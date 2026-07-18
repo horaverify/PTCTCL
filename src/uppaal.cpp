@@ -697,7 +697,13 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     *satisfied = true;
     return true;
   }
-  return false;  // leads-to over networks not supported yet
+  if (q.kind == Query::LEADSTO) {  // p --> q
+    DiscPred p, qq;
+    if (!build_pred(q.lhs, p) || !build_pred(q.note, qq)) return false;
+    *satisfied = leads_to_net(net, p, qq, backend, stats);
+    return true;
+  }
+  return false;
 }
 
 }  // namespace ptctlmc

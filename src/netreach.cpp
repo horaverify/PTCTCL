@@ -492,4 +492,125 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
   return false;
 }
 
+bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Backend backend,
+                  ReachStats* stats) {
+  (void)backend;
+  std::vector<std::int32_t> L = net.lbound, U = net.ubound;
+  const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;
+  const std::vector<char> qmask(net.nclocks + 1, 0);
+
+  auto holds = [&](const DiscPred& pr, const SymState& s) -> bool {
+    for (const auto& r : pr.locs) { const bool eq = (s.locs[r.proc] == r.loc); if (eq != r.equal) return false; }
+    return int_ok(pr.ints, s.ints);
+  };
+  auto key = [&](const SymState& s) -> std::string {
+    std::string k = disc_key(s.locs, s.ints);
+    const auto& d = s.zone.data();
+    k.append(reinterpret_cast<const char*>(d.data()), d.size() * sizeof(raw_t));
+    return k;
+  };
+  auto extrap = [&](Dbm& z) {
+    if (emode == ExLuPlus) z.extrapolate_lu_plus(L, U);
+    else if (emode == ExNoDiag) z.extrapolate_lu_plus_nodiag(L, U);
+  };
+
+  SymState s0;
+  s0.locs.resize(net.nprocs());
+  for (int pr = 0; pr < net.nprocs(); ++pr) s0.locs[pr] = net.procs[pr].initial;
+  s0.ints.resize(net.intvars.size());
+  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
+  s0.zone = Dbm(net.nclocks);
+  {
+    const std::vector<Constraint> inv = all_invariants(net, s0.locs);
+    if (!apply_all(s0.zone, inv)) return true;  // unreachable init => vacuously holds
+    bool c, u; frozen_flags(net, s0.locs, &c, &u);
+    if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
+    reset_inactive(net, s0.locs, s0.zone, qmask);
+    extrap(s0.zone);
+  }
+
+  // Build the full reachable graph (exact-hash nodes, extrapolated for finiteness).
+  std::unordered_map<std::string, int> id;
+  std::vector<SymState> node;
+  std::vector<std::vector<int>> adj;
+  auto intern = [&](SymState&& s) -> int {
+    std::string k = key(s);
+    auto it = id.find(k);
+    if (it != id.end()) return it->second;
+    const int n = static_cast<int>(node.size());
+    id.emplace(std::move(k), n); node.push_back(std::move(s)); adj.emplace_back();
+    return n;
+  };
+  auto time_diverges = [&](const SymState& s) -> bool {
+    if (net.nclocks == 0) return false;
+    Dbm z = s.zone; z.delay(); apply_all(z, all_invariants(net, s.locs));
+    if (z.empty()) return false;
+    for (int i = 1; i <= net.nclocks; ++i) if (z.get(i, 0) != kInf) return false;
+    return true;
+  };
+  intern(std::move(s0));
+  for (int u = 0; u < static_cast<int>(node.size()); ++u) {
+    if (stats) ++stats->explored;
+    std::vector<SymState> succ;
+    successors_net(net, node[u], L, U, qmask, emode, succ);
+    for (auto& ns : succ) adj[u].push_back(intern(std::move(ns)));
+  }
+  const int N = static_cast<int>(node.size());
+  std::vector<char> pv(N), qv(N), seed(N, 0);
+  for (int i = 0; i < N; ++i) { pv[i] = holds(p, node[i]); qv[i] = holds(q, node[i]); }
+  // Seeds of an infinite/maximal ¬q run: a ¬q deadlock, or a ¬q state where time diverges.
+  for (int i = 0; i < N; ++i)
+    if (!qv[i] && (adj[i].empty() || time_diverges(node[i]))) seed[i] = 1;
+
+  // ¬q-cycle nodes are also seeds — iterative Tarjan SCC over the ¬q-subgraph.
+  std::vector<int> tidx(N, -1), low(N, 0);
+  std::vector<char> onstk(N, 0);
+  std::vector<int> tstk;
+  int counter = 0;
+  struct Frame { int u; std::size_t i; };
+  for (int s = 0; s < N; ++s) {
+    if (qv[s] || tidx[s] != -1) continue;
+    std::vector<Frame> fs;
+    fs.push_back({s, 0}); tidx[s] = low[s] = counter++; tstk.push_back(s); onstk[s] = 1;
+    while (!fs.empty()) {
+      Frame& f = fs.back();
+      const int u = f.u;
+      bool descended = false;
+      while (f.i < adj[u].size()) {
+        const int v = adj[u][f.i++];
+        if (qv[v]) continue;
+        if (tidx[v] == -1) {
+          tidx[v] = low[v] = counter++; tstk.push_back(v); onstk[v] = 1; fs.push_back({v, 0});
+          descended = true; break;
+        } else if (onstk[v]) { if (tidx[v] < low[u]) low[u] = tidx[v]; }
+      }
+      if (descended) continue;
+      if (low[u] == tidx[u]) {
+        std::vector<int> comp; int w;
+        do { w = tstk.back(); tstk.pop_back(); onstk[w] = 0; comp.push_back(w); } while (w != u);
+        bool cyc = comp.size() > 1;
+        if (!cyc) for (int v : adj[u]) if (v == u) cyc = true;  // self-loop
+        if (cyc) for (int c : comp) seed[c] = 1;
+      }
+      fs.pop_back();
+      if (!fs.empty() && low[u] < low[fs.back().u]) low[fs.back().u] = low[u];
+    }
+  }
+
+  // escape = ¬q nodes that can reach a seed via ¬q-edges (reverse reachability).
+  std::vector<std::vector<int>> radj(N);
+  for (int u = 0; u < N; ++u)
+    if (!qv[u]) for (int v : adj[u]) if (!qv[v]) radj[v].push_back(u);
+  std::vector<char> escape(N, 0);
+  std::vector<int> stk;
+  for (int i = 0; i < N; ++i) if (seed[i]) { escape[i] = 1; stk.push_back(i); }
+  while (!stk.empty()) {
+    const int u = stk.back(); stk.pop_back();
+    for (int w : radj[u]) if (!escape[w]) { escape[w] = 1; stk.push_back(w); }
+  }
+  // p --> q fails iff a reachable p ∧ ¬q state can stay in ¬q forever (escape).
+  for (int i = 0; i < N; ++i) if (pv[i] && !qv[i] && escape[i]) return false;
+  return true;
+}
+
 }  // namespace ptctlmc

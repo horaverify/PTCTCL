@@ -28,4 +28,9 @@ struct DiscPred {
 bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backend = Backend::Seq,
                           ReachStats* stats = nullptr);
 
+// p --> q  (leads-to): does every reachable state satisfying `p` inevitably reach a state
+// satisfying `q` on all maximal runs? Location/integer predicates only.
+bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q,
+                  Backend backend = Backend::Seq, ReachStats* stats = nullptr);
+
 }  // namespace ptctlmc
