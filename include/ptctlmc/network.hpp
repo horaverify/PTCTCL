@@ -44,6 +44,7 @@ struct Network {
   std::vector<std::string> clock_names;   // index 0 = "0"
   std::vector<IntVar> intvars;
   std::vector<std::string> channels;
+  std::vector<char> chan_broadcast;  // 1 if declared `broadcast chan` (fires with 0+ receivers)
   std::vector<NProc> procs;
 
   std::vector<std::int32_t> lbound, ubound;  // global Extra_LU bounds over clocks

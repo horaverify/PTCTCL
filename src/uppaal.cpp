@@ -403,12 +403,17 @@ void collect_ints(const std::string& decl, std::unordered_map<std::string, int>&
 }
 
 void collect_channels(const std::string& decl, std::unordered_map<std::string, int>& chm,
-                      std::vector<std::string>& names) {
+                      std::vector<std::string>& names, std::vector<char>& bcast) {
   std::size_t p = 0;
   while ((p = decl.find("chan", p)) != std::string::npos) {
     const bool wb = (p == 0 || !(std::isalnum((unsigned char)decl[p - 1]) || decl[p - 1] == '_')) &&
                     (p + 4 >= decl.size() || !(std::isalnum((unsigned char)decl[p + 4]) || decl[p + 4] == '_'));
     if (!wb) { p += 4; continue; }
+    // `broadcast chan ...` => broadcast channels.
+    std::size_t q = p;
+    while (q > 0 && std::isspace((unsigned char)decl[q - 1])) --q;
+    const bool is_b = q >= 9 && decl.compare(q - 9, 9, "broadcast") == 0 &&
+                      (q == 9 || !(std::isalnum((unsigned char)decl[q - 10]) || decl[q - 10] == '_'));
     std::size_t e = decl.find(';', p);
     std::string list = decl.substr(p + 4, (e == std::string::npos ? decl.size() : e) - (p + 4));
     for (auto part : split_conjuncts(list)) {
@@ -416,6 +421,7 @@ void collect_channels(const std::string& decl, std::unordered_map<std::string, i
       if (!part.empty() && (std::isalpha((unsigned char)part[0]) || part[0] == '_') && !chm.count(part)) {
         chm[part] = (int)names.size();
         names.push_back(part);
+        bcast.push_back(is_b ? 1 : 0);
       }
     }
     p = (e == std::string::npos) ? decl.size() : e + 1;
@@ -510,13 +516,13 @@ Network load_uppaal_network(const std::string& path) {
   ClockMap cm;
   std::unordered_map<std::string, int> im, chm;
   net.clock_names.push_back("0");
-  if (const Xml* d = nta.first("declaration")) { collect_clocks(d->text, cm, net.clock_names); collect_ints(d->text, im, net.intvars); collect_channels(d->text, chm, net.channels); }
+  if (const Xml* d = nta.first("declaration")) { collect_clocks(d->text, cm, net.clock_names); collect_ints(d->text, im, net.intvars); collect_channels(d->text, chm, net.channels, net.chan_broadcast); }
 
   for (const auto& tmpl : nta.kids) {
     if (tmpl.tag != "template") continue;
     NProc proc;
     proc.name = tmpl.first("name") ? tmpl.first("name")->text : "P";
-    if (const Xml* d = tmpl.first("declaration")) { collect_clocks(d->text, cm, net.clock_names); collect_ints(d->text, im, net.intvars); collect_channels(d->text, chm, net.channels); }
+    if (const Xml* d = tmpl.first("declaration")) { collect_clocks(d->text, cm, net.clock_names); collect_ints(d->text, im, net.intvars); collect_channels(d->text, chm, net.channels, net.chan_broadcast); }
     std::unordered_map<std::string, int> lid;
     for (const auto& k : tmpl.kids) {
       if (k.tag != "location") continue;

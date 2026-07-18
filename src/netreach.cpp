@@ -143,6 +143,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
     for (int ei : net.procs[i].edges_from(s.locs[i])) {
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1) continue;  // sender a!
+      if (net.chan_broadcast[se.sync_chan]) continue;      // broadcast handled below
       if (!int_ok(se.int_guard, s.ints)) continue;
       const bool i_comm = net.procs[i].locations[s.locs[i]].committed;
       for (int j = 0; j < net.nprocs(); ++j) {
@@ -176,6 +177,66 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
           ns.zone = std::move(z1);
           out.push_back(std::move(ns));
         }
+      }
+    }
+  }
+
+  // ---- broadcast synchronisation: a! fires with ALL enabled a? (0 or more) ----
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_from(s.locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, s.ints)) continue;
+      // Each other process contributes at most one enabled a? (nondeterministic choice).
+      std::vector<std::pair<int, std::vector<int>>> parts;
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        std::vector<int> es;
+        for (int ej : net.procs[j].edges_from(s.locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints))
+            es.push_back(ej);
+        }
+        if (!es.empty()) parts.push_back({j, std::move(es)});
+      }
+      std::vector<std::size_t> pick(parts.size(), 0);
+      for (;;) {
+        bool part_committed = net.procs[i].locations[s.locs[i]].committed;
+        for (const auto& pr : parts)
+          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        if (!src_committed || part_committed) {
+          Dbm z1 = s.zone;
+          bool ok = apply_all(z1, se.clock_guard);
+          for (std::size_t t = 0; ok && t < parts.size(); ++t)
+            ok = apply_all(z1, net.procs[parts[t].first].edges[parts[t].second[pick[t]]].clock_guard);
+          if (ok) {
+            SymState ns;
+            ns.locs = s.locs; ns.ints = s.ints;
+            ns.locs[i] = se.tgt;
+            for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;
+            for (int r : se.clock_resets) z1.reset(r);
+            for (std::size_t t = 0; t < parts.size(); ++t) {
+              const NEdge& re = net.procs[parts[t].first].edges[parts[t].second[pick[t]]];
+              ns.locs[parts[t].first] = re.tgt;
+              for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
+              for (int r : re.clock_resets) z1.reset(r);
+            }
+            const std::vector<Constraint> inv = all_invariants(net, ns.locs);
+            if (apply_all(z1, inv)) {
+              bool nc, nu;
+              frozen_flags(net, ns.locs, &nc, &nu);
+              if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
+              reset_inactive(net, ns.locs, z1, qmask);
+              if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
+              else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
+              if (!z1.empty()) { ns.zone = std::move(z1); out.push_back(std::move(ns)); }
+            }
+          }
+        }
+        if (parts.empty()) break;
+        std::size_t k = 0;
+        for (; k < parts.size(); ++k) { if (++pick[k] < parts[k].second.size()) break; pick[k] = 0; }
+        if (k == parts.size()) break;
       }
     }
   }
@@ -553,7 +614,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     if (stats) ++stats->explored;
     std::vector<SymState> succ;
     successors_net(net, node[u], L, U, qmask, emode, succ);
-    for (auto& ns : succ) adj[u].push_back(intern(std::move(ns)));
+    for (auto& ns : succ) { const int v = intern(std::move(ns)); adj[u].push_back(v); }
   }
   const int N = static_cast<int>(node.size());
   std::vector<char> pv(N), qv(N), seed(N, 0);
@@ -573,11 +634,10 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     std::vector<Frame> fs;
     fs.push_back({s, 0}); tidx[s] = low[s] = counter++; tstk.push_back(s); onstk[s] = 1;
     while (!fs.empty()) {
-      Frame& f = fs.back();
-      const int u = f.u;
+      const int u = fs.back().u;  // copy: fs may reallocate on push_back below
       bool descended = false;
-      while (f.i < adj[u].size()) {
-        const int v = adj[u][f.i++];
+      while (fs.back().i < adj[u].size()) {
+        const int v = adj[u][fs.back().i++];
         if (qv[v]) continue;
         if (tidx[v] == -1) {
           tidx[v] = low[v] = counter++; tstk.push_back(v); onstk[v] = 1; fs.push_back({v, 0});

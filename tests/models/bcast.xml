@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x; broadcast chan a;</declaration>
+<template><name>S</name>
+<location id="s0"><name>idle</name><label kind="invariant">x&lt;=5</label></location>
+<location id="s1"><name>done</name></location>
+<init ref="s0"/>
+<transition><source ref="s0"/><target ref="s1"/><label kind="guard">x&gt;=2</label><label kind="synchronisation">a!</label></transition>
+</template>
+<template><name>R1</name>
+<location id="r0"><name>wait</name></location><location id="r1"><name>got</name></location>
+<init ref="r0"/>
+<transition><source ref="r0"/><target ref="r1"/><label kind="synchronisation">a?</label></transition>
+</template>
+<template><name>R2</name>
+<location id="q0"><name>wait</name></location><location id="q1"><name>got</name></location>
+<init ref="q0"/>
+<transition><source ref="q0"/><target ref="q1"/><label kind="synchronisation">a?</label></transition>
+</template>
+<system>system S,R1,R2;</system>
+</nta>
