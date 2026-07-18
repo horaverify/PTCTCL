@@ -380,7 +380,25 @@ void collect_ints(const std::string& decl, std::unordered_map<std::string, int>&
     if (!wb) { p += 3; continue; }
     std::size_t q = p + 3;
     while (q < decl.size() && std::isspace((unsigned char)decl[q])) ++q;
-    if (q < decl.size() && decl[q] == '[') { q = decl.find(']', q); if (q == std::string::npos) break; ++q; }
+    // Parse the declared bounds `int[lo,hi] ...`. These widths are load-bearing:
+    // reachable_net packs the discrete state into a uint64 with bits(hi-lo+1) bits
+    // per int var, so a dropped range (lo==hi==0 => 0 bits) silently collides
+    // distinct values of any 2nd int var. Unbounded `int` falls back to UPPAAL's
+    // default 16-bit range so the field is wide enough for any legal value.
+    long rlo = -32768, rhi = 32767;
+    if (q < decl.size() && decl[q] == '[') {
+      const std::size_t rb = decl.find(']', q);
+      if (rb == std::string::npos) break;
+      const std::string range = decl.substr(q + 1, rb - q - 1);
+      const std::size_t comma = range.find(',');
+      if (comma != std::string::npos) {
+        try {
+          rlo = std::stol(trim(range.substr(0, comma)));
+          rhi = std::stol(trim(range.substr(comma + 1)));
+        } catch (...) {}
+      }
+      q = rb + 1;
+    }
     std::size_t e = decl.find(';', q);
     std::string list = decl.substr(q, (e == std::string::npos ? decl.size() : e) - q);
     for (auto part : split_conjuncts(list)) {
@@ -395,7 +413,7 @@ void collect_ints(const std::string& decl, std::unordered_map<std::string, int>&
       name = trim(name);
       if (!name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_') && !im.count(name)) {
         im[name] = (int)vars.size();
-        vars.push_back({name, 0, 0, init});
+        vars.push_back({name, rlo, rhi, init});
       }
     }
     p = (e == std::string::npos) ? decl.size() : e + 1;

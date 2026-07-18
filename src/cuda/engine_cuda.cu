@@ -109,32 +109,16 @@ void delay_in_host(Dbm& z, const Location& l) {
 
 }  // namespace
 
-bool reachable_cuda(const TimedAutomaton& ta, int target_loc,
-                    const std::vector<Constraint>& target, ReachStats* stats) {
+bool reachable_cuda(const TimedAutomaton& ta, const std::vector<char>& accept,
+                    const std::vector<Constraint>& tgt_clocks,
+                    const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
+                    ReachStats* stats) {
   const int dim = ta.nclocks + 1;
   if (dim > kMaxDim)
     throw std::runtime_error("reachable_cuda: too many clocks (raise kMaxDim)");
   const int d2 = dim * dim;
-
-  // The GPU path uses Extra_LU+, which (like the CPU non-diagonal path) is unsound with
-  // diagonal constraints. Reject them here rather than return a wrong answer.
-  auto has_diag = [](const std::vector<Constraint>& cs) {
-    for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
-    return false;
-  };
-  bool diag = has_diag(target);
-  for (const auto& l : ta.locations) if (has_diag(l.invariant)) diag = true;
-  for (const auto& e : ta.edges) if (has_diag(e.guard)) diag = true;
-  if (diag)
-    throw std::runtime_error("reachable_cuda: diagonal constraints unsupported on GPU; use --backend seq/omp");
-
-  // Extra_LU+ bounds = model bounds widened with the query's clock constants (matches CPU).
-  std::vector<std::int32_t> L = ta.lbound, U = ta.ubound;
-  for (const auto& c : target) {
-    const int v = raw_bound(c.bound);
-    if (c.i > 0 && c.j == 0) { if (v > U[c.i]) U[c.i] = v; }
-    else if (c.i == 0 && c.j > 0) { const int lb = -v; if (lb > L[c.j]) L[c.j] = lb; }
-  }
+  // `ta` is diagonal-free (the caller applied diagonal splitting) and L/U are the
+  // Extra_LU+ bounds the caller precomputed — so the GPU path handles diagonal models too.
 
   // ---- flatten edges to host arrays, then upload once ----
   const int E = static_cast<int>(ta.edges.size());
@@ -170,9 +154,9 @@ bool reachable_cuda(const TimedAutomaton& ta, int target_loc,
   const int nloc = static_cast<int>(ta.locations.size());
   std::vector<std::vector<Dbm>> passed(nloc);
   auto is_target = [&](int loc, const Dbm& z) {
-    if (target_loc >= 0 && loc != target_loc) return false;
+    if (!accept[loc]) return false;
     Dbm t = z;
-    return apply_host(t, target);
+    return apply_host(t, tgt_clocks);
   };
   auto subsumed = [&](int loc, const Dbm& z) {
     for (const auto& zp : passed[loc]) if (zp.includes(z)) return true;
@@ -186,7 +170,7 @@ bool reachable_cuda(const TimedAutomaton& ta, int target_loc,
   bool found = is_target(ta.initial, z0);
 
   std::vector<int> front_loc{ta.initial};
-  std::vector<raw_t> front_z(z0.data());
+  std::vector<raw_t> front_z(z0.data().begin(), z0.data().end());
   passed[ta.initial].push_back(z0);
   if (stats) ++stats->explored;
 

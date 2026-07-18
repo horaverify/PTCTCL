@@ -7,11 +7,17 @@
 #include <vector>
 
 #include "ptctlmc/dbm_ops.hpp"
+#include "ptctlmc/dbm_pool.hpp"
 
 namespace ptctlmc {
 
 class Dbm {
  public:
+  // Zone storage draws from a per-thread free-list (see dbm_pool.hpp): zones are
+  // churned by the millions and malloc's global lock otherwise throttles the
+  // parallel network backend. std::vector still owns/copies/moves the buffer.
+  using Storage = std::vector<raw_t, PoolAllocator<raw_t>>;
+
   Dbm() : n_(0), dim_(1), m_(1, kZeroLe) {}  // 0-clock placeholder (for containers)
   explicit Dbm(int nclocks)
       : n_(nclocks), dim_(nclocks + 1), m_(static_cast<std::size_t>(dim_) * dim_, kZeroLe) {}
@@ -20,8 +26,8 @@ class Dbm {
   int dim() const { return dim_; }
   raw_t get(int i, int j) const { return m_[i * dim_ + j]; }
   void set(int i, int j, raw_t r) { m_[i * dim_ + j] = r; }
-  const std::vector<raw_t>& data() const { return m_; }
-  std::vector<raw_t>& data() { return m_; }
+  const Storage& data() const { return m_; }
+  Storage& data() { return m_; }
 
   void close() { dbm_close(m_.data(), dim_); }
   bool empty() const { return dbm_empty(m_.data(), dim_); }
@@ -54,7 +60,7 @@ class Dbm {
 
  private:
   int n_, dim_;
-  std::vector<raw_t> m_;
+  Storage m_;
 };
 
 }  // namespace ptctlmc
