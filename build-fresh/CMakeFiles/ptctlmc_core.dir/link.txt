@@ -1,0 +1,2 @@
+/usr/bin/ar qc libptctlmc_core.a CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o CMakeFiles/ptctlmc_core.dir/src/network.cpp.o CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o
+/usr/bin/ranlib libptctlmc_core.a

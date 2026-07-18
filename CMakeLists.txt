@@ -14,6 +14,35 @@ option(PTCTLMC_ENABLE_METAL "Enable the Metal GPU backend on macOS if available"
 option(PTCTLMC_BUILD_TESTS  "Build tests" ON)
 
 find_package(OpenMP QUIET)
+# Apple Clang ships without an OpenMP runtime, so find_package fails even when
+# Homebrew's libomp is installed. Wire it up by hand so the parallel network
+# backend (--backend omp) is available out of the box on macOS. Non-Apple
+# toolchains (GCC/Clang on Linux) find OpenMP natively above.
+if(NOT OpenMP_CXX_FOUND AND APPLE)
+  set(_omp_hints /opt/homebrew/opt/libomp /usr/local/opt/libomp)
+  find_program(BREW_EXECUTABLE brew)
+  if(BREW_EXECUTABLE)
+    execute_process(COMMAND ${BREW_EXECUTABLE} --prefix libomp
+                    OUTPUT_VARIABLE _omp_brew OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(_omp_brew)
+      list(PREPEND _omp_hints "${_omp_brew}")
+    endif()
+  endif()
+  foreach(_h ${_omp_hints})
+    if(EXISTS "${_h}/lib/libomp.dylib")
+      set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${_h}/include" CACHE STRING "" FORCE)
+      set(OpenMP_CXX_LIB_NAMES "omp" CACHE STRING "" FORCE)
+      set(OpenMP_omp_LIBRARY "${_h}/lib/libomp.dylib" CACHE FILEPATH "" FORCE)
+      find_package(OpenMP QUIET)
+      break()
+    endif()
+  endforeach()
+endif()
+if(OpenMP_CXX_FOUND)
+  message(STATUS "PTCTLMC: OpenMP ENABLED — parallel network backend (--backend omp)")
+else()
+  message(STATUS "PTCTLMC: OpenMP not found — network backend runs serially")
+endif()
 
 set(PTCTLMC_HAVE_CUDA OFF)
 if(PTCTLMC_ENABLE_CUDA)

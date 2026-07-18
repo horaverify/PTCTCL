@@ -234,7 +234,7 @@ bool reachable_metal(const TimedAutomaton& ta, const std::vector<char>& accept,
     bool found = is_target(ta.initial, z0);
 
     std::vector<int> front_loc{ta.initial};
-    std::vector<raw_t> front_z(z0.data());
+    std::vector<raw_t> front_z(z0.data().begin(), z0.data().end());
     passed[ta.initial].push_back(z0);
     if (stats) ++stats->explored;
 
