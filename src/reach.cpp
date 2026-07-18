@@ -17,7 +17,7 @@
 namespace ptctlmc {
 namespace {
 
-bool apply(Dbm& z, const std::vector<Constraint>& cs) {
+bool apply_cs(Dbm& z, const std::vector<Constraint>& cs) {
   for (const auto& c : cs)
     if (!z.constrain(c.i, c.j, c.bound)) return false;
   return true;
@@ -26,7 +26,7 @@ bool apply(Dbm& z, const std::vector<Constraint>& cs) {
 void delay_in(Dbm& z, const Location& loc) {
   if (loc.urgent || loc.committed) return;  // no time may pass
   z.delay();
-  apply(z, loc.invariant);
+  apply_cs(z, loc.invariant);
 }
 
 // Extend LU bounds with the constants appearing in `cs` (so extrapolation never
@@ -54,7 +54,7 @@ void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
 struct Extrap {
   const std::vector<std::int32_t>*L, *U;
   bool diagonal = false;
-  void apply(Dbm& z) const {
+  void apply_cs(Dbm& z) const {
     if (diagonal) z.extrapolate_lu_plus_nodiag(*L, *U);  // keep diagonals exact
     else z.extrapolate_lu_plus(*L, *U);
   }
@@ -66,11 +66,108 @@ bool has_diagonal(const std::vector<Constraint>& cs) {
   return false;
 }
 
+// --- diagonal splitting: rewrite a TA with diagonal guards into an equivalent
+// diagonal-FREE one, so Extra_LU+ / aLU is sound and exploration terminates. Each
+// distinct diagonal atom d ≡ (x_i - x_j ~ c) becomes a boolean recorded in the
+// location: since x_i - x_j is constant except at resets, d's truth only changes when
+// x_i or x_j is reset, and the new truth is a NON-diagonal condition on the surviving
+// clock. Locations split into (loc, bitvector); reset edges split on those conditions.
+struct SplitTA { TimedAutomaton ta; int nb = 1; std::vector<Constraint> atoms; };
+
+int find_atom(const std::vector<Constraint>& D, const Constraint& c) {
+  for (int k = 0; k < static_cast<int>(D.size()); ++k)
+    if (D[k].i == c.i && D[k].j == c.j && D[k].bound == c.bound) return k;
+  return -1;
+}
+bool diag_true_at_zero(const Constraint& c) {  // x_i - x_j = 0 satisfies (0 ~ value)?
+  return raw_is_strict(c.bound) ? (0 < raw_bound(c.bound)) : (0 <= raw_bound(c.bound));
+}
+
+SplitTA split_diagonals(const TimedAutomaton& in, const std::vector<Constraint>& query) {
+  SplitTA S;
+  std::vector<Constraint>& D = S.atoms;
+  auto add_atom = [&](const Constraint& c) { if (c.i > 0 && c.j > 0 && find_atom(D, c) < 0) D.push_back(c); };
+  for (const auto& e : in.edges) for (const auto& c : e.guard) add_atom(c);
+  for (const auto& l : in.locations) for (const auto& c : l.invariant) add_atom(c);
+  for (const auto& c : query) add_atom(c);
+  const int k = static_cast<int>(D.size());
+  if (k == 0) { S.ta = in; S.nb = 1; return S; }
+  if (k > 16) throw std::runtime_error("diagonal splitting: too many distinct diagonal atoms");
+  const int nb = 1 << k;
+  S.nb = nb;
+  TimedAutomaton& out = S.ta;
+  out.nclocks = in.nclocks; out.clock_names = in.clock_names;
+  const int NL = static_cast<int>(in.locations.size());
+  auto nloc = [&](int L, int b) { return L * nb + b; };
+  auto valid = [&](int L, int b) -> bool {  // diagonal invariant atoms must hold in (L,b)
+    for (const auto& c : in.locations[L].invariant)
+      if (c.i > 0 && c.j > 0) { const int id = find_atom(D, c); if (id >= 0 && !(b & (1 << id))) return false; }
+    return true;
+  };
+  out.locations.resize(static_cast<std::size_t>(NL) * nb);
+  for (int L = 0; L < NL; ++L)
+    for (int b = 0; b < nb; ++b) {
+      Location loc;
+      loc.name = in.locations[L].name; loc.urgent = in.locations[L].urgent; loc.committed = in.locations[L].committed;
+      for (const auto& c : in.locations[L].invariant) if (!(c.i > 0 && c.j > 0)) loc.invariant.push_back(c);
+      out.locations[nloc(L, b)] = std::move(loc);
+    }
+  int b0 = 0;
+  for (int d = 0; d < k; ++d) if (diag_true_at_zero(D[d])) b0 |= (1 << d);
+  out.initial = nloc(in.initial, b0);
+
+  for (const auto& e : in.edges) {
+    std::vector<Constraint> gnd;  // non-diagonal guard part
+    int req = 0;                  // diagonal atoms the guard requires TRUE in the source
+    for (const auto& c : e.guard) {
+      if (c.i > 0 && c.j > 0) { const int id = find_atom(D, c); if (id >= 0) req |= (1 << id); }
+      else gnd.push_back(c);
+    }
+    std::vector<char> rst(in.nclocks + 1, 0);
+    for (int r : e.resets) rst[r] = 1;
+    struct Rule { int type; Constraint cond; };  // 0 unchanged, 1 const-false, 2 const-true, 3 split
+    std::vector<Rule> rule(k);
+    std::vector<int> splitIdx;
+    for (int d = 0; d < k; ++d) {
+      const Constraint& c = D[d];
+      const bool ri = rst[c.i], rj = rst[c.j];
+      if (!ri && !rj) rule[d] = {0, {}};
+      else if (ri && rj) rule[d] = {diag_true_at_zero(c) ? 2 : 1, {}};
+      else if (ri) { rule[d] = {3, Constraint{0, c.j, c.bound}}; splitIdx.push_back(d); }   // -x_j ~ c
+      else { rule[d] = {3, Constraint{c.i, 0, c.bound}}; splitIdx.push_back(d); }            //  x_i ~ c
+    }
+    const int ns = static_cast<int>(splitIdx.size());
+    for (int bsrc = 0; bsrc < nb; ++bsrc) {
+      if ((bsrc & req) != req || !valid(e.src, bsrc)) continue;
+      for (int combo = 0; combo < (1 << ns); ++combo) {
+        int btgt = 0;
+        std::vector<Constraint> g = gnd;
+        for (int d = 0; d < k; ++d) {
+          if (rule[d].type == 0) { if ((bsrc >> d) & 1) btgt |= (1 << d); }
+          else if (rule[d].type == 2) btgt |= (1 << d);
+        }
+        for (int s = 0; s < ns; ++s) {
+          const int d = splitIdx[s];
+          if ((combo >> s) & 1) { btgt |= (1 << d); g.push_back(rule[d].cond); }
+          else g.push_back(negate(rule[d].cond));
+        }
+        if (!valid(e.tgt, btgt)) continue;
+        Edge ne;
+        ne.src = nloc(e.src, bsrc); ne.tgt = nloc(e.tgt, btgt);
+        ne.guard = std::move(g); ne.resets = e.resets; ne.sync = e.sync;
+        out.edges.push_back(std::move(ne));
+      }
+    }
+  }
+  out.compute_max_constants();
+  return S;
+}
+
 bool initial_zone(const TimedAutomaton& ta, Dbm& z0, const Extrap& ex) {
   z0 = Dbm(ta.nclocks);
-  if (!apply(z0, ta.locations[ta.initial].invariant)) return false;
+  if (!apply_cs(z0, ta.locations[ta.initial].invariant)) return false;
   delay_in(z0, ta.locations[ta.initial]);
-  ex.apply(z0);
+  ex.apply_cs(z0);
   return true;
 }
 
@@ -79,12 +176,12 @@ void successors(const TimedAutomaton& ta, int loc, const Dbm& z,
   for (int ei : ta.edges_from(loc)) {
     const Edge& e = ta.edges[ei];
     Dbm z1 = z;
-    if (!apply(z1, e.guard)) continue;
+    if (!apply_cs(z1, e.guard)) continue;
     for (int r : e.resets) z1.reset(r);
     const Location& tl = ta.locations[e.tgt];
-    if (!apply(z1, tl.invariant)) continue;
+    if (!apply_cs(z1, tl.invariant)) continue;
     delay_in(z1, tl);
-    ex.apply(z1);
+    ex.apply_cs(z1);
     if (!z1.empty()) out.emplace_back(e.tgt, std::move(z1));
   }
 }
@@ -113,18 +210,37 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
   std::vector<std::int32_t> L = ta.lbound, U = ta.ubound;
   extend_bounds(L, U, target);
 
-  // Choose the extrapolation: fast Extra_LU+ for diagonal-free TA, sound per-pair
-  // k-normalisation when any guard/invariant compares two clocks.
-  Extrap ex;
-  ex.L = &L; ex.U = &U;
-  for (const auto& l : ta.locations) if (has_diagonal(l.invariant)) ex.diagonal = true;
-  for (const auto& e : ta.edges) if (has_diagonal(e.guard)) ex.diagonal = true;
-  if (has_diagonal(target)) ex.diagonal = true;
+  // Diagonal constraints make LU/aLU unsound. Rewrite the automaton diagonal-FREE by
+  // splitting locations on the truth of each diagonal atom, then use fast Extra_LU+.
+  bool diag = has_diagonal(target);
+  for (const auto& l : ta.locations) if (has_diagonal(l.invariant)) diag = true;
+  for (const auto& e : ta.edges) if (has_diagonal(e.guard)) diag = true;
 
-  const int nloc = static_cast<int>(ta.locations.size());
-  // Passed list per location: zone-inclusion (subsumption) for pruning power, plus
-  // an exact-DBM hash set as an O(1) fast path for re-visits (avoids the O(N)
-  // inclusion scan for exact duplicates, which dominate).
+  SplitTA split;
+  const TimedAutomaton* Wp = &ta;
+  int nb = 1;
+  if (diag) {
+    split = split_diagonals(ta, target);
+    Wp = &split.ta;
+    nb = split.nb;
+    L = split.ta.lbound; U = split.ta.ubound;
+    extend_bounds(L, U, target);
+  }
+  const TimedAutomaton& W = *Wp;
+  Extrap ex;
+  ex.L = &L; ex.U = &U; ex.diagonal = false;  // W is diagonal-free
+
+  // Translate the target: location (÷ nb), non-diagonal clock atoms (checked on the
+  // zone), and diagonal atoms (checked via the split location's boolean bit).
+  std::vector<Constraint> tgt_clocks;
+  std::vector<int> tgt_diag_bits;
+  for (const auto& c : target) {
+    const int id = (diag && c.i > 0 && c.j > 0) ? find_atom(split.atoms, c) : -1;
+    if (id >= 0) tgt_diag_bits.push_back(id);
+    else tgt_clocks.push_back(c);
+  }
+
+  const int nloc = static_cast<int>(W.locations.size());
   std::vector<std::vector<Dbm>> pz(nloc);
   std::vector<std::unordered_set<std::string>> pk(nloc);
   auto key = [](const Dbm& z) {
@@ -132,9 +248,10 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
                        z.data().size() * sizeof(raw_t));
   };
   auto is_target = [&](int loc, const Dbm& z) {
-    if (target_loc >= 0 && loc != target_loc) return false;
+    if (target_loc >= 0 && loc / nb != target_loc) return false;
+    for (int bit : tgt_diag_bits) if (!((loc % nb) & (1 << bit))) return false;
     Dbm t = z;
-    return apply(t, target);
+    return apply_cs(t, tgt_clocks);
   };
   auto seen = [&](int loc, const Dbm& z) {
     if (pk[loc].count(key(z))) return true;      // exact duplicate (O(1))
@@ -154,10 +271,10 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
       throw std::runtime_error("state cap exceeded — model likely has unbounded diagonal clocks");
   };
 
-  Dbm z0(ta.nclocks);
-  if (!initial_zone(ta, z0, ex)) return false;
-  if (is_target(ta.initial, z0)) return true;
-  add(ta.initial, z0);
+  Dbm z0(W.nclocks);
+  if (!initial_zone(W, z0, ex)) return false;
+  if (is_target(W.initial, z0)) return true;
+  add(W.initial, z0);
   if (stats) ++stats->explored;
 
 #ifndef PTCTLMC_HAVE_OPENMP
@@ -166,12 +283,12 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
 
   if (!parallel) {
     std::deque<std::pair<int, Dbm>> waiting;
-    waiting.emplace_back(ta.initial, z0);
+    waiting.emplace_back(W.initial, z0);
     while (!waiting.empty()) {
       auto st = std::move(waiting.front());
       waiting.pop_front();
       std::vector<std::pair<int, Dbm>> succ;
-      successors(ta, st.first, st.second, succ, ex);
+      successors(W, st.first, st.second, succ, ex);
       for (auto& s : succ) {
         if (stats) ++stats->generated;
         if (is_target(s.first, s.second)) return true;
@@ -188,7 +305,7 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
 #ifdef PTCTLMC_HAVE_OPENMP
   const int nthreads = omp_get_max_threads();
   std::vector<std::pair<int, Dbm>> frontier;
-  frontier.emplace_back(ta.initial, z0);
+  frontier.emplace_back(W.initial, z0);
   while (!frontier.empty()) {
     std::vector<std::vector<std::pair<int, Dbm>>> tls(nthreads);
 #pragma omp parallel
@@ -197,7 +314,7 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
       auto& buf = tls[tid];
 #pragma omp for schedule(dynamic, 8)
       for (long i = 0; i < static_cast<long>(frontier.size()); ++i)
-        successors(ta, frontier[i].first, frontier[i].second, buf, ex);
+        successors(W, frontier[i].first, frontier[i].second, buf, ex);
     }
     std::vector<std::pair<int, Dbm>> next;
     for (auto& buf : tls)
