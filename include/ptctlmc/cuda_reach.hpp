@@ -3,6 +3,7 @@
 // CUDA-enabled builds, src/cuda/engine_cuda.cu).
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "ptctlmc/reach.hpp"
@@ -10,9 +11,13 @@
 
 namespace ptctlmc {
 
-// Same semantics as reachable(), but successor generation (the DBM pipeline) runs
-// on the GPU. Requires nClocks+1 <= PTCTLMC_CUDA_MAX_DIM; throws otherwise.
-bool reachable_cuda(const TimedAutomaton& ta, int target_loc,
-                    const std::vector<Constraint>& target = {}, ReachStats* stats = nullptr);
+// GPU zone-graph reachability over a DIAGONAL-FREE automaton `ta` (the caller applies
+// diagonal splitting first). `accept[loc]` marks target locations; `tgt_clocks` are the
+// target's clock constraints; `L`/`U` are the precomputed Extra_LU+ bounds. Successor
+// generation runs on the GPU; host does the subsumption merge.
+bool reachable_cuda(const TimedAutomaton& ta, const std::vector<char>& accept,
+                    const std::vector<Constraint>& tgt_clocks,
+                    const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
+                    ReachStats* stats = nullptr);
 
 }  // namespace ptctlmc
