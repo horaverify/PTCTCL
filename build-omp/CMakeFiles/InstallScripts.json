@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/cmake_install.cmake",
+		"/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

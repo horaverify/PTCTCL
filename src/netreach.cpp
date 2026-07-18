@@ -18,9 +18,17 @@
 namespace ptctlmc {
 namespace {
 
+// The discrete part of a symbolic state is copied for every successor and again
+// for every survivor entering the next frontier. Backing locs/ints with the same
+// per-thread pool as the zone (dbm_pool.hpp) turns those millions of tiny
+// vector copies from malloc/free pairs — which serialize the OpenMP workers on
+// the global allocator lock — into lock-free free-list pops.
+using LocVec = std::vector<int, PoolAllocator<int>>;
+using IntVec = std::vector<long, PoolAllocator<long>>;
+
 struct SymState {
-  std::vector<int> locs;
-  std::vector<long> ints;
+  LocVec locs;
+  IntVec ints;
   Dbm zone;
 };
 
@@ -30,7 +38,7 @@ bool apply_all(Dbm& z, const std::vector<Constraint>& cs) {
   return true;
 }
 
-bool int_ok(const std::vector<IntAtom>& g, const std::vector<long>& ints) {
+bool int_ok(const std::vector<IntAtom>& g, const IntVec& ints) {
   for (const auto& a : g) {
     const long x = ints[a.var];
     bool r = false;
@@ -47,14 +55,16 @@ bool int_ok(const std::vector<IntAtom>& g, const std::vector<long>& ints) {
   return true;
 }
 
-std::vector<Constraint> all_invariants(const Network& net, const std::vector<int>& locs) {
-  std::vector<Constraint> inv;
+// Fills `inv` (cleared first) rather than returning a fresh vector: this runs
+// 1-3x per successor in the hottest loop, so the allocation is pooled away by
+// reusing a caller-owned scratch buffer.
+void all_invariants(const Network& net, const LocVec& locs, std::vector<Constraint>& inv) {
+  inv.clear();
   for (int p = 0; p < net.nprocs(); ++p)
     for (const auto& c : net.procs[p].locations[locs[p]].invariant) inv.push_back(c);
-  return inv;
 }
 
-void frozen_flags(const Network& net, const std::vector<int>& locs, bool* committed, bool* urgent) {
+void frozen_flags(const Network& net, const LocVec& locs, bool* committed, bool* urgent) {
   *committed = *urgent = false;
   for (int p = 0; p < net.nprocs(); ++p) {
     const Location& l = net.procs[p].locations[locs[p]];
@@ -65,7 +75,7 @@ void frozen_flags(const Network& net, const std::vector<int>& locs, bool* commit
 
 // Reset clocks no process will read before resetting AND that the query does not
 // read (qmask) — collapses zones that differ only in dead clocks, soundly.
-void reset_inactive(const Network& net, const std::vector<int>& locs, Dbm& z,
+void reset_inactive(const Network& net, const LocVec& locs, Dbm& z,
                     const std::vector<char>& qmask) {
   static const bool off = std::getenv("PTCTLMC_NOACTIVE") != nullptr;
   if (off) return;
@@ -96,7 +106,7 @@ bool network_has_diagonal(const Network& net) {
   return false;
 }
 
-std::string disc_key(const std::vector<int>& locs, const std::vector<long>& ints) {
+std::string disc_key(const LocVec& locs, const IntVec& ints) {
   std::string k;
   k.reserve(locs.size() * 4 + ints.size() * 8);
   for (int l : locs) k.append(reinterpret_cast<const char*>(&l), sizeof(int));
@@ -106,6 +116,7 @@ std::string disc_key(const std::vector<int>& locs, const std::vector<long>& ints
 
 void successors_net(const Network& net, const SymState& s, const std::vector<std::int32_t>& L,
                     const std::vector<std::int32_t>& U, const std::vector<char>& qmask, int emode, std::vector<SymState>& out) {
+  thread_local std::vector<Constraint> inv;  // reused invariant scratch (see all_invariants)
   bool src_committed, src_urgent;
   frozen_flags(net, s.locs, &src_committed, &src_urgent);
   for (int p = 0; p < net.nprocs(); ++p) {
@@ -124,7 +135,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
       ns.ints = s.ints;
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
 
-      const std::vector<Constraint> inv = all_invariants(net, ns.locs);
+      all_invariants(net, ns.locs, inv);
       if (!apply_all(z1, inv)) continue;
       bool nc, nu;
       frozen_flags(net, ns.locs, &nc, &nu);
@@ -165,7 +176,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
           ns.ints = s.ints;
           for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;  // sender then receiver
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
-          const std::vector<Constraint> inv = all_invariants(net, ns.locs);
+          all_invariants(net, ns.locs, inv);
           if (!apply_all(z1, inv)) continue;
           bool nc, nu;
           frozen_flags(net, ns.locs, &nc, &nu);
@@ -221,7 +232,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) z1.reset(r);
             }
-            const std::vector<Constraint> inv = all_invariants(net, ns.locs);
+            all_invariants(net, ns.locs, inv);
             if (apply_all(z1, inv)) {
               bool nc, nu;
               frozen_flags(net, ns.locs, &nc, &nu);
@@ -284,7 +295,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     }
   }
   // Per-state aLU bounds: max of per-location bounds over processes, floored by the query.
-  auto state_bounds = [&](const std::vector<int>& locs, std::vector<std::int32_t>& L2,
+  auto state_bounds = [&](const LocVec& locs, std::vector<std::int32_t>& L2,
                           std::vector<std::int32_t>& U2) {
     if (net.lbound_loc.empty()) { L2 = L; U2 = U; return; }  // fall back to global bounds
     L2.assign(net.nclocks + 1, kAluNegInf);
@@ -320,15 +331,41 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   // in the same shard, so each shard is a self-contained antichain owned by exactly
   // one thread during the merge — the O(bucket^2 * dim^3) convex-merge now runs in
   // parallel with no locks. Per discrete state: antichain + convex-union merge.
-  struct Entry { SymState s; int level; };
-  std::vector<std::unordered_map<std::string, std::vector<Entry>>> shards(S);
-  std::hash<std::string> hsh;
-  auto shard_of = [&](const std::string& dk) -> int {
-    return S == 1 ? 0 : static_cast<int>(hsh(dk) % static_cast<unsigned>(S));
+  // Discrete-state key packed losslessly into a uint64: a fixed bit-field per process
+  // location + per int variable. This replaces the per-state std::string key, whose
+  // alloc/format/hash dominated the profile — keys are now compared and hashed as plain
+  // integers (what UPPAAL does with its "compressed integer" discrete states).
+  std::vector<int> dshift(net.nprocs() + net.intvars.size());
+  {
+    int off = 0;
+    auto bits = [](long n) { int b = 0; while ((1LL << b) < n) ++b; return b; };
+    for (int p = 0; p < net.nprocs(); ++p) {
+      dshift[p] = off; off += bits(static_cast<long>(net.procs[p].locations.size()));
+    }
+    for (std::size_t v = 0; v < net.intvars.size(); ++v) {
+      dshift[net.nprocs() + v] = off; off += bits(net.intvars[v].hi - net.intvars[v].lo + 1);
+    }
+    // >= 64 (not > 64): keeps every field offset < 64, so a trailing zero-width
+    // field (single-value int/location) can never trigger a `value << 64` UB shift.
+    if (off >= 64)
+      throw std::runtime_error("reachable_net: discrete state needs >= 64 bits (network too wide)");
+  }
+  auto disc_key = [&](const LocVec& locs, const IntVec& ints) -> std::uint64_t {
+    std::uint64_t k = 0;
+    for (int p = 0; p < static_cast<int>(locs.size()); ++p)
+      k |= static_cast<std::uint64_t>(static_cast<unsigned>(locs[p])) << dshift[p];
+    for (std::size_t v = 0; v < ints.size(); ++v)
+      k |= static_cast<std::uint64_t>(ints[v] - net.intvars[v].lo) << dshift[net.nprocs() + v];
+    return k;
   };
-  auto add_to = [&](std::unordered_map<std::string, std::vector<Entry>>& mp, SymState&& s,
-                    const std::string& dk, int level, std::unordered_set<std::string>& touched) {
-    std::vector<std::int32_t> Ls, Us;
+  struct Entry { SymState s; int level; };
+  std::vector<std::unordered_map<std::uint64_t, std::vector<Entry>>> shards(S);
+  auto shard_of = [&](std::uint64_t dk) -> int {
+    return S == 1 ? 0 : static_cast<int>((dk * 0x9e3779b97f4a7c15ULL) % static_cast<unsigned>(S));
+  };
+  auto add_to = [&](std::unordered_map<std::uint64_t, std::vector<Entry>>& mp, SymState&& s,
+                    std::uint64_t dk, int level, std::unordered_set<std::uint64_t>& touched) {
+    thread_local std::vector<std::int32_t> Ls, Us;   // reuse capacity across states (assign)
     state_bounds(s.locs, Ls, Us);  // per-location aLU bounds for this discrete state
     auto& b = mp[dk];
     for (const auto& e : b)
@@ -358,7 +395,8 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
   s0.zone = Dbm(net.nclocks);
   {
-    const std::vector<Constraint> inv = all_invariants(net, s0.locs);
+    std::vector<Constraint> inv;
+    all_invariants(net, s0.locs, inv);
     if (!apply_all(s0.zone, inv)) return false;
     bool c, u;
     frozen_flags(net, s0.locs, &c, &u);
@@ -371,8 +409,8 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   std::vector<SymState> frontier;
   frontier.push_back(s0);
   {
-    const std::string dk = disc_key(s0.locs, s0.ints);
-    std::unordered_set<std::string> t0;
+    const std::uint64_t dk = disc_key(s0.locs, s0.ints);
+    std::unordered_set<std::uint64_t> t0;
     add_to(shards[shard_of(dk)], std::move(s0), dk, 0, t0);
   }
 
@@ -400,12 +438,12 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     }
 
     // (2) route each successor to its shard (serial, cheap); early-exit on target
-    std::vector<std::vector<std::pair<std::string, SymState>>> byshard(S);
+    std::vector<std::vector<std::pair<std::uint64_t, SymState>>> byshard(S);
     for (auto& buf : tls)
       for (auto& s : buf) {
         if (stats) ++stats->generated;
         if (is_target(s)) return true;
-        std::string dk = disc_key(s.locs, s.ints);
+        std::uint64_t dk = disc_key(s.locs, s.ints);
         const int sh = shard_of(dk);
         byshard[sh].emplace_back(std::move(dk), std::move(s));
       }
@@ -416,7 +454,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 1) num_threads(S)
       for (int t = 0; t < S; ++t) {
-        std::unordered_set<std::string> touched;
+        std::unordered_set<std::uint64_t> touched;
         for (auto& pr : byshard[t]) add_to(shards[t], std::move(pr.second), pr.first, level, touched);
         for (const auto& dk : touched)
           for (const auto& e : shards[t][dk])
@@ -424,7 +462,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       }
 #endif
     } else {
-      std::unordered_set<std::string> touched;
+      std::unordered_set<std::uint64_t> touched;
       for (auto& pr : byshard[0]) add_to(shards[0], std::move(pr.second), pr.first, level, touched);
       for (const auto& dk : touched)
         for (const auto& e : shards[0][dk])
@@ -477,7 +515,8 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
   for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
   s0.zone = Dbm(net.nclocks);
   {
-    const std::vector<Constraint> inv = all_invariants(net, s0.locs);
+    std::vector<Constraint> inv;
+    all_invariants(net, s0.locs, inv);
     if (!apply_all(s0.zone, inv)) return false;
     bool c, u;
     frozen_flags(net, s0.locs, &c, &u);
@@ -508,7 +547,9 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
     if (net.nclocks == 0) return false;
     Dbm z = s.zone;
     z.delay();
-    apply_all(z, all_invariants(net, s.locs));
+    std::vector<Constraint> inv;
+    all_invariants(net, s.locs, inv);
+    apply_all(z, inv);
     if (z.empty()) return false;
     for (int i = 1; i <= net.nclocks; ++i)
       if (z.get(i, 0) != kInf) return false;
@@ -582,7 +623,8 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
   s0.zone = Dbm(net.nclocks);
   {
-    const std::vector<Constraint> inv = all_invariants(net, s0.locs);
+    std::vector<Constraint> inv;
+    all_invariants(net, s0.locs, inv);
     if (!apply_all(s0.zone, inv)) return true;  // unreachable init => vacuously holds
     bool c, u; frozen_flags(net, s0.locs, &c, &u);
     if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
@@ -604,7 +646,8 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   };
   auto time_diverges = [&](const SymState& s) -> bool {
     if (net.nclocks == 0) return false;
-    Dbm z = s.zone; z.delay(); apply_all(z, all_invariants(net, s.locs));
+    Dbm z = s.zone; z.delay();
+    std::vector<Constraint> inv; all_invariants(net, s.locs, inv); apply_all(z, inv);
     if (z.empty()) return false;
     for (int i = 1; i <= net.nclocks; ++i) if (z.get(i, 0) != kInf) return false;
     return true;
