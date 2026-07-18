@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "ptctlmc/cuda_reach.hpp"
+#include "ptctlmc/metal_reach.hpp"
 
 #ifdef PTCTLMC_HAVE_OPENMP
 #include <omp.h>
@@ -97,6 +98,13 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
     return reachable_cuda(ta, target_loc, target, stats);
 #else
     throw std::runtime_error("CUDA backend not available in this build");
+#endif
+  }
+  if (backend == Backend::Metal) {
+#ifdef PTCTLMC_HAVE_METAL
+    return reachable_metal(ta, target_loc, target, stats);
+#else
+    throw std::runtime_error("Metal backend not available in this build");
 #endif
   }
   bool parallel = (backend == Backend::Omp);
