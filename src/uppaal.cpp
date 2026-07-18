@@ -648,7 +648,56 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     *satisfied = !exists_invariant_run(net, nphi, backend, stats);
     return true;
   }
-  return false;  // A[] / leads-to over networks not supported yet
+  auto neg_int = [](IntOp o) {
+    switch (o) {
+      case IntOp::Eq: return IntOp::Ne; case IntOp::Ne: return IntOp::Eq;
+      case IntOp::Lt: return IntOp::Ge; case IntOp::Ge: return IntOp::Lt;
+      case IntOp::Le: return IntOp::Gt; default: return IntOp::Le;
+    }
+  };
+  // Is a state satisfying !atom reachable?  atom = conjunction of constraints; !atom is the
+  // disjunction of the negated constraints, so any one being reachable violates the atom.
+  auto violated = [&](const std::string& atom) -> int {  // 1 reachable, 0 not, -1 unsupported
+    std::vector<Constraint> cc; std::vector<IntAtom> ic;
+    parse_net_atom(atom, cm, im, cc, ic);
+    if (!cc.empty()) {
+      for (const auto& c : cc) { NetTarget nt; nt.clock_cond.push_back(negate(c));
+        if (reachable_net(net, nt, backend, stats)) return 1; }
+      return 0;
+    }
+    if (!ic.empty()) {
+      for (const auto& a : ic) { NetTarget nt; nt.int_cond.push_back({a.var, neg_int(a.op), a.val});
+        if (reachable_net(net, nt, backend, stats)) return 1; }
+      return 0;
+    }
+    return -1;  // location atom: negation not expressible as a positive target
+  };
+
+  if (q.kind == Query::AG) {  // A[] phi  =  ! E<> !phi
+    std::string body = trim(q.note);
+    // Safety form  A[] not(X)  /  A[] !(X)  =  ! E<>(X)
+    std::string inner;
+    if (!body.empty() && body[0] == '!') inner = trim(body.substr(1));
+    else if (body.compare(0, 4, "not(") == 0 || body.compare(0, 4, "not ") == 0) inner = trim(body.substr(3));
+    if (!inner.empty()) {
+      if (inner.size() >= 2 && inner.front() == '(' && inner.back() == ')') inner = trim(inner.substr(1, inner.size() - 2));
+      NetTarget tgt;
+      if (!build_target(inner, tgt)) return false;
+      *satisfied = !reachable_net(net, tgt, backend, stats);
+      return true;
+    }
+    // General:  A[] (a1 & a2 & ...) = AND_i !E<>(!ai)
+    for (auto atom : split_conjuncts(body)) {
+      atom = trim(atom);
+      if (atom.empty() || atom == "true") continue;
+      const int v = violated(atom);
+      if (v < 0) return false;             // unsupported atom (positive location)
+      if (v == 1) { *satisfied = false; return true; }
+    }
+    *satisfied = true;
+    return true;
+  }
+  return false;  // leads-to over networks not supported yet
 }
 
 }  // namespace ptctlmc

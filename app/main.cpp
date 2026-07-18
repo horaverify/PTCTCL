@@ -56,6 +56,8 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
     TimedAutomaton ta = load_uppaal_xml(model);
     std::cout << "*** PTCTLMC — backend: " << bn << " | " << ta.locations.size() << " locations, "
               << ta.nclocks << " clocks, " << ta.edges.size() << " edges\n";
+    Network net_fb;  // lazily loaded as a 1-process network for liveness / A[] / leads-to
+    bool net_loaded = false, net_ok = false;
     int rc = 0;
     for (const auto& q : queries) {
       bool sat = false;
@@ -64,9 +66,18 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
       if (check_query(ta, q, &sat, backend, &st)) {
         std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
                   << "  [explored " << st.explored << " symbolic states]\n";
+        continue;
+      }
+      // Fall back to the network engine (E[] / A<> / A[] / leads-to on a single automaton).
+      if (!net_loaded) {
+        net_loaded = true;
+        try { net_fb = load_uppaal_network(model); net_ok = true; } catch (...) { net_ok = false; }
+      }
+      if (net_ok && check_net_query(net_fb, q, &sat, backend, &st)) {
+        std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
+                  << "  [explored " << st.explored << " symbolic states]\n";
       } else {
-        std::cout << "-- Formula is UNSUPPORTED"
-                  << (q.note.empty() ? "" : " (" + q.note + ")") << "\n";
+        std::cout << "-- Formula is UNSUPPORTED" << (q.note.empty() ? "" : " (" + q.note + ")") << "\n";
         rc = 2;
       }
     }
