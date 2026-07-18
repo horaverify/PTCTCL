@@ -30,7 +30,8 @@ int self_test() {
 int run(const char* model, const char* query, ptctlmc::Backend backend) {
   using namespace ptctlmc;
   try {
-    const char* bn = backend == Backend::Seq ? "seq" : backend == Backend::Omp ? "omp" : "cuda";
+    const char* bn = backend == Backend::Seq ? "seq" : backend == Backend::Omp ? "omp"
+                   : backend == Backend::Metal ? "metal" : "cuda";
     std::vector<Query> queries = load_queries(query);
 
     if (uppaal_template_count(model) > 1) {  // network of timed automata
@@ -129,7 +130,8 @@ int main(int argc, char** argv) {
     if (a == "--backend" && i + 1 < argc) {
       std::string b = argv[++i];
       backend = (b == "seq") ? ptctlmc::Backend::Seq
-              : (b == "cuda") ? ptctlmc::Backend::Cuda : ptctlmc::Backend::Omp;
+              : (b == "cuda") ? ptctlmc::Backend::Cuda
+              : (b == "metal") ? ptctlmc::Backend::Metal : ptctlmc::Backend::Omp;
     } else if (a[0] != '-' && nf < 2) {
       files[nf++] = argv[i];
     }
