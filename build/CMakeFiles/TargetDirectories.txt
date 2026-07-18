@@ -4,6 +4,7 @@
 /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles/edit_cache.dir
 /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles/rebuild_cache.dir
 /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests/CMakeFiles/ptctlmc_unit.dir
+/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests/CMakeFiles/ptctlmc_bisim.dir
 /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests/CMakeFiles/test.dir
 /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests/CMakeFiles/edit_cache.dir
 /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests/CMakeFiles/rebuild_cache.dir

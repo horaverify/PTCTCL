@@ -5,6 +5,7 @@ cmake_policy(SET CMP0009 NEW)
 # PTCTLMC_CORE_SRC at CMakeLists.txt:34 (file)
 file(GLOB NEW_GLOB LIST_DIRECTORIES true "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/*.cpp")
 set(OLD_GLOB
+  "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/bisim.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp"

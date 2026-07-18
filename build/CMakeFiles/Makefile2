@@ -83,6 +83,7 @@ clean: tests/clean
 
 # Recursive "all" directory target.
 tests/all: tests/CMakeFiles/ptctlmc_unit.dir/all
+tests/all: tests/CMakeFiles/ptctlmc_bisim.dir/all
 .PHONY : tests/all
 
 # Recursive "preinstall" directory target.
@@ -91,6 +92,7 @@ tests/preinstall:
 
 # Recursive "clean" directory target.
 tests/clean: tests/CMakeFiles/ptctlmc_unit.dir/clean
+tests/clean: tests/CMakeFiles/ptctlmc_bisim.dir/clean
 .PHONY : tests/clean
 
 #=============================================================================
@@ -100,12 +102,12 @@ tests/clean: tests/CMakeFiles/ptctlmc_unit.dir/clean
 CMakeFiles/ptctlmc_core.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=3,4,5,6,7,8,9 "Built target ptctlmc_core"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=5,6,7,8,9,10,11,12 "Built target ptctlmc_core"
 .PHONY : CMakeFiles/ptctlmc_core.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/ptctlmc_core.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 7
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 8
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/ptctlmc_core.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 0
 .PHONY : CMakeFiles/ptctlmc_core.dir/rule
@@ -131,7 +133,7 @@ CMakeFiles/ptctlmc.dir/all: CMakeFiles/ptctlmc_core.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/ptctlmc.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 9
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 10
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/ptctlmc.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 0
 .PHONY : CMakeFiles/ptctlmc.dir/rule
@@ -152,12 +154,12 @@ CMakeFiles/ptctlmc.dir/clean:
 tests/CMakeFiles/ptctlmc_unit.dir/all: CMakeFiles/ptctlmc_core.dir/all
 	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_unit.dir/build.make tests/CMakeFiles/ptctlmc_unit.dir/depend
 	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_unit.dir/build.make tests/CMakeFiles/ptctlmc_unit.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=10,11 "Built target ptctlmc_unit"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=13,14 "Built target ptctlmc_unit"
 .PHONY : tests/CMakeFiles/ptctlmc_unit.dir/all
 
 # Build rule for subdir invocation for target.
 tests/CMakeFiles/ptctlmc_unit.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 9
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 10
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tests/CMakeFiles/ptctlmc_unit.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 0
 .PHONY : tests/CMakeFiles/ptctlmc_unit.dir/rule
@@ -170,6 +172,32 @@ ptctlmc_unit: tests/CMakeFiles/ptctlmc_unit.dir/rule
 tests/CMakeFiles/ptctlmc_unit.dir/clean:
 	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_unit.dir/build.make tests/CMakeFiles/ptctlmc_unit.dir/clean
 .PHONY : tests/CMakeFiles/ptctlmc_unit.dir/clean
+
+#=============================================================================
+# Target rules for target tests/CMakeFiles/ptctlmc_bisim.dir
+
+# All Build rule for target.
+tests/CMakeFiles/ptctlmc_bisim.dir/all: CMakeFiles/ptctlmc_core.dir/all
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/depend
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=3,4 "Built target ptctlmc_bisim"
+.PHONY : tests/CMakeFiles/ptctlmc_bisim.dir/all
+
+# Build rule for subdir invocation for target.
+tests/CMakeFiles/ptctlmc_bisim.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 10
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tests/CMakeFiles/ptctlmc_bisim.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles 0
+.PHONY : tests/CMakeFiles/ptctlmc_bisim.dir/rule
+
+# Convenience name for target.
+ptctlmc_bisim: tests/CMakeFiles/ptctlmc_bisim.dir/rule
+.PHONY : ptctlmc_bisim
+
+# clean rule for target.
+tests/CMakeFiles/ptctlmc_bisim.dir/clean:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/clean
+.PHONY : tests/CMakeFiles/ptctlmc_bisim.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

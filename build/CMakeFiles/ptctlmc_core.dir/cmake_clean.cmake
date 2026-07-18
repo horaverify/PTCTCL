@@ -1,4 +1,6 @@
 file(REMOVE_RECURSE
+  "CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o"
+  "CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o.d"
   "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
   "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o.d"
   "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"

@@ -141,6 +141,44 @@ ptctlmc_unit/fast:
 	cd /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_unit.dir/build.make tests/CMakeFiles/ptctlmc_unit.dir/build
 .PHONY : ptctlmc_unit/fast
 
+# Convenience name for target.
+tests/CMakeFiles/ptctlmc_bisim.dir/rule:
+	cd /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 tests/CMakeFiles/ptctlmc_bisim.dir/rule
+.PHONY : tests/CMakeFiles/ptctlmc_bisim.dir/rule
+
+# Convenience name for target.
+ptctlmc_bisim: tests/CMakeFiles/ptctlmc_bisim.dir/rule
+.PHONY : ptctlmc_bisim
+
+# fast build rule for target.
+ptctlmc_bisim/fast:
+	cd /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/build
+.PHONY : ptctlmc_bisim/fast
+
+bisim_tests.o: bisim_tests.cpp.o
+.PHONY : bisim_tests.o
+
+# target to build an object file
+bisim_tests.cpp.o:
+	cd /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/bisim_tests.cpp.o
+.PHONY : bisim_tests.cpp.o
+
+bisim_tests.i: bisim_tests.cpp.i
+.PHONY : bisim_tests.i
+
+# target to preprocess a source file
+bisim_tests.cpp.i:
+	cd /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/bisim_tests.cpp.i
+.PHONY : bisim_tests.cpp.i
+
+bisim_tests.s: bisim_tests.cpp.s
+.PHONY : bisim_tests.s
+
+# target to generate assembly for a file
+bisim_tests.cpp.s:
+	cd /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build && $(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/bisim_tests.cpp.s
+.PHONY : bisim_tests.cpp.s
+
 dbm_tests.o: dbm_tests.cpp.o
 .PHONY : dbm_tests.o
 
@@ -174,7 +212,11 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... test"
+	@echo "... ptctlmc_bisim"
 	@echo "... ptctlmc_unit"
+	@echo "... bisim_tests.o"
+	@echo "... bisim_tests.i"
+	@echo "... bisim_tests.s"
 	@echo "... dbm_tests.o"
 	@echo "... dbm_tests.i"
 	@echo "... dbm_tests.s"

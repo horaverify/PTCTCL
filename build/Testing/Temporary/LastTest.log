@@ -1,10 +1,10 @@
-Start testing: Jul 17 20:29 CEST
+Start testing: Jul 18 13:23 CEST
 ----------------------------------------------------------
-1/3 Testing: version
-1/3 Test: version
+1/4 Testing: version
+1/4 Test: version
 Command: "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/ptctlmc" "--version"
 Directory: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests
-"version" start time: Jul 17 20:29 CEST
+"version" start time: Jul 18 13:23 CEST
 Output:
 ----------------------------------------------------------
 PTCTLMC 0.1.0
@@ -12,15 +12,15 @@ PTCTLMC 0.1.0
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"version" end time: Jul 17 20:29 CEST
+"version" end time: Jul 18 13:23 CEST
 "version" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-2/3 Testing: selftest
-2/3 Test: selftest
+2/4 Testing: selftest
+2/4 Test: selftest
 Command: "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/ptctlmc" "--selftest"
 Directory: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests
-"selftest" start time: Jul 17 20:29 CEST
+"selftest" start time: Jul 18 13:23 CEST
 Output:
 ----------------------------------------------------------
 self-test: OK
@@ -28,24 +28,40 @@ self-test: OK
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"selftest" end time: Jul 17 20:29 CEST
+"selftest" end time: Jul 18 13:23 CEST
 "selftest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-3/3 Testing: unit
-3/3 Test: unit
+3/4 Testing: unit
+3/4 Test: unit
 Command: "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests/ptctlmc_unit"
 Directory: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests
-"unit" start time: Jul 17 20:29 CEST
+"unit" start time: Jul 18 13:23 CEST
 Output:
 ----------------------------------------------------------
 dbm+reach tests: 105 checks, 0 failures
 <end of output>
-Test time =   0.20 sec
+Test time =   0.78 sec
 ----------------------------------------------------------
 Test Passed.
-"unit" end time: Jul 17 20:29 CEST
+"unit" end time: Jul 18 13:23 CEST
 "unit" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Jul 17 20:29 CEST
+4/4 Testing: bisim
+4/4 Test: bisim
+Command: "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests/ptctlmc_bisim"
+Directory: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests
+"bisim" start time: Jul 18 13:23 CEST
+Output:
+----------------------------------------------------------
+bisim validation: 49 passed, 0 failed
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"bisim" end time: Jul 18 13:23 CEST
+"bisim" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jul 18 13:23 CEST

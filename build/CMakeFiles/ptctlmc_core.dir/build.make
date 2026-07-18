@@ -69,10 +69,24 @@ include CMakeFiles/ptctlmc_core.dir/progress.make
 # Include the compile flags for this target's objects.
 include CMakeFiles/ptctlmc_core.dir/flags.make
 
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/bisim.cpp
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/bisim.cpp
+
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/bisim.cpp > CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.i
+
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/bisim.cpp -o CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.s
+
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.i: cmake_force
@@ -86,7 +100,7 @@ CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.i: cmake_force
@@ -100,7 +114,7 @@ CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.o: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/network.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/network.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/network.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.i: cmake_force
@@ -114,7 +128,7 @@ CMakeFiles/ptctlmc_core.dir/src/network.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/reach.cpp
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/reach.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.i: cmake_force
@@ -128,7 +142,7 @@ CMakeFiles/ptctlmc_core.dir/src/reach.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.i: cmake_force
@@ -142,7 +156,7 @@ CMakeFiles/ptctlmc_core.dir/src/ta.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uppaal.cpp
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uppaal.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.i: cmake_force
@@ -155,6 +169,7 @@ CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.s: cmake_force
 
 # Object files for target ptctlmc_core
 ptctlmc_core_OBJECTS = \
+"CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/network.cpp.o" \
@@ -165,6 +180,7 @@ ptctlmc_core_OBJECTS = \
 # External object files for target ptctlmc_core
 ptctlmc_core_EXTERNAL_OBJECTS =
 
+libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/network.cpp.o
@@ -173,7 +189,7 @@ libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/build.make
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Linking CXX static library libptctlmc_core.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Linking CXX static library libptctlmc_core.a"
 	$(CMAKE_COMMAND) -P CMakeFiles/ptctlmc_core.dir/cmake_clean_target.cmake
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/ptctlmc_core.dir/link.txt --verbose=$(VERBOSE)
 
