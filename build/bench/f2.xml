@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x0,x1; int[0,2] id;</declaration>
+<template><name>P0</name>
+<location id="p0_idle"><name>idle</name></location>
+<location id="p0_req"><name>req</name><label kind="invariant">x0&lt;=2</label></location>
+<location id="p0_wait"><name>wait</name></location>
+<location id="p0_cs"><name>cs</name></location>
+<init ref="p0_idle"/>
+<transition><source ref="p0_idle"/><target ref="p0_req"/><label kind="guard">id==0</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="p0_req"/><target ref="p0_wait"/><label kind="assignment">id=1, x0=0</label></transition>
+<transition><source ref="p0_wait"/><target ref="p0_cs"/><label kind="guard">x0&gt;2 &amp;&amp; id==1</label></transition>
+<transition><source ref="p0_wait"/><target ref="p0_idle"/><label kind="guard">x0&gt;2 &amp;&amp; id!=1</label></transition>
+<transition><source ref="p0_cs"/><target ref="p0_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P1</name>
+<location id="p1_idle"><name>idle</name></location>
+<location id="p1_req"><name>req</name><label kind="invariant">x1&lt;=2</label></location>
+<location id="p1_wait"><name>wait</name></location>
+<location id="p1_cs"><name>cs</name></location>
+<init ref="p1_idle"/>
+<transition><source ref="p1_idle"/><target ref="p1_req"/><label kind="guard">id==0</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="p1_req"/><target ref="p1_wait"/><label kind="assignment">id=2, x1=0</label></transition>
+<transition><source ref="p1_wait"/><target ref="p1_cs"/><label kind="guard">x1&gt;2 &amp;&amp; id==2</label></transition>
+<transition><source ref="p1_wait"/><target ref="p1_idle"/><label kind="guard">x1&gt;2 &amp;&amp; id!=2</label></transition>
+<transition><source ref="p1_cs"/><target ref="p1_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<system>system P0,P1;</system>
+</nta>

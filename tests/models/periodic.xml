@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock t, x;</declaration>
+<template>
+<name>Task</name>
+<location id="id0"><name>Idle</name><label kind="invariant">t&lt;=4</label></location>
+<location id="id1"><name>Run</name><label kind="invariant">x&lt;=5 &amp;&amp; t&lt;=10</label></location>
+<location id="id2"><name>Done</name><label kind="invariant">t&lt;=12</label></location>
+<init ref="id0"/>
+<transition><source ref="id0"/><target ref="id1"/><label kind="guard">t&gt;=2</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id1"/><target ref="id2"/><label kind="guard">x&gt;=3</label></transition>
+<transition><source ref="id2"/><target ref="id0"/><label kind="guard">t&gt;=8</label><label kind="assignment">t=0</label></transition>
+</template>
+<system>system Task;</system>
+</nta>

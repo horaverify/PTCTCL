@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x, y;</declaration>
+<template>
+<name>P</name>
+<location id="id0"><name>Init</name><label kind="invariant">x&lt;=6</label></location>
+<location id="id1"><name>Urg</name><urgent/></location>
+<location id="id2"><name>Work</name><label kind="invariant">y&lt;=8</label></location>
+<location id="id3"><name>Commit</name><committed/></location>
+<location id="id4"><name>Done</name><label kind="invariant">x&lt;=10</label></location>
+<init ref="id0"/>
+<transition><source ref="id0"/><target ref="id1"/><label kind="guard">x&gt;=2</label><label kind="assignment">y=0</label></transition>
+<transition><source ref="id1"/><target ref="id2"/></transition>
+<transition><source ref="id2"/><target ref="id3"/><label kind="guard">y&gt;=3</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id3"/><target ref="id4"/></transition>
+</template>
+<system>system P;</system>
+</nta>

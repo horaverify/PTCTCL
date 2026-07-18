@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x, y;</declaration>
+<template>
+<name>Watchdog</name>
+<location id="id0"><name>Running</name><label kind="invariant">x&lt;=10</label></location>
+<location id="id1"><name>Timeout</name><label kind="invariant">x&lt;=5</label></location>
+<init ref="id0"/>
+<transition><source ref="id0"/><target ref="id0"/><label kind="guard">x&gt;=2</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id0"/><target ref="id1"/><label kind="guard">x&gt;=10</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id1"/><target ref="id0"/><label kind="guard">x&gt;=3</label><label kind="assignment">x=0, y=0</label></transition>
+</template>
+<system>system Watchdog;</system>
+</nta>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x;</declaration>
+<template><name>C</name>
+<location id="a"><name>a</name><label kind="invariant">x&lt;=5</label></location>
+<location id="b"><name>b</name><label kind="invariant">x&lt;=5</label></location>
+<init ref="a"/>
+<transition><source ref="a"/><target ref="b"/><label kind="guard">x&gt;=1</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="b"/><target ref="a"/><label kind="guard">x&gt;=1</label><label kind="assignment">x=0</label></transition>
+</template>
+<template><name>Z</name><location id="z0"><name>z0</name></location><init ref="z0"/></template>
+<system>system C,Z;</system>
+</nta>

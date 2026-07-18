@@ -1,0 +1,56 @@
+[
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/network.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/reach.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/reach.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uppaal.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uppaal.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/nvcc -forward-unknown-to-host-compiler -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 --options-file CMakeFiles/ptctlmc_core.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++17 \"--generate-code=arch=compute_90,code=[compute_90,sm_90]\" -x cu -rdc=true -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/cuda/engine_cuda.cu -o CMakeFiles/ptctlmc_core.dir/src/cuda/engine_cuda.cu.o",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/cuda/engine_cuda.cu",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/cuda/engine_cuda.cu.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -fopenmp -o CMakeFiles/ptctlmc.dir/app/main.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/app/main.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/app/main.cpp",
+  "output": "CMakeFiles/ptctlmc.dir/app/main.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/tests",
+  "command": "/home/luca/miniconda3/envs/cudadev/bin/c++ -DPTCTLMC_HAVE_CUDA=1 -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -fopenmp -o CMakeFiles/ptctlmc_unit.dir/dbm_tests.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/tests/dbm_tests.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/tests/dbm_tests.cpp",
+  "output": "tests/CMakeFiles/ptctlmc_unit.dir/dbm_tests.cpp.o"
+}
+]

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x, y;</declaration>
+<template>
+<name>Race</name>
+<location id="id0"><name>Idle</name><label kind="invariant">x&lt;=8</label></location>
+<location id="id1"><name>Run</name><label kind="invariant">x&lt;=12</label></location>
+<location id="id2"><name>Win</name></location>
+<location id="id3"><name>Trap</name></location>
+<init ref="id0"/>
+<transition><source ref="id0"/><target ref="id1"/><label kind="guard">x&gt;=2</label><label kind="assignment">y=0</label></transition>
+<transition><source ref="id1"/><target ref="id2"/><label kind="guard">x-y&lt;=4 &amp;&amp; y-x&lt;=-3</label></transition>
+<transition><source ref="id1"/><target ref="id3"/><label kind="guard">x-y&lt;=7 &amp;&amp; y-x&lt;=-6</label></transition>
+</template>
+<system>system Race;</system>
+</nta>

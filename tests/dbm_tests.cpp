@@ -1,0 +1,136 @@
+// dbm_tests.cpp — unit tests for the DBM zone algebra.
+#include <cstdio>
+
+#include "ptctlmc/dbm.hpp"
+#include "ptctlmc/reach.hpp"
+#include "ptctlmc/ta.hpp"
+
+namespace {
+int g_fail = 0, g_checks = 0;
+#define CHECK(c) do { ++g_checks; if (!(c)) { std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
+using namespace ptctlmc;
+
+// 1-clock zone [lo,hi]  (hi<0 => unbounded above).
+Dbm zone1(int lo, int hi) {
+  Dbm z(1);
+  z.delay();                       // x >= 0
+  if (hi >= 0) z.constrain(1, 0, le(hi));
+  z.constrain(0, 1, le(-lo));      // x >= lo
+  z.close();
+  return z;
+}
+
+void test_basic() {
+  Dbm z = zone1(0, 5);
+  CHECK(!z.empty());
+  CHECK(z.get(1, 0) == le(5));      // x <= 5
+  CHECK(z.get(0, 1) == le(0));      // x >= 0
+
+  Dbm e(1);                         // empty: x>=6 and x<=5
+  e.delay();
+  e.constrain(1, 0, le(5));
+  bool ok = e.constrain(0, 1, le(-6));
+  CHECK(!ok);
+  CHECK(e.empty());
+}
+
+void test_reset_delay() {
+  Dbm z = zone1(2, 5);              // x in [2,5]
+  z.reset(1);                       // x := 0
+  CHECK(z.get(1, 0) == le(0) && z.get(0, 1) == le(0));  // x == 0
+  z.delay();                        // x >= 0
+  CHECK(z.get(1, 0) == kInf);       // unbounded above
+  CHECK(z.get(0, 1) == le(0));      // x >= 0
+}
+
+void test_inclusion() {
+  Dbm a = zone1(0, 5), b = zone1(3, 5);
+  CHECK(a.includes(b));    // [0,5] ⊇ [3,5]
+  CHECK(!b.includes(a));   // [3,5] ⊉ [0,5]
+  CHECK(a.includes(a));
+}
+
+void test_extrapolate() {
+  Dbm z = zone1(0, 5);
+  std::vector<std::int32_t> maxc = {0, 4};  // max constant for clock 1 is 4
+  z.extrapolate(maxc);
+  CHECK(z.get(1, 0) == kInf);       // 5 > 4  => upper bound removed
+  CHECK(z.get(0, 1) == le(0));      // lower bound 0 kept
+}
+
+void test_two_clocks_diagonal() {
+  // clocks x=1, y=2 ; delay ; x<=5 ; y>=2 ; x-y<=1
+  Dbm z(2);
+  z.delay();
+  CHECK(z.constrain(1, 0, le(5)));   // x <= 5
+  CHECK(z.constrain(0, 2, le(-2)));  // y >= 2
+  CHECK(z.constrain(1, 2, le(1)));   // x - y <= 1
+  CHECK(!z.empty());
+  // x - y <= 1 and y >= 2 imply x <= ... but x also <= 5; canonical form tightens.
+  // Contradiction check: add y - x <= -5 (i.e. x - y >= 5) -> empty with x-y<=1.
+  Dbm w = z;
+  bool ok = w.constrain(2, 1, le(-5));  // y - x <= -5  => x - y >= 5, clashes with <=1
+  CHECK(!ok && w.empty());
+}
+
+void test_reachability() {
+  // A --[x>=5]--> B ; A invariant x<=10 ; C unreachable. clock x = index 1.
+  TimedAutomaton ta;
+  ta.nclocks = 1;
+  ta.clock_names = {"0", "x"};
+  Location A; A.name = "A"; A.invariant = {c_le(1, 10)};
+  Location B; B.name = "B";
+  Location C; C.name = "C";
+  ta.locations = {A, B, C};
+  Edge e; e.src = 0; e.tgt = 1; e.guard = {c_ge(1, 5)};
+  ta.edges = {e};
+  ta.initial = 0;
+  ta.compute_max_constants();
+
+  CHECK(reachable(ta, 1));                 // B reachable
+  CHECK(!reachable(ta, 2));                // C unreachable
+  CHECK(!reachable(ta, 1, {c_le(1, 3)}));  // B with x<=3 impossible (entered x>=5)
+  CHECK(reachable(ta, 1, {c_le(1, 8)}));   // B with x<=8 : x in [5,8]
+  CHECK(reachable(ta, 1, {c_ge(1, 5)}));   // B with x>=5
+
+  // Toggling loop with resets: Off <-> On, On invariant x<=3, resets on both edges.
+  TimedAutomaton t2;
+  t2.nclocks = 1;
+  t2.clock_names = {"0", "x"};
+  Location off; off.name = "Off";
+  Location on; on.name = "On"; on.invariant = {c_le(1, 3)};
+  t2.locations = {off, on};
+  Edge e1; e1.src = 0; e1.tgt = 1; e1.guard = {c_ge(1, 2)}; e1.resets = {1};
+  Edge e2; e2.src = 1; e2.tgt = 0; e2.guard = {c_ge(1, 1)}; e2.resets = {1};
+  t2.edges = {e1, e2};
+  t2.initial = 0;
+  t2.compute_max_constants();
+
+  ReachStats st;
+  CHECK(reachable(t2, 1, {}, &st));        // On reachable (terminates via zones)
+  CHECK(reachable(t2, 1, {c_le(1, 3)}));   // On with x<=3
+  CHECK(!reachable(t2, 1, {c_gt(1, 3)}));  // On invariant x<=3 forbids x>3
+  CHECK(st.explored > 0);
+
+  // sequential and OpenMP engines must agree on every query
+  for (int L = 0; L < 3; ++L)
+    for (int b = 0; b <= 12; ++b) {
+      CHECK(reachable(ta, L, {c_le(1, b)}, nullptr, Backend::Seq) ==
+            reachable(ta, L, {c_le(1, b)}, nullptr, Backend::Omp));
+      CHECK(reachable(t2, L < 2 ? L : 0, {c_le(1, b)}, nullptr, Backend::Seq) ==
+            reachable(t2, L < 2 ? L : 0, {c_le(1, b)}, nullptr, Backend::Omp));
+    }
+}
+
+}  // namespace
+
+int main() {
+  test_basic();
+  test_reset_delay();
+  test_inclusion();
+  test_extrapolate();
+  test_two_clocks_diagonal();
+  test_reachability();
+  std::printf("dbm+reach tests: %d checks, %d failures\n", g_checks, g_fail);
+  return g_fail == 0 ? 0 : 1;
+}

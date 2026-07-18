@@ -1,0 +1,2 @@
+/home/luca/miniconda3/envs/cudadev/bin/ar qc libptctlmc_core.a CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o CMakeFiles/ptctlmc_core.dir/src/network.cpp.o CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o CMakeFiles/ptctlmc_core.dir/src/cuda/engine_cuda.cu.o
+/home/luca/miniconda3/envs/cudadev/bin/ranlib libptctlmc_core.a

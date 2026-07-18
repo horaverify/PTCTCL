@@ -1,0 +1,50 @@
+[
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/network.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/reach.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/reach.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uppaal.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uppaal.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -fopenmp -o CMakeFiles/ptctlmc.dir/app/main.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/app/main.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/app/main.cpp",
+  "output": "CMakeFiles/ptctlmc.dir/app/main.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build/tests",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -fopenmp -o CMakeFiles/ptctlmc_unit.dir/dbm_tests.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/tests/dbm_tests.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/tests/dbm_tests.cpp",
+  "output": "tests/CMakeFiles/ptctlmc_unit.dir/dbm_tests.cpp.o"
+}
+]

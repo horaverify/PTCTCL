@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x, y;</declaration>
+<template>
+<name>P</name>
+<location id="id0"><name>S0</name><label kind="invariant">x&lt;=4</label></location>
+<location id="id1"><name>S1</name><label kind="invariant">x&lt;=4</label></location>
+<location id="id2"><name>S2</name><label kind="invariant">x&lt;=4</label></location>
+<location id="id3"><name>S3</name><label kind="invariant">x&lt;=4</label></location>
+<location id="id4"><name>Fast</name><label kind="invariant">x&lt;=2</label></location>
+<location id="id5"><name>Deep</name><label kind="invariant">x&lt;=10</label></location>
+<init ref="id0"/>
+<transition><source ref="id0"/><target ref="id1"/><label kind="guard">x&gt;=1</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id1"/><target ref="id2"/><label kind="guard">x&gt;=1</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id2"/><target ref="id3"/><label kind="guard">x&gt;=1</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id3"/><target ref="id0"/><label kind="guard">x&gt;=1</label><label kind="assignment">x=0, y=0</label></transition>
+<transition><source ref="id2"/><target ref="id4"/><label kind="guard">x&gt;=1 &amp;&amp; y&lt;=6</label><label kind="assignment">x=0</label></transition>
+<transition><source ref="id4"/><target ref="id5"/><label kind="guard">x&gt;=1</label><label kind="assignment">x=0</label></transition>
+</template>
+<system>system P;</system>
+</nta>
