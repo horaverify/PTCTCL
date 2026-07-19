@@ -1,0 +1,85 @@
+// net_gpu.hpp — GPU successor generation for networks of timed automata.
+//
+// CPU-safe interface (no GPU types leak), so the CPU translation unit netreach.cpp can
+// include it; the Metal implementation lives in src/metal/netengine_metal.mm and is only
+// built when PTCTLMC_HAVE_METAL is defined.
+//
+// STAGE 1 scope: non-diagonal, channel-free networks (shared int variables only). Each
+// (frontier-state, process, location-edge) is expanded on the GPU running the exact
+// successors_net pipeline (int guard -> clock guard -> resets -> combined invariant ->
+// delay-if-not-frozen -> combined invariant -> reset_inactive -> emptiness). The host still
+// performs the aLU-subsumption + convex-union merge (the correctness oracle for stage 1a).
+// The factory returns nullptr for anything out of scope (channels / diagonal constraints /
+// no Metal device), so the caller cleanly falls back to the CPU path.
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include "ptctlmc/dbm_ops.hpp"  // raw_t
+
+namespace ptctlmc {
+
+struct Network;
+
+class NetGpuExpander {
+ public:
+  virtual ~NetGpuExpander() = default;
+
+  // Expand `nstates` frontier states. Inputs are row-major:
+  //   locs[s*nprocs + p], ints[s*nintvars + v], zones[s*(dim*dim) + k].
+  // Returns the number of work items W. Outputs point INTO the expander's persistent buffers
+  // (valid until the next expand/merge call): work item w is a successor iff out_valid[w],
+  // with discrete state out_locs[w*nprocs..], out_ints[w*nintvars..] (int32) and zone
+  // out_zones[w*(dim*dim)..] — read in place, no compaction copy.
+  virtual std::size_t expand(int nstates,
+                             const std::vector<int>& locs,
+                             const std::vector<long>& ints,
+                             const std::vector<raw_t>& zones,
+                             const int*& out_valid, const int*& out_locs,
+                             const int*& out_ints, const raw_t*& out_zones) = 0;
+
+  // Merge this level's `nb` discrete-state buckets on the GPU (aLU-subsumption + convex-union,
+  // exactly as the CPU add_to), one GPU thread per bucket. For bucket b:
+  //   existing antichain: exist_zones[exist_off[b]*d2 .. +exist_cnt[b]*d2)  (d2 = dim*dim)
+  //   new zones in order: new_zones[new_off[b]*d2 .. +new_cnt[b]*d2)
+  //   aLU bounds:         L[b*dim .. b*dim+dim), U[...]  (has_diag => plain inclusion instead)
+  // Outputs the final antichain per bucket: out_zones with out_off[b] the zone-unit start,
+  // and out_isnew[i] = 1 for zones added THIS level (i.e. the next frontier).
+  // Stage the merge work buffer (persistent, unified memory) and hand back a pointer the caller
+  // fills DIRECTLY (no host vectors, no upload copy): for bucket b, write its EXISTING antichain
+  // to work_buf[work_off[b]*d2 ..] (exist_cnt[b] zones). `work_zones` = total (exist+new)
+  // work-pool capacity. New zones are NOT staged — the merge reads them in place from the expand
+  // output by work-item index (see `new_idx` below), so successor zones are never copied.
+  virtual void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf) = 0;
+
+  // Per-bucket subsumption + convex-union merge. Existing zones come from the staged work buffer;
+  // NEW zones are read in place from the previous expand's output at the given work-item indices:
+  // bucket b's new zones are expand items new_idx[new_off[b] .. +new_cnt[b]]. Outputs point INTO
+  // the persistent work buffer (valid until the next expand/merge call): bucket b's final
+  // antichain is out_zones[(out_work_off[b]+i)*d2 ..] for i in [0, out_count[b]), with
+  // out_isnew[out_work_off[b]+i] flagging survivors — read straight from unified memory.
+  // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
+  // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
+  virtual std::size_t device_bytes() const { return 0; }
+
+  virtual void merge(int nb, int dim, bool has_diag,
+                     const std::vector<int>& work_off, const std::vector<int>& exist_cnt,
+                     const std::vector<int>& new_idx, const std::vector<int>& new_off,
+                     const std::vector<int>& new_cnt,
+                     const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
+                     std::vector<int>& out_work_off, std::vector<int>& out_count,
+                     const raw_t*& out_zones, const int*& out_isnew) = 0;
+};
+
+// Build a Metal / CUDA expander for `net`. `qmask[c]` marks clocks the query reads (kept active
+// by reset_inactive). Returns nullptr if the network is out of scope (diagonal constraints) or no
+// GPU is available — the caller then falls back to the CPU path. Both share the flat driver in
+// netreach.cpp; only the device implementation (netengine_metal.mm / netengine_cuda.cu) differs.
+std::unique_ptr<NetGpuExpander> make_net_gpu_metal(const Network& net,
+                                                   const std::vector<char>& qmask);
+std::unique_ptr<NetGpuExpander> make_net_gpu_cuda(const Network& net,
+                                                  const std::vector<char>& qmask);
+
+}  // namespace ptctlmc

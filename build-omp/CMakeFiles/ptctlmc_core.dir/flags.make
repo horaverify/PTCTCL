@@ -12,3 +12,5 @@ CXX_FLAGS = -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parame
 
 # Custom options: CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o_OPTIONS = -fobjc-arc
 
+# Custom options: CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o_OPTIONS = -fobjc-arc
+

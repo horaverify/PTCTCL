@@ -1,18 +1,18 @@
-Start testing: Jul 18 14:03 CEST
+Start testing: Jul 19 14:23 CEST
 ----------------------------------------------------------
 1/3 Testing: version
 1/3 Test: version
 Command: "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/ptctlmc" "--version"
 Directory: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests
-"version" start time: Jul 18 14:03 CEST
+"version" start time: Jul 19 14:23 CEST
 Output:
 ----------------------------------------------------------
 PTCTLMC 0.1.0
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"version" end time: Jul 18 14:03 CEST
+"version" end time: Jul 19 14:23 CEST
 "version" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -20,7 +20,7 @@ Test Passed.
 2/3 Test: selftest
 Command: "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/ptctlmc" "--selftest"
 Directory: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests
-"selftest" start time: Jul 18 14:03 CEST
+"selftest" start time: Jul 19 14:23 CEST
 Output:
 ----------------------------------------------------------
 self-test: OK
@@ -28,7 +28,7 @@ self-test: OK
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"selftest" end time: Jul 18 14:03 CEST
+"selftest" end time: Jul 19 14:23 CEST
 "selftest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -36,16 +36,16 @@ Test Passed.
 3/3 Test: unit
 Command: "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/ptctlmc_unit"
 Directory: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests
-"unit" start time: Jul 18 14:03 CEST
+"unit" start time: Jul 19 14:23 CEST
 Output:
 ----------------------------------------------------------
 dbm+reach tests: 105 checks, 0 failures
 <end of output>
-Test time =   0.14 sec
+Test time =   0.32 sec
 ----------------------------------------------------------
 Test Passed.
-"unit" end time: Jul 18 14:03 CEST
+"unit" end time: Jul 19 14:23 CEST
 "unit" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Jul 18 14:03 CEST
+End testing: Jul 19 14:23 CEST

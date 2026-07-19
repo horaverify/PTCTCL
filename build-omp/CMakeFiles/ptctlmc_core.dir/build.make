@@ -170,6 +170,20 @@ CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -fobjc-arc -S /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/engine_metal.mm -o CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.s
 
+CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o: CMakeFiles/ptctlmc_core.dir/flags.make
+CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm
+CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -fobjc-arc -MD -MT CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o -MF CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o.d -o CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm
+
+CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -fobjc-arc -E /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm > CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.i
+
+CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -fobjc-arc -S /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm -o CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.s
+
 # Object files for target ptctlmc_core
 ptctlmc_core_OBJECTS = \
 "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o" \
@@ -178,7 +192,8 @@ ptctlmc_core_OBJECTS = \
 "CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o" \
-"CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o"
+"CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o" \
+"CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o"
 
 # External object files for target ptctlmc_core
 ptctlmc_core_EXTERNAL_OBJECTS =
@@ -190,9 +205,10 @@ libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o
+libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/build.make
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Linking CXX static library libptctlmc_core.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Linking CXX static library libptctlmc_core.a"
 	$(CMAKE_COMMAND) -P CMakeFiles/ptctlmc_core.dir/cmake_clean_target.cmake
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/ptctlmc_core.dir/link.txt --verbose=$(VERBOSE)
 

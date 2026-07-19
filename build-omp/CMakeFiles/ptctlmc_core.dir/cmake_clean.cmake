@@ -3,6 +3,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o.d"
   "CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o"
   "CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o.d"
+  "CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o"
+  "CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o.d"
   "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
   "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o.d"
   "CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"

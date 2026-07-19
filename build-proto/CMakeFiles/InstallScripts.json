@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/cmake_install.cmake",
+		"/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

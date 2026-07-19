@@ -1,8 +1,13 @@
 // main.cpp — PTCTLMC entry point (timed-automata / TCTL model checker).
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 
+#include "ptctlmc/bisim.hpp"
 #include "ptctlmc/dbm.hpp"
+#include "ptctlmc/netreach.hpp"
 #include "ptctlmc/reach.hpp"
 #include "ptctlmc/ta.hpp"
 #include "ptctlmc/uppaal.hpp"
@@ -114,6 +119,75 @@ int dump(const char* model) {
   return 0;
 }
 
+// --bisim <spec>: decide a timed (bi)simulation between two automata described in a small text
+// spec (written by the front-end, which owns the UPPAAL->BAut translation and its diagnostics).
+//
+//   kind  strongbisim|strongsim|weakbisim|weaksim
+//   obs   <act>*                      (observable labels; used by the weak kinds)
+//   aut                               (exactly two blocks: A then B)
+//   clocks <n> / locs <n> / init <n>
+//   edge  <src> <dst> <act>           (subsequent g/r lines attach to this edge)
+//   g     ge|gt|le|lt <clock> <value>
+//   r     <clock>
+int bisim_cmd(const char* path) {
+  using namespace ptctlmc;
+  std::ifstream in(path);
+  if (!in) { std::cerr << "cannot open spec: " << path << "\n"; return 1; }
+
+  BisimKind kind = BisimKind::StrongBisim;
+  std::set<int> obs;
+  std::vector<BAut> auts;
+  std::string line;
+  int lineno = 0;
+  auto die = [&](const std::string& msg) { std::cerr << "spec line " << lineno << ": " << msg << "\n"; };
+
+  while (std::getline(in, line)) {
+    ++lineno;
+    std::istringstream ls(line);
+    std::string tok;
+    if (!(ls >> tok) || tok[0] == '#') continue;
+    if (tok == "kind") {
+      std::string k; ls >> k;
+      if (k == "strongbisim") kind = BisimKind::StrongBisim;
+      else if (k == "strongsim") kind = BisimKind::StrongSim;
+      else if (k == "weakbisim") kind = BisimKind::WeakBisim;
+      else if (k == "weaksim") kind = BisimKind::WeakSim;
+      else { die("unknown kind '" + k + "'"); return 2; }
+    } else if (tok == "obs") {
+      int v; while (ls >> v) obs.insert(v);
+    } else if (tok == "aut") {
+      auts.emplace_back();
+    } else if (auts.empty()) {
+      die("'" + tok + "' before any 'aut'"); return 2;
+    } else if (tok == "clocks") { ls >> auts.back().nclocks; }
+    else if (tok == "locs")     { ls >> auts.back().nlocs; }
+    else if (tok == "init")     { ls >> auts.back().initial; }
+    else if (tok == "edge") {
+      BEdge e; ls >> e.src >> e.dst >> e.act;
+      auts.back().edges.push_back(e);
+    } else if (tok == "g" || tok == "r") {
+      if (auts.back().edges.empty()) { die("'" + tok + "' before any 'edge'"); return 2; }
+      if (tok == "r") { int c; ls >> c; auts.back().edges.back().resets.push_back(c); }
+      else {
+        std::string op; int clk, val; ls >> op >> clk >> val;
+        auto& g = auts.back().edges.back().guard;
+        if (op == "ge") g.push_back(c_ge(clk, val));
+        else if (op == "gt") g.push_back(c_gt(clk, val));
+        else if (op == "le") g.push_back(c_le(clk, val));
+        else if (op == "lt") g.push_back(c_lt(clk, val));
+        else { die("unknown guard op '" + op + "'"); return 2; }
+      }
+    } else { die("unknown directive '" + tok + "'"); return 2; }
+  }
+  if (auts.size() != 2) {
+    std::cerr << "expected exactly 2 'aut' blocks, got " << auts.size() << "\n";
+    return 2;
+  }
+  bool holds = decide_bisim(auts[0], auts[1], kind, obs);
+  std::cout << "RESULT: " << (holds ? "yes" : "no") << "\n";
+  return 0;
+}
+
 int main(int argc, char** argv) {
   if (argc > 1 && (!std::strcmp(argv[1], "--version") || !std::strcmp(argv[1], "-V"))) {
     std::cout << kVersion << "\n";
@@ -121,6 +195,7 @@ int main(int argc, char** argv) {
   }
   if (argc > 1 && !std::strcmp(argv[1], "--selftest")) return self_test();
   if (argc >= 3 && !std::strcmp(argv[1], "--dump")) return dump(argv[2]);
+  if (argc >= 3 && !std::strcmp(argv[1], "--bisim")) return bisim_cmd(argv[2]);
 
   ptctlmc::Backend backend = ptctlmc::Backend::Omp;
   const char* files[2] = {nullptr, nullptr};
@@ -132,6 +207,10 @@ int main(int argc, char** argv) {
       backend = (b == "seq") ? ptctlmc::Backend::Seq
               : (b == "cuda") ? ptctlmc::Backend::Cuda
               : (b == "metal") ? ptctlmc::Backend::Metal : ptctlmc::Backend::Omp;
+    } else if (a == "--adaptive") {   // GPU merge routing: calibrate CPU vs GPU per level
+      ptctlmc::set_adaptive_merge(true);
+    } else if (a == "--naive") {      // GPU merge routing: always one thread per bucket (default)
+      ptctlmc::set_adaptive_merge(false);
     } else if (a[0] != '-' && nf < 2) {
       files[nf++] = argv[i];
     }
@@ -139,7 +218,9 @@ int main(int argc, char** argv) {
   if (nf == 2) return run(files[0], files[1], backend);
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
-            << "usage: ptctlmc [--backend seq|omp|cuda] <model.xml> <query.q>\n"
+            << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] <model.xml> <query.q>\n"
+            << "       --adaptive: GPU merge auto-routes CPU/GPU per level (default --naive)\n"
+            << "       ptctlmc --bisim <spec>   decide timed (bi)simulation between two automata\n"
             << "       ptctlmc [--version] [--selftest] [--dump <model.xml>]\n";
   return 0;
 }

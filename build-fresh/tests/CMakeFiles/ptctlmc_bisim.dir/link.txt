@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/ptctlmc_bisim.dir/bisim_tests.cpp.o -o ptctlmc_bisim  ../libptctlmc_core.a /opt/homebrew/opt/libomp/lib/libomp.dylib -framework Metal -framework Foundation

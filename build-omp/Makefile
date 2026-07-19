@@ -238,6 +238,30 @@ src/metal/engine_metal.mm.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.s
 .PHONY : src/metal/engine_metal.mm.s
 
+src/metal/netengine_metal.o: src/metal/netengine_metal.mm.o
+.PHONY : src/metal/netengine_metal.o
+
+# target to build an object file
+src/metal/netengine_metal.mm.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o
+.PHONY : src/metal/netengine_metal.mm.o
+
+src/metal/netengine_metal.i: src/metal/netengine_metal.mm.i
+.PHONY : src/metal/netengine_metal.i
+
+# target to preprocess a source file
+src/metal/netengine_metal.mm.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.i
+.PHONY : src/metal/netengine_metal.mm.i
+
+src/metal/netengine_metal.s: src/metal/netengine_metal.mm.s
+.PHONY : src/metal/netengine_metal.s
+
+# target to generate assembly for a file
+src/metal/netengine_metal.mm.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.s
+.PHONY : src/metal/netengine_metal.mm.s
+
 src/netreach.o: src/netreach.cpp.o
 .PHONY : src/netreach.o
 
@@ -379,6 +403,9 @@ help:
 	@echo "... src/metal/engine_metal.o"
 	@echo "... src/metal/engine_metal.i"
 	@echo "... src/metal/engine_metal.s"
+	@echo "... src/metal/netengine_metal.o"
+	@echo "... src/metal/netengine_metal.i"
+	@echo "... src/metal/netengine_metal.s"
 	@echo "... src/netreach.o"
 	@echo "... src/netreach.i"
 	@echo "... src/netreach.s"

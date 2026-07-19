@@ -1,15 +1,23 @@
 #include "ptctlmc/netreach.hpp"
 #include <cstdio>
+#include <chrono>
+#ifdef __APPLE__
+#include <malloc/malloc.h>
+#endif
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include "ptctlmc/net_gpu.hpp"
 
 #ifdef PTCTLMC_HAVE_OPENMP
 #include <omp.h>
@@ -271,6 +279,64 @@ void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
 
 }  // namespace
 
+// GPU merge routing mode (see netreach.hpp). Default naive = always the one-thread-per-bucket GPU
+// merge (the original, published behavior); --adaptive turns on the calibrated CPU/GPU routing.
+static bool g_adaptive_merge = false;
+void set_adaptive_merge(bool on) { g_adaptive_merge = on; }
+bool adaptive_merge() { return g_adaptive_merge; }
+
+#if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
+// Host port of the net_merge GPU kernel body (dbm_ops.hpp host functions), for ONE discrete-state
+// bucket. The GPU runs one thread per bucket, so a level with few/fat buckets stalls on a handful of
+// slow lanes; this lets the flat driver merge such buckets across all CPU cores instead. Existing
+// antichain is at work_buf[work_off_b .. +exist_cnt_b) (already gathered); new zones are read in
+// place from the expand output `oz` at indices new_idx_b[0..new_cnt_b). Writes the final antichain
+// back in place, sets WI (isnew flags: existing=0, appended new=1), returns the surviving count.
+static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
+                             const raw_t* oz, const int* new_idx_b, int new_cnt_b,
+                             const std::int32_t* L, const std::int32_t* U,
+                             int dim, bool has_diag, int* WI) {
+  const int d2 = dim * dim;
+  raw_t* W = work_buf + static_cast<std::size_t>(work_off_b) * d2;
+  raw_t zn[kDbmMaxDim * kDbmMaxDim];
+  int cur = exist_cnt_b;                              // WI[0..cur) already 0 (existing zones)
+  for (int t = 0; t < new_cnt_b; ++t) {
+    const raw_t* src = oz + static_cast<std::size_t>(new_idx_b[t]) * d2;
+    for (int k = 0; k < d2; ++k) zn[k] = src[k];
+    bool subsumed = false;                            // zn subsumed by a stored zone?
+    for (int i = 0; i < cur; ++i) {
+      const raw_t* zw = W + static_cast<std::size_t>(i) * d2;
+      if (has_diag ? dbm_includes(zw, zn, dim) : dbm_is_alu_le(zn, zw, dim, L, U)) { subsumed = true; break; }
+    }
+    if (subsumed) continue;
+    int w = 0;                                        // drop stored zones subsumed by zn
+    for (int i = 0; i < cur; ++i) {
+      const raw_t* zw = W + static_cast<std::size_t>(i) * d2;
+      const bool killed = has_diag ? dbm_includes(zn, zw, dim) : dbm_is_alu_le(zw, zn, dim, L, U);
+      if (!killed) {
+        if (w != i) { std::memcpy(W + static_cast<std::size_t>(w)*d2, zw, d2*sizeof(raw_t)); WI[w] = WI[i]; }
+        ++w;
+      }
+    }
+    cur = w;
+    bool merged = true;                               // convex-union absorb (zn becomes the hull)
+    while (merged) {
+      merged = false;
+      for (int kk = 0; kk < cur; ++kk)
+        if (dbm_try_union(zn, W + static_cast<std::size_t>(kk)*d2, dim)) {
+          for (int i = kk; i < cur - 1; ++i) {
+            std::memcpy(W + static_cast<std::size_t>(i)*d2, W + static_cast<std::size_t>(i+1)*d2, d2*sizeof(raw_t));
+            WI[i] = WI[i+1];
+          }
+          --cur; merged = true; break;
+        }
+    }
+    std::memcpy(W + static_cast<std::size_t>(cur)*d2, zn, d2*sizeof(raw_t)); WI[cur] = 1; ++cur;
+  }
+  return cur;
+}
+#endif
+
 bool reachable_net(const Network& net, const NetTarget& target, Backend backend, ReachStats* stats) {
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   extend_bounds(L, U, target.clock_cond);
@@ -295,7 +361,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     }
   }
   // Per-state aLU bounds: max of per-location bounds over processes, floored by the query.
-  auto state_bounds = [&](const LocVec& locs, std::vector<std::int32_t>& L2,
+  auto state_bounds = [&](const int* locs, std::vector<std::int32_t>& L2,
                           std::vector<std::int32_t>& U2) {
     if (net.lbound_loc.empty()) { L2 = L; U2 = U; return; }  // fall back to global bounds
     L2.assign(net.nclocks + 1, kAluNegInf);
@@ -327,6 +393,22 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 #endif
   const int S = parallel ? nthreads : 1;  // passed-list shards (== merge threads)
 
+  // GPU network backend (Metal or CUDA): the flat GPU-resident driver below runs the whole
+  // level loop on the GPU (expand + per-bucket subsumption/convex-union merge). make_net_gpu_*
+  // returns null for out-of-scope networks (diagonal constraints) or no device, so we fall back
+  // to the CPU path transparently.
+  std::unique_ptr<NetGpuExpander> gpu;
+  bool use_gpu = false;
+#ifdef PTCTLMC_HAVE_METAL
+  if (backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
+#endif
+#ifdef PTCTLMC_HAVE_CUDA
+  if (backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
+#endif
+  use_gpu = (gpu != nullptr);
+  if (use_gpu && std::getenv("PTCTLMC_STATS"))
+    std::fprintf(stderr, "[gpu] network expander ACTIVE\n");
+
   // Passed list SHARDED by discrete-state hash: a given discrete state always lands
   // in the same shard, so each shard is a self-contained antichain owned by exactly
   // one thread during the merge — the O(bucket^2 * dim^3) convex-merge now runs in
@@ -335,21 +417,27 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   // location + per int variable. This replaces the per-state std::string key, whose
   // alloc/format/hash dominated the profile — keys are now compared and hashed as plain
   // integers (what UPPAAL does with its "compressed integer" discrete states).
-  std::vector<int> dshift(net.nprocs() + net.intvars.size());
+  const int nfields = net.nprocs() + static_cast<int>(net.intvars.size());
+  std::vector<int> dshift(nfields);
+  std::vector<std::uint64_t> dmask(nfields);  // per-field value mask (for decoding dk -> locs/ints)
   {
     int off = 0;
     auto bits = [](long n) { int b = 0; while ((1LL << b) < n) ++b; return b; };
-    for (int p = 0; p < net.nprocs(); ++p) {
-      dshift[p] = off; off += bits(static_cast<long>(net.procs[p].locations.size()));
-    }
-    for (std::size_t v = 0; v < net.intvars.size(); ++v) {
-      dshift[net.nprocs() + v] = off; off += bits(net.intvars[v].hi - net.intvars[v].lo + 1);
-    }
+    auto set = [&](int f, int w) { dshift[f] = off; dmask[f] = (w >= 64) ? ~0ULL : ((1ULL << w) - 1); off += w; };
+    for (int p = 0; p < net.nprocs(); ++p) set(p, bits(static_cast<long>(net.procs[p].locations.size())));
+    for (std::size_t v = 0; v < net.intvars.size(); ++v)
+      set(net.nprocs() + static_cast<int>(v), bits(net.intvars[v].hi - net.intvars[v].lo + 1));
     // >= 64 (not > 64): keeps every field offset < 64, so a trailing zero-width
     // field (single-value int/location) can never trigger a `value << 64` UB shift.
     if (off >= 64)
       throw std::runtime_error("reachable_net: discrete state needs >= 64 bits (network too wide)");
   }
+  // Decode a packed key back into location + int vectors (inverse of disc_key).
+  auto decode_key = [&](std::uint64_t dk, int* locs, long* ints) {
+    for (int p = 0; p < net.nprocs(); ++p) locs[p] = static_cast<int>((dk >> dshift[p]) & dmask[p]);
+    for (std::size_t v = 0; v < net.intvars.size(); ++v)
+      ints[v] = static_cast<long>((dk >> dshift[net.nprocs() + v]) & dmask[net.nprocs() + v]) + net.intvars[v].lo;
+  };
   auto disc_key = [&](const LocVec& locs, const IntVec& ints) -> std::uint64_t {
     std::uint64_t k = 0;
     for (int p = 0; p < static_cast<int>(locs.size()); ++p)
@@ -366,7 +454,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   auto add_to = [&](std::unordered_map<std::uint64_t, std::vector<Entry>>& mp, SymState&& s,
                     std::uint64_t dk, int level, std::unordered_set<std::uint64_t>& touched) {
     thread_local std::vector<std::int32_t> Ls, Us;   // reuse capacity across states (assign)
-    state_bounds(s.locs, Ls, Us);  // per-location aLU bounds for this discrete state
+    state_bounds(s.locs.data(), Ls, Us);  // per-location aLU bounds for this discrete state
     auto& b = mp[dk];
     for (const auto& e : b)
       if (has_diag ? e.s.zone.includes(s.zone) : s.zone.alu_subsumed_by(e.s.zone, Ls, Us))
@@ -405,6 +493,270 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     // no extrapolation: exact zones + aLU subsumption keep the passed list finite & minimal
   }
   if (is_target(s0)) return true;
+
+#if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
+  // ---- FLAT GPU-resident driver (Metal / CUDA) -------------------------------------------
+  // Everything stays as flat zone arrays across levels: no SymState round-trip, no per-level
+  // rebuild of a map of Dbm copies (which the profiler showed dominated the metal wall time).
+  // GPU does expand + the per-bucket subsumption/convex-union merge; the host only groups by
+  // dk (cheap integer hashing) and marshals flat zone spans.
+  if (use_gpu) {
+    const int np = net.nprocs(), ni = static_cast<int>(net.intvars.size()), dim = net.nclocks + 1, d2 = dim * dim;
+    auto int_ok_flat = [&](const std::vector<IntAtom>& g, const int* iv) {
+      for (const auto& a : g) {
+        const long x = iv[a.var]; bool r;
+        switch (a.op) { case IntOp::Eq: r = x==a.val; break; case IntOp::Ne: r = x!=a.val; break;
+          case IntOp::Lt: r = x<a.val; break; case IntOp::Le: r = x<=a.val; break;
+          case IntOp::Gt: r = x>a.val; break; default: r = x>=a.val; }
+        if (!r) return false;
+      }
+      return true;
+    };
+    std::unordered_map<std::uint64_t, std::vector<raw_t>> passed;   // dk -> concat antichain zones
+    std::vector<int> fl(s0.locs.begin(), s0.locs.end());
+    std::vector<long> fi(s0.ints.begin(), s0.ints.end());
+    std::vector<raw_t> fz(s0.zone.data().begin(), s0.zone.data().end());
+    passed[disc_key(s0.locs, s0.ints)].assign(s0.zone.data().begin(), s0.zone.data().end());
+    // Optional phase profiler (PTCTLMC_MTLPROF): host-side timing of the two synchronous GPU
+    // calls (expand/merge, which block until the kernel finishes since outputs are read in place)
+    // vs. the host marshaling/rebuild. Zero overhead when the env var is unset.
+    const bool mtlprof = std::getenv("PTCTLMC_MTLPROF") != nullptr;
+    // Memory accounting (PTCTLMC_MEMPROF): where the resident bytes actually go — the passed list
+    // (live zone bytes vs vector CAPACITY, i.e. growth slack), the duplicated frontier copy, and the
+    // transient per-level pools the GPU buffers are sized to. Zero cost when unset.
+    const bool memprof = std::getenv("PTCTLMC_MEMPROF") != nullptr;
+    std::size_t peak_nwork = 0, peak_wtot = 0, peak_front = 0;
+    double t_expand = 0, t_merge = 0;
+    int prof_nb = 0, prof_maxsz = 0; double prof_meansz = 0; long long prof_peak_sum2 = 0;
+    double gpu_rate = -1, cpu_rate = -1;   // adaptive merge routing: work-units (sum bucket^2) per ms
+    auto _now = [] { return std::chrono::steady_clock::now(); };
+    auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+      return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    const auto _wall0 = _now();
+    while (!fl.empty()) {
+      const int nfr = static_cast<int>(fl.size() / np);
+      if (stats) stats->explored += nfr;
+      const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const raw_t* oz = nullptr;
+      const auto _te = _now();
+      const std::size_t nwork = gpu->expand(nfr, fl, fi, fz, ev, ol, oi, oz);
+      if (mtlprof) t_expand += _ms(_te, _now());
+      if (memprof && nwork > peak_nwork) peak_nwork = nwork;
+      if (nwork == 0) break;
+      // The GPU now holds its own copy of the frontier (persistent device buffer) and the host
+      // copies are dead until the end-of-level swap. Release them NOW: otherwise they sit alongside
+      // the next frontier being built during the rebuild, i.e. a full extra copy of the frontier at
+      // exactly the moment memory peaks.
+      { std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<raw_t>().swap(fz); }
+      // group VALID successors by dk (reading straight from GPU buffers); target check on the fly
+      // Bucket the valid successors with a FLAT (CSR) layout: a per-work-item bucket id plus a
+      // per-bucket count, then a prefix sum. The obvious `vector<vector<int>>` heap-allocates one
+      // small vector PER BUCKET PER LEVEL (millions of alloc/free pairs over a run, and the
+      // fragmentation dominated resident memory); this is two flat arrays instead.
+      std::unordered_map<std::uint64_t, int> bidx;
+      std::vector<std::uint64_t> bdk;
+      std::vector<int> bcnt;                              // per-bucket count of new zones
+      std::vector<int> w_bucket(nwork, -1);               // work item -> bucket id (-1 = not a successor)
+      for (std::size_t w = 0; w < nwork; ++w) {
+        if (!ev[w]) continue;
+        if (stats) ++stats->generated;
+        const int* wl = ol + w * np;
+        const int* wi = oi + w * ni;
+        bool tgt = true;
+        for (const auto& lr : target.loc_req) if (wl[lr.first] != lr.second) { tgt = false; break; }
+        if (tgt && !int_ok_flat(target.int_cond, wi)) tgt = false;
+        if (tgt) {
+          Dbm td(net.nclocks);
+          std::copy(oz + w * d2, oz + w * d2 + d2, td.data().begin());
+          if (apply_all(td, target.clock_cond)) return true;
+        }
+        std::uint64_t dk = 0;
+        for (int p = 0; p < np; ++p) dk |= static_cast<std::uint64_t>(static_cast<unsigned>(wl[p])) << dshift[p];
+        for (int v = 0; v < ni; ++v) dk |= static_cast<std::uint64_t>(wi[v] - net.intvars[v].lo) << dshift[np + v];
+        auto it = bidx.find(dk);
+        int bi;
+        if (it == bidx.end()) { bi = static_cast<int>(bdk.size()); bidx.emplace(dk, bi); bdk.push_back(dk); bcnt.push_back(0); }
+        else bi = it->second;
+        w_bucket[w] = bi; ++bcnt[bi];
+      }
+      const int nb = static_cast<int>(bdk.size());
+      std::vector<int> work_off(nb), exist_cnt(nb), new_off(nb), new_cnt(nb);
+      std::vector<std::int32_t> Lm(static_cast<std::size_t>(nb) * dim), Um(static_cast<std::size_t>(nb) * dim);
+      // counts + prefix sums. The NEW zones are never copied: the merge reads them in place from
+      // the expand output by work-item index, so we only flatten the index list (integers, cheap).
+      std::size_t ntot = 0, wtot = 0;  // total new zones; total work-pool zones (exist+new)
+      for (int b = 0; b < nb; ++b) {
+        new_cnt[b] = bcnt[b];
+        auto pit = passed.find(bdk[b]);
+        exist_cnt[b] = (pit == passed.end()) ? 0 : static_cast<int>(pit->second.size() / d2);
+        new_off[b] = static_cast<int>(ntot); ntot += new_cnt[b];
+        work_off[b] = static_cast<int>(wtot); wtot += exist_cnt[b] + new_cnt[b];
+      }
+      // Scatter the work-item indices into the flat CSR array. Iterating w ascending preserves the
+      // per-bucket ordering the merge relies on (the convex union is order-sensitive), so this is
+      // bit-for-bit equivalent to the old vector-of-vectors.
+      std::vector<int> new_idx(ntot);
+      {
+        std::vector<int> cursor(new_off);
+        for (std::size_t w = 0; w < nwork; ++w) {
+          const int bi = w_bucket[w];
+          if (bi >= 0) new_idx[cursor[bi]++] = static_cast<int>(w);
+        }
+      }
+      { std::vector<int>().swap(w_bucket); }   // dead once scattered — release before the merge peak
+      if (memprof && wtot > peak_wtot) peak_wtot = wtot;
+      raw_t* work_buf = nullptr;
+      gpu->stage_merge(wtot, d2, work_buf);
+      // PARALLEL: gather only the EXISTING antichains into the work buffer (unified memory);
+      // successor zones stay in the expand output and are read in place by the merge kernel.
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 32)
+#endif
+      for (int b = 0; b < nb; ++b) {
+        auto pit = passed.find(bdk[b]);
+        if (pit != passed.end())
+          std::memcpy(work_buf + static_cast<std::size_t>(work_off[b]) * d2, pit->second.data(),
+                      static_cast<std::size_t>(exist_cnt[b]) * d2 * sizeof(raw_t));
+        int dl[64]; long di[32];
+        std::vector<std::int32_t> L2, U2;
+        decode_key(bdk[b], dl, di);
+        state_bounds(dl, L2, U2);
+        for (int c = 0; c < dim; ++c) { Lm[static_cast<std::size_t>(b) * dim + c] = L2[c]; Um[static_cast<std::size_t>(b) * dim + c] = U2[c]; }
+      }
+      std::vector<int> out_work_off, out_count;
+      const raw_t* out_zones = nullptr;
+      const int* out_isnew = nullptr;
+      // Merge routing. NAIVE (default): always the GPU one-thread-per-bucket merge (original
+      // behavior). ADAPTIVE (--adaptive): CALIBRATE each path's throughput (work ~ sum bucket^2, per
+      // ms) on early BFS levels, then route each later level to the predicted-faster of {GPU, 12 CPU
+      // cores}. This rescues merge-heavy models (e.g. philosophers, where the GPU merge is 93% of the
+      // wall time — one thread per bucket is the wrong shape) with no effect where the GPU already wins.
+      long long sum2 = 0, sumsz = 0; int maxsz = 0;
+      for (int b = 0; b < nb; ++b) { const long long s = exist_cnt[b] + new_cnt[b]; sum2 += s*s; sumsz += s; if (s > maxsz) maxsz = (int)s; }
+      if (mtlprof && sum2 > prof_peak_sum2) { prof_peak_sum2 = sum2; prof_nb = nb; prof_maxsz = maxsz; prof_meansz = nb ? (double)sumsz/nb : 0; }
+      bool cpu_merge = false;
+      if (g_adaptive_merge) {
+        if (cpu_rate < 0) cpu_merge = true;         // calibrate the CPU path first (never catastrophic)
+        else if (gpu_rate < 0) cpu_merge = false;   // then calibrate the GPU path
+        else cpu_merge = (cpu_rate >= gpu_rate);    // route to the higher-throughput path
+      }
+      std::vector<int> host_isnew_v, host_count;
+      const auto _tm = _now();
+      if (cpu_merge) {
+        host_isnew_v.assign(wtot, 0);          // existing zones start not-new; appended new zones -> 1
+        host_count.assign(nb, 0);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 8)
+#endif
+        for (int b = 0; b < nb; ++b)
+          host_count[b] = flat_merge_bucket(work_buf, work_off[b], exist_cnt[b], oz,
+                                            new_idx.data() + new_off[b], new_cnt[b],
+                                            Lm.data() + static_cast<std::size_t>(b)*dim,
+                                            Um.data() + static_cast<std::size_t>(b)*dim,
+                                            dim, has_diag, host_isnew_v.data() + work_off[b]);
+        out_work_off = work_off; out_count = std::move(host_count);
+        out_zones = work_buf; out_isnew = host_isnew_v.data();
+      } else {
+        gpu->merge(nb, dim, has_diag, work_off, exist_cnt, new_idx, new_off, new_cnt, Lm, Um,
+                   out_work_off, out_count, out_zones, out_isnew);
+      }
+      const double _dtm = _ms(_tm, _now());
+      if (mtlprof) t_merge += _dtm;
+      if (g_adaptive_merge && sum2 > 0 && _dtm > 0.5) {   // update throughput calibration (skip trivial levels)
+        const double rate = static_cast<double>(sum2) / _dtm;
+        if (cpu_merge) cpu_rate = (cpu_rate < 0) ? rate : 0.5 * cpu_rate + 0.5 * rate;
+        else           gpu_rate = (gpu_rate < 0) ? rate : 0.5 * gpu_rate + 0.5 * rate;
+      }
+      // rebuild passed + assemble the flat next frontier (survivors). Prefix-sum the per-bucket
+      // survivor counts, pre-create the passed nodes, then fill everything in parallel.
+      std::vector<int> fr_off(nb), fr_cnt(nb);
+      std::size_t frtot = 0;
+      for (int b = 0; b < nb; ++b) {
+        int c = 0;
+        for (int i = 0; i < out_count[b]; ++i) if (out_isnew[static_cast<std::size_t>(out_work_off[b]) + i]) ++c;
+        fr_cnt[b] = c; fr_off[b] = static_cast<int>(frtot); frtot += c;
+      }
+      if (memprof && frtot > peak_front) peak_front = frtot;
+      std::vector<int> nl(frtot * np);
+      std::vector<long> nin(frtot * (ni ? ni : 1));
+      std::vector<raw_t> nz(frtot * d2);
+      // A bucket with NO survivor had all its new zones subsumed — its antichain is unchanged, so
+      // `passed[dk]` is already correct. Skip its rebuild copy AND frontier gather entirely; only
+      // changed buckets are cleared + refilled (their element ptrs stay stable across later inserts).
+      std::vector<std::vector<raw_t>*> pzp(nb, nullptr);
+      for (int b = 0; b < nb; ++b) if (fr_cnt[b] > 0) { pzp[b] = &passed[bdk[b]]; }
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 32)
+#endif
+      for (int b = 0; b < nb; ++b) {
+        if (fr_cnt[b] == 0) continue;   // unchanged bucket — nothing to do
+        int dl[64]; long di[32];
+        decode_key(bdk[b], dl, di);
+        auto& pz = *pzp[b];
+        pz.resize(static_cast<std::size_t>(out_count[b]) * d2);
+        int fpos = fr_off[b];
+        for (int i = 0; i < out_count[b]; ++i) {
+          const std::size_t slot = static_cast<std::size_t>(out_work_off[b]) + i;
+          const raw_t* zb = out_zones + slot * d2;
+          std::memcpy(pz.data() + static_cast<std::size_t>(i) * d2, zb, static_cast<std::size_t>(d2) * sizeof(raw_t));
+          if (out_isnew[slot]) {
+            for (int p = 0; p < np; ++p) nl[static_cast<std::size_t>(fpos) * np + p] = dl[p];
+            for (int v = 0; v < ni; ++v) nin[static_cast<std::size_t>(fpos) * ni + v] = di[v];
+            std::memcpy(nz.data() + static_cast<std::size_t>(fpos) * d2, zb, static_cast<std::size_t>(d2) * sizeof(raw_t));
+            ++fpos;
+          }
+        }
+      }
+      fl.swap(nl); fi.swap(nin); fz.swap(nz);
+    }
+    if (memprof) {
+      std::size_t live = 0, cap = 0;
+      for (const auto& kv : passed) { live += kv.second.size(); cap += kv.second.capacity(); }
+      const double GB = 1024.0 * 1024.0 * 1024.0, B = sizeof(raw_t);
+      // per-bucket container overhead: unordered_map node (~48 B: hash+next+key+vector object) + malloc header
+      const double node_ov = passed.size() * 64.0;
+      std::fprintf(stderr,
+        "[memprof] buckets=%zu  zones=%zu\n"
+        "          passed live   = %6.2f GB   (the actual data)\n"
+        "          passed capacity= %6.2f GB   (+%.0f%% vector growth slack)\n"
+        "          bucket overhead= %6.2f GB   (~64 B/bucket: map node + malloc header)\n"
+        "          frontier copy  = %6.2f GB   (peak %zu zones — DUPLICATES passed)\n"
+        "          gpu expand pool= %6.2f GB   (peak %zu work items, persistent)\n"
+        "          gpu merge pool = %6.2f GB   (peak %zu work zones, persistent)\n"
+        "          GPU buffers ACTUAL = %6.2f GB  (all 7 persistent pools, measured)\n"
+        "          ---- accounted = %6.2f GB\n",
+        passed.size(), live / (std::size_t)d2,
+        live * B / GB, cap * B / GB, live ? 100.0 * (double)(cap - live) / (double)live : 0.0,
+        node_ov / GB,
+        peak_front * (double)d2 * B / GB, peak_front,
+        peak_nwork * (double)d2 * B / GB, peak_nwork,
+        peak_wtot * (double)d2 * B / GB, peak_wtot,
+        gpu->device_bytes() / GB,
+        (cap * B + node_ov + peak_front * (double)d2 * B + gpu->device_bytes()) / GB);
+#ifdef __APPLE__
+      // Separate "bytes the program is using" from "bytes malloc is holding but not returning to
+      // the OS". A large gap here means the cost is allocator RETENTION from per-level churn, not
+      // live data — a different fix (pooling) than shrinking any one structure.
+      {
+        malloc_statistics_t st{};
+        malloc_zone_statistics(malloc_default_zone(), &st);
+        std::fprintf(stderr,
+          "          malloc in-use  = %6.2f GB   (live heap)\n"
+          "          malloc reserved= %6.2f GB   (held by allocator, not returned to OS)\n",
+          st.size_in_use / GB, st.size_allocated / GB);
+      }
+#endif
+    }
+    if (mtlprof) {
+      const double wall = _ms(_wall0, _now());
+      std::fprintf(stderr, "[mtlprof] expand=%.0fms merge=%.0fms host=%.0fms wall=%.0fms  "
+                   "(merge %.0f%%)  peak-level: nb=%d meansz=%.1f maxsz=%d\n",
+                   t_expand, t_merge, wall - t_expand - t_merge, wall,
+                   100.0 * t_merge / wall, prof_nb, prof_meansz, prof_maxsz);
+    }
+    return false;
+  }
+#endif
 
   std::vector<SymState> frontier;
   frontier.push_back(s0);
