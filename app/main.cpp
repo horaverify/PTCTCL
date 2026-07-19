@@ -211,6 +211,13 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(true);
     } else if (a == "--naive") {      // GPU merge routing: always one thread per bucket (default)
       ptctlmc::set_adaptive_merge(false);
+    } else if (a == "--chunking") {   // expand the frontier in bounded batches (caps peak memory)
+      int states = 65536;             // optional size: --chunking 32768
+      if (i + 1 < argc && argv[i + 1][0] != '-') {
+        const int v = std::atoi(argv[i + 1]);
+        if (v > 0) { states = v; ++i; }
+      }
+      ptctlmc::set_chunking(true, states);
     } else if (a[0] != '-' && nf < 2) {
       files[nf++] = argv[i];
     }
@@ -218,8 +225,10 @@ int main(int argc, char** argv) {
   if (nf == 2) return run(files[0], files[1], backend);
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
-            << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] <model.xml> <query.q>\n"
+            << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] <model.xml> <query.q>\n"
             << "       --adaptive: GPU merge auto-routes CPU/GPU per level (default --naive)\n"
+            << "       --chunking: expand the frontier in batches of N states (default 65536),\n"
+            << "                   capping peak GPU memory independently of BFS level width\n"
             << "       ptctlmc --bisim <spec>   decide timed (bi)simulation between two automata\n"
             << "       ptctlmc [--version] [--selftest] [--dump <model.xml>]\n";
   return 0;

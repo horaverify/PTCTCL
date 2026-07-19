@@ -14,6 +14,15 @@ namespace ptctlmc {
 void set_adaptive_merge(bool on);
 bool adaptive_merge();
 
+// GPU frontier chunking (`--chunking`). Off by default: a BFS level is expanded in one shot, so the
+// unified-memory pools are sized to the WIDEST level and peak memory scales with level width. On, the
+// frontier is processed in bounded batches, so the pools are sized to a chunk instead and peak memory
+// becomes independent of level width (raising the model size that fits in RAM). Sound: the frontier is
+// a worklist, so processing it in batches only changes the schedule — it may shift the order-sensitive
+// convex-union counts slightly, never the verdict. `states` = frontier states per chunk.
+void set_chunking(bool on, int states = 65536);
+bool chunking();
+
 // E<> : is a discrete/clock state matching `target` reachable? Zone-graph
 // exploration with a passed list keyed by discrete state (location vector + int
 // values), inclusion subsumption + exact-DBM hash + LU extrapolation.

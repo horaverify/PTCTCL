@@ -285,6 +285,12 @@ static bool g_adaptive_merge = false;
 void set_adaptive_merge(bool on) { g_adaptive_merge = on; }
 bool adaptive_merge() { return g_adaptive_merge; }
 
+// Frontier chunking (see netreach.hpp). Off by default = expand a whole BFS level at once.
+static bool g_chunking = false;
+static int g_chunk_states = 65536;
+void set_chunking(bool on, int states) { g_chunking = on; if (states > 0) g_chunk_states = states; }
+bool chunking() { return g_chunking; }
+
 #if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
 // Host port of the net_merge GPU kernel body (dbm_ops.hpp host functions), for ONE discrete-state
 // bucket. The GPU runs one thread per bucket, so a level with few/fat buckets stalls on a handful of
@@ -534,20 +540,44 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       return std::chrono::duration<double, std::milli>(b - a).count();
     };
     const auto _wall0 = _now();
+    const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
     while (!fl.empty()) {
-      const int nfr = static_cast<int>(fl.size() / np);
+      const int total = static_cast<int>(fl.size() / np);
+      // --chunking: expand only a bounded PREFIX of the frontier this iteration and carry the tail
+      // forward. The frontier is a worklist, so batching it only changes the schedule; the GPU pools
+      // are then sized to a chunk instead of the widest level, making peak memory independent of
+      // level width. Default (off) expands the whole level, exactly as before.
+      const int nfr = g_chunking ? std::min(total, g_chunk_states) : total;
+      const bool whole = (nfr == total);
       if (stats) stats->explored += nfr;
       const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const raw_t* oz = nullptr;
       const auto _te = _now();
-      const std::size_t nwork = gpu->expand(nfr, fl, fi, fz, ev, ol, oi, oz);
+      std::size_t nwork;
+      if (whole) {
+        nwork = gpu->expand(nfr, fl, fi, fz, ev, ol, oi, oz);   // no copy in the default path
+      } else {
+        std::vector<int>   cfl(fl.begin(), fl.begin() + static_cast<std::size_t>(nfr) * np);
+        std::vector<long>  cfi(fi.begin(), fi.begin() + static_cast<std::size_t>(nfr) * niw);
+        std::vector<raw_t> cfz(fz.begin(), fz.begin() + static_cast<std::size_t>(nfr) * d2);
+        nwork = gpu->expand(nfr, cfl, cfi, cfz, ev, ol, oi, oz);
+      }
       if (mtlprof) t_expand += _ms(_te, _now());
       if (memprof && nwork > peak_nwork) peak_nwork = nwork;
-      if (nwork == 0) break;
+      if (nwork == 0) {
+        if (whole) break;
+        // this chunk produced nothing: drop it and continue with the remaining frontier
+        std::vector<int>   tl(fl.begin() + static_cast<std::size_t>(nfr) * np,  fl.end());
+        std::vector<long>  ti(fi.begin() + static_cast<std::size_t>(nfr) * niw, fi.end());
+        std::vector<raw_t> tz(fz.begin() + static_cast<std::size_t>(nfr) * d2,  fz.end());
+        fl.swap(tl); fi.swap(ti); fz.swap(tz);
+        continue;
+      }
       // The GPU now holds its own copy of the frontier (persistent device buffer) and the host
       // copies are dead until the end-of-level swap. Release them NOW: otherwise they sit alongside
       // the next frontier being built during the rebuild, i.e. a full extra copy of the frontier at
       // exactly the moment memory peaks.
-      { std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<raw_t>().swap(fz); }
+      // Only safe when the whole frontier was expanded; when chunking, the tail is still needed.
+      if (whole) { std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<raw_t>().swap(fz); }
       // group VALID successors by dk (reading straight from GPU buffers); target check on the fly
       // Bucket the valid successors with a FLAT (CSR) layout: a per-work-item bucket id plus a
       // per-bucket count, then a prefix sum. The obvious `vector<vector<int>>` heap-allocates one
@@ -706,6 +736,12 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
             ++fpos;
           }
         }
+      }
+      // When chunking, the unexpanded tail of this frontier carries over to the next iteration.
+      if (!whole) {
+        nl.insert(nl.end(),  fl.begin() + static_cast<std::size_t>(nfr) * np,  fl.end());
+        nin.insert(nin.end(), fi.begin() + static_cast<std::size_t>(nfr) * niw, fi.end());
+        nz.insert(nz.end(),  fz.begin() + static_cast<std::size_t>(nfr) * d2,  fz.end());
       }
       fl.swap(nl); fi.swap(nin); fz.swap(nz);
     }
