@@ -20,6 +20,7 @@ endif()
 file(GLOB NEW_GLOB LIST_DIRECTORIES true "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/*.mm")
 set(OLD_GLOB
   "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/engine_metal.mm"
+  "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm"
   )
 if(NOT "${NEW_GLOB}" STREQUAL "${OLD_GLOB}")
   message("-- GLOB mismatch!")

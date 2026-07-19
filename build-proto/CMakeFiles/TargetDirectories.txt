@@ -1,0 +1,10 @@
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/CMakeFiles/ptctlmc_core.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/CMakeFiles/ptctlmc.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/CMakeFiles/test.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/CMakeFiles/edit_cache.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/CMakeFiles/rebuild_cache.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests/CMakeFiles/ptctlmc_unit.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests/CMakeFiles/ptctlmc_bisim.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests/CMakeFiles/test.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests/CMakeFiles/edit_cache.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests/CMakeFiles/rebuild_cache.dir

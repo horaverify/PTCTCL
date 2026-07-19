@@ -1,0 +1,74 @@
+[
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/bisim.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/bisim.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/dbm.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/dbm.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/netreach.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/netreach.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_core.dir/src/network.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/network.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/network.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/reach.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/reach.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/ta.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/ta.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/uppaal.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/uppaal.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -fobjc-arc -o CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/engine_metal.mm",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/engine_metal.mm",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -O3 -DNDEBUG -std=c++17 -arch arm64 -Wall -Wextra -Wno-unused-parameter -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -fobjc-arc -o CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -arch arm64 -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc.dir/app/main.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/app/main.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/app/main.cpp",
+  "output": "CMakeFiles/ptctlmc.dir/app/main.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -arch arm64 -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_unit.dir/dbm_tests.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/dbm_tests.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/dbm_tests.cpp",
+  "output": "tests/CMakeFiles/ptctlmc_unit.dir/dbm_tests.cpp.o"
+},
+{
+  "directory": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-proto/tests",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_METAL=1 -DPTCTLMC_HAVE_OPENMP=1 -I/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -arch arm64 -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -o CMakeFiles/ptctlmc_bisim.dir/bisim_tests.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/bisim_tests.cpp",
+  "file": "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/bisim_tests.cpp",
+  "output": "tests/CMakeFiles/ptctlmc_bisim.dir/bisim_tests.cpp.o"
+}
+]

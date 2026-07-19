@@ -1,0 +1,111 @@
+// net_gpu_encode.hpp — static, per-run encoding of a Network into flat GPU-friendly arrays,
+// shared by the Metal (netengine_metal.mm) and CUDA (netengine_cuda.cu) network backends so the
+// two stay bit-for-bit in step. Pure host C++ (no GPU types).
+#pragma once
+
+#include <cstddef>
+#include <vector>
+
+#include "ptctlmc/network.hpp"
+
+namespace ptctlmc {
+namespace netgpu {
+
+struct NetEncoding {
+  int dim = 0, nprocs = 0, nintvars = 0, nclocks = 0, total_locs = 0;
+  std::vector<int> locbase;            // [nprocs+1] cumulative location counts
+  std::vector<int> edge_tgt;           // [E] target loc (within its process)
+  std::vector<int> cg_off, cg_data;    // clock guard: triples (i,j,bound)
+  std::vector<int> rs_off, rs_clk;     // resets
+  std::vector<int> ig_off, ig_data;    // int guard: triples (var,op,val)
+  std::vector<int> iu_off, iu_data;    // int update: pairs (var,val)
+  std::vector<int> inv_off, inv_data;  // per-loc invariant: triples (i,j,bound)
+  std::vector<int> frozen;             // per-loc: bit0 committed, bit1 urgent
+  std::vector<int> active;             // [total_locs*(nclocks+1)]
+  std::vector<int> qmask;              // [nclocks+1]
+  std::vector<int> edge_proc;          // [E] owning process of each global edge
+  std::vector<int> edge_chan;          // [E] sync channel (-1 none)
+  std::vector<int> edge_dir;           // [E] +1 '!', -1 '?', 0 none
+  std::vector<char> chan_bcast;        // [nchan] broadcast?
+  // host-only: per (process, location) the global edge indices of ALL its edges
+  std::vector<std::vector<std::vector<int>>> loc_edges;
+};
+
+inline bool network_has_diagonal(const Network& net) {
+  auto diag = [](const std::vector<Constraint>& cs) {
+    for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
+    return false;
+  };
+  for (const auto& p : net.procs) {
+    for (const auto& l : p.locations) if (diag(l.invariant)) return true;
+    for (const auto& e : p.edges) if (diag(e.clock_guard)) return true;
+  }
+  return false;
+}
+
+inline NetEncoding encode(const Network& net, const std::vector<char>& qmask) {
+  NetEncoding en;
+  en.nclocks = net.nclocks;
+  en.dim = net.nclocks + 1;
+  en.nprocs = net.nprocs();
+  en.nintvars = static_cast<int>(net.intvars.size());
+
+  en.locbase.assign(en.nprocs + 1, 0);
+  for (int p = 0; p < en.nprocs; ++p)
+    en.locbase[p + 1] = en.locbase[p] + static_cast<int>(net.procs[p].locations.size());
+  en.total_locs = en.locbase[en.nprocs];
+
+  en.inv_off.assign(en.total_locs + 1, 0);
+  en.frozen.assign(en.total_locs, 0);
+  en.active.assign(static_cast<std::size_t>(en.total_locs) * (en.nclocks + 1), 0);
+  const bool have_active = !net.active.empty();
+  for (int p = 0; p < en.nprocs; ++p) {
+    for (int l = 0; l < static_cast<int>(net.procs[p].locations.size()); ++l) {
+      const int Li = en.locbase[p] + l;
+      const Location& loc = net.procs[p].locations[l];
+      for (const auto& c : loc.invariant) { en.inv_data.push_back(c.i); en.inv_data.push_back(c.j); en.inv_data.push_back(c.bound); }
+      en.inv_off[Li + 1] = static_cast<int>(en.inv_data.size() / 3);
+      en.frozen[Li] = (loc.committed ? 1 : 0) | (loc.urgent ? 2 : 0);
+      if (have_active)
+        for (int c = 1; c <= en.nclocks; ++c)
+          en.active[static_cast<std::size_t>(Li) * (en.nclocks + 1) + c] = net.active[p][l][c] ? 1 : 0;
+      else
+        for (int c = 1; c <= en.nclocks; ++c)
+          en.active[static_cast<std::size_t>(Li) * (en.nclocks + 1) + c] = 1;  // no reduction => all active
+    }
+  }
+  for (int i = 1; i <= en.total_locs; ++i)
+    if (en.inv_off[i] < en.inv_off[i - 1]) en.inv_off[i] = en.inv_off[i - 1];
+
+  en.cg_off.push_back(0); en.rs_off.push_back(0); en.ig_off.push_back(0); en.iu_off.push_back(0);
+  en.loc_edges.assign(en.nprocs, {});
+  for (int p = 0; p < en.nprocs; ++p) {
+    en.loc_edges[p].assign(net.procs[p].locations.size(), {});
+    for (int ei = 0; ei < static_cast<int>(net.procs[p].edges.size()); ++ei) {
+      const NEdge& e = net.procs[p].edges[ei];
+      const int ge = static_cast<int>(en.edge_tgt.size());
+      en.edge_tgt.push_back(e.tgt);
+      en.edge_proc.push_back(p);
+      en.edge_chan.push_back(e.sync_chan);
+      en.edge_dir.push_back(e.sync_dir);
+      for (const auto& c : e.clock_guard) { en.cg_data.push_back(c.i); en.cg_data.push_back(c.j); en.cg_data.push_back(c.bound); }
+      en.cg_off.push_back(static_cast<int>(en.cg_data.size() / 3));
+      for (int r : e.clock_resets) en.rs_clk.push_back(r);
+      en.rs_off.push_back(static_cast<int>(en.rs_clk.size()));
+      for (const auto& a : e.int_guard) { en.ig_data.push_back(a.var); en.ig_data.push_back(static_cast<int>(a.op)); en.ig_data.push_back(static_cast<int>(a.val)); }
+      en.ig_off.push_back(static_cast<int>(en.ig_data.size() / 3));
+      for (const auto& a : e.int_updates) { en.iu_data.push_back(a.var); en.iu_data.push_back(static_cast<int>(a.val)); }
+      en.iu_off.push_back(static_cast<int>(en.iu_data.size() / 2));
+      en.loc_edges[p][e.src].push_back(ge);  // ALL edges (sync enumeration happens in expand)
+    }
+  }
+  en.chan_bcast.assign(net.channels.size(), 0);
+  for (std::size_t c = 0; c < net.chan_broadcast.size(); ++c) en.chan_bcast[c] = net.chan_broadcast[c];
+
+  en.qmask.assign(en.nclocks + 1, 0);
+  for (int c = 0; c <= en.nclocks && c < static_cast<int>(qmask.size()); ++c) en.qmask[c] = qmask[c] ? 1 : 0;
+  return en;
+}
+
+}  // namespace netgpu
+}  // namespace ptctlmc

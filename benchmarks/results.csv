@@ -1,0 +1,2 @@
+bench,N,verdict,parity,stored,explored,vfy_stored,vfy_explored,seq,omp,metal,verifyta,vfy/omp,vfy/metal,omp/metal,gpu
+fischer,8,SAT,EXACT,25080,40536,25080,40536,0.159,0.062,0.112,0.227,3.66,2.03,0.55,ACTIVE

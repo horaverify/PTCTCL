@@ -6,6 +6,14 @@
 
 namespace ptctlmc {
 
+// GPU (Metal/CUDA) merge routing. NAIVE (default): the passed-list merge always runs as one GPU
+// thread per discrete-state bucket. ADAPTIVE: the flat driver calibrates the GPU vs 12-core-CPU merge
+// throughput on early BFS levels and routes each later level to the faster path — rescuing
+// merge-heavy models (few, fat antichains) where one thread per bucket is the wrong shape. No effect
+// on the CPU-only (seq/omp) backends. Set once from the CLI (`--adaptive`).
+void set_adaptive_merge(bool on);
+bool adaptive_merge();
+
 // E<> : is a discrete/clock state matching `target` reachable? Zone-graph
 // exploration with a passed list keyed by discrete state (location vector + int
 // values), inclusion subsumption + exact-DBM hash + LU extrapolation.
