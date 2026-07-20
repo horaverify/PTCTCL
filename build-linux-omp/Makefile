@@ -251,6 +251,30 @@ src/dbm.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.s
 .PHONY : src/dbm.cpp.s
 
+src/expr.o: src/expr.cpp.o
+.PHONY : src/expr.o
+
+# target to build an object file
+src/expr.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/expr.cpp.o
+.PHONY : src/expr.cpp.o
+
+src/expr.i: src/expr.cpp.i
+.PHONY : src/expr.i
+
+# target to preprocess a source file
+src/expr.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/expr.cpp.i
+.PHONY : src/expr.cpp.i
+
+src/expr.s: src/expr.cpp.s
+.PHONY : src/expr.s
+
+# target to generate assembly for a file
+src/expr.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/expr.cpp.s
+.PHONY : src/expr.cpp.s
+
 src/netreach.o: src/netreach.cpp.o
 .PHONY : src/netreach.o
 
@@ -347,6 +371,30 @@ src/ta.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/ta.cpp.s
 .PHONY : src/ta.cpp.s
 
+src/uexpr.o: src/uexpr.cpp.o
+.PHONY : src/uexpr.o
+
+# target to build an object file
+src/uexpr.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/uexpr.cpp.o
+.PHONY : src/uexpr.cpp.o
+
+src/uexpr.i: src/uexpr.cpp.i
+.PHONY : src/uexpr.i
+
+# target to preprocess a source file
+src/uexpr.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/uexpr.cpp.i
+.PHONY : src/uexpr.cpp.i
+
+src/uexpr.s: src/uexpr.cpp.s
+.PHONY : src/uexpr.s
+
+# target to generate assembly for a file
+src/uexpr.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/uexpr.cpp.s
+.PHONY : src/uexpr.cpp.s
+
 src/uppaal.o: src/uppaal.cpp.o
 .PHONY : src/uppaal.o
 
@@ -393,6 +441,9 @@ help:
 	@echo "... src/dbm.o"
 	@echo "... src/dbm.i"
 	@echo "... src/dbm.s"
+	@echo "... src/expr.o"
+	@echo "... src/expr.i"
+	@echo "... src/expr.s"
 	@echo "... src/netreach.o"
 	@echo "... src/netreach.i"
 	@echo "... src/netreach.s"
@@ -405,6 +456,9 @@ help:
 	@echo "... src/ta.o"
 	@echo "... src/ta.i"
 	@echo "... src/ta.s"
+	@echo "... src/uexpr.o"
+	@echo "... src/uexpr.i"
+	@echo "... src/uexpr.s"
 	@echo "... src/uppaal.o"
 	@echo "... src/uppaal.i"
 	@echo "... src/uppaal.s"

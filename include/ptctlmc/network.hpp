@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "ptctlmc/expr.hpp"
 #include "ptctlmc/ta.hpp"
 
 namespace ptctlmc {
@@ -29,6 +30,20 @@ struct NEdge {
   std::vector<IntAsgn> int_updates;
   int sync_chan = -1;   // channel id (-1 none)
   int sync_dir = 0;     // +1 '!', -1 '?'
+
+  // General modelling-language guard/update, used only when the edge needs more
+  // than `var OP const` / `var := const` -- array elements, arithmetic, or a call
+  // (`e == front()`, `enqueue(e)`). Kept SEPARATE from the fast-path vectors
+  // above so the existing static analyses (Extra_LU bounds, aLU per-location
+  // bounds, active-clock reduction) and the validated Fischer/viking behaviour
+  // are untouched: those read int_guard/int_updates, which stay exactly as
+  // before for models that do not need this.
+  //
+  // Semantics: gen_guard is ANDed with int_guard; gen_update runs AFTER
+  // int_updates. A faulting guard is false; a faulting update kills the edge.
+  ExprP gen_guard;
+  StmtP gen_update;
+  int gen_locals = 0;   // frame size needed by gen_update
 };
 
 struct NProc {
@@ -46,6 +61,10 @@ struct Network {
   std::vector<std::string> channels;
   std::vector<char> chan_broadcast;  // 1 if declared `broadcast chan` (fires with 0+ receivers)
   std::vector<NProc> procs;
+  // User functions referenced by NEdge::gen_guard / gen_update. Arrays are
+  // flattened into consecutive `intvars` cells, so a function body addresses
+  // exactly the same int state the engine already packs.
+  std::vector<Func> funcs;
 
   std::vector<std::int32_t> lbound, ubound;  // global Extra_LU bounds over clocks
   // Per-LOCATION LU bounds (static guard analysis): lbound_loc[p][l][c] = max lower
