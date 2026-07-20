@@ -243,6 +243,79 @@ void collect_clocks(const std::string& decl, ClockMap& cm, std::vector<std::stri
   }
 }
 
+// ---- the <system> block -----------------------------------------------------
+// It does two things, and ignoring either silently under-models the system:
+//   Viking11 = Viking10();            instantiate a template under a new name
+//   system Viking1, ..., Viking11;    which processes actually form the network
+// A template that is never listed is not part of the system at all.
+struct SystemDecl {
+  bool has_list = false;
+  std::vector<std::string> order;                     // names in `system ...;`
+  std::unordered_map<std::string, std::string> inst;  // instance name -> template
+};
+
+std::string strip_comments(const std::string& s) {
+  std::string o;
+  o.reserve(s.size());
+  for (std::size_t i = 0; i < s.size(); ++i) {
+    if (s[i] == '/' && i + 1 < s.size() && s[i + 1] == '/') {
+      while (i < s.size() && s[i] != '\n') ++i;
+      o.push_back('\n');
+    } else if (s[i] == '/' && i + 1 < s.size() && s[i + 1] == '*') {
+      i += 2;
+      while (i + 1 < s.size() && !(s[i] == '*' && s[i + 1] == '/')) ++i;
+      ++i;
+      o.push_back(' ');
+    } else {
+      o.push_back(s[i]);
+    }
+  }
+  return o;
+}
+
+bool ident_char(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
+
+SystemDecl parse_system(const std::string& raw) {
+  SystemDecl sd;
+  const std::string s = strip_comments(raw);
+  std::size_t p = 0;
+  while (p < s.size()) {
+    std::size_t e = s.find(';', p);
+    std::string stmt = trim(s.substr(p, (e == std::string::npos ? s.size() : e) - p));
+    p = (e == std::string::npos) ? s.size() : e + 1;
+    if (stmt.empty()) continue;
+
+    // `system A, B, C;` — UPPAAL also allows '<' between priority groups.
+    if (stmt.size() >= 6 && stmt.compare(0, 6, "system") == 0 &&
+        (stmt.size() == 6 || !ident_char(stmt[6]))) {
+      sd.has_list = true;
+      std::string list = stmt.substr(6);
+      for (char& c : list) if (c == '<') c = ',';
+      for (auto n : split_conjuncts(list)) {
+        n = trim(n);
+        if (!n.empty()) sd.order.push_back(n);
+      }
+      continue;
+    }
+
+    // `Name = Template(args);`
+    std::size_t eq = stmt.find('=');
+    if (eq == std::string::npos) continue;
+    std::string lhs = trim(stmt.substr(0, eq));
+    std::string rhs = trim(stmt.substr(eq + 1));
+    if (rhs.empty() || rhs.back() != ')') continue;  // not an instantiation
+    std::size_t op = rhs.find('(');
+    if (op == std::string::npos) continue;
+    std::string tname = trim(rhs.substr(0, op));
+    std::string args = trim(rhs.substr(op + 1, rhs.size() - op - 2));
+    if (lhs.empty() || tname.empty()) continue;
+    if (!args.empty())
+      throw UppaalError("parameterised template instantiation is not supported: " + stmt);
+    sd.inst[lhs] = tname;
+  }
+  return sd;
+}
+
 }  // namespace
 
 TimedAutomaton load_uppaal_xml(const std::string& path) {
@@ -522,11 +595,17 @@ void parse_net_assign(const std::string& text, const ClockMap& cm,
 
 }  // namespace
 
-int uppaal_template_count(const std::string& path) {
+int uppaal_process_count(const std::string& path) {
   std::ifstream in(path);
   if (!in) throw UppaalError("cannot open model: " + path);
   std::stringstream ss; ss << in.rdbuf();
   Xml nta = XmlParser(ss.str()).parse();
+  // The system list decides how many processes there are: one template may be
+  // instantiated several times, and a template may not be in the system at all.
+  if (const Xml* sys = nta.first("system")) {
+    SystemDecl sd = parse_system(sys->text);
+    if (sd.has_list) return (int)sd.order.size();
+  }
   int n = 0;
   for (const auto& k : nta.kids) if (k.tag == "template") ++n;
   return n;
@@ -545,11 +624,68 @@ Network load_uppaal_network(const std::string& path) {
   net.clock_names.push_back("0");
   if (const Xml* d = nta.first("declaration")) { collect_clocks(d->text, cm, net.clock_names); collect_ints(d->text, im, net.intvars); collect_channels(d->text, chm, net.channels, net.chan_broadcast); }
 
-  for (const auto& tmpl : nta.kids) {
-    if (tmpl.tag != "template") continue;
+  // Index templates by name, keeping document order.
+  std::vector<const Xml*> tmpl_order;
+  std::unordered_map<std::string, const Xml*> tmpl_by_name;
+  for (const auto& k : nta.kids) {
+    if (k.tag != "template") continue;
+    tmpl_order.push_back(&k);
+    tmpl_by_name[k.first("name") ? trim(k.first("name")->text) : "P"] = &k;
+  }
+
+  SystemDecl sd;
+  if (const Xml* sys = nta.first("system")) sd = parse_system(sys->text);
+
+  // Resolve the process list: (instance name, defining template). Without a
+  // `system ...;` line, fall back to one process per template in document order.
+  std::vector<std::pair<std::string, const Xml*>> plist;
+  if (sd.has_list) {
+    for (const auto& nm : sd.order) {
+      auto ii = sd.inst.find(nm);
+      const std::string tn = (ii != sd.inst.end()) ? ii->second : nm;
+      auto ti = tmpl_by_name.find(tn);
+      if (ti == tmpl_by_name.end())
+        throw UppaalError("system declaration names unknown process or template: " + nm);
+      plist.emplace_back(nm, ti->second);
+    }
+  } else {
+    for (const Xml* t : tmpl_order)
+      plist.emplace_back(t->first("name") ? trim(t->first("name")->text) : "P", t);
+  }
+
+  // Template-local declarations are collected once per template, not per
+  // instance (collect_* append unconditionally, so repeating would duplicate).
+  std::unordered_map<const Xml*, int> use_count;
+  for (const auto& pr : plist) ++use_count[pr.second];
+  for (const Xml* t : tmpl_order) {
+    auto uc = use_count.find(t);
+    if (uc == use_count.end()) continue;  // template not part of the system
+    const Xml* d = t->first("declaration");
+    if (!d) continue;
+    if (uc->second > 1) {
+      // Two instances of a template with local clocks/variables would need one
+      // renamed copy each; sharing a single copy would be wrong, so refuse.
+      ClockMap probe_cm;
+      std::vector<std::string> probe_names{"0"};
+      std::unordered_map<std::string, int> probe_im;
+      std::vector<IntVar> probe_iv;
+      collect_clocks(d->text, probe_cm, probe_names);
+      collect_ints(d->text, probe_im, probe_iv);
+      if (probe_names.size() > 1 || !probe_iv.empty())
+        throw UppaalError("template '" +
+                          std::string(t->first("name") ? trim(t->first("name")->text) : "P") +
+                          "' declares local clocks/variables and is instantiated more than "
+                          "once; per-instance local state is not supported");
+    }
+    collect_clocks(d->text, cm, net.clock_names);
+    collect_ints(d->text, im, net.intvars);
+    collect_channels(d->text, chm, net.channels, net.chan_broadcast);
+  }
+
+  for (const auto& pr : plist) {
+    const Xml& tmpl = *pr.second;
     NProc proc;
-    proc.name = tmpl.first("name") ? tmpl.first("name")->text : "P";
-    if (const Xml* d = tmpl.first("declaration")) { collect_clocks(d->text, cm, net.clock_names); collect_ints(d->text, im, net.intvars); collect_channels(d->text, chm, net.channels, net.chan_broadcast); }
+    proc.name = pr.first;
     std::unordered_map<std::string, int> lid;
     for (const auto& k : tmpl.kids) {
       if (k.tag != "location") continue;
