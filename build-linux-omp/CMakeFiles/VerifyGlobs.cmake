@@ -7,10 +7,12 @@ file(GLOB NEW_GLOB LIST_DIRECTORIES true "/home/luca/Documents/ParallelCTLModelC
 set(OLD_GLOB
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/bisim.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/dbm.cpp"
+  "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/expr.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/network.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/reach.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp"
+  "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uexpr.cpp"
   "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uppaal.cpp"
   )
 if(NOT "${NEW_GLOB}" STREQUAL "${OLD_GLOB}")
