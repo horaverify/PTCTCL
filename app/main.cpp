@@ -39,7 +39,7 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
                    : backend == Backend::Metal ? "metal" : "cuda";
     std::vector<Query> queries = load_queries(query);
 
-    if (uppaal_template_count(model) > 1) {  // network of timed automata
+    if (uppaal_process_count(model) > 1) {  // network of timed automata
       Network net = load_uppaal_network(model);
       std::cout << "*** PTCTLMC — backend: " << bn << " | network: " << net.nprocs()
                 << " procs, " << net.nclocks << " clocks, " << net.intvars.size() << " int vars\n";

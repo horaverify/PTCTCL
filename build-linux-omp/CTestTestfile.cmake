@@ -1,0 +1,7 @@
+# CMake generated Testfile for 
+# Source directory: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC
+# Build directory: /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-linux-omp
+# 
+# This file includes the relevant testing commands required for 
+# testing this directory and lists subdirectories to be tested as well.
+subdirs("tests")
