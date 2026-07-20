@@ -28,6 +28,15 @@ struct NetEncoding {
   std::vector<int> edge_dir;           // [E] +1 '!', -1 '?', 0 none
   std::vector<char> chan_bcast;        // [nchan] broadcast?
   // host-only: per (process, location) the global edge indices of ALL its edges
+  // Back-pointer from a global edge index to the NEdge it was flattened from.
+  // The tables above only capture the `var OP const` / `var := const` fast
+  // paths; an edge may additionally carry gen_guard/gen_update (arithmetic,
+  // arrays, calls), which cannot be flattened into fixed-width triples. The GPU
+  // host loop evaluates those through gen_ok/gen_apply, so it needs the NEdge.
+  // Valid for as long as the source Network outlives the encoding.
+  std::vector<const NEdge*> edge_src;   // [E]
+  bool has_general = false;             // any edge carries gen_guard/gen_update
+
   std::vector<std::vector<std::vector<int>>> loc_edges;
 };
 
@@ -96,6 +105,8 @@ inline NetEncoding encode(const Network& net, const std::vector<char>& qmask) {
       en.ig_off.push_back(static_cast<int>(en.ig_data.size() / 3));
       for (const auto& a : e.int_updates) { en.iu_data.push_back(a.var); en.iu_data.push_back(static_cast<int>(a.val)); }
       en.iu_off.push_back(static_cast<int>(en.iu_data.size() / 2));
+      en.edge_src.push_back(&e);
+      if (e.gen_guard || e.gen_update) en.has_general = true;
       en.loc_edges[p][e.src].push_back(ge);  // ALL edges (sync enumeration happens in expand)
     }
   }

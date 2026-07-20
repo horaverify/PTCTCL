@@ -12,6 +12,17 @@ std::vector<int> NProc::edges_from(int loc) const {
   return out;
 }
 
+// One O(E) pass builds the per-location outgoing-edge lists, so the hot path
+// (successors_net) never scans or allocates to find a location's edges again.
+void NProc::build_edge_index() {
+  edges_by_loc.assign(locations.size(), {});
+  for (int e = 0; e < static_cast<int>(edges.size()); ++e) {
+    const int src = edges[e].src;
+    if (src >= 0 && src < static_cast<int>(edges_by_loc.size()))
+      edges_by_loc[src].push_back(e);
+  }
+}
+
 void Network::compute_bounds() {
   lbound.assign(nclocks + 1, 0);
   ubound.assign(nclocks + 1, 0);
@@ -34,6 +45,10 @@ void Network::compute_bounds() {
     for (const auto& e : p.edges) scan(e.clock_guard);
   }
   lbound[0] = ubound[0] = 0;
+
+  // compute_bounds() is the single network-finalisation point (called once after
+  // all templates/edges are loaded), so build the outgoing-edge index here too.
+  for (auto& p : procs) p.build_edge_index();
 }
 
 void Network::compute_loc_bounds() {

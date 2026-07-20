@@ -51,7 +51,17 @@ struct NProc {
   std::vector<Location> locations;   // clock invariants + urgent/committed
   std::vector<NEdge> edges;
   int initial = 0;
-  std::vector<int> edges_from(int loc) const;
+
+  // Outgoing edges indexed by source location, built once by build_edge_index().
+  // successors_net() is called once per (state, process) and used to call
+  // edges_from() there, which allocated a fresh vector and linearly scanned ALL
+  // edges every time -- the dominant malloc/scan cost on discrete-heavy models
+  // (viking). Reading edges_of(loc) instead is allocation-free.
+  std::vector<std::vector<int>> edges_by_loc;
+  void build_edge_index();
+  const std::vector<int>& edges_of(int loc) const { return edges_by_loc[loc]; }
+
+  std::vector<int> edges_from(int loc) const;  // still used off the hot path
 };
 
 struct Network {
