@@ -403,6 +403,124 @@ and no atomics---the invalid slots are simply skipped by the host afterwards. Th
 pressure: each thread holds a $\dim^2$ zone (plus scratch), which is what caps the supported clock
 count at $\dim \le 24$.
 
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[font=\small]
+
+%% ---------------- background panels ----------------
+\begin{scope}[on background layer]
+  \node[lane, fill=soft,  draw=cpu!35, minimum width=8.65cm, minimum height=6.45cm]
+       at (4.275,-2.275) {};
+  \node[lane, fill=softg, draw=gpu!35, minimum width=6.05cm, minimum height=7.20cm]
+       at (12.025,-2.65) {};
+  \node[lane, fill=soft,  draw=cpu!45, minimum width=15.10cm, minimum height=1.10cm]
+       at (7.50,-7.05) {};
+\end{scope}
+
+%% ---------------- headers ----------------
+\node[font=\small\bfseries, text=cpu] at (4.275,0.62) {HOST (CPU)};
+\node[font=\small\bfseries, text=gpu] at (12.025,0.62) {GPU (Metal)};
+
+%% ================= (1) frontier arrays =================
+\node[lbl] at (1.50,0.16) {BFS frontier, SoA};
+\node[cpubox, minimum width=3.0cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (1.50,-0.65) {\code{fl} -- locations\\ \code{nfr}$\times$\code{nprocs} int};
+\node[cpubox, minimum width=3.0cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (1.50,-1.75) {\code{fi} -- integer vars\\ \code{nfr}$\times$\code{nint} int};
+\node[cpubox, minimum width=3.0cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (1.50,-2.85) {\code{fz} -- zones\\ \code{nfr}$\times$\code{d2} \code{raw\_t}};
+
+%% ================= (2) recipe enumeration =================
+\node[lbl] at (6.15,0.16) {enumerate RECIPES -- one per successor};
+\node[cpubox, minimum width=4.6cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (6.15,-0.65) {LOCAL --- 1 edge\\ $\{(p,e)\}$};
+\node[cpubox, minimum width=4.6cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (6.15,-1.75) {BINARY handshake --- 2 edges\\ $\{(i,a!),(j,a?)\}$};
+\node[cpubox, minimum width=4.6cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (6.15,-2.85) {BROADCAST --- 1 sender, $K$ receivers\\ $\{(i,a!),(j_1,a?),\ldots,(j_K,a?)\}$};
+
+\draw[flow] (3.05,-1.75) -- (3.80,-1.75);
+
+\node[lbl, align=center, text width=6.6cm] at (3.55,-3.78)
+     {irregular and branchy -- channel matching, integer guards,
+      committed-location filtering $\Rightarrow$ stays on the CPU};
+
+\draw[flow] (7.95,-3.32) -- (7.95,-4.12);
+
+\node[cpubox, minimum width=8.2cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (4.30,-4.78) {recipes emitted as flat CSR arrays\\
+      \code{ws}, \code{part\_off}, \code{part\_cnt}, \code{part\_proc}, \code{part\_edge}\\
+      participants of recipe $w$: \code{part\_off[w]} $\ldots$ \code{+part\_cnt[w]}};
+
+%% ================= (3) GPU thread lane =================
+\node[lbl] at (12.025,0.16) {one thread per recipe, $N=$ \code{nwork}};
+\node[lane, fill=white, draw=gpu!45, minimum width=5.75cm, minimum height=0.95cm]
+     at (12.025,-0.80) {};
+\node[gpubox, minimum width=0.62cm, minimum height=0.62cm, inner sep=1pt, font=\scriptsize] at (9.58,-0.80) {$t_0$};
+\node[gpubox, minimum width=0.62cm, minimum height=0.62cm, inner sep=1pt, font=\scriptsize] at (10.28,-0.80) {$t_1$};
+\node[gpubox, minimum width=0.62cm, minimum height=0.62cm, inner sep=1pt, font=\scriptsize] at (10.98,-0.80) {$t_2$};
+\node[gpubox, minimum width=0.62cm, minimum height=0.62cm, inner sep=1pt, font=\scriptsize] at (11.68,-0.80) {$t_3$};
+\node[gpubox, minimum width=0.62cm, minimum height=0.62cm, inner sep=1pt, font=\scriptsize] at (12.38,-0.80) {$t_4$};
+\node[gpubox, minimum width=0.62cm, minimum height=0.62cm, inner sep=1pt, font=\scriptsize] at (13.08,-0.80) {$t_5$};
+\node[font=\scriptsize] at (13.72,-0.80) {$\cdots$};
+\node[gpubox, minimum width=0.95cm, minimum height=0.62cm, inner sep=1pt, font=\scriptsize] at (14.40,-0.80) {$t_{N-1}$};
+
+%% dispatch: CSR recipe arrays -> thread lane
+\draw[flow] (8.42,-4.78) -- (8.80,-4.78) -- (8.80,-0.80) -- (9.10,-0.80);
+
+%% representative thread -> zone pipeline
+\draw[dflow] (10.98,-1.12) -- (10.70,-1.72);
+
+\node[gpubox, text width=2.5cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (10.70,-1.95) {check guards};
+\node[gpubox, text width=2.5cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (10.70,-2.57) {apply resets};
+\node[gpubox, text width=2.5cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (10.70,-3.19) {target invariants};
+\node[gpubox, text width=2.5cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (10.70,-3.81) {delay (future)};
+\node[gpubox, text width=2.5cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (10.70,-4.43) {invariants again};
+\node[gpubox, text width=2.5cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (10.70,-5.10) {reset inactive clocks};
+\node[gpubox, text width=2.5cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (10.70,-5.80) {emptiness check};
+
+\draw[flow] (10.70,-2.16) -- (10.70,-2.36);
+\draw[flow] (10.70,-2.78) -- (10.70,-2.98);
+\draw[flow] (10.70,-3.40) -- (10.70,-3.60);
+\draw[flow] (10.70,-4.02) -- (10.70,-4.22);
+\draw[flow] (10.70,-4.64) -- (10.70,-4.80);
+\draw[flow] (10.70,-5.45) -- (10.70,-5.60);
+
+\node[lbl, rotate=90] at (9.18,-3.80) {zone pipeline run by every thread};
+
+\node[gpubox, text width=2.2cm, minimum height=4mm, inner sep=3pt, font=\scriptsize] at (13.65,-2.40)
+     {each thread owns\\ \textbf{one} zone:\\ \code{d2} \code{raw\_t} words\\ in private memory};
+
+\node[box, fill=white, draw=acc!75, text width=2.2cm, minimum height=4mm, inner sep=3pt, font=\scriptsize]
+     at (13.65,-4.70)
+     {thread $w$ touches\\ only slot $w$ --\\ no conflicts, no\\ atomics or locks};
+
+%% ================= (4) output arrays =================
+\draw[flow] (10.70,-6.02) -- (10.70,-6.55);
+\node[lbl, anchor=west] at (10.88,-6.26) {writes slot $w$};
+
+\node[gpubox, minimum width=3.4cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (1.95,-7.05) {\code{out\_valid}\\ \code{nwork} $\times$ \code{uint8}};
+\node[gpubox, minimum width=3.4cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (5.65,-7.05) {\code{out\_locs}\\ \code{nwork}$\times$\code{nprocs} int};
+\node[gpubox, minimum width=3.4cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (9.35,-7.05) {\code{out\_ints}\\ \code{nwork}$\times$\code{nint} int};
+\node[gpubox, minimum width=3.4cm, minimum height=6mm, inner sep=3pt, font=\scriptsize]
+     at (13.05,-7.05) {\code{out\_zones}\\ \code{nwork}$\times$\code{d2} \code{raw\_t}};
+
+\draw[dflow] (0.30,-6.52) -- (0.30,-5.55);
+\node[lbl, anchor=west] at (0.48,-6.08) {host reads the results in place -- no copy-back};
+
+\node[lbl, align=center, text width=14.4cm] at (7.50,-7.98)
+     {the four buffers are \code{MTLResourceStorageModeShared} (unified memory): the GPU writes them and the
+      host compacts them into the next frontier without any explicit transfer};
+
+\end{tikzpicture}
+\caption{Expansion, end to end. The host holds the frontier as three flat struct-of-arrays and enumerates \emph{recipes}---the irregular, branchy part (channel matching, integer guards, committed-location priority)---emitting them as CSR index arrays. The GPU then runs \emph{one thread per recipe}, each executing the identical zone pipeline on its own private zone and writing only its own output slot, so the kernel needs no atomics and no synchronisation. All four output buffers are unified memory, so the host reads them in place with no copy-back.}
+\label{fig:threadmap}
+\end{figure*}
+
 \subsection{Merge: one GPU thread per discrete-state bucket}\label{sec:kmrg}
 After expansion the host groups the valid successors by discrete key---integer hashing over the packed
 $\dk$, cheap and cache-friendly---and builds a \emph{work pool} describing the level's merge as flat
@@ -466,6 +584,103 @@ CPU cores simultaneously.}
 \label{fig:metal}
 \end{figure*}
 
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm]
+
+%% ---------------------------------------------------------------- header
+\node[font=\small\bfseries, anchor=north] at (8.0,7.45)
+  {merge kernel: one GPU thread $\leftrightarrow$ one discrete-state bucket \dk};
+
+%% panel separator
+\draw[draw=black!25, thick] (8.60,0.05) -- (8.60,7.00);
+
+%% ================================================================ LEFT
+\node[font=\small\bfseries, text=gpu, anchor=north] at (3.99,6.90)
+  {many thin buckets (Fischer, two-lock, arbiter)};
+\node[font=\small\bfseries, text=acc, anchor=north] at (3.99,6.50)
+  {GPU wins};
+\node[lbl, anchor=south] at (3.99,5.54) {every lane gets a bucket};
+
+\foreach \i/\n in {0/1, 1/2, 2/1, 3/1, 4/2, 5/1, 6/2, 7/1, 8/1, 9/2}{
+  \pgfmathsetmacro{\bx}{0.75+0.72*\i}
+  \draw[rounded corners=1.5pt, draw=gpu!75, thick, fill=softg]
+        (\bx-0.26,4.98) rectangle (\bx+0.26,5.42);
+  \foreach \j in {1,...,\n}{
+    \pgfmathsetmacro{\cy}{2.60+0.22*(\j-1)}
+    \draw[draw=cpu!60, fill=cpu!12, rounded corners=0.6pt]
+          (\bx-0.29,\cy) rectangle (\bx+0.29,\cy+0.19);
+  }
+  \pgfmathsetmacro{\by}{2.60+0.22*\n+0.10}
+  \draw[flow] (\bx,4.94) -- (\bx,\by);
+}
+
+\node[lbl, anchor=north, align=center, text width=7.4cm] at (3.99,2.46)
+  {$10^3$--$10^4$ buckets \dk, each with $k\!\le\!2$ zones:\\
+   work per lane $O(k^2\dim^3)$, $k$ small $\Rightarrow$ all lanes busy};
+
+%% what one lane actually does
+\node[lane, fill=white, anchor=north west, align=left, font=\scriptsize]
+     (steps) at (0.60,1.30)
+  {\textbf{one lane's entire body, inside its bucket $b$}\\[1pt]
+   (a) aLU-subsume new vs stored: \code{ALULE(zn,zw)} $\to$ skip\\
+   (b) drop stored zones killed by new, compact \code{W}\\
+   (c) convex-union absorb: \code{d\_try\_union(zn,zw)}\\
+   (d) append survivor: \code{W[cur]=zn}, \code{WI[cur]=1}};
+\draw[dflow] (7.23,2.56) -- (7.23,1.36);
+
+%% ================================================================ RIGHT
+\node[font=\small\bfseries, text=gpu, anchor=north] at (12.30,6.90)
+  {few fat buckets (dining philosophers)};
+\node[font=\small\bfseries, text=black!55, anchor=north] at (12.30,6.50)
+  {GPU stalls};
+\node[lbl, anchor=south] at (11.15,5.54) {3 busy lanes};
+
+\foreach \i/\n in {0/9, 1/8, 2/9}{
+  \pgfmathsetmacro{\bx}{9.90+1.25*\i}
+  \draw[rounded corners=1.5pt, draw=gpu!75, thick, fill=softg]
+        (\bx-0.31,4.98) rectangle (\bx+0.31,5.42);
+  \foreach \j in {1,...,\n}{
+    \pgfmathsetmacro{\cy}{2.60+0.22*(\j-1)}
+    \draw[draw=cpu!60, fill=cpu!12, rounded corners=0.6pt]
+          (\bx-0.40,\cy) rectangle (\bx+0.40,\cy+0.19);
+  }
+  \pgfmathsetmacro{\by}{2.60+0.22*\n+0.10}
+  \draw[flow] (\bx,4.94) -- (\bx,\by);
+}
+\node[lbl, anchor=west, align=left, text=black!70] at (13.10,3.00)
+  {$O(k^2\dim^3)$\\ per busy lane};
+
+%% idle lanes
+\foreach \i in {0,1,2}{
+  \foreach \r in {0,1}{
+    \pgfmathsetmacro{\ix}{13.75+0.80*\i}
+    \pgfmathsetmacro{\iy}{5.20-0.62*\r}
+    \draw[rounded corners=1.5pt, draw=black!30, thick, fill=black!7]
+          (\ix-0.31,\iy-0.22) rectangle (\ix+0.31,\iy+0.22);
+  }
+}
+\node[lbl, anchor=north, align=center] at (14.55,4.28)
+  {\ldots\ the rest of\\ the GPU idles};
+
+\node[lbl, anchor=north, align=center, text width=7.2cm] at (12.30,2.46)
+  {3 buckets, $k\approx 8$--40 zones each (a large antichain):\\
+   only 3 lanes are ever active, and \code{d\_try\_union}\\
+   fires over and over inside every one of them};
+
+%% measured callout
+\node[box, fill=acc!8, draw=acc!70, anchor=north west, align=left,
+      font=\scriptsize, text width=6.4cm] at (8.90,1.22)
+  {\textbf{measured:} merge is \textbf{93\%} of Metal wall time on
+   philosophers, but only \textbf{31\%} on Fischer --- the bucket shape,
+   not the kernel, decides.};
+
+\end{tikzpicture}
+\caption{Why the merge kernel's \emph{shape} decides everything. One GPU thread is assigned per discrete-state bucket. \textbf{Left:} many thin buckets (Fischer, two-lock, arbiter)---every lane gets a bucket with a tiny antichain, all lanes stay busy, and the GPU wins outright. \textbf{Right:} few fat buckets (dining philosophers)---a handful of lanes each grind through an $O(k^2\dim^3)$ antichain while the rest of the device idles. The inset lists what one lane actually executes. This single structural difference is the whole story of \cref{sec:eval}: measured, the merge is $93\%$ of Metal's wall time on philosophers but only $31\%$ on Fischer.}
+\label{fig:mergeshape}
+\end{figure*}
+
 \subsection{Keeping the GPU fed: the flat unified-memory data path}\label{sec:feed}
 The first working version was three times \emph{slower} than OpenMP, and the profiler explained
 why: the GPU kernels were ${\sim}25\%$ of the time, and the remaining ${\sim}75\%$ was the host
@@ -527,6 +742,86 @@ for (int i = 0; i < out_count[b]; ++i) {
 }
 \end{lstlisting}
 
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+
+% ---------- BFS level timeline: expand (GPU, fixed) + merge (routed) ----------
+% expansion segments: always on the GPU
+\foreach \x/\nm in {0/{$L_1$}, 2.3/{$L_2$}, 4.6/{$L_3$}, 6.9/{$L_4$}, 9.2/{$L_5$}, 12.3/{$L_n$}}{
+  \node[gpubox, anchor=south west, inner sep=1pt, minimum width=0.85cm,
+        minimum height=0.8cm, font=\tiny, text=gpu!85!black] at (\x,2.1) {expand\\GPU};
+  \node[font=\small, anchor=south] at (\x+1.0,2.94) {\nm};
+}
+% merge segments routed to the 12 CPU cores
+\foreach \x in {0, 4.6, 9.2}{
+  \node[cpubox, anchor=south west, inner sep=1pt, minimum width=1.15cm,
+        minimum height=0.8cm, font=\tiny, text=cpu!85!black] at (\x+0.85,2.1) {merge\\CPU};
+}
+% merge segments routed to the GPU
+\foreach \x in {2.3, 6.9, 12.3}{
+  \node[gpubox, anchor=south west, inner sep=1pt, minimum width=1.15cm,
+        minimum height=0.8cm, font=\tiny, text=gpu!85!black] at (\x+0.85,2.1) {merge\\GPU};
+}
+\node[font=\small] at (11.75,2.5) {$\cdots$};
+\node[lbl, anchor=south, rotate=90] at (-0.18,2.1) {BFS levels $\rightarrow$};
+
+% ---------- top annotations ----------
+\node[align=center, font=\scriptsize, text=cpu, anchor=south] at (1.0,3.30)
+     {calibrate CPU:\\measure\\work/ms\\[1pt]
+      {\color{black!55}\itshape(never}\\{\color{black!55}\itshape catastrophic)}};
+\node[align=center, font=\scriptsize, text=gpu, anchor=south] at (3.3,3.30)
+     {calibrate GPU:\\measure\\work/ms};
+\draw[decorate, decoration={brace, amplitude=4pt}, draw=black!45, thick]
+     (4.6,3.28) -- (14.3,3.28);
+\node[font=\scriptsize, anchor=south, align=center] at (9.45,3.44)
+     {route \emph{each} level to the measured-faster path};
+
+% ---------- measured rates feed the rule ----------
+\draw[dflow] (1.425,2.05) -- (1.425,1.50);
+\draw[dflow] (3.725,2.05) -- (3.725,1.50);
+\node[font=\scriptsize, text=cpu, anchor=west] at (1.52,1.80) {$\mathrm{rate}_{\mathrm{CPU}}$};
+\node[font=\scriptsize, text=gpu, anchor=west] at (3.82,1.80) {$\mathrm{rate}_{\mathrm{GPU}}$};
+
+% ---------- decision rule ----------
+\node[box, fill=black!2, anchor=north, minimum width=8.8cm,
+      font=\small, align=center] (rule) at (5.0,1.45)
+     {\code{--adaptive} routing rule, re-evaluated at every level\\[1.5pt]
+      $W=\sum_b |\mathrm{bucket}_b|^2$ \quad
+      $\mathrm{rate}=W/\Delta t$\\[1.5pt]
+      choose \textcolor{cpu}{CPU} iff
+      $\mathrm{rate}_{\mathrm{CPU}} \ge \mathrm{rate}_{\mathrm{GPU}}$,
+      else \textcolor{gpu}{GPU}};
+
+% ---------- the decision is applied to every later level ----------
+\draw[dflow] (rule.east) -- ++(2.35,0) -- (11.75,2.02);
+\node[lbl, anchor=south] at ($(rule.east)+(0.98,0.05)$) {per-level decision};
+
+% ---------- legend ----------
+\node[cpubox, inner sep=0pt, minimum width=0.5cm, minimum height=0.3cm] at (0.85,-0.62) {};
+\node[font=\scriptsize, anchor=west] at (1.17,-0.62) {merge on 12 CPU cores};
+\node[gpubox, inner sep=0pt, minimum width=0.5cm, minimum height=0.3cm] at (5.05,-0.62) {};
+\node[font=\scriptsize, anchor=west] at (5.37,-0.62) {merge on GPU};
+
+% ---------- notes ----------
+\node[lbl, anchor=west] at (0.6,-1.05)
+     {expansion is \emph{always} on the GPU --- only the antichain merge is routed};
+\node[lbl, anchor=west] at (0.6,-1.38)
+     {the router lives in the shared host driver, so the CUDA backend inherits it unchanged};
+
+% ---------- measured payoff (inset) ----------
+\node[lane, fill=white, anchor=south west, align=center, font=\scriptsize,
+      minimum width=4.3cm] at (10.0,-1.22)
+     {\textbf{measured payoff}\\[1pt]
+      philosophers $N{=}12$\\
+      naive $121.9$\,s $\rightarrow$ adaptive $2.59$\,s \ (\textcolor{acc}{$47\times$})};
+
+\end{tikzpicture}
+\caption{Adaptive merge routing. Expansion always runs on the GPU; only the antichain merge is routed. The driver \emph{measures} instead of guessing: it calibrates the CPU path first (never catastrophic), then the GPU path, recording each one's throughput $W/\Delta t$ over the work proxy $W=\sum_b |\mathrm{bucket}_b|^2$, and thereafter sends every level to whichever processor is measured faster. Because the router lives in the shared host driver rather than in device code, the CUDA backend inherits it unchanged.}
+\label{fig:adaptiverouting}
+\end{figure*}
+
 \subsection{Two data-path optimisations that failed (and why)}\label{sec:failed}
 Intuition said the ultimate win was a \emph{GPU-resident arena}: keep every passed-list zone on the
 GPU forever, store only \code{dk -> (offset,count)} on the host, and have the merge read existing
@@ -560,7 +855,7 @@ with \code{\#pragma omp parallel for}---i.e. the merge on all 12 cores instead o
 For every BFS level it estimates the merge work as $\sum_b |\mathrm{bucket}_b|^2$ and records each
 path's \emph{throughput} (work per millisecond); it calibrates the CPU path first (never
 catastrophic), then the GPU path, then routes every subsequent level to whichever is \emph{measured}
-faster, updating the estimate as it goes. \emph{Expansion always stays on the GPU}---only the merge is
+faster, updating the estimate as it goes (\cref{fig:adaptiverouting}). \emph{Expansion always stays on the GPU}---only the merge is
 routed. Because this lives in the \emph{shared} flat driver and not in device code, the CUDA backend
 (\cref{sec:cuda}) inherits it unchanged.
 
