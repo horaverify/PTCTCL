@@ -257,7 +257,9 @@ kernel void net_merge(
 {
   if (b >= uint(P.nb)) return;
   const int dim = P.dim, d2 = dim * dim, has_diag = P.has_diag;
-  device int* W = work + work_off[b] * d2;
+  // ulong indexing: work_off[b]*d2 overflows 32 bits once the pool exceeds ~3.7M zones at d2=576
+  // (kept in step with the same fix in netengine_cuda.cu, where a datacentre GPU reaches it).
+  device int* W = work + (ulong)work_off[b] * d2;
   device int* WI = work_isnew + work_off[b];
   device const int* L = Lb + b * dim;
   device const int* U = Ub + b * dim;
@@ -266,7 +268,7 @@ kernel void net_merge(
 
   for (int t = 0; t < new_cnt[b]; ++t) {
     int widx = new_idx[new_off[b] + t];
-    for (int k = 0; k < d2; ++k) zn[k] = oz[widx * d2 + k];
+    for (int k = 0; k < d2; ++k) zn[k] = oz[(ulong)widx * d2 + k];
 
     bool subsumed = false;                                   // zn subsumed by a stored zone?
     for (int i = 0; i < cur; ++i) {

@@ -112,12 +112,21 @@ std::string trim(const std::string& s) {
   return s.substr(a, b - a);
 }
 
+// True if c may appear inside an identifier. Used to require that a textual "and" operator is a whole
+// token: without checking BOTH sides, an identifier merely *ending* in "and" (land, command, rand) was
+// split mid-name, silently dropping the declaration and corrupting the model with no diagnostic.
+static inline bool ident_char(unsigned char c) { return std::isalnum(c) != 0 || c == '_'; }
+
 std::vector<std::string> split_conjuncts(const std::string& s) {
   std::vector<std::string> out;
   std::string cur;
   for (std::size_t i = 0; i < s.size();) {
     if (s.compare(i, 2, "&&") == 0) { out.push_back(trim(cur)); cur.clear(); i += 2; }
-    else if (s.compare(i, 3, "and") == 0 && (i + 3 >= s.size() || !std::isalnum((unsigned char)s[i + 3]))) { out.push_back(trim(cur)); cur.clear(); i += 3; }
+    else if (s.compare(i, 3, "and") == 0
+             && (i == 0 || !ident_char((unsigned char)s[i - 1]))
+             && (i + 3 >= s.size() || !ident_char((unsigned char)s[i + 3]))) {
+      out.push_back(trim(cur)); cur.clear(); i += 3;
+    }
     else if (s[i] == ',') { out.push_back(trim(cur)); cur.clear(); ++i; }
     else cur += s[i++];
   }

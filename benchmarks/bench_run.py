@@ -55,6 +55,13 @@ CONFIGS = [
     ("omp",      _p("--backend", "omp"),                OMP12),
     ("metal",    _p("--backend", "metal"),             OMP12),   # naive one-thread-per-bucket merge
     ("metal-ad", _p("--backend", "metal", "--adaptive"), OMP12), # calibrated CPU/GPU merge routing
+    # --chunking sweep: expand the frontier in bounded batches so the GPU pools are sized to a chunk
+    # rather than the widest BFS level. Sizes span 64x to trace the memory/time trade-off; a size
+    # larger than a model's peak frontier simply never triggers (identical to metal-ad).
+    ("mad-c4k",   _p("--backend", "metal", "--adaptive", "--chunking", "4096"),   OMP12),
+    ("mad-c16k",  _p("--backend", "metal", "--adaptive", "--chunking", "16384"),  OMP12),
+    ("mad-c64k",  _p("--backend", "metal", "--adaptive", "--chunking", "65536"),  OMP12),
+    ("mad-c256k", _p("--backend", "metal", "--adaptive", "--chunking", "262144"), OMP12),
 ]
 
 

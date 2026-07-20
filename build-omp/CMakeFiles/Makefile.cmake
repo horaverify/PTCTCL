@@ -59,4 +59,5 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/ptctlmc_core.dir/DependInfo.cmake"
   "CMakeFiles/ptctlmc.dir/DependInfo.cmake"
   "tests/CMakeFiles/ptctlmc_unit.dir/DependInfo.cmake"
+  "tests/CMakeFiles/ptctlmc_bisim.dir/DependInfo.cmake"
   )

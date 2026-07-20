@@ -72,10 +72,24 @@ include CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/codegen:
 .PHONY : CMakeFiles/ptctlmc_core.dir/codegen
 
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/bisim.cpp
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/bisim.cpp
+
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/bisim.cpp > CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.i
+
+CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/bisim.cpp -o CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.s
+
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/dbm.cpp
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/dbm.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.i: cmake_force
@@ -89,7 +103,7 @@ CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/netreach.cpp
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/netreach.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.i: cmake_force
@@ -103,7 +117,7 @@ CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/network.cpp
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/network.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/network.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/network.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/network.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/network.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/network.cpp.i: cmake_force
@@ -117,7 +131,7 @@ CMakeFiles/ptctlmc_core.dir/src/network.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/reach.cpp
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/reach.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/reach.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/reach.cpp.i: cmake_force
@@ -131,7 +145,7 @@ CMakeFiles/ptctlmc_core.dir/src/reach.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/ta.cpp
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/ta.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/ta.cpp.i: cmake_force
@@ -145,7 +159,7 @@ CMakeFiles/ptctlmc_core.dir/src/ta.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/uppaal.cpp
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o -MF CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o.d -o CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/uppaal.cpp
 
 CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.i: cmake_force
@@ -159,7 +173,7 @@ CMakeFiles/ptctlmc_core.dir/src/uppaal.cpp.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/engine_metal.mm
 CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -fobjc-arc -MD -MT CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o -MF CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o.d -o CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/engine_metal.mm
 
 CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.i: cmake_force
@@ -173,7 +187,7 @@ CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.s: cmake_force
 CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o: CMakeFiles/ptctlmc_core.dir/flags.make
 CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o: /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm
 CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o: CMakeFiles/ptctlmc_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CXX object CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -fobjc-arc -MD -MT CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o -MF CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o.d -o CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o -c /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/metal/netengine_metal.mm
 
 CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.i: cmake_force
@@ -186,6 +200,7 @@ CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.s: cmake_force
 
 # Object files for target ptctlmc_core
 ptctlmc_core_OBJECTS = \
+"CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o" \
 "CMakeFiles/ptctlmc_core.dir/src/network.cpp.o" \
@@ -198,6 +213,7 @@ ptctlmc_core_OBJECTS = \
 # External object files for target ptctlmc_core
 ptctlmc_core_EXTERNAL_OBJECTS =
 
+libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/dbm.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/network.cpp.o
@@ -208,7 +224,7 @@ libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/metal/engine_metal.mm.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/src/metal/netengine_metal.mm.o
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/build.make
 libptctlmc_core.a: CMakeFiles/ptctlmc_core.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Linking CXX static library libptctlmc_core.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Linking CXX static library libptctlmc_core.a"
 	$(CMAKE_COMMAND) -P CMakeFiles/ptctlmc_core.dir/cmake_clean_target.cmake
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/ptctlmc_core.dir/link.txt --verbose=$(VERBOSE)
 

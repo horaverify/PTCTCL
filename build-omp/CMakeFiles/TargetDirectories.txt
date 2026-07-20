@@ -4,6 +4,7 @@
 /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles/edit_cache.dir
 /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/CMakeFiles/rebuild_cache.dir
 /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/CMakeFiles/ptctlmc_unit.dir
+/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/CMakeFiles/ptctlmc_bisim.dir
 /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/CMakeFiles/test.dir
 /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/CMakeFiles/edit_cache.dir
 /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/CMakeFiles/rebuild_cache.dir

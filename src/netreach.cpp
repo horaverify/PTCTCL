@@ -3,6 +3,7 @@
 #include <chrono>
 #ifdef __APPLE__
 #include <malloc/malloc.h>
+#include <mach/mach.h>
 #endif
 
 #include <algorithm>
@@ -532,6 +533,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     // transient per-level pools the GPU buffers are sized to. Zero cost when unset.
     const bool memprof = std::getenv("PTCTLMC_MEMPROF") != nullptr;
     std::size_t peak_nwork = 0, peak_wtot = 0, peak_front = 0;
+    std::size_t peak_rss_ = 0, peak_rss_heap_ = 0, peak_rss_gpu_ = 0;
     double t_expand = 0, t_merge = 0;
     int prof_nb = 0, prof_maxsz = 0; double prof_meansz = 0; long long prof_peak_sum2 = 0;
     double gpu_rate = -1, cpu_rate = -1;   // adaptive merge routing: work-units (sum bucket^2) per ms
@@ -737,6 +739,19 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
           }
         }
       }
+#ifdef __APPLE__
+      if (memprof) {   // sample the TRUE resident peak per level, with its composition
+        mach_task_basic_info info{};
+        mach_msg_type_number_t cnt = MACH_TASK_BASIC_INFO_COUNT;
+        if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &cnt) == KERN_SUCCESS &&
+            info.resident_size > peak_rss_) {
+          malloc_statistics_t ms{}; malloc_zone_statistics(malloc_default_zone(), &ms);
+          peak_rss_ = info.resident_size;
+          peak_rss_heap_ = ms.size_in_use;
+          peak_rss_gpu_ = gpu->device_bytes();
+        }
+      }
+#endif
       // When chunking, the unexpanded tail of this frontier carries over to the next iteration.
       if (!whole) {
         nl.insert(nl.end(),  fl.begin() + static_cast<std::size_t>(nfr) * np,  fl.end());
@@ -778,8 +793,11 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         malloc_zone_statistics(malloc_default_zone(), &st);
         std::fprintf(stderr,
           "          malloc in-use  = %6.2f GB   (live heap)\n"
-          "          malloc reserved= %6.2f GB   (held by allocator, not returned to OS)\n",
-          st.size_in_use / GB, st.size_allocated / GB);
+          "          malloc reserved= %6.2f GB   (held by allocator, not returned to OS)\n"
+          "          >>> PEAK RSS   = %6.2f GB   at peak: heap %.2f GB + gpu %.2f GB = %.2f GB\n",
+          st.size_in_use / GB, st.size_allocated / GB,
+          peak_rss_ / GB, peak_rss_heap_ / GB, peak_rss_gpu_ / GB,
+          (peak_rss_heap_ + peak_rss_gpu_) / GB);
       }
 #endif
     }

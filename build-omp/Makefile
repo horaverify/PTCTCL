@@ -166,6 +166,19 @@ ptctlmc_unit/fast:
 	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_unit.dir/build.make tests/CMakeFiles/ptctlmc_unit.dir/build
 .PHONY : ptctlmc_unit/fast
 
+#=============================================================================
+# Target rules for targets named ptctlmc_bisim
+
+# Build rule for target.
+ptctlmc_bisim: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 ptctlmc_bisim
+.PHONY : ptctlmc_bisim
+
+# fast build rule for target.
+ptctlmc_bisim/fast:
+	$(MAKE) $(MAKESILENT) -f tests/CMakeFiles/ptctlmc_bisim.dir/build.make tests/CMakeFiles/ptctlmc_bisim.dir/build
+.PHONY : ptctlmc_bisim/fast
+
 app/main.o: app/main.cpp.o
 .PHONY : app/main.o
 
@@ -189,6 +202,30 @@ app/main.s: app/main.cpp.s
 app/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc.dir/build.make CMakeFiles/ptctlmc.dir/app/main.cpp.s
 .PHONY : app/main.cpp.s
+
+src/bisim.o: src/bisim.cpp.o
+.PHONY : src/bisim.o
+
+# target to build an object file
+src/bisim.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.o
+.PHONY : src/bisim.cpp.o
+
+src/bisim.i: src/bisim.cpp.i
+.PHONY : src/bisim.i
+
+# target to preprocess a source file
+src/bisim.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.i
+.PHONY : src/bisim.cpp.i
+
+src/bisim.s: src/bisim.cpp.s
+.PHONY : src/bisim.s
+
+# target to generate assembly for a file
+src/bisim.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ptctlmc_core.dir/build.make CMakeFiles/ptctlmc_core.dir/src/bisim.cpp.s
+.PHONY : src/bisim.cpp.s
 
 src/dbm.o: src/dbm.cpp.o
 .PHONY : src/dbm.o
@@ -392,11 +429,15 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... test"
 	@echo "... ptctlmc"
+	@echo "... ptctlmc_bisim"
 	@echo "... ptctlmc_core"
 	@echo "... ptctlmc_unit"
 	@echo "... app/main.o"
 	@echo "... app/main.i"
 	@echo "... app/main.s"
+	@echo "... src/bisim.o"
+	@echo "... src/bisim.i"
+	@echo "... src/bisim.s"
 	@echo "... src/dbm.o"
 	@echo "... src/dbm.i"
 	@echo "... src/dbm.s"
