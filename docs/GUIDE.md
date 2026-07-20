@@ -316,29 +316,46 @@ one pass merging each touched bucket with `add_to`. Because it is deterministic 
 the **correctness and parity oracle** — its stored/explored counts are the ones compared
 against UPPAAL.
 
-**OpenMP (`omp`).** The level loop parallelizes cleanly once you notice that buckets are
-independent. The passed set is **sharded by discrete key** across threads: `shard_of(dk)`
-(`netreach.cpp:389`) sends a given discrete state always to the same shard, so each shard is
-a self‑contained antichain owned by exactly one thread. Within a level:
+**OpenMP (`omp`) — the shared‑passed hybrid.** The default CPU backend is a **hybrid of
+LTSmin's parallel architecture and PTCTLMC's exact merge** (`--shared-passed`, on by
+default; `--legacy-passed` restores the old static‑shard design below for A/B). The design
+mirrors the FORMATS'12 opaal+LTSmin algorithm — *one* shared passed/waiting table with
+**fine‑grained locking and no static partition** — but keeps PTCTLMC's exact‑zone aLU +
+convex‑union merge as the per‑bucket operation. Three ideas compound:
 
-- **Expand in parallel** — frontier states are distributed across threads, each computing
-  successors into a per‑thread, per‑destination‑shard buffer (`byshard`), no locks.
-- **Merge in parallel** — thread `t` runs `add_to` over *only* its own shard's touched
-  buckets. Since shards are disjoint, the `O(bucket² · dim³)` convex merge — the most
-  expensive part — runs fully in parallel with no synchronization.
+- **Shared, stripe‑locked table (no serial barrier).** The passed set is one table split
+  into `NB ≫ nthreads` lock stripes. Any worker may insert any discrete state, taking only
+  that state's stripe lock. Expansion and insertion are **fused** — a frontier state's
+  successors go straight into the table — so there is no serial per‑level routing pass (the
+  Amdahl ceiling of the old design). Strict‑BFS level synchronization is kept (it minimizes
+  the state count). At one thread it is bit‑identical to `seq`.
 
-**The per‑thread DBM pool.** Zones are fixed‑size (`dim·dim` words) and allocated/freed
-constantly during expansion and merging. A shared `malloc` becomes a lock‑contention
-bottleneck across 12 threads, so each thread keeps its own free‑list pool of zone‑sized
-blocks (`include/ptctlmc/dbm_pool.hpp`); allocation is a pointer pop, freeing a pointer push,
-and the pool never gives memory back to the global allocator during a run.
+- **Zone interning.** Symmetric models reach millions of states but few *distinct* zones
+  (viking15: 2.77 M states, **120** distinct DBMs). Each distinct zone is stored once
+  (`ZoneIntern`) and every passed node holds a 4‑byte zone **index**; interned zones are
+  immutable (subsumption/`try_union` only read them), so lookups are lock‑free after a
+  per‑thread warm‑up. This collapses the resident zone set from ~1.5 GB to ~69 KB
+  (L2‑resident) and removes the large‑model memory‑bandwidth wall.
 
-**How it does.** On Fischer, `omp` at 12 threads beats single‑threaded `verifyta` by
-**~3.5×** at N=10–11 and **~3.0×** at N=12 (measured; §11). Parallel efficiency relative to
-`seq` is roughly `seq/omp ≈ 3.7×` at 12 threads — well short of linear, because the routing
-pass is serial and the subsumption/merge phase is memory‑bandwidth bound (it streams DBMs
-through the caches faster than the cores can be fed). That ceiling is exactly what motivates
-moving the merge onto the GPU's much wider memory system (§8).
+- **Storage reuse.** The frontier holds `(dk, zone‑index)` — 12 B, not a full state; locs/ints
+  are reconstructed from the packed key and the parent zone is passed by reference. And
+  `gen_succ_reuse` builds each successor **in place** in a reused buffer, so the per‑successor
+  loc/int/zone allocation (tens of millions of pooled alloc/free pairs) drops to zero after
+  warm‑up.
+
+**The per‑thread DBM pool** still backs the transient zone algebra (`include/ptctlmc/dbm_pool.hpp`):
+a free‑list of zone‑sized blocks, allocation a pointer pop, never returned to the global
+allocator during a run — no `malloc` lock contention across threads.
+
+**Legacy design (`--legacy-passed`).** The original CPU backend sharded the passed set
+**statically** by discrete key (`shard_of(dk)`), one shard per thread, with a *serial*
+per‑level routing pass into `byshard` before a lock‑free parallel merge. Kept as an A/B
+baseline; the shared‑passed hybrid is **3–4.3× faster** on viking (the gap grows with N).
+
+**How it does.** The hybrid **beats opaal+LTSmin on all four viking sizes** — LTSmin's own
+benchmark — at 8 threads (viking10 2.9×, viking12 1.6×, viking15 1.08×, viking17 1.67×), and
+**crushes Fischer** (~1000× at N=6; LTSmin's extrapolation explodes |Σ|/|S| to ~50 where
+PTCTLMC's convex merge keeps it ≈1). See §11 and `LTStest/results/HYBRID_FINDINGS.md`.
 
 ---
 
@@ -497,6 +514,31 @@ time is.
 **A kept micro‑optimization.** `skip-rebuild`: a bucket whose merge produced **0 survivors**
 (every new zone was subsumed) is unchanged, so its passed‑list rebuild and frontier gather are
 skipped entirely.
+
+### 10a. The CPU hybrid: catching opaal+LTSmin on *their* benchmark
+
+The same profiler‑guided discipline, applied to the `omp` backend, closed the gap with the
+FORMATS'12 opaal+LTSmin tool on the discrete‑heavy **viking** model (LTSmin's home turf). Each
+step is exact (state counts identical to `--legacy-passed`, verified on viking *and* Fischer):
+
+1. **Shared table replaces static shards (`--shared-passed`).** The old design's *serial*
+   per‑level routing pass was an Amdahl ceiling (1→2 threads only 1.45×). Replacing it with one
+   stripe‑locked table and **fused expand+insert** removed the barrier: viking15 scaling went
+   from 2.1× to 4.1× on 8 threads. This is LTSmin's Alg. 3/4 shape, with our exact merge kept
+   as the per‑bucket op.
+2. **Zone interning.** `PTCTLMC_STATS` revealed viking15 stores 2.77 M zones but only **120
+   distinct** ones. Storing each distinct DBM once and referencing it by index collapsed the
+   resident zone set (~1.5 GB → ~69 KB, L2‑resident), flipping viking17 from a loss to a win.
+3. **Frontier + successor storage reuse.** The frontier was shrunk to `(dk, zone‑index)` and
+   `gen_succ_reuse` builds each successor **in place** in a reused buffer — the profiler showed
+   the residual cost was ~40 M per‑successor pooled alloc/free pairs (a fresh `SymState` per
+   successor that `add()` immediately discards), *not* thermal throttling as first suspected.
+   Eliminating it took viking17 from ~12 s to **8.2 s** and viking15 to **1.24 s**.
+
+Result: `omp` **wins all four viking sizes** (10 2.9×, 12 1.6×, 15 1.08×, 17 1.67× at 8
+threads) and stays **~1000× ahead on Fischer**. Full numbers and the opaal soundness fix that
+made the Fischer comparison possible (opaal could not compile the `id != k` guards) are in
+`LTStest/results/HYBRID_FINDINGS.md`.
 
 ---
 

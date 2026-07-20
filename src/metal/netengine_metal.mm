@@ -23,6 +23,7 @@
 #include "ptctlmc/dbm_ops.hpp"
 #include "ptctlmc/net_gpu.hpp"
 #include "ptctlmc/net_gpu_encode.hpp"
+#include "ptctlmc/netreach.hpp"   // gen_ok / gen_apply — shared with the CPU path
 #include "ptctlmc/network.hpp"
 
 namespace ptctlmc {
@@ -151,9 +152,17 @@ struct MergeParams { int dim, nb, has_diag; };
 // the kernel is the pure zone pipeline over the participants (exactly successors_net's zone
 // steps: all guards, all resets, combined invariant, delay-if-not-frozen, invariant,
 // reset_inactive, emptiness) plus the discrete update (locs/ints).
+//
+// The INTEGER half of the discrete update is computed host-side and arrives already
+// applied, per work item, in `work_ints`. It used to be replayed here from a flattened
+// (var := const) table, which silently ignored NEdge::gen_update -- so a model whose
+// update is an expression (viking's `L = (1 - L) % 2`) lost the assignment entirely on
+// GPU and explored roughly half its state space. The host knows the source ints for each
+// recipe, so it runs the exact CPU semantics (int_updates then gen_apply) and ships the
+// result; that also lets a faulting update drop the recipe before it ever reaches the GPU.
 kernel void net_expand(
     device const int* front_locs [[buffer(0)]],
-    device const int* front_ints [[buffer(1)]],
+    device const int* work_ints  [[buffer(1)]],   // [nwork*nintvars], post-update
     device const int* front_zone [[buffer(2)]],
     device const int* work_state [[buffer(3)]],
     device const int* part_off   [[buffer(4)]],
@@ -165,19 +174,17 @@ kernel void net_expand(
     device const int* cg_data    [[buffer(10)]],
     device const int* rs_off     [[buffer(11)]],
     device const int* rs_clk     [[buffer(12)]],
-    device const int* iu_off     [[buffer(13)]],
-    device const int* iu_data    [[buffer(14)]],
-    device const int* locbase    [[buffer(15)]],
-    device const int* inv_off    [[buffer(16)]],
-    device const int* inv_data   [[buffer(17)]],
-    device const int* frozen     [[buffer(18)]],
-    device const int* active     [[buffer(19)]],
-    device const int* qmask      [[buffer(20)]],
-    device int*       out_valid  [[buffer(21)]],
-    device int*       out_locs   [[buffer(22)]],
-    device int*       out_ints   [[buffer(23)]],
-    device int*       out_zone   [[buffer(24)]],
-    constant Params&  P          [[buffer(25)]],
+    device const int* locbase    [[buffer(13)]],
+    device const int* inv_off    [[buffer(14)]],
+    device const int* inv_data   [[buffer(15)]],
+    device const int* frozen     [[buffer(16)]],
+    device const int* active     [[buffer(17)]],
+    device const int* qmask      [[buffer(18)]],
+    device int*       out_valid  [[buffer(19)]],
+    device int*       out_locs   [[buffer(20)]],
+    device int*       out_ints   [[buffer(21)]],
+    device int*       out_zone   [[buffer(22)]],
+    constant Params&  P          [[buffer(23)]],
     uint w [[thread_position_in_grid]])
 {
   if (w >= uint(P.nwork)) return;
@@ -221,17 +228,10 @@ kernel void net_expand(
   }
   if (d_empty(z, dim)) return;
 
-  // integer updates, in participant order (sender then receivers)
-  int nints[MAXINT];
-  for (int v = 0; v < nintvars; ++v) nints[v] = front_ints[si*nintvars + v];
-  for (int t = 0; t < pc; ++t) {
-    int ge = part_edge[po+t];
-    for (int u = iu_off[ge]; u < iu_off[ge+1]; ++u) nints[iu_data[2*u]] = iu_data[2*u+1];
-  }
-
   out_valid[w] = 1;
   for (int q = 0; q < nprocs; ++q) out_locs[w*nprocs + q] = nlocs[q];
-  for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = nints[v];
+  // integers: already updated host-side for this recipe (see the header comment)
+  for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
   for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = z[k];
 }
 
@@ -309,7 +309,9 @@ using netgpu::encode;
 
 class NetGpuMetal : public NetGpuExpander {
  public:
-  explicit NetGpuMetal(NetEncoding&& en) : en_(std::move(en)) {
+  // `net` must outlive this expander (it does: reachable_net owns it for the run).
+  // Needed because gen_guard/gen_update are evaluated host-side via gen_ok/gen_apply.
+  NetGpuMetal(const Network& net, NetEncoding&& en) : net_(&net), en_(std::move(en)) {
     device_ = MTLCreateSystemDefaultDevice();
     PTCTLMC_MTL_CHECK(device_ != nil, "no system default Metal device");
     queue_ = [device_ newCommandQueue];
@@ -328,7 +330,8 @@ class NetGpuMetal : public NetGpuExpander {
     // static (per-run) buffers
     b_edge_tgt_ = ibuf(en_.edge_tgt); b_cg_off_ = ibuf(en_.cg_off); b_cg_data_ = ibuf(en_.cg_data);
     b_rs_off_ = ibuf(en_.rs_off); b_rs_clk_ = ibuf(en_.rs_clk);
-    b_iu_off_ = ibuf(en_.iu_off); b_iu_data_ = ibuf(en_.iu_data);  // int guards are host-side (en_.ig_*)
+    // int guards AND int updates are host-side now (en_.ig_* / en_.iu_*): the update has
+    // to be, because gen_update is an expression the kernel cannot evaluate.
     b_locbase_ = ibuf(en_.locbase); b_inv_off_ = ibuf(en_.inv_off); b_inv_data_ = ibuf(en_.inv_data);
     b_frozen_ = ibuf(en_.frozen); b_active_ = ibuf(en_.active); b_qmask_ = ibuf(en_.qmask);
   }
@@ -344,6 +347,11 @@ class NetGpuMetal : public NetGpuExpander {
     std::vector<int> ints32(static_cast<std::size_t>(nstates) * ni);
     for (std::size_t i = 0; i < ints32.size(); ++i) ints32[i] = static_cast<int>(ints[i]);
 
+    // Source ints of the state currently being expanded, as the CPU path's IntVec.
+    // Only materialised for networks that actually carry gen_guard/gen_update, so
+    // Fischer and friends pay nothing for it.
+    std::vector<long> cur_long;
+
     auto int_ok_ge = [&](int ge, const int* si) {
       for (int g = en_.ig_off[ge]; g < en_.ig_off[ge + 1]; ++g) {
         const int var = en_.ig_data[3*g], op = en_.ig_data[3*g+1], val = en_.ig_data[3*g+2];
@@ -353,22 +361,49 @@ class NetGpuMetal : public NetGpuExpander {
                       case 3: ok = x <= val; break; case 4: ok = x > val; break; default: ok = x >= val; }
         if (!ok) return false;
       }
+      // General guard (arithmetic / array / call), evaluated with the SAME function the
+      // CPU path uses so the two backends cannot drift.
+      if (en_.has_general) {
+        const NEdge* e = en_.edge_src[ge];
+        if (e->gen_guard && !gen_ok(*net_, *e, cur_long.data(), cur_long.size())) return false;
+      }
       return true;
     };
 
     // enumerate successor recipes (participant lists), mirroring successors_net EXACTLY:
     // per state — location edges, then binary handshakes, then broadcasts.
     std::vector<int> ws, part_off, part_cnt, part_proc, part_edge;
+    std::vector<int> wints;                  // [nwork*ni] post-update ints, one row per recipe
     std::vector<std::pair<int, int>> parts;
+    std::vector<long> upd;                              // scratch, reused across recipes
+
+    // Applies the discrete integer update exactly as successors_net does: every
+    // participant's int_updates in participant order (sender then receivers), THEN every
+    // participant's gen_update. A faulting or out-of-range gen_update discards the
+    // transition, so the recipe is never emitted.
     auto emit = [&](int s) {
+      const long* src = ints.data() + static_cast<std::size_t>(s) * ni;
+      upd.assign(src, src + ni);
+      for (auto& pr : parts)
+        for (int u = en_.iu_off[pr.second]; u < en_.iu_off[pr.second + 1]; ++u)
+          upd[en_.iu_data[2*u]] = en_.iu_data[2*u + 1];
+      if (en_.has_general)
+        for (auto& pr : parts)
+          if (!gen_apply(*net_, *en_.edge_src[pr.second], upd.data(), upd.size())) return;
+
       ws.push_back(s);
       part_off.push_back(static_cast<int>(part_proc.size()));
       part_cnt.push_back(static_cast<int>(parts.size()));
       for (auto& pr : parts) { part_proc.push_back(pr.first); part_edge.push_back(pr.second); }
+      for (int v = 0; v < ni; ++v) wints.push_back(static_cast<int>(upd[v]));
     };
     for (int s = 0; s < nstates; ++s) {
       const int* sl = &locs[static_cast<std::size_t>(s) * np];
       const int* si = &ints32[static_cast<std::size_t>(s) * ni];
+      if (en_.has_general) {
+        const long* src = ints.data() + static_cast<std::size_t>(s) * ni;
+        cur_long.assign(src, src + ni);
+      }
       bool src_comm = false;
       for (int q = 0; q < np; ++q) if (en_.frozen[en_.locbase[q] + sl[q]] & 1) { src_comm = true; break; }
       for (int p = 0; p < np; ++p) {                                  // location edges
@@ -430,7 +465,7 @@ class NetGpuMetal : public NetGpuExpander {
     @autoreleasepool {
       id<MTLBuffer> b_fz = grow(pb_fz_, (zones.size() ? zones.size() : 1) * sizeof(raw_t));
       if (!zones.empty()) std::memcpy(b_fz.contents, zones.data(), zones.size() * sizeof(raw_t));
-      id<MTLBuffer> b_fl = ibuf(locs), b_fi = ibuf(ints32);
+      id<MTLBuffer> b_fl = ibuf(locs), b_wi = ibuf(wints);
       id<MTLBuffer> b_ws = ibuf(ws), b_po = ibuf(part_off), b_pc = ibuf(part_cnt),
                     b_pp = ibuf(part_proc), b_pe = ibuf(part_edge);
       id<MTLBuffer> b_ov = grow(pb_ov_, static_cast<std::size_t>(nwork) * sizeof(int)),
@@ -442,11 +477,11 @@ class NetGpuMetal : public NetGpuExpander {
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
       [enc setComputePipelineState:pso_];
-      id<MTLBuffer> bufs[25] = {b_fl, b_fi, b_fz, b_ws, b_po, b_pc, b_pp, b_pe, b_edge_tgt_, b_cg_off_,
-                                b_cg_data_, b_rs_off_, b_rs_clk_, b_iu_off_, b_iu_data_, b_locbase_,
+      id<MTLBuffer> bufs[23] = {b_fl, b_wi, b_fz, b_ws, b_po, b_pc, b_pp, b_pe, b_edge_tgt_, b_cg_off_,
+                                b_cg_data_, b_rs_off_, b_rs_clk_, b_locbase_,
                                 b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_, b_ov, b_ol, b_oi, b_oz};
-      for (int i = 0; i < 25; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
-      [enc setBytes:&P length:sizeof(P) atIndex:25];
+      for (int i = 0; i < 23; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
+      [enc setBytes:&P length:sizeof(P) atIndex:23];
       NSUInteger tg = pso_.maxTotalThreadsPerThreadgroup;
       if (tg > static_cast<NSUInteger>(nwork)) tg = nwork;
       [enc dispatchThreads:MTLSizeMake(nwork, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
@@ -551,14 +586,17 @@ class NetGpuMetal : public NetGpuExpander {
     return b;
   }
 
+  const Network* net_ = nullptr;   // for gen_ok/gen_apply; outlives this object
   NetEncoding en_;
   int kZeroPad_ = 0;
   id<MTLDevice> device_ = nil;
   id<MTLCommandQueue> queue_ = nil;
   id<MTLComputePipelineState> pso_ = nil;
   id<MTLComputePipelineState> pso_merge_ = nil;
+  // No b_iu_* here: the integer update is applied host-side (gen_update is an
+  // expression, so the kernel cannot replay it from a flat table).
   id<MTLBuffer> b_edge_tgt_, b_cg_off_, b_cg_data_, b_rs_off_, b_rs_clk_,
-      b_iu_off_, b_iu_data_, b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_;
+      b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_;
   id<MTLBuffer> pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_;   // persistent expand in/out zone+disc pools
   id<MTLBuffer> pb_work_, pb_wi_;                         // persistent merge work pool + isnew
 
@@ -585,7 +623,7 @@ std::unique_ptr<NetGpuExpander> make_net_gpu_metal(const Network& net,
   if (net.nprocs() > 64 || static_cast<int>(net.intvars.size()) > 32) return nullptr;
   if (MTLCreateSystemDefaultDevice() == nil) return nullptr;
   try {
-    return std::make_unique<NetGpuMetal>(encode(net, qmask));
+    return std::make_unique<NetGpuMetal>(net, encode(net, qmask));
   } catch (...) {
     return nullptr;  // any Metal failure -> CPU fallback
   }

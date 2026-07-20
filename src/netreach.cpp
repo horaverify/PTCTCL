@@ -7,11 +7,14 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -41,21 +44,230 @@ struct SymState {
   Dbm zone;
 };
 
+struct Entry { SymState s; int level; };
+
+// ---- zone interning --------------------------------------------------------
+// Discrete-heavy symmetric models (viking) reach millions of states but only a
+// handful of DISTINCT zone matrices (~120 for viking15's 2.77M states). Storing
+// each distinct DBM once and referencing it by a 4-byte index collapses the
+// resident zone set from ~1.5 GB to a few KB (L2-resident), removing the
+// memory-bandwidth wall that made large viking trail LTSmin. Interned zones are
+// IMMUTABLE: subsumption and try_union only ever READ the stored zone (mutating
+// the incoming fresh one), so reads need no lock; only the first sight of a new
+// distinct zone takes the mutex. A per-thread byte-keyed cache skips the mutex
+// once a thread has seen a zone -- for viking, after the first BFS level every
+// intern is a lock-free hit. Low-sharing models (fischer, ~80% distinct) simply
+// intern more zones; correctness is unaffected -- two byte-identical canonical
+// DBMs are the same zone, and the merge is unchanged.
+struct ZoneKey {
+  const raw_t* p;
+  int n;
+  bool operator==(const ZoneKey& o) const {
+    return n == o.n && std::memcmp(p, o.p, static_cast<std::size_t>(n) * sizeof(raw_t)) == 0;
+  }
+};
+struct ZoneKeyHash {
+  std::size_t operator()(const ZoneKey& k) const {
+    std::uint64_t h = 1469598103934665603ULL;
+    for (int i = 0; i < k.n; ++i) { h ^= static_cast<std::uint32_t>(k.p[i]); h *= 1099511628211ULL; }
+    return static_cast<std::size_t>(h);
+  }
+};
+struct ZoneIntern {
+  static constexpr int kMax = 1 << 21;                 // distinct-zone cap (2M)
+  std::deque<Dbm> store;                                // stable Dbm addresses; index = insertion order
+  std::vector<const Dbm*> pz;                           // pz[idx] -> stored Dbm (reserved -> lock-free indexed read)
+  std::unordered_map<ZoneKey, int, ZoneKeyHash> map;    // global dedup; keys point into `store`
+  std::vector<std::unordered_map<ZoneKey, int, ZoneKeyHash>> tcache;  // per-thread cache; keys point into `store`
+  std::mutex mtx;
+  std::atomic<int> n{0};
+  int dim2;
+
+  ZoneIntern(int dim2_, int nthreads) : tcache(nthreads > 0 ? nthreads : 1), dim2(dim2_) { pz.reserve(kMax); }
+
+  // Read a stored (immutable) zone. Lock-free: pz is reserved so it never moves,
+  // and any stored index was published (under mtx, then through the stripe/phase
+  // locks) before the arena node referencing it became visible to this thread.
+  const Dbm& get(int idx) const { return *pz[idx]; }
+
+  // Intern `z`, returning its distinct-zone index. `z` is not modified.
+  int intern(const Dbm& z, int tid) {
+    ZoneKey qk{z.data().data(), dim2};
+    auto& tc = tcache[tid];
+    auto tit = tc.find(qk);
+    if (tit != tc.end()) return tit->second;            // lock-free hit (all of viking after level 1)
+    std::lock_guard<std::mutex> lk(mtx);
+    int idx;
+    auto it = map.find(qk);
+    if (it != map.end()) {
+      idx = it->second;
+    } else {
+      idx = n.load(std::memory_order_relaxed);
+      if (idx >= kMax) throw std::runtime_error("zone intern table overflow (too many distinct zones)");
+      store.push_back(z);                               // the one deep copy per DISTINCT zone
+      const Dbm& d = store.back();
+      pz[idx] = &d;
+      map.emplace(ZoneKey{d.data().data(), dim2}, idx);
+      n.store(idx + 1, std::memory_order_release);
+    }
+    tc.emplace(ZoneKey{pz[idx]->data().data(), dim2}, idx);  // cache with the STABLE stored bytes
+    return idx;
+  }
+};
+
+// Flat open-addressing passed/waiting table for one shared-passed stripe.
+// Replaces std::unordered_map<dk, std::vector<Entry>>, which cost ~2 system
+// mallocs per discrete state (a map node + a bucket vector) -- the dominant
+// cost on discrete-heavy models (viking, ~1 zone/dk), where LTSmin's flat
+// lockless table wins. Here:
+//   * `tab` is an open-addressing slot array: dk -> arena index of the antichain
+//     HEAD (or -1). It only holds small (dk,int) pairs, so a rehash moves no
+//     SymStates.
+//   * `arena` is a std::deque of nodes with STABLE addresses (never moved on
+//     growth), each holding one zone (Entry) and the `next` index of the next
+//     zone for the same dk. Dead (subsumed/merged) nodes are tombstoned.
+// The per-bucket merge is byte-for-byte the same aLU + convex-union logic as the
+// legacy add_to; only the container changed. The brand-new-dk path (the whole of
+// viking) allocates nothing per state and skips state_bounds.
+struct NetPassed {
+  // A node stores ONLY the zone + BFS level. The discrete part (locs/ints) is
+  // NOT kept: it is losslessly packed in the bucket's dk (disc_key/decode_key are
+  // exact inverses) and identical for every zone in the bucket, so storing it per
+  // node was pure redundancy -- two pooled-vector allocations and ~72 B per
+  // stored state. Dropping it shrinks the resident passed set (the working set
+  // that thrashes cache at 2.7M+ states, the large-viking bottleneck) and removes
+  // the per-state alloc the profile was dominated by. locs/ints are reconstructed
+  // from dk only when a survivor re-enters the frontier (once per survivor, in
+  // for_level). The merge below never needs them: it touches stored nodes only
+  // for their zone, and the aLU bounds come from the INCOMING state's locs.
+  struct Node { int zidx; int level; int next; bool dead; };   // zidx: index into the shared ZoneIntern
+  struct Slot { std::uint64_t dk; int head; };
+  std::deque<Node> arena;
+  std::vector<Slot> tab;
+  std::uint64_t mask;
+  std::size_t used = 0;   // distinct discrete states (occupied slots)
+  ZoneIntern* zi = nullptr;   // shared distinct-zone table (set before first add)
+
+  NetPassed() : tab(1024, Slot{0, -1}), mask(1023) {}
+
+  static std::uint64_t mix(std::uint64_t dk) { return dk * 0x9e3779b97f4a7c15ULL; }
+
+  std::size_t slot_of(std::uint64_t dk) const {
+    std::size_t i = static_cast<std::size_t>(mix(dk) & mask);
+    while (tab[i].head != -1 && tab[i].dk != dk) i = (i + 1) & mask;
+    return i;
+  }
+  void grow() {
+    const std::size_t ncap = (mask + 1) * 2;
+    std::vector<Slot> nt(ncap, Slot{0, -1});
+    const std::uint64_t nmask = ncap - 1;
+    for (const auto& s : tab)
+      if (s.head != -1) {
+        std::size_t i = static_cast<std::size_t>(mix(s.dk) & nmask);
+        while (nt[i].head != -1) i = (i + 1) & nmask;
+        nt[i] = s;
+      }
+    tab.swap(nt);
+    mask = nmask;
+  }
+
+  // Merge zone `s.zone` (stamped `level`) into dk's antichain. Only the zone is
+  // stored; the rest of `s` is discarded. Returns the arena index of the newly
+  // stored node (a new survivor) or -1 if subsumed and dropped. `bounds(locs, ..)`
+  // fills the per-location aLU bounds from the INCOMING state; it is only invoked
+  // when the discrete state already exists, so a brand-new dk pays nothing for it.
+  template <class BoundsFn>
+  int add(SymState&& s, std::uint64_t dk, int level, bool has_diag, BoundsFn&& bounds, int tid) {
+    if (used * 10 >= (mask + 1) * 7) grow();
+    const std::size_t si = slot_of(dk);
+    if (tab[si].head == -1) {                       // brand-new discrete state (fast path)
+      const int idx = static_cast<int>(arena.size());
+      arena.push_back(Node{zi->intern(s.zone, tid), level, -1, false});
+      tab[si] = Slot{dk, idx};
+      ++used;
+      return idx;
+    }
+    thread_local std::vector<std::int32_t> Ls, Us;
+    if (!has_diag) bounds(s.locs.data(), Ls, Us);
+    const int head = tab[si].head;
+    // (2) s subsumed by a stored zone? -> drop
+    for (int i = head; i != -1; i = arena[i].next) {
+      if (arena[i].dead) continue;
+      const Dbm& ez = zi->get(arena[i].zidx);
+      if (has_diag ? ez.includes(s.zone) : s.zone.alu_subsumed_by(ez, Ls, Us))
+        return -1;
+    }
+    // (3) drop stored zones now subsumed by s
+    for (int i = head; i != -1; i = arena[i].next) {
+      if (arena[i].dead) continue;
+      const Dbm& ez = zi->get(arena[i].zidx);
+      if (has_diag ? s.zone.includes(ez) : ez.alu_subsumed_by(s.zone, Ls, Us))
+        arena[i].dead = true;
+    }
+    // (4) convex-union merge: absorb stored zones whose union with s is exact.
+    // try_union mutates only s.zone (the incoming fresh zone); the interned zone
+    // is read-only, so this never disturbs another state's stored zone.
+    for (bool merged = true; merged;) {
+      merged = false;
+      for (int i = head; i != -1; i = arena[i].next) {
+        if (arena[i].dead) continue;
+        if (s.zone.try_union(zi->get(arena[i].zidx))) { arena[i].dead = true; merged = true; break; }
+      }
+    }
+    // (5) prepend s to the chain
+    const int idx = static_cast<int>(arena.size());
+    arena.push_back(Node{zi->intern(s.zone, tid), level, tab[si].head, false});
+    tab[si].head = idx;
+    return idx;
+  }
+
+  // Visit the live zones stamped `level` for discrete state dk. The callback
+  // receives the stored zone; the caller reconstructs locs/ints from dk.
+  template <class F>
+  void for_level(std::uint64_t dk, int level, F&& f) const {
+    std::size_t i = static_cast<std::size_t>(mix(dk) & mask);
+    while (tab[i].head != -1 && tab[i].dk != dk) i = (i + 1) & mask;
+    if (tab[i].head == -1) return;
+    for (int n = tab[i].head; n != -1; n = arena[n].next)
+      if (!arena[n].dead && arena[n].level == level) f(arena[n].zidx);
+  }
+
+  void stats(std::size_t& disc, std::size_t& zones) const {
+    disc += used;
+    for (const auto& n : arena)
+      if (!n.dead) ++zones;
+  }
+  // Probe (PTCTLMC_STATS): visit every live zone, to measure distinct-zone sharing.
+  template <class F>
+  void for_each_live_zone(F&& f) const {
+    for (const auto& nd : arena)
+      if (!nd.dead) f(zi->get(nd.zidx));
+  }
+};
+
 bool apply_all(Dbm& z, const std::vector<Constraint>& cs) {
   for (const auto& c : cs)
     if (!z.constrain(c.i, c.j, c.bound)) return false;
   return true;
 }
 
+}  // namespace
+
 // ---- general modelling-language guard/update -------------------------------
 // Only edges that need more than `var OP const` carry these (see NEdge). The
 // common case is a null check, so this costs nothing for Fischer/viking.
+//
+// These two are deliberately OUTSIDE the anonymous namespace: the GPU engines
+// (src/metal, src/cuda) must apply exactly the same semantics as the CPU path,
+// and duplicating them there is how the backends silently diverged before --
+// the Metal expander dropped `gen_update` entirely and explored roughly half of
+// viking's state space. Declared in netreach.hpp.
 
 // Scratch buffer so a guard that calls a function cannot perturb the live state.
-bool gen_ok(const Network& net, const NEdge& e, const IntVec& ints) {
+bool gen_ok(const Network& net, const NEdge& e, const long* ints, std::size_t n) {
   if (!e.gen_guard) return true;
   thread_local std::vector<long> scratch;
-  scratch.assign(ints.begin(), ints.end());
+  scratch.assign(ints, ints + n);
   EvalCtx cx;
   cx.cells = scratch.data();
   cx.funcs = &net.funcs;
@@ -67,10 +279,10 @@ bool gen_ok(const Network& net, const NEdge& e, const IntVec& ints) {
 // division by zero, runaway loop) or if a write left a variable's declared
 // range -- the latter would silently collide in the packed discrete key, so it
 // is refused rather than mis-encoded.
-bool gen_apply(const Network& net, const NEdge& e, IntVec& ints) {
+bool gen_apply(const Network& net, const NEdge& e, long* ints, std::size_t n) {
   if (!e.gen_update) return true;
   thread_local std::vector<long> buf;
-  buf.assign(ints.begin(), ints.end());
+  buf.assign(ints, ints + n);
   EvalCtx cx;
   cx.cells = buf.data();
   cx.funcs = &net.funcs;
@@ -85,6 +297,8 @@ bool gen_apply(const Network& net, const NEdge& e, IntVec& ints) {
   }
   return true;
 }
+
+namespace {
 
 bool int_ok(const std::vector<IntAtom>& g, const IntVec& ints) {
   for (const auto& a : g) {
@@ -162,18 +376,24 @@ std::string disc_key(const LocVec& locs, const IntVec& ints) {
   return k;
 }
 
-void successors_net(const Network& net, const SymState& s, const std::vector<std::int32_t>& L,
+// The parent zone is passed SEPARATELY (szone) rather than read from s.zone, so
+// callers that already hold the zone elsewhere -- notably the shared-passed path,
+// where it lives in the intern table -- can pass it by reference instead of
+// copying a 576 B DBM into the frontier state for every expansion (millions of
+// pointless copies on large viking). s.zone is ignored; s carries only locs/ints.
+void successors_net(const Network& net, const SymState& s, const Dbm& szone,
+                    const std::vector<std::int32_t>& L,
                     const std::vector<std::int32_t>& U, const std::vector<char>& qmask, int emode, std::vector<SymState>& out) {
   thread_local std::vector<Constraint> inv;  // reused invariant scratch (see all_invariants)
   bool src_committed, src_urgent;
   frozen_flags(net, s.locs, &src_committed, &src_urgent);
   for (int p = 0; p < net.nprocs(); ++p) {
     if (src_committed && !net.procs[p].locations[s.locs[p]].committed) continue;
-    for (int ei : net.procs[p].edges_from(s.locs[p])) {
+    for (int ei : net.procs[p].edges_of(s.locs[p])) {
       const NEdge& e = net.procs[p].edges[ei];
       if (e.sync_chan >= 0) continue;
-      if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints)) continue;
-      Dbm z1 = s.zone;
+      if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints.data(), s.ints.size())) continue;
+      Dbm z1 = szone;
       if (!apply_all(z1, e.clock_guard)) continue;
       for (int r : e.clock_resets) z1.reset(r);
 
@@ -182,7 +402,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
       ns.locs[p] = e.tgt;
       ns.ints = s.ints;
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
-      if (!gen_apply(net, e, ns.ints)) continue;
+      if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
 
       all_invariants(net, ns.locs, inv);
       if (!apply_all(z1, inv)) continue;
@@ -200,20 +420,20 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
 
   // ---- binary channel synchronisation (a! in proc i  ||  a? in proc j) ----
   for (int i = 0; i < net.nprocs(); ++i) {
-    for (int ei : net.procs[i].edges_from(s.locs[i])) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1) continue;  // sender a!
       if (net.chan_broadcast[se.sync_chan]) continue;      // broadcast handled below
-      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints)) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
       const bool i_comm = net.procs[i].locations[s.locs[i]].committed;
       for (int j = 0; j < net.nprocs(); ++j) {
         if (j == i) continue;
-        for (int ej : net.procs[j].edges_from(s.locs[j])) {
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
           const NEdge& re = net.procs[j].edges[ej];
           if (re.sync_chan != se.sync_chan || re.sync_dir != -1) continue;  // receiver a?
           if (src_committed && !(i_comm || net.procs[j].locations[s.locs[j]].committed)) continue;
-          if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints)) continue;
-          Dbm z1 = s.zone;
+          if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints.data(), s.ints.size())) continue;
+          Dbm z1 = szone;
           if (!apply_all(z1, se.clock_guard)) continue;
           if (!apply_all(z1, re.clock_guard)) continue;
           for (int r : se.clock_resets) z1.reset(r);
@@ -225,7 +445,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
           ns.ints = s.ints;
           for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;  // sender then receiver
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
-          if (!gen_apply(net, se, ns.ints) || !gen_apply(net, re, ns.ints)) continue;
+          if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) || !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
           all_invariants(net, ns.locs, inv);
           if (!apply_all(z1, inv)) continue;
           bool nc, nu;
@@ -244,18 +464,18 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
 
   // ---- broadcast synchronisation: a! fires with ALL enabled a? (0 or more) ----
   for (int i = 0; i < net.nprocs(); ++i) {
-    for (int ei : net.procs[i].edges_from(s.locs[i])) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
-      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints)) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
       // Each other process contributes at most one enabled a? (nondeterministic choice).
       std::vector<std::pair<int, std::vector<int>>> parts;
       for (int j = 0; j < net.nprocs(); ++j) {
         if (j == i) continue;
         std::vector<int> es;
-        for (int ej : net.procs[j].edges_from(s.locs[j])) {
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
           const NEdge& re = net.procs[j].edges[ej];
-          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints))
+          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
             es.push_back(ej);
         }
         if (!es.empty()) parts.push_back({j, std::move(es)});
@@ -266,7 +486,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
         for (const auto& pr : parts)
           if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
         if (!src_committed || part_committed) {
-          Dbm z1 = s.zone;
+          Dbm z1 = szone;
           bool ok = apply_all(z1, se.clock_guard);
           for (std::size_t t = 0; ok && t < parts.size(); ++t)
             ok = apply_all(z1, net.procs[parts[t].first].edges[parts[t].second[pick[t]]].clock_guard);
@@ -303,6 +523,160 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
   }
 }
 
+// Slot-reusing successor generation for the shared-passed hot path. Semantically
+// identical to successors_net above, but instead of building a fresh SymState
+// (two pooled loc/int vectors + a DBM) per successor and push_back-ing it -- ~3
+// allocations for every one of tens of millions of successors, all discarded by
+// add() which keeps only the interned zone -- it BUILDS EACH SUCCESSOR IN PLACE in
+// a reused `out` slot. The caller does not clear `out`; it reads out[0..return).
+// Because add() interns the zone by copy (never moves the SymState out), the slots
+// survive the caller's loop and are reused on the next frontier state, so after a
+// short warm-up the per-successor allocation is ZERO. (The legacy successors_net
+// stays for the seq/legacy/single-TA paths, which accumulate rather than reuse and
+// are slated for removal.)
+std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szone,
+                           const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
+                           const std::vector<char>& qmask, int emode, std::vector<SymState>& out) {
+  thread_local std::vector<Constraint> inv;
+  std::size_t on = 0;
+  auto slot = [&]() -> SymState& { if (on == out.size()) out.emplace_back(); return out[on]; };
+  bool src_committed, src_urgent;
+  frozen_flags(net, s.locs, &src_committed, &src_urgent);
+
+  // ---- location edges ----
+  for (int p = 0; p < net.nprocs(); ++p) {
+    if (src_committed && !net.procs[p].locations[s.locs[p]].committed) continue;
+    for (int ei : net.procs[p].edges_of(s.locs[p])) {
+      const NEdge& e = net.procs[p].edges[ei];
+      if (e.sync_chan >= 0) continue;
+      if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints.data(), s.ints.size())) continue;
+      SymState& ns = slot();
+      ns.zone = szone;                                    // into reused capacity
+      if (!apply_all(ns.zone, e.clock_guard)) continue;
+      for (int r : e.clock_resets) ns.zone.reset(r);
+      ns.locs.assign(s.locs.begin(), s.locs.end());
+      ns.locs[p] = e.tgt;
+      ns.ints.assign(s.ints.begin(), s.ints.end());
+      for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
+      if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
+      all_invariants(net, ns.locs, inv);
+      if (!apply_all(ns.zone, inv)) continue;
+      bool nc, nu;
+      frozen_flags(net, ns.locs, &nc, &nu);
+      if (!nc && !nu) { ns.zone.delay(); apply_all(ns.zone, inv); }
+      reset_inactive(net, ns.locs, ns.zone, qmask);
+      if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
+      else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+      if (ns.zone.empty()) continue;
+      ++on;
+    }
+  }
+
+  // ---- binary channel synchronisation ----
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1) continue;
+      if (net.chan_broadcast[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      const bool i_comm = net.procs[i].locations[s.locs[i]].committed;
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan != se.sync_chan || re.sync_dir != -1) continue;
+          if (src_committed && !(i_comm || net.procs[j].locations[s.locs[j]].committed)) continue;
+          if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints.data(), s.ints.size())) continue;
+          SymState& ns = slot();
+          ns.zone = szone;
+          if (!apply_all(ns.zone, se.clock_guard)) continue;
+          if (!apply_all(ns.zone, re.clock_guard)) continue;
+          for (int r : se.clock_resets) ns.zone.reset(r);
+          for (int r : re.clock_resets) ns.zone.reset(r);
+          ns.locs.assign(s.locs.begin(), s.locs.end());
+          ns.locs[i] = se.tgt;
+          ns.locs[j] = re.tgt;
+          ns.ints.assign(s.ints.begin(), s.ints.end());
+          for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;
+          for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
+          if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) || !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
+          all_invariants(net, ns.locs, inv);
+          if (!apply_all(ns.zone, inv)) continue;
+          bool nc, nu;
+          frozen_flags(net, ns.locs, &nc, &nu);
+          if (!nc && !nu) { ns.zone.delay(); apply_all(ns.zone, inv); }
+          reset_inactive(net, ns.locs, ns.zone, qmask);
+          if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
+          else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+          if (ns.zone.empty()) continue;
+          ++on;
+        }
+      }
+    }
+  }
+
+  // ---- broadcast synchronisation ----
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      std::vector<std::pair<int, std::vector<int>>> parts;
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        std::vector<int> es;
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
+            es.push_back(ej);
+        }
+        if (!es.empty()) parts.push_back({j, std::move(es)});
+      }
+      std::vector<std::size_t> pick(parts.size(), 0);
+      for (;;) {
+        bool part_committed = net.procs[i].locations[s.locs[i]].committed;
+        for (const auto& pr : parts)
+          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        if (!src_committed || part_committed) {
+          SymState& ns = slot();
+          ns.zone = szone;
+          bool ok = apply_all(ns.zone, se.clock_guard);
+          for (std::size_t t = 0; ok && t < parts.size(); ++t)
+            ok = apply_all(ns.zone, net.procs[parts[t].first].edges[parts[t].second[pick[t]]].clock_guard);
+          if (ok) {
+            ns.locs.assign(s.locs.begin(), s.locs.end());
+            ns.ints.assign(s.ints.begin(), s.ints.end());
+            ns.locs[i] = se.tgt;
+            for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;
+            for (int r : se.clock_resets) ns.zone.reset(r);
+            for (std::size_t t = 0; t < parts.size(); ++t) {
+              const NEdge& re = net.procs[parts[t].first].edges[parts[t].second[pick[t]]];
+              ns.locs[parts[t].first] = re.tgt;
+              for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
+              for (int r : re.clock_resets) ns.zone.reset(r);
+            }
+            all_invariants(net, ns.locs, inv);
+            if (apply_all(ns.zone, inv)) {
+              bool nc, nu;
+              frozen_flags(net, ns.locs, &nc, &nu);
+              if (!nc && !nu) { ns.zone.delay(); apply_all(ns.zone, inv); }
+              reset_inactive(net, ns.locs, ns.zone, qmask);
+              if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
+              else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+              if (!ns.zone.empty()) ++on;
+            }
+          }
+        }
+        if (parts.empty()) break;
+        std::size_t k = 0;
+        for (; k < parts.size(); ++k) { if (++pick[k] < parts[k].second.size()) break; pick[k] = 0; }
+        if (k == parts.size()) break;
+      }
+    }
+  }
+  return on;
+}
+
 void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
                    const std::vector<Constraint>& cs) {
   for (const auto& c : cs) {
@@ -326,6 +700,15 @@ void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
 static bool g_adaptive_merge = false;
 void set_adaptive_merge(bool on) { g_adaptive_merge = on; }
 bool adaptive_merge() { return g_adaptive_merge; }
+
+// Shared vs legacy passed list (CPU seq/omp path). ON by default: one shared,
+// stripe-locked passed/waiting table (LTSmin Alg. 3/4 shape) whose per-bucket
+// operation is PTCTLMC's own exact-zone aLU + convex-union merge -- the hybrid.
+// The legacy path (--legacy-passed) statically partitions the passed list into
+// S=nthreads shards and routes successors serially each level; kept for A/B.
+static bool g_shared_passed = true;
+void set_shared_passed(bool on) { g_shared_passed = on; }
+bool shared_passed() { return g_shared_passed; }
 
 // Frontier chunking (see netreach.hpp). Off by default = expand a whole BFS level at once.
 static bool g_chunking = false;
@@ -494,7 +877,6 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       k |= static_cast<std::uint64_t>(ints[v] - net.intvars[v].lo) << dshift[net.nprocs() + v];
     return k;
   };
-  struct Entry { SymState s; int level; };
   std::vector<std::unordered_map<std::uint64_t, std::vector<Entry>>> shards(S);
   auto shard_of = [&](std::uint64_t dk) -> int {
     return S == 1 ? 0 : static_cast<int>((dk * 0x9e3779b97f4a7c15ULL) % static_cast<unsigned>(S));
@@ -853,6 +1235,164 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   }
 #endif
 
+  // ======================================================================
+  // SHARED-PASSED (hybrid): one stripe-locked passed/waiting table that any
+  // worker may touch, locking only the stripe of the discrete state it is
+  // updating -- LTSmin's "shared table + fine-grained locking, no static
+  // partition" (Alg. 3/4). The per-bucket update is unchanged: PTCTLMC's exact
+  // aLU subsumption + convex-union merge (add_to). Expansion and insertion are
+  // FUSED, so there is no serial per-level routing barrier; strict-BFS level
+  // synchronisation is kept (it minimises the state count). At 1 thread this is
+  // bit-identical to the legacy path (same per-bucket merge, same order).
+  if (g_shared_passed) {
+    int nbbits = 10;                                   // >= 1024 stripes, and >> nthreads
+    while ((1 << nbbits) < std::max(1024, nthreads * 64)) ++nbbits;
+    const std::size_t NB = static_cast<std::size_t>(1) << nbbits;
+    const int shift = 64 - nbbits;
+    const int dim2 = (net.nclocks + 1) * (net.nclocks + 1);
+    ZoneIntern zi(dim2, nthreads);                     // ONE shared distinct-zone table
+    std::vector<NetPassed> smap(NB);                   // flat per-stripe passed tables
+    for (auto& mp : smap) mp.zi = &zi;
+    std::vector<std::mutex> smtx(NB);                  // one lock per stripe (value-init in place)
+    auto stripe_of = [&](std::uint64_t dk) -> std::size_t {
+      return static_cast<std::size_t>((dk * 0x9e3779b97f4a7c15ULL) >> shift);
+    };
+
+    // The frontier holds only (dk, zone-index) per state -- 12 B, not a full
+    // SymState. locs/ints come from dk (decode_key) and the zone from the intern
+    // table, reconstructed into a REUSED per-thread scratch at expansion. This
+    // removes the ~1.6 GB of interned-zone copies the old make_survivor did (one
+    // full DBM copied into every frontier state) and shrinks the resident
+    // frontier ~50× so it stays cache-resident during expansion.
+    const int np_ = net.nprocs(), ni_ = static_cast<int>(net.intvars.size());
+    std::vector<std::pair<std::uint64_t, int>> frontier;
+    {
+      const std::uint64_t dk = disc_key(s0.locs, s0.ints);
+      const int z0 = zi.intern(s0.zone, 0);
+      smap[stripe_of(dk)].add(std::move(s0), dk, 0, has_diag, state_bounds, 0);
+      frontier.push_back({dk, z0});
+    }
+
+    int level = 0;
+    std::size_t nexpanded = 0;
+    std::atomic<bool> found{false};
+    const bool single = (nthreads == 1);   // seq / omp -p1: skip locks + the touched union
+    while (!frontier.empty()) {
+      if (stats) stats->explored += frontier.size();
+      if (has_diag && (nexpanded += frontier.size()) > 500000)
+        throw std::runtime_error("state cap exceeded — model likely has unbounded diagonal clocks");
+      ++level;
+
+      // Expand each frontier state and insert its successors DIRECTLY into the
+      // shared table, locking only the touched stripe (expansion and insertion
+      // fused → no serial routing barrier). Fused insertion is what keeps the
+      // convex-union merge order stable enough to match the legacy state counts.
+      std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
+      std::vector<std::size_t> tls_gen(nthreads, 0);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel num_threads(nthreads)
+      {
+        const int tid = omp_get_thread_num();
+        auto& touched = tls_touched[tid];
+        std::vector<SymState> buf;
+        SymState cur;                    // reused per thread: reconstructed frontier state
+        cur.locs.resize(np_);
+        cur.ints.resize(ni_);
+#pragma omp for schedule(dynamic, 8)
+        for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
+          if (found.load(std::memory_order_relaxed)) continue;
+          decode_key(frontier[i].first, cur.locs.data(), cur.ints.data());
+          // buf is NOT cleared: gen_succ_reuse rebuilds slots in place and returns
+          // the count, so the loc/int/zone storage is reused across frontier states.
+          const std::size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second), L, U, qmask, emode, buf);
+          for (std::size_t sk = 0; sk < ns; ++sk) {
+            SymState& s = buf[sk];
+            ++tls_gen[tid];
+            if (is_target(s)) { found.store(true, std::memory_order_relaxed); break; }
+            const std::uint64_t dk = disc_key(s.locs, s.ints);
+            const std::size_t si = stripe_of(dk);
+            if (single) {
+              if (smap[si].add(std::move(s), dk, level, has_diag, state_bounds, tid) >= 0) touched.insert(dk);
+            } else {
+              std::lock_guard<std::mutex> lk(smtx[si]);
+              if (smap[si].add(std::move(s), dk, level, has_diag, state_bounds, tid) >= 0) touched.insert(dk);
+            }
+          }
+        }
+      }
+#else
+      {
+        auto& touched = tls_touched[0];
+        std::vector<SymState> buf;
+        SymState cur;
+        cur.locs.resize(np_);
+        cur.ints.resize(ni_);
+        for (auto& fr : frontier) {
+          decode_key(fr.first, cur.locs.data(), cur.ints.data());
+          const std::size_t ns = gen_succ_reuse(net, cur, zi.get(fr.second), L, U, qmask, emode, buf);
+          for (std::size_t sk = 0; sk < ns; ++sk) {
+            SymState& s = buf[sk];
+            ++tls_gen[0];
+            if (is_target(s)) return true;
+            const std::uint64_t dk = disc_key(s.locs, s.ints);
+            if (smap[stripe_of(dk)].add(std::move(s), dk, level, has_diag, state_bounds, 0) >= 0)
+              touched.insert(dk);
+          }
+        }
+      }
+#endif
+      if (stats) for (std::size_t g : tls_gen) stats->generated += g;
+      if (found.load()) return true;
+
+      // Collect this level's survivors (entries stamped `level`) into the next
+      // frontier. Union the per-thread touched sets so each dk is scanned once;
+      // the tables are read-only here (no writers), so for_level is a safe read.
+      std::vector<std::uint64_t> tdk;
+      if (single) {
+        tdk.assign(tls_touched[0].begin(), tls_touched[0].end());
+      } else {
+        std::unordered_set<std::uint64_t> allt;
+        for (auto& t : tls_touched) allt.insert(t.begin(), t.end());
+        tdk.assign(allt.begin(), allt.end());
+      }
+      // Survivors go into the next frontier as (dk, zone-index) pairs -- no
+      // SymState build, no zone copy here (that happens once, lazily, at the next
+      // expansion into the reused `cur`).
+      std::vector<std::vector<std::pair<std::uint64_t, int>>> nf(nthreads);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 64) num_threads(nthreads)
+      for (long k = 0; k < static_cast<long>(tdk.size()); ++k) {
+        const std::uint64_t dk = tdk[k];
+        auto& buf = nf[omp_get_thread_num()];
+        smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
+      }
+#else
+      for (const std::uint64_t dk : tdk)
+        smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { nf[0].push_back({dk, zidx}); });
+#endif
+      std::vector<std::pair<std::uint64_t, int>> next;
+      for (auto& v : nf)
+        for (auto& p : v) next.push_back(p);
+      frontier.swap(next);
+    }
+    if (std::getenv("PTCTLMC_STATS")) {
+      std::size_t zones = 0, disc = 0;
+      for (const auto& mp : smap) mp.stats(disc, zones);
+      std::unordered_set<std::uint64_t> distinct;   // distinct-zone probe (FNV-1a of zone bytes)
+      for (const auto& mp : smap)
+        mp.for_each_live_zone([&](const Dbm& z) {
+          const auto& d = z.data();
+          std::uint64_t h = 1469598103934665603ULL;
+          for (raw_t r : d) { h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(r)); h *= 1099511628211ULL; }
+          distinct.insert(h);
+        });
+      std::fprintf(stderr, "[stats] discrete-states=%zu stored-zones=%zu distinct-zones=%zu generated=%zu (shared-passed, %zu stripes)\n",
+                   disc, zones, distinct.size(), stats ? stats->generated : 0, NB);
+    }
+    return false;
+  }
+  // ======================================================================
+
   std::vector<SymState> frontier;
   frontier.push_back(s0);
   {
@@ -877,11 +1417,11 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         auto& buf = tls[omp_get_thread_num()];
 #pragma omp for schedule(dynamic, 8)
         for (long i = 0; i < static_cast<long>(frontier.size()); ++i)
-          successors_net(net, frontier[i], L, U, qmask, emode, buf);
+          successors_net(net, frontier[i], frontier[i].zone, L, U, qmask, emode, buf);
       }
 #endif
     } else {
-      for (auto& f : frontier) successors_net(net, f, L, U, qmask, emode, tls[0]);
+      for (auto& f : frontier) successors_net(net, f, f.zone, L, U, qmask, emode, tls[0]);
     }
 
     // (2) route each successor to its shard (serial, cheap); early-exit on target
@@ -1008,7 +1548,7 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
     if (stats) ++stats->explored;
     if (time_diverges(node[u])) return true;
     std::vector<SymState> succ;
-    successors_net(net, node[u], L, U, qmask, emode, succ);
+    successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ);
     for (auto& ns : succ) {
       if (!sat(ns)) continue;
       const int v = intern(std::move(ns));
@@ -1103,7 +1643,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   for (int u = 0; u < static_cast<int>(node.size()); ++u) {
     if (stats) ++stats->explored;
     std::vector<SymState> succ;
-    successors_net(net, node[u], L, U, qmask, emode, succ);
+    successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ);
     for (auto& ns : succ) { const int v = intern(std::move(ns)); adj[u].push_back(v); }
   }
   const int N = static_cast<int>(node.size());
