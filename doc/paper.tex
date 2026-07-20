@@ -83,21 +83,21 @@ discrete-state bucket, with a host-side marshaling layer that we ultimately para
 CPU cores as well---so the machine computes with the GPU \emph{and} all cores at once. We validate
 that every backend explores the \emph{identical} zone graph as UPPAAL---matching its stored- and
 explored-state counts \emph{integer-for-integer} on Fischer, two-lock and arbiter---so the
-speed-ups compare like with like. Across a stress evaluation that climbs each model to the
+speed-ups compare like with like. Across an evaluation whose per-model size grid is capped by the
 machine's memory ceiling, both parallel backends beat single-threaded \texttt{verifyta} on every
 model (OpenMP by up to $3.5\times$). The Metal backend additionally beats the 12-thread OpenMP
 backend on the \emph{expansion-dominated} models---Fischer, two-lock and arbiter---reaching
-$3.7$--$4.9\times$ over \texttt{verifyta}; a single optimisation that stops the host copying freshly
+$3.3$--$6.2\times$ over \texttt{verifyta}; a single optimisation that stops the host copying freshly
 generated zones (the merge kernel reads them in place from the expand kernel's output) is what turns
 the largest Fischer instance from a loss into a win. The one place the naive GPU merge \emph{loses}---a
 \emph{merge-dominated} model (dining philosophers), where its one-thread-per-bucket kernel is the
-wrong shape and collapses to $119$\,s---we \emph{fix} with an \code{--adaptive} mode that calibrates
+wrong shape and collapses to $122$\,s---we \emph{fix} with an \code{--adaptive} mode that calibrates
 the GPU-versus-12-core-CPU merge throughput per level and routes each level to the faster path: a
-$13$--$40\times$ speed-up that makes the adaptive Metal backend the fastest configuration on
-\emph{every} model, beating OpenMP throughout and \code{verifyta} by $3.4$--$5.6\times$. Its cost is
+$14$--$47\times$ speed-up that makes the adaptive Metal backend the fastest configuration on
+\emph{every} model, beating OpenMP throughout and \code{verifyta} by $3.4$--$7.3\times$. Its cost is
 memory---the GPU backends carry a double-buffering premium---so peak RAM, not run time, sets the
 ceiling on a $24$\,GB laptop. We give the design, intuition and diagrams for both backends, an honest
-account of two optimisations that \emph{failed}, and a CUDA port that inherits the adaptive merge for
+account of three optimisations that \emph{failed}, and a CUDA port that inherits the adaptive merge for
 datacentre GPUs.
 \end{abstract}
 
@@ -487,10 +487,11 @@ CUDA backend both to raise the ceiling and to soften the merge-dominated worst c
 \section{Experimental evaluation}\label{sec:eval}
 % ===========================================================================
 \paragraph{Setup.} Apple M4 Pro (12 CPU cores; integrated GPU; 24\,GB unified memory), macOS.
-We measure five configurations: \code{seq} (one core), \code{omp} (12 threads), \code{metal}
+We measure nine configurations: \code{seq} (one core), \code{omp} (12 threads), \code{metal}
 (GPU\,$+$\,12 cores, \emph{naive} one-thread-per-bucket merge), \code{metal-ad}
-(\code{metal --adaptive}, \cref{sec:adaptive}), and the reference UPPAAL \code{verifyta} 5.0
-(single-threaded). Wall-clock is a discarded warm-up then the \emph{minimum} of $k$ timed runs
+(\code{metal --adaptive}, \cref{sec:adaptive}), a sweep of \code{--chunking} at $4$k/$16$k/$64$k/$256$k
+frontier states per batch (all on top of \code{--adaptive}), and the reference UPPAAL \code{verifyta}
+5.0 (single-threaded). Wall-clock is a discarded warm-up then the \emph{minimum} of $k$ timed runs
 ($k$ shrinks from $5$ toward $1$ as a single run grows past $15$\,s; deterministic baselines need no
 repeats). Peak RSS is captured with \code{/usr/bin/time -l} in the same probe. Because
 \code{metal-ad} allocates host merge buffers on top of the GPU buffers it is the memory-hungriest
@@ -540,25 +541,25 @@ full speed-up-over-\code{verifyta} curves, and \cref{fig:adaptive} what \code{--
 facts hold everywhere: \textbf{every parallel backend beats single-threaded \code{verifyta}} at scale,
 and \textbf{correctness is invariant} (all configurations agree on the verdict). The headline is that
 \textbf{the adaptive Metal backend is the fastest configuration on every model}, beating the 12-thread
-OpenMP backend at every large $N$ and reaching $3.4$--$5.6\times$ over \code{verifyta}.
+OpenMP backend at every large $N$ and reaching $3.4$--$7.3\times$ over \code{verifyta}.
 
 \begin{table}[t]
 \centering\small
 \caption{Wall-clock seconds (min-of-$k$). \code{metal} is the naive one-thread-per-bucket merge;
 \code{metal-ad} is \code{--adaptive} (\cref{sec:adaptive}). The fastest backend is in \textbf{bold};
 the last column is its speed-up over \code{vfy}. \code{metal-ad} wins every row---and rescues the
-philosophers blow-up where the naive merge reaches $119$\,s.}
+philosophers blow-up where the naive merge reaches $122$\,s.}
 \label{tab:main}
 \begin{tabular}{l r r r r r r r r}
 \toprule
 model & $N$ & stored & \code{seq} & \code{omp} & \code{metal} & \code{metal-ad} & \code{vfy} & best/\code{vfy} \\
 \midrule
-Fischer      & 12 & 2\,681\,780 & 59.97 & 15.22 & 13.35 & \textbf{11.46} & 52.32 & $4.6\times$ \\
-two-lock     & 11 &   860\,477 & 14.84 & 4.12 & 2.74 & \textbf{2.38} & 13.22 & $5.6\times$ \\
-arbiter      & 16 &   589\,824 & 10.41 & 2.79 & 1.78 & \textbf{1.73} & 5.58 & $3.2\times$ \\
-CSMA/CD      & 14 &   618\,496 & 10.89 & 3.17 & 3.12 & \textbf{1.82} & 9.06 & $5.0\times$ \\
-philosophers & 11 &   188\,687 & 4.00 & 1.09 & 7.83 & \textbf{0.60} & 2.20 & $3.7\times$ \\
-philosophers & 12 &   574\,299 & 19.63 & 5.89 & 119.2 & \textbf{2.97} & 10.14 & $3.4\times$ \\
+Fischer      & 12 & 2\,681\,780 & 59.67 & 14.95 & 9.89 & \textbf{8.25} & 51.01 & $6.2\times$ \\
+two-lock     & 11 &   860\,477 & 14.57 & 3.80 & 2.13 & \textbf{1.80} & 13.24 & $7.3\times$ \\
+arbiter      & 16 &   589\,824 & 10.40 & 2.53 & 1.61 & \textbf{1.57} & 5.29 & $3.4\times$ \\
+CSMA/CD      & 14 &   618\,496 & 11.94 & 3.32 & 2.98 & \textbf{1.61} & 9.70 & $6.0\times$ \\
+philosophers & 11 &   188\,687 & 4.29 & 1.03 & 7.85 & \textbf{0.54} & 2.41 & $4.5\times$ \\
+philosophers & 12 &   574\,299 & 20.74 & 5.17 & 121.93 & \textbf{2.59} & 10.88 & $4.2\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -582,15 +583,15 @@ dominated by the uniform arithmetic of \emph{expansion}---the GPU's strength---a
 merge-heavy models the naive one-thread-per-bucket merge (\cref{sec:metal}) collapses: on philosophers
 the exact convex union fires constantly, and a handful of weak GPU lanes each grind through an
 $O(k^2\dim^3)$ per-bucket load while the CPU idles. The effect is dramatic and super-linear---at
-philosophers $N{=}12$ the naive Metal merge takes \textbf{119\,s}, an order of magnitude \emph{slower}
+philosophers $N{=}12$ the naive Metal merge takes \textbf{122\,s}, an order of magnitude \emph{slower}
 than plain \code{seq}. This is the empirical face of the tension in the abstract: expansion is parallel
 \emph{across} states, but the merge is sequential \emph{within} a bucket.
 
 \paragraph{Adaptive metal fixes it.} Routing the merge per level (\cref{sec:adaptive})---GPU when
 buckets are many and thin, the 12 CPU cores when they are few and fat---turns that loss into the
 best result on the board. \Cref{fig:adaptive} plots the ratio: \code{--adaptive} is a
-\textbf{$13\times$} speed-up on philosophers $N{=}11$ and a \textbf{$40\times$} speed-up at $N{=}12$
-($119\!\to\!2.97$\,s), a $1.6$--$1.9\times$ win on CSMA, and---crucially---never a regression on the
+\textbf{$14\times$} speed-up on philosophers $N{=}11$ and a \textbf{$47\times$} speed-up at $N{=}12$
+($121.9\!\to\!2.59$\,s), a $1.9\times$ win on CSMA, and---crucially---never a regression on the
 already-fast expansion-dominated models (ratio ${\approx}\,1$ on Fischer, two-lock, arbiter, since the
 calibration simply leaves the merge on the GPU there). With adaptive on, \code{metal-ad} beats OpenMP
 at every large $N$ across \emph{all five} models (\cref{tab:main}).
@@ -599,7 +600,7 @@ at every large $N$ across \emph{all five} models (\cref{tab:main}).
 \centering
 \includegraphics[width=\linewidth]{figs/adaptive_speedup.png}
 \caption{What \code{--adaptive} buys: naive-merge time $/$ adaptive-merge time (${>}1$ = adaptive
-faster). It is a $40\times$ speed-up on the merge-heavy philosophers at $N{=}12$ and a modest win on
+faster). It is a $47\times$ speed-up on the merge-heavy philosophers at $N{=}12$ and a modest win on
 CSMA, while staying ${\approx}1$ (no regression) on the expansion-dominated models---the calibration
 routes each level to the faster path.}
 \label{fig:adaptive}
@@ -623,11 +624,11 @@ double-buffering $+$ host merge buffers); \code{verifyta} is an order of magnitu
 \toprule
 model & $N$ & \code{seq} & \code{omp} & \code{metal} & \code{metal-ad} & \code{vfy} \\
 \midrule
-Fischer      & 12 & 7.17 & 9.32 & 8.09 & 12.88 & 0.55 \\
-two-lock     & 11 & 1.92 & 2.10 & 5.05 & 5.66 & 0.18 \\
-arbiter      & 16 & 2.75 & 3.13 & 5.33 & 6.53 & 0.11 \\
-CSMA/CD      & 14 & 2.15 & 2.53 & 3.02 & 4.00 & 0.14 \\
-philosophers & 12 & 1.34 & 1.50 & 3.59 & 4.00 & 0.18 \\
+Fischer      & 12 & 7.45 & 7.84 & 6.54 & 11.24 & 0.55 \\
+two-lock     & 11 & 1.92 & 2.33 & 3.43 & 4.04 & 0.18 \\
+arbiter      & 16 & 2.75 & 3.25 & 5.20 & 6.39 & 0.11 \\
+CSMA/CD      & 14 & 2.15 & 2.22 & 2.94 & 3.90 & 0.14 \\
+philosophers & 12 & 1.35 & 1.82 & 2.31 & 2.72 & 0.19 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -641,6 +642,49 @@ $24$\,GB machine this footprint, not run time, sets the ceiling.}
 \label{fig:memory}
 \end{figure}
 
+\paragraph{A third negative result: frontier chunking does not buy memory.} Since memory---not
+time---is the binding constraint, the obvious lever is to stop materialising a whole BFS level at
+once. We added \code{--chunking N}, which expands the frontier in bounded batches so the
+unified-memory pools are sized to a \emph{chunk} rather than to the widest level (the frontier is a
+worklist, so batching only changes the schedule, never the verdict). It does exactly what it claims at
+the level we control: at Fischer $N{=}11$ it cuts the peak expand pool from $1.44$M work items to
+$41.6$k, and the summed buffer length from $2.15$\,GB to $0.26$\,GB---an $8\times$ reduction.
+
+\emph{And it does not reduce peak RSS at all} (\cref{tab:chunk}). Worse, small chunks \emph{increase}
+it while costing up to $12\times$ in run time. The explanation is the same one that makes the memory
+gap hard to close: \code{vmmap} attributes the bulk of the footprint not to our buffers but to
+\code{IOAccelerator} regions the Metal driver holds \emph{non-volatile} and reclaims only lazily. A
+smaller chunk means \emph{more} levels, hence more per-level transient allocations for the driver to
+retain---so the lever we control (pool size) is not the quantity that sets the peak. We keep the flag,
+default off, and report it as a negative result: on this runtime, bounding your own allocations is not
+sufficient to bound resident memory.
+
+\begin{table}[t]
+\centering\small
+\caption{Frontier chunking at Fischer $N{=}12$: wall-clock seconds and peak RSS (GB) versus chunk size
+(``off'' $=$ \code{metal-ad}). Bounding the GPU pools leaves peak RSS unchanged while run time degrades
+sharply, because the resident peak is driver-retained memory, not our buffers.}
+\label{tab:chunk}
+\begin{tabular}{l r r r r r}
+\toprule
+chunk (frontier states) & off & $256$k & $64$k & $16$k & $4$k \\
+\midrule
+wall-clock (s) & \textbf{8.25} & 10.01 & 17.49 & 47.83 & 99.30 \\
+peak RSS (GB)  & 11.24 & 11.23 & 11.40 & 11.12 & 11.68 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/chunking_tradeoff.png}
+\caption{Frontier chunking across all five models (each at its largest $N$). Run time degrades
+monotonically as the chunk shrinks (left, log scale) while peak RSS stays flat or gets \emph{worse}
+(right). The effect is not model-specific: bounding the pools \emph{we} allocate does not bound what
+the GPU driver keeps resident.}
+\label{fig:chunk}
+\end{figure}
+
 % ===========================================================================
 \section{Discussion and conclusion}
 % ===========================================================================
@@ -652,21 +696,23 @@ The Metal backend earns its speed by keeping the GPU busy with the uniform work 
 (expansion) while a \emph{parallel} host layer feeds it through unified memory with as few copies as
 possible---so the whole machine, GPU and all CPU cores, works at once. Every parallel backend beats a
 mature single-threaded tool on every model, and the adaptive Metal backend does so by
-$3.4$--$5.6\times$ while being the fastest configuration throughout.
+$3.4$--$7.3\times$ while being the fastest configuration throughout.
 
 The decisive variable is the \emph{ratio of expansion to merge}. Expansion is parallel \emph{across}
 symbolic states---the GPU's home turf---but the antichain merge is sequential \emph{within} a
 discrete-state bucket, and the GPU merge kernel spends one thread per bucket. When buckets are many
 and thin (Fischer, two-lock, arbiter) that is a fine fit and the GPU wins outright; when they are few
 and fat (philosophers) a few weak GPU lanes carry the whole load and the naive merge collapses---at
-$N{=}12$ it is $40\times$ slower than routing that same merge onto the 12 CPU cores. Rather than guess
+$N{=}12$ it is $47\times$ slower than routing that same merge onto the 12 CPU cores. Rather than guess
 which regime a level is in from static bucket statistics (which do not separate the cases), the
 \code{--adaptive} driver \emph{measures} both paths' throughput and routes each level to the faster
 one; because it lives in the shared driver, the CUDA backend inherits it. That single mechanism turns
 the backend's worst case into its best result and leaves the good cases untouched. The remaining
 honest limit is \emph{memory}: the GPU backends pay a double-buffering premium (adaptive most of all),
 UPPAAL is an order of magnitude leaner, and on a $24$\,GB laptop peak RAM---not run time---is what
-caps the largest instances. Two attempts to cut the zone traffic (a GPU-resident arena and a direct
+caps the largest instances---and \code{--chunking}, which bounds the pools we allocate $8\times$,
+does not bound what the driver keeps resident, so it buys no memory and costs time. Two further
+attempts to cut the zone traffic (a GPU-resident arena and a direct
 frontier buffer) backfired for concrete, measurable reasons. A datacentre GPU
 (\cref{sec:cuda})---far more memory and thousands more lanes---is where the same design has the most
 room to grow. The broader takeaways transfer well beyond this checker: profile relentlessly, suspect

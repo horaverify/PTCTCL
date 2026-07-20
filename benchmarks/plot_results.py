@@ -78,7 +78,7 @@ for b in models:
     if xs: a.plot(xs, ys, marker="o", label=b, ms=5)
 a.axhline(1.0, color="k", ls="--", lw=0.8)
 a.set_xlabel("N"); a.set_ylabel("naive metal / adaptive metal  (×)")
-a.set_title("What --adaptive buys: naive-merge time / adaptive-merge time (>1 = adaptive faster)")
+a.set_title("What --adaptive buys (>1 = adaptive faster)")
 a.grid(True, alpha=0.3); a.legend(fontsize=8)
 fig.tight_layout(); fig.savefig(os.path.join(OUT, "adaptive_speedup.png"), dpi=130); plt.close(fig)
 
@@ -107,4 +107,31 @@ for j in range(len(models), rws * cols): ax[j // cols][j % cols].axis("off")
 fig.suptitle("Peak resident memory (GB) — metal double-buffers zones into GPU-facing buffers")
 fig.tight_layout(rect=(0, 0, 1, 0.97)); fig.savefig(os.path.join(OUT, "memory_all.png"), dpi=130); plt.close(fig)
 
-print(f"wrote figures to {OUT}/  (scaling/memory per model + speedup_vs_verifyta + adaptive_speedup + memory_all)")
+# ---- chunking trade-off: time and peak RSS vs chunk size, at each model's largest N ----
+CH = [("t_metal-ad", "rss_metal-ad", "off"), ("t_mad-c256k", "rss_mad-c256k", "256k"),
+      ("t_mad-c64k", "rss_mad-c64k", "64k"), ("t_mad-c16k", "rss_mad-c16k", "16k"),
+      ("t_mad-c4k", "rss_mad-c4k", "4k")]
+if all(c[0] in rows[models[0]][0] for c in CH):
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4))
+    xs = list(range(len(CH)))
+    for b in models:
+        last = rows[b][-1]
+        t = [fnum(last[c[0]]) for c in CH]
+        r = [fnum(last[c[1]]) for c in CH]
+        lab = f"{b} N={last['N']}"
+        if any(v is not None for v in t):
+            a1.plot(xs, [v if v else float('nan') for v in t], marker="o", label=lab, ms=5)
+        if any(v is not None for v in r):
+            a2.plot(xs, [v if v else float('nan') for v in r], marker="o", label=lab, ms=5)
+    for a, yl, ti in ((a1, "wall-clock (s, log)", "Time cost of chunking"),
+                      (a2, "peak RSS (GB)", "Memory effect of chunking")):
+        a.set_xticks(xs); a.set_xticklabels([c[2] for c in CH])
+        a.set_xlabel("chunk size (frontier states per batch)"); a.set_ylabel(yl)
+        a.set_title(ti); a.grid(True, alpha=0.3); a.legend(fontsize=7)
+    a1.set_yscale("log")
+    fig.suptitle("--chunking bounds the GPU pools but does not reduce peak RSS — and costs time")
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(os.path.join(OUT, "chunking_tradeoff.png"), dpi=130); plt.close(fig)
+
+print(f"wrote figures to {OUT}/  (scaling/memory per model + speedup_vs_verifyta + adaptive_speedup"
+      f" + memory_all + chunking_tradeoff)")

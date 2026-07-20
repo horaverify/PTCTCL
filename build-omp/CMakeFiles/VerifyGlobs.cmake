@@ -4,6 +4,7 @@
 # PTCTLMC_CORE_SRC at CMakeLists.txt:77 (file)
 file(GLOB NEW_GLOB LIST_DIRECTORIES true "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/*.cpp")
 set(OLD_GLOB
+  "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/bisim.cpp"
   "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/dbm.cpp"
   "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/netreach.cpp"
   "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/src/network.cpp"

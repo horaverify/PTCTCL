@@ -60,10 +60,6 @@ class NetGpuExpander {
   // the persistent work buffer (valid until the next expand/merge call): bucket b's final
   // antichain is out_zones[(out_work_off[b]+i)*d2 ..] for i in [0, out_count[b]), with
   // out_isnew[out_work_off[b]+i] flagging survivors — read straight from unified memory.
-  // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
-  // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
-  virtual std::size_t device_bytes() const { return 0; }
-
   virtual void merge(int nb, int dim, bool has_diag,
                      const std::vector<int>& work_off, const std::vector<int>& exist_cnt,
                      const std::vector<int>& new_idx, const std::vector<int>& new_off,
@@ -71,6 +67,10 @@ class NetGpuExpander {
                      const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
                      std::vector<int>& out_work_off, std::vector<int>& out_count,
                      const raw_t*& out_zones, const int*& out_isnew) = 0;
+
+  // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
+  // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
+  virtual std::size_t device_bytes() const { return 0; }
 };
 
 // Build a Metal / CUDA expander for `net`. `qmask[c]` marks clocks the query reads (kept active
