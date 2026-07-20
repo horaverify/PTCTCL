@@ -46,6 +46,45 @@ bool apply_all(Dbm& z, const std::vector<Constraint>& cs) {
   return true;
 }
 
+// ---- general modelling-language guard/update -------------------------------
+// Only edges that need more than `var OP const` carry these (see NEdge). The
+// common case is a null check, so this costs nothing for Fischer/viking.
+
+// Scratch buffer so a guard that calls a function cannot perturb the live state.
+bool gen_ok(const Network& net, const NEdge& e, const IntVec& ints) {
+  if (!e.gen_guard) return true;
+  thread_local std::vector<long> scratch;
+  scratch.assign(ints.begin(), ints.end());
+  EvalCtx cx;
+  cx.cells = scratch.data();
+  cx.funcs = &net.funcs;
+  const long v = eval(*e.gen_guard, cx);
+  return !cx.fault && v != 0;
+}
+
+// Runs the general update in place. Returns false if it faulted (bad index,
+// division by zero, runaway loop) or if a write left a variable's declared
+// range -- the latter would silently collide in the packed discrete key, so it
+// is refused rather than mis-encoded.
+bool gen_apply(const Network& net, const NEdge& e, IntVec& ints) {
+  if (!e.gen_update) return true;
+  thread_local std::vector<long> buf;
+  buf.assign(ints.begin(), ints.end());
+  EvalCtx cx;
+  cx.cells = buf.data();
+  cx.funcs = &net.funcs;
+  cx.locals.assign(static_cast<std::size_t>(e.gen_locals) + 4, 0);
+  bool returned = false;
+  long ret = 0;
+  exec(*e.gen_update, cx, &returned, &ret);
+  if (cx.fault) return false;
+  for (std::size_t i = 0; i < buf.size(); ++i) {
+    if (buf[i] < net.intvars[i].lo || buf[i] > net.intvars[i].hi) return false;
+    ints[i] = buf[i];
+  }
+  return true;
+}
+
 bool int_ok(const std::vector<IntAtom>& g, const IntVec& ints) {
   for (const auto& a : g) {
     const long x = ints[a.var];
@@ -132,7 +171,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
     for (int ei : net.procs[p].edges_from(s.locs[p])) {
       const NEdge& e = net.procs[p].edges[ei];
       if (e.sync_chan >= 0) continue;
-      if (!int_ok(e.int_guard, s.ints)) continue;
+      if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints)) continue;
       Dbm z1 = s.zone;
       if (!apply_all(z1, e.clock_guard)) continue;
       for (int r : e.clock_resets) z1.reset(r);
@@ -142,6 +181,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
       ns.locs[p] = e.tgt;
       ns.ints = s.ints;
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
+      if (!gen_apply(net, e, ns.ints)) continue;
 
       all_invariants(net, ns.locs, inv);
       if (!apply_all(z1, inv)) continue;
@@ -163,7 +203,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1) continue;  // sender a!
       if (net.chan_broadcast[se.sync_chan]) continue;      // broadcast handled below
-      if (!int_ok(se.int_guard, s.ints)) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints)) continue;
       const bool i_comm = net.procs[i].locations[s.locs[i]].committed;
       for (int j = 0; j < net.nprocs(); ++j) {
         if (j == i) continue;
@@ -171,7 +211,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
           const NEdge& re = net.procs[j].edges[ej];
           if (re.sync_chan != se.sync_chan || re.sync_dir != -1) continue;  // receiver a?
           if (src_committed && !(i_comm || net.procs[j].locations[s.locs[j]].committed)) continue;
-          if (!int_ok(re.int_guard, s.ints)) continue;
+          if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints)) continue;
           Dbm z1 = s.zone;
           if (!apply_all(z1, se.clock_guard)) continue;
           if (!apply_all(z1, re.clock_guard)) continue;
@@ -184,6 +224,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
           ns.ints = s.ints;
           for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;  // sender then receiver
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
+          if (!gen_apply(net, se, ns.ints) || !gen_apply(net, re, ns.ints)) continue;
           all_invariants(net, ns.locs, inv);
           if (!apply_all(z1, inv)) continue;
           bool nc, nu;
@@ -205,7 +246,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
     for (int ei : net.procs[i].edges_from(s.locs[i])) {
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
-      if (!int_ok(se.int_guard, s.ints)) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints)) continue;
       // Each other process contributes at most one enabled a? (nondeterministic choice).
       std::vector<std::pair<int, std::vector<int>>> parts;
       for (int j = 0; j < net.nprocs(); ++j) {
@@ -213,7 +254,7 @@ void successors_net(const Network& net, const SymState& s, const std::vector<std
         std::vector<int> es;
         for (int ej : net.procs[j].edges_from(s.locs[j])) {
           const NEdge& re = net.procs[j].edges[ej];
-          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints))
+          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints))
             es.push_back(ej);
         }
         if (!es.empty()) parts.push_back({j, std::move(es)});
