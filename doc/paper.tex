@@ -315,29 +315,112 @@ step in between is cheap serial bookkeeping.
 GPUs excel at the uniform arithmetic of expansion, but the merge---branchy, data-dependent,
 antichain-shaped---is exactly what GPUs are \emph{bad} at. The engineering question is therefore
 not ``can the DBM math run on the GPU'' (it can) but ``can we keep the GPU fed without drowning in
-host$\leftrightarrow$device traffic.'' Our answer has three ingredients: a \emph{recipe}-based
-expand kernel, a \emph{one-thread-per-bucket} merge kernel, and a flat, unified-memory data path
-whose host-side plumbing is itself parallelised over the CPU cores.
+host$\leftrightarrow$device traffic.'' This section develops the answer from the decomposition
+outwards: first \emph{where} the parallelism actually is (\cref{sec:decomp}), then the data layout
+that exposes it (\cref{sec:layout}), then the two kernels (\cref{sec:kexp,sec:kmrg}), then the data
+path that feeds them (\cref{sec:feed}), and finally the adaptive router that repairs the one case
+where the decomposition breaks down (\cref{sec:adaptive}).
 
-\subsection{Expand: one GPU thread per successor recipe}
-A network transition can be a plain location step, a binary handshake ($a!\,\|\,a?$), or a
-broadcast ($a!$ with all enabled $a?$). We unify these as a \emph{recipe}: a short list of
-participating $(\text{process},\text{edge})$ pairs. The host enumerates recipes---this is the
-discrete part of successor generation (channel matching, integer guards, committed-location
-filtering), which is cheap and irregular---while the GPU runs the \emph{zone} pipeline for each
-recipe in one thread (\cref{fig:metal}, left): intersect all participants' guards, apply all
-resets, intersect the combined target invariant, elapse time unless a participant is
-urgent/committed, reset clocks no process can still read, test emptiness. One thread, one
-successor zone.
+\subsection{Where the parallelism is---and where it is not}\label{sec:decomp}
+Everything in this section follows from one observation about the level loop, so it is worth making
+precisely. The loop has two hot phases and they have \emph{opposite} characters.
 
-\subsection{Merge: one GPU thread per discrete-state bucket}
-After expansion, successors are grouped by discrete key on the host (integer hashing, cheap). Each
-\emph{bucket}---the new zones sharing a key, plus that key's existing antichain---is handed to a
-single GPU thread that replicates the sequential \code{AddTo} \emph{exactly}: aLU-subsume the new
-zone against the stored ones (and vice-versa), attempt convex union, append if it survived. The
-work is sequential \emph{within} a bucket (antichains are tiny) and massively parallel \emph{across}
-the thousands of simultaneously-touched buckets (\cref{fig:metal}, right). Crucially the convex
-union is done on the GPU too---no shortcut---so the stored-state count matches UPPAAL bit for bit.
+\paragraph{Expansion is unboundedly and uniformly parallel.} For a frontier of $F$ symbolic states,
+the successors of state $s$ depend only on $s$ and on the (read-only) network description. No two
+frontier states interact, and no two successors of different states share any mutable location. The
+available parallelism is therefore the whole Cartesian product
+$\{\text{frontier states}\} \times \{\text{enabled transitions}\}$---at Fischer $N{=}11$ that is
+$1.44$M independent tasks in a single level---and every task runs the \emph{same} straight-line
+sequence of DBM operations on its own private zone. Uniform control flow, no synchronisation, no
+write conflicts: this is the textbook GPU workload.
+
+\paragraph{The merge is parallel only across discrete keys.} The successors must then be folded into
+the passed list, and here the tasks are \emph{not} independent. Two successors that share a discrete
+key $\dk$ interact---each may subsume the other, or the two may be absorbed into a single zone by the
+exact convex union---while two successors with different keys can never interact at all, because the
+passed list is partitioned by $\dk$. The merge is therefore \emph{embarrassingly parallel across
+buckets and strictly sequential within one}. Two consequences follow immediately, and they run the
+rest of this paper:
+\begin{enumerate}\itemsep2pt
+  \item The available parallelism is not the number of successors but the \textbf{number of distinct
+        buckets touched this level}. A level that produces a million successors into a thousand
+        buckets offers a thousand-way parallelism, not a million-way.
+  \item The per-task cost is \textbf{quadratic in the bucket's antichain size}: folding $k$ zones
+        into a bucket costs $O(k^2)$ subsumption/union tests of $O(\dim^2)$--$O(\dim^3)$ each. The
+        work is thus distributed as the \emph{square} of a quantity we do not control and cannot
+        cheaply predict.
+\end{enumerate}
+A one-thread-per-bucket mapping is the natural way to exploit (1). But (2) means that mapping is only
+efficient when buckets are \emph{many and thin}; when they are \emph{few and fat} a handful of weak
+GPU lanes carry the entire level while the rest of the device idles. \Cref{fig:mergeshape} draws both
+regimes side by side, \cref{sec:eval} shows they both occur in practice, and \cref{sec:adaptive} is
+our fix.
+
+\subsection{Data layout: flat arrays, no objects}\label{sec:layout}
+The CPU engine stores a symbolic state as a small object graph (a location vector, an integer vector
+and a \code{Dbm}, each separately heap-allocated). That representation cannot cross to a GPU, and
+converting it per level was what made our first GPU attempt three times \emph{slower} than OpenMP
+(\cref{sec:feed}). The GPU path therefore abandons objects entirely and keeps every level in
+\emph{flat, struct-of-arrays} form:
+\begin{itemize}\itemsep2pt
+  \item the frontier is three parallel arrays---\code{fl} ($F{\times}p$ locations), \code{fi}
+        ($F{\times}m$ integers), \code{fz} ($F{\times}\dim^2$ zone words);
+  \item the passed list is \code{unordered\_map<uint64, vector<raw\_t>>}: one contiguous run of zone
+        words per discrete key, addressed by the packed key of \cref{fig:key};
+  \item recipes and merge metadata are CSR-style index arrays (offsets $+$ payload), never
+        pointer-linked structures.
+\end{itemize}
+Two properties matter. First, every array is a single allocation that the GPU can read directly, so
+``uploading'' a level is at worst one \code{memcpy} and usually not even that
+(\cref{sec:feed}). Second, because a zone is exactly $\dim^2$ machine words at a known offset, a
+kernel thread computes the address of \emph{its} zone arithmetically---no indirection, fully
+coalesced access.
+
+\subsection{Expand: one GPU thread per successor recipe}\label{sec:kexp}
+A network transition can be a plain location step, a binary handshake ($a!\,\|\,a?$), or a broadcast
+($a!$ with all enabled $a?$). Rather than write three kernels, we unify them into one abstraction: a
+\emph{recipe} is a short list of participating $(\text{process},\text{edge})$ pairs---one pair for a
+local step, two for a handshake, $1{+}K$ for a broadcast with $K$ receivers. A recipe is exactly ``one
+potential successor'', so \emph{one recipe becomes one GPU thread} and the kernel needs no case
+analysis over channel kinds: it simply loops over the participant list.
+
+\paragraph{Why the host enumerates and the GPU computes.} Deciding \emph{which} recipes exist is
+irregular work: matching senders to receivers per channel, evaluating integer guards, honouring
+committed-location priority, and taking a cross product over receivers for broadcasts. It is branchy,
+its output size is data-dependent, and it is cheap---integer tests over a handful of arrays. Deciding
+\emph{what each recipe produces} is the opposite: a fixed sequence of dense $O(\dim^2)$ matrix
+operations, identical for every recipe. So we split along that seam. The host emits the recipe list as
+CSR arrays (\code{ws}, \code{part\_off}, \code{part\_cnt}, \code{part\_proc}, \code{part\_edge}); the
+GPU runs the zone pipeline. \Cref{fig:threadmap} shows the whole path.
+
+\paragraph{What one thread does.} Thread $w$ reads its recipe's participant list, copies its source
+zone into thread-local storage, and runs exactly the pipeline of \cref{sec:bg}: conjoin every
+participant's clock guard, apply every reset, conjoin the combined target invariant, let time elapse
+unless some participant is urgent or committed, re-apply the invariant, reset the clocks no process can
+still read, and test emptiness. It then writes its verdict and its zone to slot $w$ of the output
+arrays. Because slot $w$ is private to thread $w$, there is no synchronisation anywhere in the kernel
+and no atomics---the invalid slots are simply skipped by the host afterwards. The cost is register
+pressure: each thread holds a $\dim^2$ zone (plus scratch), which is what caps the supported clock
+count at $\dim \le 24$.
+
+\subsection{Merge: one GPU thread per discrete-state bucket}\label{sec:kmrg}
+After expansion the host groups the valid successors by discrete key---integer hashing over the packed
+$\dk$, cheap and cache-friendly---and builds a \emph{work pool} describing the level's merge as flat
+arrays: for bucket $b$, \code{work\_off[b]} is where its slice starts, \code{exist\_cnt[b]} how many
+zones its existing antichain contributes, and \code{new\_idx[new\_off[b]\,..]} lists the expand-output
+indices of its new zones. The kernel then assigns \emph{one thread per bucket}.
+
+That thread replicates the sequential \code{AddTo} \emph{exactly}, in the same order, for each new zone
+in turn: (a) test whether the new zone is aLU-subsumed by any stored zone---if so, discard it; (b) drop
+any stored zones subsumed by the new one, compacting the slice and carrying the ``is new'' flags along;
+(c) repeatedly attempt the exact convex union, absorbing any stored zone whose union with the new one
+is itself convex; (d) append the survivor and mark it new. Preserving the order matters: the convex
+union is order-sensitive (\cref{sec:bg}), so a different order would give a different---still sound,
+but different---stored count. Crucially the convex union runs on the GPU too, with no shortcut, which
+is why the GPU backend's stored-state count matches UPPAAL's rather than merely approximating it.
+
+The mapping is a good fit exactly when the level offers many thin buckets, and a poor one when it does
+not---the two regimes of \cref{fig:mergeshape}.
 
 \begin{figure*}[t]
 \centering
@@ -383,7 +466,7 @@ CPU cores simultaneously.}
 \label{fig:metal}
 \end{figure*}
 
-\subsection{Keeping the GPU fed: the flat unified-memory data path}
+\subsection{Keeping the GPU fed: the flat unified-memory data path}\label{sec:feed}
 The first working version was three times \emph{slower} than OpenMP, and the profiler explained
 why: the GPU kernels were ${\sim}25\%$ of the time, and the remaining ${\sim}75\%$ was the host
 converting between \code{SymState} objects and flat arrays, allocating hundreds of megabytes of
@@ -413,6 +496,29 @@ around four ideas, each validated by re-profiling:
 A final micro-optimisation: a bucket all of whose new zones are subsumed is \emph{unchanged}, so we
 skip its rebuild and frontier gather entirely.
 
+\paragraph{Why ``GPU $+$ 12 cores'' is literal.} Point (3) deserves unpacking, because it is what makes
+the Metal backend faster than the OpenMP backend rather than merely a different way of being as fast.
+A level is not ``GPU work'' followed by ``CPU work''; it is a pipeline in which each phase runs on the
+processor that suits it. The GPU executes the two kernels; the CPU, on all twelve cores
+simultaneously, does the work the GPU is bad at---enumerating recipes, hashing successors into buckets,
+gathering each bucket's existing antichain, and rebuilding the passed list and the next frontier. Those
+host phases are themselves data-parallel over independent buckets, so they run under
+\code{\#pragma omp parallel for}, and the per-thread zone pool of \cref{sec:omp} keeps them off the
+global allocator. The OpenMP backend has twelve cores; the Metal backend has twelve cores \emph{and} a
+GPU, and neither sits idle for a whole phase. The one subtlety is that the parallel rebuild writes into
+an \code{unordered\_map} while other threads read it, which is safe only because element pointers are
+stable across insertions---so we pre-create the nodes serially and fill their values in parallel.
+
+\paragraph{Why the copies were the enemy at all.} It is worth stating the underlying economics, since
+it explains both the wins here and the failures in \cref{sec:failed}. A zone is $\dim^2$ words---$676$
+bytes at $12$ clocks---and a large level moves millions of them. At Fischer $N{=}11$ the expand output
+alone is $1.44$M zones ($0.77$\,GB) and the merge work pool another $1.21$M ($0.65$\,GB). Every
+\emph{additional} pass over that data costs more than the arithmetic the pass exists to serve: the DBM
+operations are $O(\dim^2)$ on data that takes $O(\dim^2)$ words to move, so the kernel is bandwidth-
+rather than compute-bound. That is why removing a single copy (point 4) is worth more than any amount
+of kernel tuning, and why two later attempts to remove \emph{different} copies backfired the moment
+they replaced a large sequential transfer with a scattered or serialised one.
+
 \begin{lstlisting}[caption={The merge output is read in place from unified memory---no copy.},captionpos=b]
 // bucket b's final antichain, straight from the GPU buffer:
 for (int i = 0; i < out_count[b]; ++i) {
@@ -421,7 +527,7 @@ for (int i = 0; i < out_count[b]; ++i) {
 }
 \end{lstlisting}
 
-\subsection{Two optimisations that failed (and why)}
+\subsection{Two data-path optimisations that failed (and why)}\label{sec:failed}
 Intuition said the ultimate win was a \emph{GPU-resident arena}: keep every passed-list zone on the
 GPU forever, store only \code{dk -> (offset,count)} on the host, and have the merge read existing
 zones \emph{in place} from the arena---eliminating even the existing-zone gather. We implemented it
@@ -470,13 +576,42 @@ nothing to route---an \code{omp} ``adaptive'' mode would toggle nothing.
 \section{The CUDA port}\label{sec:cuda}
 % ===========================================================================
 Because the \emph{control} of the level loop lives in host code and only the \emph{device} layer is
-platform-specific, porting to CUDA is a device-for-device exercise. The CUDA backend
-(\code{netengine\_cuda.cu}) reuses the shared network encoding and the \emph{same}
-\code{\_\_host\_\_ \_\_device\_\_} DBM operations the CPU is tested on, so the kernels---one
-\code{net\_expand} over recipes, one \code{net\_merge} over buckets---are line-for-line twins of the
-Metal shaders. The unified-memory data path maps onto CUDA \emph{managed} memory
-(\code{cudaMallocManaged}), which lets the very same host driver write merge inputs and read outputs
-through raw pointers. Datacentre GPUs (H100) have both far higher arithmetic throughput and much
+platform-specific, porting to CUDA is a device-for-device exercise. What makes that true is a
+deliberate three-way split, and it is worth naming because it is the part of the design that
+generalises beyond this tool.
+
+\paragraph{One driver, two devices.} The abstract interface \code{NetGpuExpander} exposes exactly
+three operations---\code{expand}, \code{stage\_merge}, \code{merge}---and the entire level loop
+(\cref{alg:omp}'s GPU analogue: grouping by $\dk$, prefix sums, the passed-list rebuild, the frontier
+assembly, and the adaptive router of \cref{sec:adaptive}) lives \emph{above} that interface in
+\code{netreach.cpp}. Neither backend contains any control flow. The practical payoff is concrete: the
+\code{--adaptive} router and the \code{--chunking} batcher were both implemented once, in the shared
+driver, and the CUDA backend acquired them without a line of device code changing.
+
+\paragraph{Shared algebra, not re-implemented algebra.} The zone operations in \code{dbm\_ops.hpp} are
+annotated \code{\_\_host\_\_ \_\_device\_\_}, so a CUDA kernel calls the \emph{same} functions the CPU
+unit tests validate---the port inherits correctness rather than re-deriving it. Only one routine needed
+a device twin: the exact convex union is host-only (it is \code{inline} and sizes its scratch to the
+CPU's \code{kDbmMaxDim}$=64$), so the \code{.cu} file carries a \code{d\_try\_union} with device-sized
+scratch. Metal cannot share C++ headers at all---MSL is a separate language---so its kernels embed a
+transcription of the same operations, which is precisely why we audit the two engines against each
+other rather than trusting them independently (\cref{sec:eval}).
+
+\paragraph{Mapping the memory model.} The Metal path leans on Apple's unified memory: buffers are
+\code{MTLResourceStorageModeShared}, so a buffer's \code{.contents} pointer is written by the host and
+read by the GPU with no copy. CUDA's counterpart is \emph{managed} memory
+(\code{cudaMallocManaged}), which presents the same single-pointer illusion, and that correspondence is
+what lets the identical host driver write merge inputs and read kernel outputs through raw pointers on
+both platforms. The illusion is not free in the same way, though, and the difference matters for one
+feature: on Apple silicon the memory really is shared, whereas on a discrete GPU managed memory is
+migrated page-by-page on fault. The \code{--adaptive} router runs the per-bucket merge \emph{on the
+host} over buffers the expand kernel just wrote on the \emph{device}, which is free on a Mac and a
+migration storm on an H100; the CUDA backend therefore marks those pools
+\code{cudaMemAdviseSetAccessedBy} so the runtime keeps them mapped for both processors. This is the
+one place where a shared-driver feature needed a device-specific accommodation, and it is exactly the
+kind of thing a device-for-device port hides until it is measured.
+
+Datacentre GPUs (H100) have both far higher arithmetic throughput and much
 wider memory bandwidth---and thousands more lanes---which are precisely the resources that bound the
 laptop GPU at the two places it currently \emph{loses} (\cref{sec:eval}): the memory-bound top of the
 scaling curve, and the merge-heavy models where a wider machine would let a threadgroup-per-bucket
