@@ -13,6 +13,12 @@
 },
 {
   "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-linux-omp",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/expr.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/expr.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/expr.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/expr.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-linux-omp",
   "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp",
   "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/netreach.cpp",
   "output": "CMakeFiles/ptctlmc_core.dir/src/netreach.cpp.o"
@@ -34,6 +40,12 @@
   "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp",
   "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/ta.cpp",
   "output": "CMakeFiles/ptctlmc_core.dir/src/ta.cpp.o"
+},
+{
+  "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-linux-omp",
+  "command": "/usr/bin/c++ -DPTCTLMC_HAVE_OPENMP=1 -I/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wno-unused-parameter -fopenmp -o CMakeFiles/ptctlmc_core.dir/src/uexpr.cpp.o -c /home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uexpr.cpp",
+  "file": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/src/uexpr.cpp",
+  "output": "CMakeFiles/ptctlmc_core.dir/src/uexpr.cpp.o"
 },
 {
   "directory": "/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-linux-omp",
