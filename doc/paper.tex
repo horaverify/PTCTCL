@@ -703,7 +703,7 @@ around four ideas, each validated by re-profiling:
         freshly generated (``new'') zone \emph{twice}: once to stage it into the merge's work buffer,
         once to read the merged result back. We removed the first pass entirely: the merge kernel
         reads new zones \emph{in place} from the expand kernel's output buffer, indexed by a
-        \code{new\_idx} array, so the host stages only each key's \emph{existing} antichain. This
+        \code{new\_idx} array (\cref{fig:newgather}), so the host stages only each key's \emph{existing} antichain. This
         halved the host memcpy profile and, on Fischer $N{=}12$, turned a ${\sim}17.6$\,s \emph{loss}
         to OpenMP into a ${\sim}12.2$\,s \emph{win}---the single change that makes Metal beat the CPU
         across the expansion-dominated models (\cref{sec:eval}).
@@ -733,6 +733,133 @@ operations are $O(\dim^2)$ on data that takes $O(\dim^2)$ words to move, so the 
 rather than compute-bound. That is why removing a single copy (point 4) is worth more than any amount
 of kernel tuning, and why two later attempts to remove \emph{different} copies backfired the moment
 they replaced a large sequential transfer with a scattered or serialised one.
+
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[
+    font=\small,
+    memb/.style   ={box, fill=black!4, draw=black!35},
+    deadbox/.style={box, fill=black!5, draw=black!30, dashed, text=black!45},
+    dead/.style   ={dflow, draw=black!30},
+    bigcopy/.style={-{Stealth[length=3mm]}, line width=2.2pt, draw=cpu, rounded corners=3pt},
+  ]
+
+%======================= BEFORE =======================
+\node[anchor=west, font=\small] at (-0.45,3.78)
+  {\textbf{BEFORE}\quad the host stages \emph{every} new zone into the merge work buffer};
+\draw[lane, fill=softg!55] (0,2.50)  rectangle (15.0,3.45);
+\draw[lane, fill=black!3]  (0,0.00)  rectangle (15.0,2.35);
+\draw[lane, fill=soft]     (0,-1.95) rectangle (15.0,-0.15);
+\node[rotate=90, font=\scriptsize\bfseries, text=gpu]      at (-0.28,2.975) {GPU};
+\node[rotate=90, font=\scriptsize\bfseries, text=black!55] at (-0.28,1.15)  {UNIFIED MEM};
+\node[rotate=90, font=\scriptsize\bfseries, text=cpu]      at (-0.28,-1.05) {HOST};
+
+\node[gpubox, minimum width=3.4cm, minimum height=7.5mm] (bex) at (2.2,2.975)  {\code{expand} kernel};
+\node[gpubox, minimum width=2.6cm, minimum height=7.5mm] (bmg) at (12.7,2.975) {\code{merge} kernel};
+\node[memb, minimum width=3.4cm] (boz) at (2.2,1.75)
+  {\code{oz} $\cdot$ expand output\\[-1pt] \scriptsize all successor zones};
+\node[memb, minimum width=3.4cm] (bac) at (2.2,0.58)
+  {bucket antichains\\[-1pt] \scriptsize existing zones};
+\node[memb, minimum width=3.4cm, minimum height=14mm] (bwb) at (11.6,1.30)
+  {\code{merge work buffer}\\[-1pt] \scriptsize new zones $\Vert$ existing};
+\node[cpubox, minimum width=3.4cm, minimum height=6.5mm] (bh1) at (6.9,-0.60)
+  {\scriptsize\textbf{copy 1}: stage new zones};
+\node[cpubox, minimum width=3.4cm, minimum height=6.5mm] (bh2) at (6.9,-1.55)
+  {\scriptsize copy 2: gather antichain};
+\node[cpubox, minimum width=1.3cm, minimum height=6.5mm] (bfl) at (14.3,-1.55)
+  {\scriptsize\code{flags}};
+
+\draw[flow, draw=gpu] (2.2,2.60) -- (boz.north);
+\node[lbl, anchor=west] at (2.32,2.42) {writes};
+
+\draw[bigcopy] (boz.south east) -- (bh1.north west);
+\draw[bigcopy] (bh1.east) -- (9.0,-0.60) -- (9.0,1.60) -- (bwb.west |- 0,1.60);
+\node[lbl, text=cpu, anchor=west] at (4.55,0.95) {every new zone};
+\node[font=\small\itshape, text=cpu!85] at (6.9,1.95) {one full pass over the largest array};
+
+\draw[flow, draw=cpu!70] (bac.east) -- (bh2.north west);
+\draw[flow, draw=cpu!70, rounded corners=3pt]
+      (bh2.east) -- (9.4,-1.55) -- (9.4,1.00) -- (bwb.west |- 0,1.00);
+
+\draw[flow, draw=gpu, rounded corners=3pt] (bwb.east) -- (13.6,1.30) -- (13.6,2.60);
+\draw[dflow, rounded corners=3pt] (14.3,2.60) -- (bfl.north);
+\node[lbl, anchor=east] at (14.2,0.28) {results};
+
+\node[rounded corners=2pt, fill=black!4, draw=black!20, inner sep=4pt,
+      font=\small\itshape, text=black!70, anchor=north, align=center] at (7.5,-2.15)
+  {every successor zone is touched twice by the host: read out of \code{oz}, written into the work buffer};
+
+%======================= AFTER =======================
+\begin{scope}[yshift=-7.35cm]
+\node[anchor=west, font=\small] at (-0.45,3.78)
+  {\textbf{AFTER}\quad the \code{merge} kernel reads the new zones \emph{in place} from \code{oz}};
+\draw[lane, fill=softg!55] (0,2.50)  rectangle (15.0,3.45);
+\draw[lane, fill=black!3]  (0,0.00)  rectangle (15.0,2.35);
+\draw[lane, fill=soft]     (0,-1.95) rectangle (15.0,-0.15);
+\node[rotate=90, font=\scriptsize\bfseries, text=gpu]      at (-0.28,2.975) {GPU};
+\node[rotate=90, font=\scriptsize\bfseries, text=black!55] at (-0.28,1.15)  {UNIFIED MEM};
+\node[rotate=90, font=\scriptsize\bfseries, text=cpu]      at (-0.28,-1.05) {HOST};
+
+\node[gpubox, minimum width=3.4cm, minimum height=7.5mm] (aex) at (2.2,2.975)  {\code{expand} kernel};
+\node[gpubox, minimum width=2.6cm, minimum height=7.5mm] (amg) at (12.7,2.975) {\code{merge} kernel};
+\node[memb, minimum width=3.4cm] (aoz) at (2.2,1.75)
+  {\code{oz} $\cdot$ expand output\\[-1pt] \scriptsize all successor zones};
+\node[memb, minimum width=3.4cm] (aac) at (2.2,0.58)
+  {bucket antichains\\[-1pt] \scriptsize existing zones};
+\node[memb, minimum width=3.4cm, minimum height=10mm] (awb) at (11.6,0.90)
+  {\code{merge work buffer}\\[-1pt] \scriptsize existing zones only};
+\node[deadbox, minimum width=3.4cm, minimum height=6.5mm] (ah1) at (6.9,-0.60)
+  {\scriptsize copy 1: stage new zones};
+\node[cpubox, minimum width=3.4cm, minimum height=6.5mm] (ah2) at (6.9,-1.55)
+  {\scriptsize copy 2: gather antichain};
+\node[cpubox, minimum width=1.3cm, minimum height=6.5mm] (afl) at (14.3,-1.55)
+  {\scriptsize\code{flags}};
+
+\draw[flow, draw=gpu] (2.2,2.60) -- (aoz.north);
+\node[lbl, anchor=west] at (2.32,2.42) {writes};
+
+% -- eliminated path ---------------------------------
+\draw[dead] (aoz.south east) -- (ah1.north west);
+\draw[dead] (ah1.east) -- (9.0,-0.60) -- (9.0,1.15) -- (awb.west |- 0,1.15);
+\draw[black!55, line width=1.2pt] (ah1.north west) -- (ah1.south east);
+\draw[black!55, line width=1.2pt] (ah1.south west) -- (ah1.north east);
+\node[rounded corners=2pt, draw=acc!60, fill=acc!8, inner sep=3.5pt,
+      font=\scriptsize, text=acc!85!black, align=center] at (11.6,-0.60)
+  {\textbf{eliminated:} one full pass\\ over every successor zone};
+
+% -- surviving antichain copy ------------------------
+\draw[flow, draw=cpu!70] (aac.east) -- (ah2.north west);
+\draw[flow, draw=cpu!70, rounded corners=3pt]
+      (ah2.east) -- (9.4,-1.55) -- (9.4,0.90) -- (awb.west);
+
+% -- new_idx -----------------------------------------
+\foreach \i/\v in {0/3, 1/4, 2/7, 3/9, 4/12, 5/15} {
+  \draw[fill=white, draw=black!45] ({6.0+\i*0.42},1.55) rectangle ++(0.42,0.40);
+  \node[font=\tiny, text=black!70] at ({6.21+\i*0.42},1.75) {\v};
+}
+\node[font=\scriptsize, text=black!65] at (7.26,2.19) {\code{new\_idx} (4\,B/zone)};
+\draw[-{Stealth[length=1.8mm]}, draw=gpu!85] (6.2,1.55) -- ($(aoz.east)+(0.04,0.30)$);
+\draw[-{Stealth[length=1.8mm]}, draw=gpu!85] (7.2,1.55) -- ($(aoz.east)+(0.04,0.03)$);
+\draw[-{Stealth[length=1.8mm]}, draw=gpu!85] (8.2,1.55) -- ($(aoz.east)+(0.04,-0.27)$);
+
+\draw[flow, draw=gpu, line width=1.2pt, rounded corners=3pt]
+      (8.58,1.75) -- (12.6,1.75) -- (12.6,2.60);
+\node[lbl, text=gpu, anchor=east] at (12.35,1.96) {\code{merge} reads new zones in place};
+
+\draw[flow, draw=gpu, rounded corners=3pt] (awb.east) -- (13.6,0.90) -- (13.6,2.60);
+\draw[dflow, rounded corners=3pt] (14.3,2.60) -- (afl.north);
+\node[lbl, anchor=east] at (14.2,0.28) {results};
+
+\node[rounded corners=2pt, fill=acc!8, draw=acc!45, inner sep=4pt,
+      font=\small, text=black!75, anchor=north, align=center] at (7.5,-2.15)
+  {host \code{memcpy} profile halved: 16\,242 $\rightarrow$ 8\,425 samples
+   \quad$\cdot$\quad Fischer $N{=}12$: 17.6\,s (loss) $\rightarrow$ 12.2\,s (win)};
+\end{scope}
+\end{tikzpicture}
+\caption{The new-gather elimination. \textbf{Before:} the host stages \emph{every} freshly generated zone into the merge work buffer (copy~1) in addition to gathering each key's existing antichain (copy~2), so every successor zone is touched twice. \textbf{After:} the merge kernel reads the new zones \emph{in place} from the expand output \code{oz}, addressed by a small \code{new\_idx} array of 4-byte indices, and the host stages only the existing antichains. One full pass over the largest array in the system disappears, replaced by an index list two orders of magnitude smaller.}
+\label{fig:newgather}
+\end{figure*}
 
 \begin{lstlisting}[caption={The merge output is read in place from unified memory---no copy.},captionpos=b]
 // bucket b's final antichain, straight from the GPU buffer:
