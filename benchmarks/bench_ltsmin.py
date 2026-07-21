@@ -46,7 +46,8 @@ def run(cmd, env_extra, timeout, memgb):
     env = dict(os.environ); env.update(env_extra or {})
     t0 = time.perf_counter()
     try:
-        p = subprocess.Popen(["/usr/bin/time", "-l"] + cmd, env=env, stdout=subprocess.PIPE,
+        time_cmd = ["/usr/bin/time", "-v"] if PLAT == "linux" else ["/usr/bin/time", "-l"]
+        p = subprocess.Popen(time_cmd + cmd, env=env, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, preexec_fn=os.setsid)
     except Exception as e:
         return 0.0, 0.0, "ERR", str(e)
@@ -68,8 +69,12 @@ def run(cmd, env_extra, timeout, memgb):
         i += 1; time.sleep(0.05)
     dt = time.perf_counter() - t0
     out = p.stdout.read().decode("utf-8", "replace")
-    m = re.search(r"([0-9]+)\s+maximum resident set size", out)
-    return dt, (int(m.group(1)) / (1024 ** 3)) if m else peak, "OK", out
+    # Extract memory: macOS "-l" or Linux "-v" format
+    m = re.search(r"([0-9]+)\s+maximum resident set size", out) or \
+        re.search(r"Maximum resident set size \(kbytes\):\s+([0-9]+)", out)
+    rss_kb = int(m.group(1)) if m else 0
+    rss_gb = (rss_kb / (1024 ** 2)) if PLAT == "linux" else (rss_kb / (1024 ** 3))
+    return dt, max(peak, rss_gb), "OK", out
 
 
 def main():
