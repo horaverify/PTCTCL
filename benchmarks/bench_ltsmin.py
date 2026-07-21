@@ -22,14 +22,15 @@ VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyt
 TABLE_BITS = 26
 
 QDIR = os.path.join(HERE, f"queries_{PLAT}"); os.makedirs(QDIR, exist_ok=True)
-def q(name, text):
+def q(name, text=None):
     p = os.path.join(QDIR, name)
-    open(p, "w").write(text + "\n")
+    if text:
+        open(p, "w").write(text + "\n")
     return p
-VIK_Q = q("viking.q", "A[] not (Viking1.safe && Viking1.unsafe)")
-FIS_Q = q("fischer.q", "A[] not (P1.cs && P2.cs)")
-TG_Q  = q("train.q",   "A[] not (Train1.Cross && Train2.Cross)")
-TG_QU = q("train_uppaal.q", "A[] not (Train(1).Cross && Train(2).Cross)")
+VIK_Q = q("viking.q")
+FIS_Q = q("fischer.q")
+TG_Q  = q("train.q")
+TG_QU = q("train_uppaal.q")
 
 
 def tbb_proxy():
