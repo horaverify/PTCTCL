@@ -43,101 +43,61 @@ comparison against the stamp, which is how survivors are identified without an a
 And there is a well-defined point at which per-level work can be scheduled, which
 \cref{sec:batching} exploits.
 
-\begin{figure*}[t]
+\begin{figure}[t]
 \centering
 \begin{tikzpicture}[font=\small, x=1mm, y=1mm,
-  ppanel/.style={draw=black!45, rounded corners=2pt, fill=black!3},
-  parr/.style={draw=black!55, rounded corners=1pt, fill=white, minimum height=6mm,
-              font=\ttfamily\scriptsize, inner xsep=3pt},
-  pstep/.style={draw=black!55, rounded corners=1pt, fill=black!8, minimum height=5.5mm,
-               font=\scriptsize, inner xsep=3pt},
-  pthr/.style={draw=black!60, rounded corners=1pt, fill=white, minimum width=8mm,
-              minimum height=5.5mm, font=\ttfamily\scriptsize},
-  pchain/.style={draw=black!55, fill=white, minimum width=7mm, minimum height=5mm,
-                font=\scriptsize},
-  pdead/.style={pchain, fill=black!12, text=black!45},
-  pnote/.style={font=\scriptsize\itshape, text=black!60},
-  pfl/.style={-{Latex[length=1.7mm]}, draw=black!65}]
+  cell/.style={draw=black!60, fill=white, minimum width=4.5mm, minimum height=4.5mm, inner sep=0pt},
+  wrk/.style={draw=black!70, fill=black!10, minimum width=9mm, minimum height=7mm,
+              font=\small, inner sep=0pt},
+  stripe/.style={draw=black!60, fill=white, minimum width=8mm, minimum height=7mm, inner sep=0pt},
+  hot/.style={stripe, fill=black!30},
+  bar/.style={draw=black!70, fill=black!35, minimum height=3.5mm, inner sep=0pt},
+  ttl/.style={font=\bfseries\small},
+  a/.style={-{Latex[length=1.6mm]}, draw=black!70}]
 
-% ================= LEFT: frontier =================
-\node[ppanel, minimum width=44mm, minimum height=52mm, anchor=north west] (P1) at (0,0) {};
-\node[font=\bfseries\small, anchor=north] at (22,-2) {FRONTIER $F_k$};
-\node[pnote, anchor=north] at (22,-8) {flat, struct-of-arrays};
-\node[parr, anchor=north west, minimum width=36mm] at (4,-14) {fk[\,] -- packed 64-bit keys};
-\node[parr, anchor=north west, minimum width=36mm] at (4,-23) {fz[\,] -- zone indices (4 B)};
-\node[pnote, anchor=north west, text width=36mm] at (4,-32)
-  {the discrete configuration is \emph{recovered} from the key, never stored beside a zone};
-\node[pnote, anchor=north west, text width=36mm] at (4,-44)
-  {one slice per thread, \texttt{schedule(dynamic)}};
+% ---------------- SEQUENTIAL ----------------
+\node[ttl] at (20,6) {sequential};
+\foreach \i in {0,...,7} \node[cell] at (2+5*\i,-2) {};
+\node[wrk] at (20,-14) {$T$};
+\foreach \i in {0,...,7} \draw[a] (2+5*\i,-4.5) -- (20,-10.5);
+\foreach \i in {0,...,4} \node[stripe] at (4+8*\i,-26) {};
+\draw[a] (20,-17.5) -- (20,-22.5);
+\node[bar, minimum width=40mm, anchor=west] at (0,-36) {};
 
-% ================= MIDDLE: one thread =================
-\node[ppanel, minimum width=62mm, minimum height=52mm, anchor=north west] (P2) at (50,0) {};
-\node[font=\bfseries\small, anchor=north] at (81,-2) {WHAT ONE THREAD DOES};
-\foreach \i/\x in {0/54, 1/64, 2/74, 3/84, 4/94, 5/104} \node[pthr] at (\x,-10) {t\i};
-\node[pnote, anchor=west] at (54,-16) {each takes a slice of $F_k$; no successor is ever handed over};
+% ---------------- PARALLEL ----------------
+\node[ttl] at (86,6) {parallel, $p$ threads};
+\foreach \i in {0,...,7} \node[cell] at (66+5*\i,-2) {};
+\draw[black!45, dashed] (75.7,1) -- (75.7,-5);
+\draw[black!45, dashed] (90.7,1) -- (90.7,-5);
+\node[wrk] at (70,-14) {$T_0$};
+\node[wrk] at (86,-14) {$T_1$};
+\node[wrk] at (102,-14) {$T_2$};
+\foreach \i in {0,1}     \draw[a] (66+5*\i,-4.5) -- (70,-10.5);
+\foreach \i in {2,3,4}   \draw[a] (66+5*\i,-4.5) -- (86,-10.5);
+\foreach \i in {5,6,7}   \draw[a] (66+5*\i,-4.5) -- (102,-10.5);
+\node[hot]    at (66,-26) {};
+\node[stripe] at (76,-26) {};
+\node[hot]    at (86,-26) {};
+\node[stripe] at (96,-26) {};
+\node[hot]    at (106,-26) {};
+\draw[a] (70,-17.5)  -- (67,-22.5);
+\draw[a] (86,-17.5)  -- (86,-22.5);
+\draw[a] (102,-17.5) -- (105,-22.5);
+\node[bar, minimum width=15mm, anchor=west] at (64,-36) {};
 
-\node[pstep, anchor=north west, minimum width=52mm] at (56,-20)
-  {\textbf{1} \texttt{gen\_succ\_reuse}: build successor \emph{in place}};
-\node[pstep, anchor=north west, minimum width=52mm] at (56,-27)
-  {\textbf{2} $\dk \gets$ pack(locations, integers) \quad 64-bit};
-\node[pstep, anchor=north west, minimum width=52mm] at (56,-34)
-  {\textbf{3} $h \gets \dk\cdot\varphi^{-1}$: \emph{high} bits $\to$ stripe, \emph{low} $\to$ slot};
-\node[pstep, anchor=north west, minimum width=52mm, fill=black!18] at (56,-41)
-  {\textbf{4} \textsc{lock}(stripe) $\to$ \textsc{Insert} $\to$ \textsc{unlock}};
-\node[pnote, anchor=north west, text width=52mm] at (56,-48)
-  {no private buffer, no routing pass: the producer stores it};
-
-% ================= RIGHT: the table =================
-\node[ppanel, minimum width=58mm, minimum height=52mm, anchor=north west] (P3) at (118,0) {};
-\node[font=\bfseries\small, anchor=north] at (147,-2) {SHARED VISITED SET};
-\node[pnote, anchor=north] at (147,-8) {$N_B \ge \max(1024,\,64p)$ stripes, one mutex each};
-
-\foreach \s/\y in {0/-14, 1/-23, 2/-32} {
-  \node[draw=black!55, fill=black!10, minimum width=7mm, minimum height=5mm,
-        font=\scriptsize, anchor=west] (L\s) at (122,\y) {\s};
-  \node[pnote, anchor=east] at (122,\y) {};
-}
-\node[pchain, anchor=west] (a1) at (133,-14) {$z_5$};
-\node[pchain, anchor=west] (a2) at (141,-14) {$z_3$};
-\node[pdead,  anchor=west] (a3) at (149,-14) {$z_1$};
-\draw[pfl] (L0) -- (a1); \draw[pfl] (a1) -- (a2); \draw[pfl] (a2) -- (a3);
-\node[pchain, anchor=west] (b1) at (133,-23) {$z_9$};
-\draw[pfl] (L1) -- (b1);
-\node[pchain, anchor=west] (c1) at (133,-32) {$z_7$};
-\node[pchain, anchor=west] (c2) at (141,-32) {$z_4$};
-\draw[pfl] (L2) -- (c1); \draw[pfl] (c1) -- (c2);
-\node[pnote, anchor=north west, text width=52mm] at (122,-38)
-  {an antichain per configuration, newest first; a subsumed zone is flagged \emph{dead}, never
-   unlinked, so a thread reading one chain is never disturbed by another};
-
-% ================= flows between panels =================
-\draw[pfl, line width=0.5pt] (44,-26) -- (50,-26);
-\draw[pfl, line width=0.5pt] (112,-26) -- (118,-26);
-
-% ================= bottom: survivors + inset =================
-\node[ppanel, minimum width=176mm, minimum height=26mm, anchor=north west] (P4) at (0,-56) {};
-\node[font=\bfseries\small, anchor=north west] at (4,-58) {\textsc{Insert}, under the stripe lock};
-\node[anchor=north west, text width=86mm, font=\scriptsize] at (4,-64)
-  {(a) is the newcomer subsumed by a stored zone? $\Rightarrow$ discard\\
-   (b) does it subsume stored zones? $\Rightarrow$ flag them dead\\
-   (c) is any union with a stored zone convex? $\Rightarrow$ absorb, repeat\\
-   (d) intern the zone, prepend the node, stamp it with level $k$};
-\node[anchor=north west, text width=80mm, font=\scriptsize\itshape, text=black!60] at (94,-64)
-  {(a)--(c) each traverse the antichain, so the critical section is $\Theta(\rho)$ --- this is
-   the term \cref{sec:batching} removes. Interning in (d) is what makes a stored state cost a
-   4-byte index: Viking $N{=}15$ has $2\,768\,894$ symbolic states drawn from $120$ distinct
-   matrices. The stamp in (d) makes ``survivor of level $k$'' an integer comparison, so the
-   next frontier is gathered without an auxiliary set.};
+% ---------------- minimal labels ----------------
+\node[font=\scriptsize, anchor=east] at (-1,-2)  {frontier};
+\node[font=\scriptsize, anchor=east] at (-1,-26) {visited};
+\node[font=\scriptsize, anchor=east] at (-1,-36) {time};
+\node[font=\scriptsize, anchor=west] at (110,-26) {stripes};
 \end{tikzpicture}
-\caption{Expansion and insertion, end to end. The frontier is held as flat arrays of packed
-keys and zone indices; threads take slices of it under a dynamic schedule and each thread runs
-the whole pipeline on its own successors, inserting them itself. One multiplicative hash yields
-both the stripe (high bits) and the slot within it (low bits), so a thread locks only the
-stripe it touches while the other $p-1$ proceed. Because there is no per-thread buffer and no
-routing pass, every successor is written exactly once. The inset lists what one thread executes
-inside the lock.}
+\caption{Sequential versus parallel insertion. Sequentially one worker drains the whole
+frontier and every successor enters the same visited set. In parallel each thread takes a slice
+and inserts its own successors; because a discrete key selects one stripe, threads writing to
+different stripes (shaded) never wait for each other, and the lock is held only for the stripe
+being touched.}
 \label{fig:pipeline}
-\end{figure*}
+\end{figure}
 
 \subsection{Why insertion is fused into expansion}
 

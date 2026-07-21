@@ -1,1 +1,1 @@
-A[] not (P1.cs && P2.cs)
+A[] not (Bus.Idle && Bus.Active)
