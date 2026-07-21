@@ -1,2 +1,88 @@
+# Build directories
+/build*/
+/dist/
+/cmake-build-*/
 
-/build-metal/
+# Dependencies and third-party
+/deps/
+/third_party/
+*.a
+*.so
+*.dylib
+*.dll
+
+# Old/backup files
+*_old/
+*_old
+*old_
+*old
+Old/
+OLD/
+.old/
+*.backup
+*.bak
+*.orig
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# Generated files
+*.o
+*.obj
+*.exe
+*.out
+
+# LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.pdf
+*.dvi
+*.ps
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.latexmain
+
+# OS-specific
+Thumbs.db
+.DS_Store
+.AppleDouble
