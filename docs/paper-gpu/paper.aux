@@ -1,0 +1,63 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}
+\newlabel{sec:intro@cref}{{[section][1][]1}{[1][1][]1}}
+\@writefile{toc}{\contentsline {paragraph}{Contributions.}{1}{section*.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Per-work-item successor pipeline. Only the first stage is DBM-free, and it already runs on the host, so a cheap GPU pre-filter has nothing left to reject.}}{2}{figure.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:kernel}{{1}{2}{Per-work-item successor pipeline. Only the first stage is DBM-free, and it already runs on the host, so a cheap GPU pre-filter has nothing left to reject}{figure.caption.2}{}}
+\newlabel{fig:kernel@cref}{{[figure][1][]1}{[1][2][]2}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Three DBM representations. R3 solves the footprint problem outright, and still loses --- for the reason given in Sect.~\ref {sec:cooperation}.}}{2}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:reps}{{2}{2}{Three DBM representations. R3 solves the footprint problem outright, and still loses --- for the reason given in Sect.~\ref {sec:cooperation}}{figure.caption.3}{}}
+\newlabel{fig:reps@cref}{{[figure][2][]2}{[1][2][]2}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Background and GPU Design}{2}{section.2}\protected@file@percent }
+\newlabel{sec:design}{{2}{2}{Background and GPU Design}{section.2}{}}
+\newlabel{sec:design@cref}{{[section][2][]2}{[1][1][]2}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Three DBM representations}{2}{subsection.2.1}\protected@file@percent }
+\newlabel{sec:reps}{{2.1}{2}{Three DBM representations}{subsection.2.1}{}}
+\newlabel{sec:reps@cref}{{[subsection][1][2]2.1}{[1][2][]2}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Adaptive CPU/GPU merge routing}{2}{subsection.2.2}\protected@file@percent }
+\newlabel{sec:adaptive}{{2.2}{2}{Adaptive CPU/GPU merge routing}{subsection.2.2}{}}
+\newlabel{sec:adaptive@cref}{{[subsection][2][2]2.2}{[1][2][]2}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Adaptive per-level merge routing. Used as a measurement instrument, it selects the GPU only for the single calibration probe on each model.}}{3}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:adaptive}{{3}{3}{Adaptive per-level merge routing. Used as a measurement instrument, it selects the GPU only for the single calibration probe on each model}{figure.caption.4}{}}
+\newlabel{fig:adaptive@cref}{{[figure][3][]3}{[1][2][]3}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces GPU components against their CPU counterparts. Every row favours the CPU.}}{3}{table.caption.5}\protected@file@percent }
+\newlabel{tab:head}{{1}{3}{GPU components against their CPU counterparts. Every row favours the CPU}{table.caption.5}{}}
+\newlabel{tab:head@cref}{{[table][1][]1}{[1][3][]3}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Measurements}{3}{section.3}\protected@file@percent }
+\newlabel{sec:meas}{{3}{3}{Measurements}{section.3}{}}
+\newlabel{sec:meas@cref}{{[section][3][]3}{[1][3][]3}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Why: two refuted hypotheses and one real cause}{3}{section.4}\protected@file@percent }
+\newlabel{sec:why}{{4}{3}{Why: two refuted hypotheses and one real cause}{section.4}{}}
+\newlabel{sec:why@cref}{{[section][4][]4}{[1][3][]3}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Divergence is not the cause}{3}{subsection.4.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Expansion time by representation. R3 cuts per-lane footprint $24\times $ and is the slowest of the three.}}{4}{table.caption.6}\protected@file@percent }
+\newlabel{tab:reps}{{2}{4}{Expansion time by representation. R3 cuts per-lane footprint $24\times $ and is the slowest of the three}{table.caption.6}{}}
+\newlabel{tab:reps@cref}{{[table][2][]2}{[1][4][]4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Arithmetic intensity is not (yet) the cause}{4}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}The working-set dilemma}{4}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:dilemma}{{4.3}{4}{The working-set dilemma}{subsection.4.3}{}}
+\newlabel{sec:dilemma@cref}{{[subsection][3][4]4.3}{[1][4][]4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}No representation escapes it}{4}{subsection.4.4}\protected@file@percent }
+\newlabel{sec:cooperation}{{4.4}{4}{No representation escapes it}{subsection.4.4}{}}
+\newlabel{sec:cooperation@cref}{{[subsection][4][4]4.4}{[1][4][]4}}
+\bibcite{dalsgaard2012multicore}{1}
+\bibcite{behrmann2004tutorial}{2}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces The dominant cause is substantially an Apple-Silicon capacity constraint.}}{5}{table.caption.7}\protected@file@percent }
+\newlabel{tab:h100}{{3}{5}{The dominant cause is substantially an Apple-Silicon capacity constraint}{table.caption.7}{}}
+\newlabel{tab:h100@cref}{{[table][3][]3}{[1][5][]5}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Unified-memory coherency}{5}{subsection.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Outlook: would a larger GPU change the answer?}{5}{section.5}\protected@file@percent }
+\newlabel{sec:h100}{{5}{5}{Outlook: would a larger GPU change the answer?}{section.5}{}}
+\newlabel{sec:h100@cref}{{[section][5][]5}{[1][5][]5}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{5}{section.6}\protected@file@percent }
+\newlabel{sec:concl}{{6}{5}{Conclusion}{section.6}{}}
+\newlabel{sec:concl@cref}{{[section][6][]6}{[1][5][]5}}
+\bibcite{behrmann2006lower}{3}
+\bibcite{laine2013megakernels}{4}
+\bibcite{williams2009roofline}{5}
+\gdef \@abspage@last{6}

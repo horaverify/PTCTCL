@@ -1,0 +1,28 @@
+\section{Introduction}
+\label{sec:intro}
+
+Zone-graph reachability appears tailor-made for a GPU. A BFS level contains millions of
+$(\text{state},\text{edge})$ pairs; each is expanded independently; the arithmetic is small
+dense integer matrix work. Yet across a sustained implementation effort we were unable to
+make a GPU implementation beat a 12-core CPU implementation of the same algorithm on the same
+chip, and the reasons turned out to be interesting enough to report.
+
+This paper is a negative result with a mechanism. Its value is threefold. First, it refutes,
+\emph{on measurement rather than intuition}, the hypothesis most practitioners (including the
+authors) reach for first --- branch divergence --- and thereby saves the reader from
+implementing the standard fix. Second, it identifies the actual cause and shows it is not a
+coding failure but a consequence of the algorithm's shape. Third, it delimits the claim
+precisely: the dominant cause is a hardware capacity that a datacenter GPU relaxes, so the
+result should not be read as ``GPUs cannot do this''.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item Three GPU DBM representations, all implemented and validated against exact
+\uppaal{} state counts (Sect.~\ref{sec:reps}).
+\item An adaptive per-level CPU/GPU merge router, whose selections are themselves a
+measurement instrument (Sect.~\ref{sec:adaptive}).
+\item A refutation of the divergence hypothesis and identification of the working-set
+dilemma (Sect.~\ref{sec:why}), plus a counting argument showing no representation escapes it
+(Sect.~\ref{sec:cooperation}).
+\item A scoped outlook for datacenter GPUs (Sect.~\ref{sec:h100}).
+\end{itemize}

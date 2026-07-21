@@ -1,0 +1,48 @@
+\section{Related Work}\label{sec:related}
+
+Timed automata were introduced by Alur and Dill, who established that reachability is
+decidable via the region graph and thereby made automatic verification of real-time systems
+possible at all. The region construction is exponential in the number of clocks and too
+coarse to implement directly, so practical tools use \emph{zones}, represented as Difference
+Bound Matrices, together with abstractions that keep the zone graph finite. The dominant such
+abstraction is the $\aLU{}$ family of Behrmann et al., which bounds each clock separately by
+the largest constants it is compared against; a complementary line of work represents zones by
+minimal constraint systems to reduce storage. These techniques determine the \emph{size} of
+the state space and are orthogonal to how a checker traverses it.
+
+\textsc{Uppaal} is the reference implementation and remains the tool against which timed
+reachability is measured. It is single-threaded in the configuration we compare against, and
+its state counts serve throughout this paper as a correctness oracle: agreement on the verdict
+is weak evidence, whereas agreement on the number of symbolic states explored is strong.
+
+Parallel and distributed model checking is well developed for untimed systems, where the
+visited set is a plain hash set and the engineering question is a scalable concurrent hash
+table. \ltsmin{} is the mature representative, providing a language-independent interface
+(PINS) behind which many formalisms plug in, together with a multi-core backend built on a
+shared lock-free table. Timed reachability does not fit that mould, because membership is
+subsumption rather than equality.
+
+The closest system to ours, and our principal baseline, is \textsc{opaal}+\ltsmin{}, which
+generates a successor generator from a \textsc{Uppaal} model and drives it through \ltsmin{}'s
+multi-core backend. Its visited set is a shared multimap in which each discrete configuration
+owns a list of symbolic states protected by a per-state spinlock, explored either by
+work-stealing or by strict level-synchronous BFS. That work reports near-linear speed-ups on
+several models and, importantly for us, identifies the failure mode: the size of its critical
+regions ``depends crucially on the $|\Sigma|/|\mathcal{S}|$ ratio'', and a high ratio ``causes
+low scalability''. It also reports a non-blocking variant that improves scalability at the
+cost of allowing $|\Sigma|$ to grow again.
+
+\paragraph*{Positioning.}
+We adopt the shared visited set of \textsc{opaal}+\ltsmin{} and depart from it in three ways,
+each targeting one of the difficulties in \cref{sec:intro}. Where their expansion routes
+successors through per-thread buffers into a locked multimap, we \emph{fuse} expansion and
+insertion so a successor is stored by its producer, eliminating the routing phase and the
+duplicate copy of each search level that it requires. Where they store a zone per symbolic
+state, we intern zones and pack the discrete configuration into a recoverable key, which is
+what turns a $13.5$\,GB footprint into $1.0$\,GB. And where they diagnose the
+$|\Sigma|/|\mathcal{S}|$ ratio as a limit on scalability and mitigate it by weakening the
+invariant, we attack the critical section itself: our batched engine performs the same
+subsumption work outside any lock, so the ratio ceases to control contention while the visited
+set remains exactly the antichain it was. Finally, whereas a parallel checker that explores
+more states than \textsc{Uppaal} can lose to it outright, our merge is aggressive enough that
+we match \textsc{Uppaal}'s counts exactly on the models where both are directly comparable.

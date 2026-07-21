@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x0,x1,x2,x3,x4, y, z; chan approach, leave, lower, raise;</declaration>
+<template><name>T0</name>
+<location id="t0_far"><name>far</name></location>
+<location id="t0_near"><name>near</name><label kind="invariant">x0&lt;=4</label></location>
+<location id="t0_in"><name>in</name><label kind="invariant">x0&lt;=15</label></location>
+<init ref="t0_far"/>
+<transition><source ref="t0_far"/><target ref="t0_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="t0_near"/><target ref="t0_in"/><label kind="guard">x0&gt;=4</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="t0_in"/><target ref="t0_far"/><label kind="guard">x0&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T1</name>
+<location id="t1_far"><name>far</name></location>
+<location id="t1_near"><name>near</name><label kind="invariant">x1&lt;=4</label></location>
+<location id="t1_in"><name>in</name><label kind="invariant">x1&lt;=15</label></location>
+<init ref="t1_far"/>
+<transition><source ref="t1_far"/><target ref="t1_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="t1_near"/><target ref="t1_in"/><label kind="guard">x1&gt;=4</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="t1_in"/><target ref="t1_far"/><label kind="guard">x1&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T2</name>
+<location id="t2_far"><name>far</name></location>
+<location id="t2_near"><name>near</name><label kind="invariant">x2&lt;=4</label></location>
+<location id="t2_in"><name>in</name><label kind="invariant">x2&lt;=15</label></location>
+<init ref="t2_far"/>
+<transition><source ref="t2_far"/><target ref="t2_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="t2_near"/><target ref="t2_in"/><label kind="guard">x2&gt;=4</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="t2_in"/><target ref="t2_far"/><label kind="guard">x2&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T3</name>
+<location id="t3_far"><name>far</name></location>
+<location id="t3_near"><name>near</name><label kind="invariant">x3&lt;=4</label></location>
+<location id="t3_in"><name>in</name><label kind="invariant">x3&lt;=15</label></location>
+<init ref="t3_far"/>
+<transition><source ref="t3_far"/><target ref="t3_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="t3_near"/><target ref="t3_in"/><label kind="guard">x3&gt;=4</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="t3_in"/><target ref="t3_far"/><label kind="guard">x3&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T4</name>
+<location id="t4_far"><name>far</name></location>
+<location id="t4_near"><name>near</name><label kind="invariant">x4&lt;=4</label></location>
+<location id="t4_in"><name>in</name><label kind="invariant">x4&lt;=15</label></location>
+<init ref="t4_far"/>
+<transition><source ref="t4_far"/><target ref="t4_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="t4_near"/><target ref="t4_in"/><label kind="guard">x4&gt;=4</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="t4_in"/><target ref="t4_far"/><label kind="guard">x4&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>G</name>
+<location id="g_up"><name>up</name></location>
+<location id="g_low"><name>low</name><label kind="invariant">y&lt;=2</label></location>
+<location id="g_down"><name>down</name></location>
+<location id="g_rai"><name>rai</name><label kind="invariant">y&lt;=2</label></location>
+<init ref="g_up"/>
+<transition><source ref="g_up"/><target ref="g_low"/><label kind="synchronisation">lower?</label><label kind="assignment">y=0</label></transition>
+<transition><source ref="g_low"/><target ref="g_down"/><label kind="guard">y&gt;=2</label></transition>
+<transition><source ref="g_down"/><target ref="g_rai"/><label kind="synchronisation">raise?</label><label kind="assignment">y=0</label></transition>
+<transition><source ref="g_rai"/><target ref="g_up"/><label kind="guard">y&gt;=2</label></transition>
+</template>
+<template><name>Ctl</name>
+<location id="c_up"><name>up</name></location>
+<location id="c_low1"><name>low_1</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low2"><name>low_2</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low3"><name>low_3</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low4"><name>low_4</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low5"><name>low_5</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_dn1"><name>dn_1</name></location>
+<location id="c_dn2"><name>dn_2</name></location>
+<location id="c_dn3"><name>dn_3</name></location>
+<location id="c_dn4"><name>dn_4</name></location>
+<location id="c_dn5"><name>dn_5</name></location>
+<location id="c_rai"><name>rai</name><label kind="invariant">z&lt;=1</label></location>
+<init ref="c_up"/>
+<transition><source ref="c_up"/><target ref="c_low1"/><label kind="synchronisation">approach?</label><label kind="assignment">z=0</label></transition>
+<transition><source ref="c_low1"/><target ref="c_low2"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low1"/><target ref="c_dn1"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low2"/><target ref="c_low3"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low2"/><target ref="c_dn2"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low3"/><target ref="c_low4"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low3"/><target ref="c_dn3"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low4"/><target ref="c_low5"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low4"/><target ref="c_dn4"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low5"/><target ref="c_dn5"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low1"/><target ref="c_up"/><label kind="synchronisation">leave?</label><label kind="assignment">z=0</label></transition>
+<transition><source ref="c_dn1"/><target ref="c_dn2"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn2"/><target ref="c_dn3"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn2"/><target ref="c_dn1"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn3"/><target ref="c_dn4"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn3"/><target ref="c_dn2"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn4"/><target ref="c_dn5"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn4"/><target ref="c_dn3"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn5"/><target ref="c_dn4"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn1"/><target ref="c_rai"/><label kind="synchronisation">leave?</label><label kind="assignment">z=0</label></transition>
+<transition><source ref="c_rai"/><target ref="c_up"/><label kind="synchronisation">raise!</label></transition>
+</template>
+<system>system T0,T1,T2,T3,T4,G,Ctl;</system>
+</nta>

@@ -1,0 +1,134 @@
+\section{Background and GPU Design}
+\label{sec:design}
+
+A symbolic state pairs a discrete location vector with a zone stored as a
+$(m{+}1)\times(m{+}1)$ Difference Bound Matrix in canonical form. The successor pipeline for
+one $(\text{state},\text{edge})$ pair is shown in Fig.~\ref{fig:kernel}: integer guard, clock
+guard, resets, combined invariant, delay, invariant again, inactive-clock reset,
+extrapolation, emptiness. Integer guards are evaluated \emph{host-side} while the work list
+is built, so the kernel receives only pairs whose discrete part is already known feasible ---
+a fact that matters in Sect.~\ref{sec:why}.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\small,
+  st/.style={draw, rounded corners=2pt, minimum height=7mm, minimum width=15mm, align=center,
+             font=\scriptsize, fill=cA!10, draw=cA},
+  host/.style={st, fill=cD!12, draw=cD},
+  ar/.style={-{Latex[length=1.8mm]}, thick},
+  ex/.style={-{Latex[length=1.8mm]}, cB, thick}]
+
+\node[host] (ig) at (0,0) {int guard\\\textit{host-side}};
+\node[st, right=4mm of ig] (cg) {clock\\guard};
+\node[st, right=4mm of cg] (rs) {resets};
+\node[st, right=4mm of rs] (iv) {invariant};
+\node[st, right=4mm of iv] (dl) {delay};
+\node[st, right=4mm of dl] (iv2) {invariant};
+\node[st, right=4mm of iv2] (ri) {reset\\inactive};
+\node[st, right=4mm of ri] (ex) {extrap.\\+ empty?};
+
+\foreach \a/\b in {ig/cg, cg/rs, rs/iv, iv/dl, dl/iv2, iv2/ri, ri/ex} \draw[ar] (\a) -- (\b);
+\foreach \n in {cg, iv, iv2, ex} \draw[ex] (\n.south) -- ++(0,-5mm);
+\node[font=\scriptsize, cB] at (5.0,-0.95) {early exits (all require the DBM)};
+\end{tikzpicture}
+\caption{Per-work-item successor pipeline. Only the first stage is DBM-free, and it already
+runs on the host, so a cheap GPU pre-filter has nothing left to reject.}
+\label{fig:kernel}
+\end{figure}
+
+\subsection{Three DBM representations}
+\label{sec:reps}
+
+We implemented three mappings of a zone onto the GPU (Fig.~\ref{fig:reps}), all producing
+identical, \uppaal{}-exact state counts.
+
+\begin{description}
+\item[R1: private dense matrix (baseline).] One work item per thread; the zone lives in a
+per-thread array \texttt{int z[MAXDIM*MAXDIM]}. At $\mathit{MAXDIM}=24$ this is 2304\,B.
+\item[R2: threadgroup-resident dense matrix.] One work item per thread, but the zone lives in
+threadgroup (on-chip) memory, sized by the model's real $\mathit{dim}$ rather than
+$\mathit{MAXDIM}$, with an odd stride to avoid bank conflicts.
+\item[R3: row-distributed.] One work item per \emph{SIMD group}; lane $i$ owns row $i$ of the
+matrix in registers. Per-lane footprint falls from $\mathit{dim}^2$ to $\mathit{dim}$ --- a
+$24\times$ reduction. Floyd--Warshall obtains $d[k][\cdot]$ by \texttt{simd\_shuffle},
+register-to-register; \emph{emptiness} folds through \texttt{simd\_any}.
+\end{description}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=3mm,
+  cell/.style={draw, minimum size=3.1mm, inner sep=0pt, fill=cGrey!12},
+  own/.style={cell, fill=cA!35, draw=cA},
+  own2/.style={cell, fill=cC!35, draw=cC},
+  lab/.style={font=\small\bfseries},
+  mem/.style={draw, rounded corners=1.5pt, font=\scriptsize, minimum height=5mm}]
+
+% R1
+\node[lab] at (1.1,2.35) {R1 private};
+\foreach \i in {0,...,5} \foreach \j in {0,...,5}
+  \node[own] at (0.35*\j+0.2, 1.9-0.35*\i) {};
+\node[mem, fill=cB!12, draw=cB, below=1mm of {(1.1,0.0)}, anchor=north] (m1)
+  {\textbf{device memory} (spilled)};
+\node[below=0.5mm of m1, align=center] {$\mathit{dim}^2$ per \emph{thread}\\2304\,B: no register fits};
+
+% R2
+\node[lab] at (4.5,2.35) {R2 threadgroup};
+\foreach \i in {0,...,5} \foreach \j in {0,...,5}
+  \node[own] at (0.35*\j+3.6, 1.9-0.35*\i) {};
+\node[mem, fill=cC!12, draw=cC, below=1mm of {(4.5,0.0)}, anchor=north] (m2)
+  {\textbf{on-chip} 32\,KB budget};
+\node[below=0.5mm of m2, align=center] {$32\times576$\,B $=18$\,KB\\$\Rightarrow$ 1 resident group};
+
+% R3
+\node[lab] at (8.1,2.35) {R3 row-distributed};
+\foreach \i in {0,...,5} \foreach \j in {0,...,5}
+  \node[cell] at (0.35*\j+7.2, 1.9-0.35*\i) {};
+\foreach \j in {0,...,5} \node[own2] at (0.35*\j+7.2, 1.9-0.35*2) {};
+\node[left=1mm of {(7.15,1.9-0.7)}, cC, font=\scriptsize] {lane $i$};
+\node[mem, fill=cA!12, draw=cA, below=1mm of {(8.1,0.0)}, anchor=north] (m3)
+  {\textbf{registers} + \texttt{simd\_shuffle}};
+\node[below=0.5mm of m3, align=center] {$\mathit{dim}$ per \emph{lane}\\$24\times$ smaller};
+\end{tikzpicture}
+\caption{Three DBM representations. R3 solves the footprint problem outright, and still loses
+--- for the reason given in Sect.~\ref{sec:cooperation}.}
+\label{fig:reps}
+\end{figure}
+
+\subsection{Adaptive CPU/GPU merge routing}
+\label{sec:adaptive}
+
+Per-discrete-state merging (\aLU{} subsumption plus convex union) is a second kernel: one
+bucket per thread. Because bucket shape varies enormously between models, we route each BFS
+level to whichever device is predicted faster. The router calibrates the throughput of each
+path on early levels --- measuring $\mathit{work}/\mathit{ms}$ with
+$\mathit{work} = \sum_b |b|^2$, the natural cost model for pairwise antichain folding ---
+then routes each later level to the higher-throughput device, updating its estimate with an
+exponential moving average (Fig.~\ref{fig:adaptive}).
+
+The router is useful in its own right, but its scientific value here is as an
+\emph{instrument}: given a free choice on every level, its selections are an unbiased
+verdict on which device is actually faster.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\small,
+  b/.style={draw, rounded corners=2pt, minimum height=7.5mm, align=center, font=\scriptsize},
+  ar/.style={-{Latex[length=1.8mm]}, thick}]
+\node[b, fill=cGrey!12] (lvl) {level $k$\\buckets};
+\node[b, right=7mm of lvl, fill=cD!12, draw=cD] (cal) {$r_{\mathit{cpu}},r_{\mathit{gpu}}$\\known?};
+\node[b, above right=3mm and 8mm of cal, fill=cB!12, draw=cB] (probe) {probe the\\uncalibrated path};
+\node[b, below right=3mm and 8mm of cal, fill=cC!12, draw=cC] (route) {route to
+$\arg\max r$};
+\node[b, right=8mm of route, fill=cGrey!12] (upd) {update $r$\\(EMA)};
+\draw[ar] (lvl) -- (cal);
+\draw[ar] (cal) -- node[above left, font=\scriptsize] {no} (probe);
+\draw[ar] (cal) -- node[below left, font=\scriptsize] {yes} (route);
+\draw[ar] (route) -- (upd);
+\draw[ar] (probe.east) -- ++(6mm,0) |- (upd.north);
+\node[right=2mm of upd, font=\scriptsize, align=left, cB]
+  {measured outcome:\\\textbf{122/124 levels $\to$ CPU}};
+\end{tikzpicture}
+\caption{Adaptive per-level merge routing. Used as a measurement instrument, it selects the
+GPU only for the single calibration probe on each model.}
+\label{fig:adaptive}
+\end{figure}

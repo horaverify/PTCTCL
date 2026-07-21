@@ -1,0 +1,50 @@
+\section{Background}\label{sec:bg}
+
+Fix a network of timed automata with processes $P_1,\dots,P_n$ over clocks $\clockSet$,
+$|\clockSet| = m$, and bounded integer variables. A \emph{discrete configuration} $\ell$
+consists of one location per process together with the integer valuation; $\mathcal{S}$
+denotes the set of reachable configurations. A \emph{zone} is a set of clock valuations
+defined by difference constraints $x_i - x_j \le c$, and a \emph{symbolic state} is a pair
+$(\ell,\Zone)$, standing for infinitely many concrete states at once; $\Sigma$ denotes the set
+of reachable symbolic states. Reachability is decided by exploring the \emph{zone graph} whose
+nodes are symbolic states.
+
+A zone over $m$ clocks is stored as a Difference Bound Matrix: an $(m{+}1) \times (m{+}1)$
+matrix $\DBM{}$ whose entry $(i,j)$ is the tightest known bound on $x_i - x_j$, with index $0$
+representing the constant zero. A DBM is kept \emph{canonical}, meaning every entry is already
+the tightest implied bound, which makes inclusion testing a pointwise comparison of matrices.
+Canonicalisation is all-pairs shortest paths, $O(m^3)$ by Floyd--Warshall, but adding a single
+constraint can be re-canonicalised incrementally in $O(m^2)$; a zone is empty exactly when
+some diagonal entry is negative. Computing the successor of $(\ell,\Zone)$ along an edge
+intersects the guard, applies clock resets, lets time elapse, intersects the target
+invariant, and finally applies the $\aLU{}$ extrapolation that keeps the zone graph finite.
+All of these are $O(m^2)$ except the emptiness test, which is $O(m)$.
+
+Exploration follows the classical scheme with a \emph{visited} set of expanded states and a
+\emph{waiting} set of discovered-but-unexpanded ones. We proceed level-synchronously, so the
+waiting set is simply the \emph{frontier}: the symbolic states discovered during the previous
+breadth-first level, all of which are expanded during the current one. One level therefore
+expands every state in the frontier, inserts the resulting successors into the visited set,
+and collects those that survive insertion into the frontier of the next level; levels are
+separated by a barrier.
+
+Insertion is where timed model checking parts company with the untimed case. A new
+$(\ell,\Zone)$ is redundant, and discarded, if some stored $(\ell,\Zone')$ has
+$\Zone \subseteq \Zone'$; symmetrically it may render stored zones redundant, and they are
+removed. In place of plain inclusion we use the $\aLU{}$ abstraction, parameterised by
+per-clock bounds derived from $\ell$. Additionally, when the union of two zones happens to be
+convex it is representable exactly, and the pair is replaced by that union. What is stored for
+a configuration is therefore an \emph{antichain} of mutually incomparable zones, and its
+length is precisely the cost of inserting into it.
+
+This yields the one structural quantity used throughout the paper,
+\[
+  \rho \;=\; |\Sigma| \,/\, |\mathcal{S}|,
+\]
+the mean number of zones per discrete configuration, equivalently the mean antichain length.
+Benchmarks differ enormously along this axis, and it will turn out to decide not only how
+expensive insertion is but which of our two engines should be used. Viking sits at
+$\rho \approx 1$, with essentially one zone per configuration, whereas Fischer concentrates
+many zones on comparatively few configurations. Prior work already identified $\rho$ as
+governing the scalability of a shared visited set; \cref{sec:batching} shows how to stop it
+from doing so.
