@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.26 (TeX Live 2024) (preloaded format=pdflatex 2024.12.24)  21 JUL 2026 14:45
+This is pdfTeX, Version 3.141592653-2.6-1.40.26 (TeX Live 2024) (preloaded format=pdflatex 2024.12.24)  21 JUL 2026 14:57
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1154,4 +1154,162 @@ LaTeX Font Info:    Trying to load font information for U+msa on input line 10.
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
 (/usr/local/texlive/2024/texmf-dist/tex/latex/microtype/mt-msa.cfg
-File: mt-msa.cfg 2006/02/04 v1.1 mic
+File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
+)
+LaTeX Font Info:    Trying to load font information for U+msb on input line 10.
+
+
+(/usr/local/texlive/2024/texmf-dist/tex/latex/amsfonts/umsb.fd
+File: umsb.fd 2013/01/14 v3.01 AMS symbols B
+)
+(/usr/local/texlive/2024/texmf-dist/tex/latex/microtype/mt-msb.cfg
+File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
+)
+LaTeX Font Info:    External font `lmex10' loaded for size
+(Font)              <10> on input line 22.
+LaTeX Font Info:    External font `lmex10' loaded for size
+(Font)              <7> on input line 22.
+LaTeX Font Info:    External font `lmex10' loaded for size
+(Font)              <5> on input line 22.
+Package microtype Info: Character `029' is missing
+(microtype)             in font `T1/lmr/m/sc/10'.
+(microtype)             Ignoring protrusion settings for this character.
+
+(./section/introduction.tex
+LaTeX Font Info:    External font `lmex10' loaded for size
+(Font)              <10.95> on input line 26.
+Package microtype Info: Character `029' is missing
+(microtype)             in font `T1/lmr/m/sc/10.95'.
+(microtype)             Ignoring protrusion settings for this character.
+ [1
+
+{/usr/local/texlive/2024/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/loc
+al/texlive/2024/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}{/usr/local/texlive/202
+4/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/usr/local/texlive/2024/texmf-dist/f
+onts/enc/dvips/lm/lm-mathit.enc}])
+(./section/related.tex [2{/usr/local/texlive/2024/texmf-dist/fonts/enc/dvips/lm
+/lm-mathsy.enc}]) (./section/background.tex) (./section/approach.tex [3]
+LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 2
+4.
+
+(/usr/local/texlive/2024/texmf-dist/tex/latex/lm/t1lmtt.fd
+File: t1lmtt.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
+)
+Package microtype Info: Loading generic protrusion settings for font family
+(microtype)             `lmtt' (encoding: T1).
+(microtype)             For optimal results, create family-specific settings.
+(microtype)             See the microtype manual for details.
+
+Overfull \hbox (1.60475pt too wide) in paragraph at lines 33--36
+ [][] 
+ []
+
+Package microtype Info: Character `029' is missing
+(microtype)             in font `T1/lmr/m/sc/8'.
+(microtype)             Ignoring protrusion settings for this character.
+
+LaTeX Font Warning: Font shape `T1/lmr/bx/sc' undefined
+(Font)              using `T1/lmr/bx/n' instead on input line 119.
+
+
+Overfull \hbox (47.3019pt too wide) in paragraph at lines 131--138
+ [][] 
+ []
+
+[4] [5]
+Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
+put line 233.
+ [6]) (./section/batching.tex [7]) (./section/evaluation.tex
+LaTeX Font Info:    Trying to load font information for T1+lmss on input line 2
+7.
+
+(/usr/local/texlive/2024/texmf-dist/tex/latex/lm/t1lmss.fd
+File: t1lmss.fd 2015/05/01 v1.6.1 Font defs for Latin Modern
+)
+Package microtype Info: Loading generic protrusion settings for font family
+(microtype)             `lmss' (encoding: T1).
+(microtype)             For optimal results, create family-specific settings.
+(microtype)             See the microtype manual for details.
+ [8]
+(./figs/parity.tex) (./figs/main.tex [9])
+<figs/time.pdf, id=209, 794.97pt x 260.17201pt>
+File: figs/time.pdf Graphic file (type pdf)
+<use figs/time.pdf>
+Package pdftex.def Info: figs/time.pdf  used on input line 102.
+(pdftex.def)             Requested size: 460.935pt x 150.85619pt.
+ (./figs/memory.tex) [10 <./figs/time.pdf>]
+<figs/memory.pdf, id=276, 794.97pt x 260.17201pt>
+File: figs/memory.pdf Graphic file (type pdf)
+<use figs/memory.pdf>
+Package pdftex.def Info: figs/memory.pdf  used on input line 136.
+(pdftex.def)             Requested size: 460.935pt x 150.85619pt.
+<figs/scaling_ptctlmc.pdf, id=279, 317.98799pt x 245.718pt>
+File: figs/scaling_ptctlmc.pdf Graphic file (type pdf)
+<use figs/scaling_ptctlmc.pdf>
+Package pdftex.def Info: figs/scaling_ptctlmc.pdf  used on input line 144.
+(pdftex.def)             Requested size: 225.86067pt x 174.52847pt.
+<figs/scaling_ltsmin.pdf, id=280, 317.98799pt x 245.718pt>
+File: figs/scaling_ltsmin.pdf Graphic file (type pdf)
+<use figs/scaling_ltsmin.pdf>
+Package pdftex.def Info: figs/scaling_ltsmin.pdf  used on input line 148.
+(pdftex.def)             Requested size: 225.86067pt x 174.52847pt.
+<figs/time_ptctlmc.pdf, id=281, 317.98799pt x 245.718pt>
+File: figs/time_ptctlmc.pdf Graphic file (type pdf)
+<use figs/time_ptctlmc.pdf>
+Package pdftex.def Info: figs/time_ptctlmc.pdf  used on input line 160.
+(pdftex.def)             Requested size: 225.86067pt x 174.52847pt.
+<figs/time_ltsmin.pdf, id=282, 317.98799pt x 245.718pt>
+File: figs/time_ltsmin.pdf Graphic file (type pdf)
+<use figs/time_ltsmin.pdf>
+Package pdftex.def Info: figs/time_ltsmin.pdf  used on input line 164.
+(pdftex.def)             Requested size: 225.86067pt x 174.52847pt.
+ [11 <./figs/memory.pdf>]) (./section/conclusion.tex) [12 <./figs/scaling_ptctl
+mc.pdf> <./figs/scaling_ltsmin.pdf>] [13 <./figs/time_ptctlmc.pdf> <./figs/time
+_ltsmin.pdf>] (./paper.aux)
+ ***********
+LaTeX2e <2023-11-01> patch level 1
+L3 programming layer <2024-02-20>
+ ***********
+
+
+LaTeX Font Warning: Some font shapes were not available, defaults substituted.
+
+Package rerunfilecheck Info: File `paper.out' has not changed.
+(rerunfilecheck)             Checksum: 96C1D26A94462CEC153365E474F767C6;1790.
+ ) 
+Here is how much of TeX's memory you used:
+ 40579 strings out of 474116
+ 913251 string characters out of 5743681
+ 1961187 words of memory out of 5000000
+ 61844 multiletter control sequences out of 15000+600000
+ 713700 words of font info for 285 fonts, out of 8000000 for 9000
+ 1141 hyphenation exceptions out of 8191
+ 89i,11n,97p,1002b,890s stack positions out of 10000i,1000n,20000p,200000b,200000s
+</usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm/lmbx10.pfb></usr/lo
+cal/texlive/2024/texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/local/texliv
+e/2024/texmf-dist/fonts/type1/public/lm/lmbx8.pfb></usr/local/texlive/2024/texm
+f-dist/fonts/type1/public/lm/lmbxi10.pfb></usr/local/texlive/2024/texmf-dist/fo
+nts/type1/public/lm/lmcsc10.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1
+/public/lm/lmmi10.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm
+/lmmi6.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm/lmmi7.pfb>
+</usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm/lmmi8.pfb></usr/local
+/texlive/2024/texmf-dist/fonts/type1/public/lm/lmr10.pfb></usr/local/texlive/20
+24/texmf-dist/fonts/type1/public/lm/lmr17.pfb></usr/local/texlive/2024/texmf-di
+st/fonts/type1/public/lm/lmr6.pfb></usr/local/texlive/2024/texmf-dist/fonts/typ
+e1/public/lm/lmr7.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm
+/lmr8.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm/lmr9.pfb></
+usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm/lmri10.pfb></usr/local/
+texlive/2024/texmf-dist/fonts/type1/public/lm/lmri8.pfb></usr/local/texlive/202
+4/texmf-dist/fonts/type1/public/lm/lmss10.pfb></usr/local/texlive/2024/texmf-di
+st/fonts/type1/public/lm/lmsy10.pfb></usr/local/texlive/2024/texmf-dist/fonts/t
+ype1/public/lm/lmsy6.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public
+/lm/lmsy8.pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm/lmtt10.
+pfb></usr/local/texlive/2024/texmf-dist/fonts/type1/public/lm/lmtt8.pfb></usr/l
+ocal/texlive/2024/texmf-dist/fonts/type1/public/lm/lmtti10.pfb>
+Output written on paper.pdf (13 pages, 624038 bytes).
+PDF statistics:
+ 680 PDF objects out of 1000 (max. 8388607)
+ 317 compressed objects within 4 object streams
+ 63 named destinations out of 1000 (max. 500000)
+ 84199 words of extra memory for PDF output out of 89155 (max. 10000000)
+
