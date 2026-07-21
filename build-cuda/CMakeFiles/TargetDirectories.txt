@@ -1,9 +1,0 @@
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/CMakeFiles/ptctlmc_core.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/CMakeFiles/ptctlmc.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/CMakeFiles/test.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/CMakeFiles/edit_cache.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/CMakeFiles/rebuild_cache.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/tests/CMakeFiles/ptctlmc_unit.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/tests/CMakeFiles/test.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/tests/CMakeFiles/edit_cache.dir
-/home/luca/Documents/ParallelCTLModelChecker/PTCTLMC/build-cuda/tests/CMakeFiles/rebuild_cache.dir

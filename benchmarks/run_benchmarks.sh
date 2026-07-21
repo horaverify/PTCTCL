@@ -15,8 +15,8 @@ cd "$HERE"
 mkdir -p results
 
 OUT="results/full.csv"
-TIMEOUT=300
-MEMGB=15
+TIMEOUT=3000
+MEMGB=100
 THREADS=(4 8 12)
 REPS=2
 
@@ -53,5 +53,3 @@ python3 bench_ltsmin.py \
 
 echo "==> regenerating figures and tables"
 python3 plot_ltsmin.py
-
-echo "==> done. Rebuild the paper with:  (cd ../docs/paper-openmp && make)"
