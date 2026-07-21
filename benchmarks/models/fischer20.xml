@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14,x15,x16,x17,x18,x19; int[0,20] id;</declaration>
+<template><name>P0</name>
+<location id="p0_idle"><name>idle</name></location>
+<location id="p0_req"><name>req</name><label kind="invariant">x0&lt;=2</label></location>
+<location id="p0_wait"><name>wait</name></location>
+<location id="p0_cs"><name>cs</name></location>
+<init ref="p0_idle"/>
+<transition><source ref="p0_idle"/><target ref="p0_req"/><label kind="guard">id==0</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="p0_req"/><target ref="p0_wait"/><label kind="assignment">id=1, x0=0</label></transition>
+<transition><source ref="p0_wait"/><target ref="p0_cs"/><label kind="guard">x0&gt;2 &amp;&amp; id==1</label></transition>
+<transition><source ref="p0_wait"/><target ref="p0_idle"/><label kind="guard">x0&gt;2 &amp;&amp; id!=1</label></transition>
+<transition><source ref="p0_cs"/><target ref="p0_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P1</name>
+<location id="p1_idle"><name>idle</name></location>
+<location id="p1_req"><name>req</name><label kind="invariant">x1&lt;=2</label></location>
+<location id="p1_wait"><name>wait</name></location>
+<location id="p1_cs"><name>cs</name></location>
+<init ref="p1_idle"/>
+<transition><source ref="p1_idle"/><target ref="p1_req"/><label kind="guard">id==0</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="p1_req"/><target ref="p1_wait"/><label kind="assignment">id=2, x1=0</label></transition>
+<transition><source ref="p1_wait"/><target ref="p1_cs"/><label kind="guard">x1&gt;2 &amp;&amp; id==2</label></transition>
+<transition><source ref="p1_wait"/><target ref="p1_idle"/><label kind="guard">x1&gt;2 &amp;&amp; id!=2</label></transition>
+<transition><source ref="p1_cs"/><target ref="p1_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P2</name>
+<location id="p2_idle"><name>idle</name></location>
+<location id="p2_req"><name>req</name><label kind="invariant">x2&lt;=2</label></location>
+<location id="p2_wait"><name>wait</name></location>
+<location id="p2_cs"><name>cs</name></location>
+<init ref="p2_idle"/>
+<transition><source ref="p2_idle"/><target ref="p2_req"/><label kind="guard">id==0</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="p2_req"/><target ref="p2_wait"/><label kind="assignment">id=3, x2=0</label></transition>
+<transition><source ref="p2_wait"/><target ref="p2_cs"/><label kind="guard">x2&gt;2 &amp;&amp; id==3</label></transition>
+<transition><source ref="p2_wait"/><target ref="p2_idle"/><label kind="guard">x2&gt;2 &amp;&amp; id!=3</label></transition>
+<transition><source ref="p2_cs"/><target ref="p2_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P3</name>
+<location id="p3_idle"><name>idle</name></location>
+<location id="p3_req"><name>req</name><label kind="invariant">x3&lt;=2</label></location>
+<location id="p3_wait"><name>wait</name></location>
+<location id="p3_cs"><name>cs</name></location>
+<init ref="p3_idle"/>
+<transition><source ref="p3_idle"/><target ref="p3_req"/><label kind="guard">id==0</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="p3_req"/><target ref="p3_wait"/><label kind="assignment">id=4, x3=0</label></transition>
+<transition><source ref="p3_wait"/><target ref="p3_cs"/><label kind="guard">x3&gt;2 &amp;&amp; id==4</label></transition>
+<transition><source ref="p3_wait"/><target ref="p3_idle"/><label kind="guard">x3&gt;2 &amp;&amp; id!=4</label></transition>
+<transition><source ref="p3_cs"/><target ref="p3_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P4</name>
+<location id="p4_idle"><name>idle</name></location>
+<location id="p4_req"><name>req</name><label kind="invariant">x4&lt;=2</label></location>
+<location id="p4_wait"><name>wait</name></location>
+<location id="p4_cs"><name>cs</name></location>
+<init ref="p4_idle"/>
+<transition><source ref="p4_idle"/><target ref="p4_req"/><label kind="guard">id==0</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="p4_req"/><target ref="p4_wait"/><label kind="assignment">id=5, x4=0</label></transition>
+<transition><source ref="p4_wait"/><target ref="p4_cs"/><label kind="guard">x4&gt;2 &amp;&amp; id==5</label></transition>
+<transition><source ref="p4_wait"/><target ref="p4_idle"/><label kind="guard">x4&gt;2 &amp;&amp; id!=5</label></transition>
+<transition><source ref="p4_cs"/><target ref="p4_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P5</name>
+<location id="p5_idle"><name>idle</name></location>
+<location id="p5_req"><name>req</name><label kind="invariant">x5&lt;=2</label></location>
+<location id="p5_wait"><name>wait</name></location>
+<location id="p5_cs"><name>cs</name></location>
+<init ref="p5_idle"/>
+<transition><source ref="p5_idle"/><target ref="p5_req"/><label kind="guard">id==0</label><label kind="assignment">x5=0</label></transition>
+<transition><source ref="p5_req"/><target ref="p5_wait"/><label kind="assignment">id=6, x5=0</label></transition>
+<transition><source ref="p5_wait"/><target ref="p5_cs"/><label kind="guard">x5&gt;2 &amp;&amp; id==6</label></transition>
+<transition><source ref="p5_wait"/><target ref="p5_idle"/><label kind="guard">x5&gt;2 &amp;&amp; id!=6</label></transition>
+<transition><source ref="p5_cs"/><target ref="p5_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P6</name>
+<location id="p6_idle"><name>idle</name></location>
+<location id="p6_req"><name>req</name><label kind="invariant">x6&lt;=2</label></location>
+<location id="p6_wait"><name>wait</name></location>
+<location id="p6_cs"><name>cs</name></location>
+<init ref="p6_idle"/>
+<transition><source ref="p6_idle"/><target ref="p6_req"/><label kind="guard">id==0</label><label kind="assignment">x6=0</label></transition>
+<transition><source ref="p6_req"/><target ref="p6_wait"/><label kind="assignment">id=7, x6=0</label></transition>
+<transition><source ref="p6_wait"/><target ref="p6_cs"/><label kind="guard">x6&gt;2 &amp;&amp; id==7</label></transition>
+<transition><source ref="p6_wait"/><target ref="p6_idle"/><label kind="guard">x6&gt;2 &amp;&amp; id!=7</label></transition>
+<transition><source ref="p6_cs"/><target ref="p6_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P7</name>
+<location id="p7_idle"><name>idle</name></location>
+<location id="p7_req"><name>req</name><label kind="invariant">x7&lt;=2</label></location>
+<location id="p7_wait"><name>wait</name></location>
+<location id="p7_cs"><name>cs</name></location>
+<init ref="p7_idle"/>
+<transition><source ref="p7_idle"/><target ref="p7_req"/><label kind="guard">id==0</label><label kind="assignment">x7=0</label></transition>
+<transition><source ref="p7_req"/><target ref="p7_wait"/><label kind="assignment">id=8, x7=0</label></transition>
+<transition><source ref="p7_wait"/><target ref="p7_cs"/><label kind="guard">x7&gt;2 &amp;&amp; id==8</label></transition>
+<transition><source ref="p7_wait"/><target ref="p7_idle"/><label kind="guard">x7&gt;2 &amp;&amp; id!=8</label></transition>
+<transition><source ref="p7_cs"/><target ref="p7_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P8</name>
+<location id="p8_idle"><name>idle</name></location>
+<location id="p8_req"><name>req</name><label kind="invariant">x8&lt;=2</label></location>
+<location id="p8_wait"><name>wait</name></location>
+<location id="p8_cs"><name>cs</name></location>
+<init ref="p8_idle"/>
+<transition><source ref="p8_idle"/><target ref="p8_req"/><label kind="guard">id==0</label><label kind="assignment">x8=0</label></transition>
+<transition><source ref="p8_req"/><target ref="p8_wait"/><label kind="assignment">id=9, x8=0</label></transition>
+<transition><source ref="p8_wait"/><target ref="p8_cs"/><label kind="guard">x8&gt;2 &amp;&amp; id==9</label></transition>
+<transition><source ref="p8_wait"/><target ref="p8_idle"/><label kind="guard">x8&gt;2 &amp;&amp; id!=9</label></transition>
+<transition><source ref="p8_cs"/><target ref="p8_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P9</name>
+<location id="p9_idle"><name>idle</name></location>
+<location id="p9_req"><name>req</name><label kind="invariant">x9&lt;=2</label></location>
+<location id="p9_wait"><name>wait</name></location>
+<location id="p9_cs"><name>cs</name></location>
+<init ref="p9_idle"/>
+<transition><source ref="p9_idle"/><target ref="p9_req"/><label kind="guard">id==0</label><label kind="assignment">x9=0</label></transition>
+<transition><source ref="p9_req"/><target ref="p9_wait"/><label kind="assignment">id=10, x9=0</label></transition>
+<transition><source ref="p9_wait"/><target ref="p9_cs"/><label kind="guard">x9&gt;2 &amp;&amp; id==10</label></transition>
+<transition><source ref="p9_wait"/><target ref="p9_idle"/><label kind="guard">x9&gt;2 &amp;&amp; id!=10</label></transition>
+<transition><source ref="p9_cs"/><target ref="p9_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P10</name>
+<location id="p10_idle"><name>idle</name></location>
+<location id="p10_req"><name>req</name><label kind="invariant">x10&lt;=2</label></location>
+<location id="p10_wait"><name>wait</name></location>
+<location id="p10_cs"><name>cs</name></location>
+<init ref="p10_idle"/>
+<transition><source ref="p10_idle"/><target ref="p10_req"/><label kind="guard">id==0</label><label kind="assignment">x10=0</label></transition>
+<transition><source ref="p10_req"/><target ref="p10_wait"/><label kind="assignment">id=11, x10=0</label></transition>
+<transition><source ref="p10_wait"/><target ref="p10_cs"/><label kind="guard">x10&gt;2 &amp;&amp; id==11</label></transition>
+<transition><source ref="p10_wait"/><target ref="p10_idle"/><label kind="guard">x10&gt;2 &amp;&amp; id!=11</label></transition>
+<transition><source ref="p10_cs"/><target ref="p10_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P11</name>
+<location id="p11_idle"><name>idle</name></location>
+<location id="p11_req"><name>req</name><label kind="invariant">x11&lt;=2</label></location>
+<location id="p11_wait"><name>wait</name></location>
+<location id="p11_cs"><name>cs</name></location>
+<init ref="p11_idle"/>
+<transition><source ref="p11_idle"/><target ref="p11_req"/><label kind="guard">id==0</label><label kind="assignment">x11=0</label></transition>
+<transition><source ref="p11_req"/><target ref="p11_wait"/><label kind="assignment">id=12, x11=0</label></transition>
+<transition><source ref="p11_wait"/><target ref="p11_cs"/><label kind="guard">x11&gt;2 &amp;&amp; id==12</label></transition>
+<transition><source ref="p11_wait"/><target ref="p11_idle"/><label kind="guard">x11&gt;2 &amp;&amp; id!=12</label></transition>
+<transition><source ref="p11_cs"/><target ref="p11_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P12</name>
+<location id="p12_idle"><name>idle</name></location>
+<location id="p12_req"><name>req</name><label kind="invariant">x12&lt;=2</label></location>
+<location id="p12_wait"><name>wait</name></location>
+<location id="p12_cs"><name>cs</name></location>
+<init ref="p12_idle"/>
+<transition><source ref="p12_idle"/><target ref="p12_req"/><label kind="guard">id==0</label><label kind="assignment">x12=0</label></transition>
+<transition><source ref="p12_req"/><target ref="p12_wait"/><label kind="assignment">id=13, x12=0</label></transition>
+<transition><source ref="p12_wait"/><target ref="p12_cs"/><label kind="guard">x12&gt;2 &amp;&amp; id==13</label></transition>
+<transition><source ref="p12_wait"/><target ref="p12_idle"/><label kind="guard">x12&gt;2 &amp;&amp; id!=13</label></transition>
+<transition><source ref="p12_cs"/><target ref="p12_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P13</name>
+<location id="p13_idle"><name>idle</name></location>
+<location id="p13_req"><name>req</name><label kind="invariant">x13&lt;=2</label></location>
+<location id="p13_wait"><name>wait</name></location>
+<location id="p13_cs"><name>cs</name></location>
+<init ref="p13_idle"/>
+<transition><source ref="p13_idle"/><target ref="p13_req"/><label kind="guard">id==0</label><label kind="assignment">x13=0</label></transition>
+<transition><source ref="p13_req"/><target ref="p13_wait"/><label kind="assignment">id=14, x13=0</label></transition>
+<transition><source ref="p13_wait"/><target ref="p13_cs"/><label kind="guard">x13&gt;2 &amp;&amp; id==14</label></transition>
+<transition><source ref="p13_wait"/><target ref="p13_idle"/><label kind="guard">x13&gt;2 &amp;&amp; id!=14</label></transition>
+<transition><source ref="p13_cs"/><target ref="p13_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P14</name>
+<location id="p14_idle"><name>idle</name></location>
+<location id="p14_req"><name>req</name><label kind="invariant">x14&lt;=2</label></location>
+<location id="p14_wait"><name>wait</name></location>
+<location id="p14_cs"><name>cs</name></location>
+<init ref="p14_idle"/>
+<transition><source ref="p14_idle"/><target ref="p14_req"/><label kind="guard">id==0</label><label kind="assignment">x14=0</label></transition>
+<transition><source ref="p14_req"/><target ref="p14_wait"/><label kind="assignment">id=15, x14=0</label></transition>
+<transition><source ref="p14_wait"/><target ref="p14_cs"/><label kind="guard">x14&gt;2 &amp;&amp; id==15</label></transition>
+<transition><source ref="p14_wait"/><target ref="p14_idle"/><label kind="guard">x14&gt;2 &amp;&amp; id!=15</label></transition>
+<transition><source ref="p14_cs"/><target ref="p14_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P15</name>
+<location id="p15_idle"><name>idle</name></location>
+<location id="p15_req"><name>req</name><label kind="invariant">x15&lt;=2</label></location>
+<location id="p15_wait"><name>wait</name></location>
+<location id="p15_cs"><name>cs</name></location>
+<init ref="p15_idle"/>
+<transition><source ref="p15_idle"/><target ref="p15_req"/><label kind="guard">id==0</label><label kind="assignment">x15=0</label></transition>
+<transition><source ref="p15_req"/><target ref="p15_wait"/><label kind="assignment">id=16, x15=0</label></transition>
+<transition><source ref="p15_wait"/><target ref="p15_cs"/><label kind="guard">x15&gt;2 &amp;&amp; id==16</label></transition>
+<transition><source ref="p15_wait"/><target ref="p15_idle"/><label kind="guard">x15&gt;2 &amp;&amp; id!=16</label></transition>
+<transition><source ref="p15_cs"/><target ref="p15_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P16</name>
+<location id="p16_idle"><name>idle</name></location>
+<location id="p16_req"><name>req</name><label kind="invariant">x16&lt;=2</label></location>
+<location id="p16_wait"><name>wait</name></location>
+<location id="p16_cs"><name>cs</name></location>
+<init ref="p16_idle"/>
+<transition><source ref="p16_idle"/><target ref="p16_req"/><label kind="guard">id==0</label><label kind="assignment">x16=0</label></transition>
+<transition><source ref="p16_req"/><target ref="p16_wait"/><label kind="assignment">id=17, x16=0</label></transition>
+<transition><source ref="p16_wait"/><target ref="p16_cs"/><label kind="guard">x16&gt;2 &amp;&amp; id==17</label></transition>
+<transition><source ref="p16_wait"/><target ref="p16_idle"/><label kind="guard">x16&gt;2 &amp;&amp; id!=17</label></transition>
+<transition><source ref="p16_cs"/><target ref="p16_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P17</name>
+<location id="p17_idle"><name>idle</name></location>
+<location id="p17_req"><name>req</name><label kind="invariant">x17&lt;=2</label></location>
+<location id="p17_wait"><name>wait</name></location>
+<location id="p17_cs"><name>cs</name></location>
+<init ref="p17_idle"/>
+<transition><source ref="p17_idle"/><target ref="p17_req"/><label kind="guard">id==0</label><label kind="assignment">x17=0</label></transition>
+<transition><source ref="p17_req"/><target ref="p17_wait"/><label kind="assignment">id=18, x17=0</label></transition>
+<transition><source ref="p17_wait"/><target ref="p17_cs"/><label kind="guard">x17&gt;2 &amp;&amp; id==18</label></transition>
+<transition><source ref="p17_wait"/><target ref="p17_idle"/><label kind="guard">x17&gt;2 &amp;&amp; id!=18</label></transition>
+<transition><source ref="p17_cs"/><target ref="p17_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P18</name>
+<location id="p18_idle"><name>idle</name></location>
+<location id="p18_req"><name>req</name><label kind="invariant">x18&lt;=2</label></location>
+<location id="p18_wait"><name>wait</name></location>
+<location id="p18_cs"><name>cs</name></location>
+<init ref="p18_idle"/>
+<transition><source ref="p18_idle"/><target ref="p18_req"/><label kind="guard">id==0</label><label kind="assignment">x18=0</label></transition>
+<transition><source ref="p18_req"/><target ref="p18_wait"/><label kind="assignment">id=19, x18=0</label></transition>
+<transition><source ref="p18_wait"/><target ref="p18_cs"/><label kind="guard">x18&gt;2 &amp;&amp; id==19</label></transition>
+<transition><source ref="p18_wait"/><target ref="p18_idle"/><label kind="guard">x18&gt;2 &amp;&amp; id!=19</label></transition>
+<transition><source ref="p18_cs"/><target ref="p18_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<template><name>P19</name>
+<location id="p19_idle"><name>idle</name></location>
+<location id="p19_req"><name>req</name><label kind="invariant">x19&lt;=2</label></location>
+<location id="p19_wait"><name>wait</name></location>
+<location id="p19_cs"><name>cs</name></location>
+<init ref="p19_idle"/>
+<transition><source ref="p19_idle"/><target ref="p19_req"/><label kind="guard">id==0</label><label kind="assignment">x19=0</label></transition>
+<transition><source ref="p19_req"/><target ref="p19_wait"/><label kind="assignment">id=20, x19=0</label></transition>
+<transition><source ref="p19_wait"/><target ref="p19_cs"/><label kind="guard">x19&gt;2 &amp;&amp; id==20</label></transition>
+<transition><source ref="p19_wait"/><target ref="p19_idle"/><label kind="guard">x19&gt;2 &amp;&amp; id!=20</label></transition>
+<transition><source ref="p19_cs"/><target ref="p19_idle"/><label kind="assignment">id=0</label></transition>
+</template>
+<system>system P0,P1,P2,P3,P4,P5,P6,P7,P8,P9,P10,P11,P12,P13,P14,P15,P16,P17,P18,P19;</system>
+</nta>

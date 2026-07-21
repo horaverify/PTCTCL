@@ -18,22 +18,22 @@ handles by skipping the LTSmin rows rather than failing.
     python3 prepare_models.py --only phil,fischer --range 4 10
 """
 import argparse, os, subprocess, sys
-
+from tqdm import tqdm
 HERE = os.path.dirname(os.path.abspath(__file__))
 GEN = os.path.join(HERE, "generators")
 
 # family -> (default N range, (macOS query, Linux query)). Queries explore the whole space rather
 # than terminating early, so timings measure exploration and not luck.
 FAMILIES = {
-    "fischer": ((4, 11), ("A[] not (P1.cs && P2.cs)", "A[] not (P1.cs && P2.cs)")),
-    "phil":    ((4, 11), ("A[] not (P0.Eat && P1.Eat)", "A[] not (F0.Eat && F1.Eat)")),  # Linux uses F0-F3
-    "twolock": ((4, 11), ("A[] not (P1.cs && P2.cs)", "A[] not (P1.cs && P2.cs)")),  # Linux uses P0-P3
-    "arbiter": ((4, 16), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),  # Linux uses C0-C3
-    "csma":    ((4, 12), ("A[] not (P1.cs && P2.cs)", "A[] not (S1.cs && S2.cs)")),  # Linux uses S0-S3
-    "grc":     ((4, 10), ("A[] not deadlock", "A[] not deadlock")),  # OK for both
-    "single":  ((4, 10), ("A[] not (P1.cs && P2.cs)", "A[] not (P.cs)")),  # Linux uses single P
-    "viking":  ((4, 17), ("A[] not (Viking1.safe && Viking1.unsafe)", "A[] not (Viking1.safe && Viking1.unsafe)")),
-    "train":   ((0, 1), ("A[] not (Train1.Cross && Train2.Cross)", "A[] not (Train1.Cross && Train2.Cross)")),
+    "fischer": ((4, 20), ("A[] not (P1.cs && P2.cs)", "A[] not (P1.cs && P2.cs)")),
+    "phil":    ((4, 20), ("A[] not (P0.Eat && P1.Eat)", "A[] not (F0.Eat && F1.Eat)")),  # Linux uses F0-F3
+    "twolock": ((4, 20), ("A[] not (P1.cs && P2.cs)", "A[] not (P1.cs && P2.cs)")),  # Linux uses P0-P3
+    "arbiter": ((4, 25), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),  # Linux uses C0-C3
+    "csma":    ((4, 22), ("A[] not (P1.cs && P2.cs)", "A[] not (S1.cs && S2.cs)")),  # Linux uses S0-S3
+    "grc":     ((4, 20), ("A[] not deadlock", "A[] not deadlock")),  # OK for both
+    "single":  ((4, 20), ("A[] not (P1.cs && P2.cs)", "A[] not (P.cs)")),  # Linux uses single P
+    "viking":  ((4, 26), ("A[] not (Viking1.safe && Viking1.unsafe)", "A[] not (Viking1.safe && Viking1.unsafe)")),
+    "train":   ((0, 5), ("A[] not (Train1.Cross && Train2.Cross)", "A[] not (Train1.Cross && Train2.Cross)")),
 }
 
 
@@ -58,7 +58,7 @@ def main():
     sodir = os.path.join(args.outdir, "so_linux" if args.linux else "so_macos"); os.makedirs(sodir, exist_ok=True)
 
     made, failed = 0, []
-    for fam in want:
+    for fam in tqdm(want):
         if fam not in FAMILIES:
             print("unknown family %r (have: %s)" % (fam, ", ".join(sorted(FAMILIES))), file=sys.stderr)
             continue
@@ -70,7 +70,7 @@ def main():
         gen = os.path.join(GEN, "gen_%s.py" % fam)
         if not os.path.exists(gen):
             failed.append("%s: no generator" % fam); continue
-        for n in range(lo, hi + 1):
+        for n in tqdm(range(lo, hi + 1), desc=fam, leave=False):
             xml = os.path.join(mdir, "%s%d.xml" % (fam, n))
             try:
                 with open(xml, "w") as fh:

@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock c0,c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15,c16; chan take0,take1,take2,take3,take4,take5,take6,take7,take8,take9,take10,take11,take12,take13,take14,take15,take16,put0,put1,put2,put3,put4,put5,put6,put7,put8,put9,put10,put11,put12,put13,put14,put15,put16;</declaration>
+<template><name>F0</name>
+<location id="f0_free"><name>Free</name></location>
+<location id="f0_used"><name>Used</name></location>
+<init ref="f0_free"/>
+<transition><source ref="f0_free"/><target ref="f0_used"/><label kind="synchronisation">take0?</label></transition>
+<transition><source ref="f0_used"/><target ref="f0_free"/><label kind="synchronisation">put0?</label></transition>
+</template>
+<template><name>F1</name>
+<location id="f1_free"><name>Free</name></location>
+<location id="f1_used"><name>Used</name></location>
+<init ref="f1_free"/>
+<transition><source ref="f1_free"/><target ref="f1_used"/><label kind="synchronisation">take1?</label></transition>
+<transition><source ref="f1_used"/><target ref="f1_free"/><label kind="synchronisation">put1?</label></transition>
+</template>
+<template><name>F2</name>
+<location id="f2_free"><name>Free</name></location>
+<location id="f2_used"><name>Used</name></location>
+<init ref="f2_free"/>
+<transition><source ref="f2_free"/><target ref="f2_used"/><label kind="synchronisation">take2?</label></transition>
+<transition><source ref="f2_used"/><target ref="f2_free"/><label kind="synchronisation">put2?</label></transition>
+</template>
+<template><name>F3</name>
+<location id="f3_free"><name>Free</name></location>
+<location id="f3_used"><name>Used</name></location>
+<init ref="f3_free"/>
+<transition><source ref="f3_free"/><target ref="f3_used"/><label kind="synchronisation">take3?</label></transition>
+<transition><source ref="f3_used"/><target ref="f3_free"/><label kind="synchronisation">put3?</label></transition>
+</template>
+<template><name>F4</name>
+<location id="f4_free"><name>Free</name></location>
+<location id="f4_used"><name>Used</name></location>
+<init ref="f4_free"/>
+<transition><source ref="f4_free"/><target ref="f4_used"/><label kind="synchronisation">take4?</label></transition>
+<transition><source ref="f4_used"/><target ref="f4_free"/><label kind="synchronisation">put4?</label></transition>
+</template>
+<template><name>F5</name>
+<location id="f5_free"><name>Free</name></location>
+<location id="f5_used"><name>Used</name></location>
+<init ref="f5_free"/>
+<transition><source ref="f5_free"/><target ref="f5_used"/><label kind="synchronisation">take5?</label></transition>
+<transition><source ref="f5_used"/><target ref="f5_free"/><label kind="synchronisation">put5?</label></transition>
+</template>
+<template><name>F6</name>
+<location id="f6_free"><name>Free</name></location>
+<location id="f6_used"><name>Used</name></location>
+<init ref="f6_free"/>
+<transition><source ref="f6_free"/><target ref="f6_used"/><label kind="synchronisation">take6?</label></transition>
+<transition><source ref="f6_used"/><target ref="f6_free"/><label kind="synchronisation">put6?</label></transition>
+</template>
+<template><name>F7</name>
+<location id="f7_free"><name>Free</name></location>
+<location id="f7_used"><name>Used</name></location>
+<init ref="f7_free"/>
+<transition><source ref="f7_free"/><target ref="f7_used"/><label kind="synchronisation">take7?</label></transition>
+<transition><source ref="f7_used"/><target ref="f7_free"/><label kind="synchronisation">put7?</label></transition>
+</template>
+<template><name>F8</name>
+<location id="f8_free"><name>Free</name></location>
+<location id="f8_used"><name>Used</name></location>
+<init ref="f8_free"/>
+<transition><source ref="f8_free"/><target ref="f8_used"/><label kind="synchronisation">take8?</label></transition>
+<transition><source ref="f8_used"/><target ref="f8_free"/><label kind="synchronisation">put8?</label></transition>
+</template>
+<template><name>F9</name>
+<location id="f9_free"><name>Free</name></location>
+<location id="f9_used"><name>Used</name></location>
+<init ref="f9_free"/>
+<transition><source ref="f9_free"/><target ref="f9_used"/><label kind="synchronisation">take9?</label></transition>
+<transition><source ref="f9_used"/><target ref="f9_free"/><label kind="synchronisation">put9?</label></transition>
+</template>
+<template><name>F10</name>
+<location id="f10_free"><name>Free</name></location>
+<location id="f10_used"><name>Used</name></location>
+<init ref="f10_free"/>
+<transition><source ref="f10_free"/><target ref="f10_used"/><label kind="synchronisation">take10?</label></transition>
+<transition><source ref="f10_used"/><target ref="f10_free"/><label kind="synchronisation">put10?</label></transition>
+</template>
+<template><name>F11</name>
+<location id="f11_free"><name>Free</name></location>
+<location id="f11_used"><name>Used</name></location>
+<init ref="f11_free"/>
+<transition><source ref="f11_free"/><target ref="f11_used"/><label kind="synchronisation">take11?</label></transition>
+<transition><source ref="f11_used"/><target ref="f11_free"/><label kind="synchronisation">put11?</label></transition>
+</template>
+<template><name>F12</name>
+<location id="f12_free"><name>Free</name></location>
+<location id="f12_used"><name>Used</name></location>
+<init ref="f12_free"/>
+<transition><source ref="f12_free"/><target ref="f12_used"/><label kind="synchronisation">take12?</label></transition>
+<transition><source ref="f12_used"/><target ref="f12_free"/><label kind="synchronisation">put12?</label></transition>
+</template>
+<template><name>F13</name>
+<location id="f13_free"><name>Free</name></location>
+<location id="f13_used"><name>Used</name></location>
+<init ref="f13_free"/>
+<transition><source ref="f13_free"/><target ref="f13_used"/><label kind="synchronisation">take13?</label></transition>
+<transition><source ref="f13_used"/><target ref="f13_free"/><label kind="synchronisation">put13?</label></transition>
+</template>
+<template><name>F14</name>
+<location id="f14_free"><name>Free</name></location>
+<location id="f14_used"><name>Used</name></location>
+<init ref="f14_free"/>
+<transition><source ref="f14_free"/><target ref="f14_used"/><label kind="synchronisation">take14?</label></transition>
+<transition><source ref="f14_used"/><target ref="f14_free"/><label kind="synchronisation">put14?</label></transition>
+</template>
+<template><name>F15</name>
+<location id="f15_free"><name>Free</name></location>
+<location id="f15_used"><name>Used</name></location>
+<init ref="f15_free"/>
+<transition><source ref="f15_free"/><target ref="f15_used"/><label kind="synchronisation">take15?</label></transition>
+<transition><source ref="f15_used"/><target ref="f15_free"/><label kind="synchronisation">put15?</label></transition>
+</template>
+<template><name>F16</name>
+<location id="f16_free"><name>Free</name></location>
+<location id="f16_used"><name>Used</name></location>
+<init ref="f16_free"/>
+<transition><source ref="f16_free"/><target ref="f16_used"/><label kind="synchronisation">take16?</label></transition>
+<transition><source ref="f16_used"/><target ref="f16_free"/><label kind="synchronisation">put16?</label></transition>
+</template>
+<template><name>P0</name>
+<location id="p0_think"><name>Think</name></location>
+<location id="p0_holdl"><name>HoldL</name></location>
+<location id="p0_eat"><name>Eat</name><label kind="invariant">c0&lt;=2</label></location>
+<location id="p0_drop"><name>Dropped</name></location>
+<init ref="p0_think"/>
+<transition><source ref="p0_think"/><target ref="p0_holdl"/><label kind="synchronisation">take0!</label><label kind="assignment">c0=0</label></transition>
+<transition><source ref="p0_holdl"/><target ref="p0_eat"/><label kind="synchronisation">take1!</label><label kind="assignment">c0=0</label></transition>
+<transition><source ref="p0_eat"/><target ref="p0_drop"/><label kind="guard">c0&gt;=1</label><label kind="synchronisation">put0!</label></transition>
+<transition><source ref="p0_drop"/><target ref="p0_think"/><label kind="synchronisation">put1!</label></transition>
+</template>
+<template><name>P1</name>
+<location id="p1_think"><name>Think</name></location>
+<location id="p1_holdl"><name>HoldL</name></location>
+<location id="p1_eat"><name>Eat</name><label kind="invariant">c1&lt;=2</label></location>
+<location id="p1_drop"><name>Dropped</name></location>
+<init ref="p1_think"/>
+<transition><source ref="p1_think"/><target ref="p1_holdl"/><label kind="synchronisation">take1!</label><label kind="assignment">c1=0</label></transition>
+<transition><source ref="p1_holdl"/><target ref="p1_eat"/><label kind="synchronisation">take2!</label><label kind="assignment">c1=0</label></transition>
+<transition><source ref="p1_eat"/><target ref="p1_drop"/><label kind="guard">c1&gt;=1</label><label kind="synchronisation">put1!</label></transition>
+<transition><source ref="p1_drop"/><target ref="p1_think"/><label kind="synchronisation">put2!</label></transition>
+</template>
+<template><name>P2</name>
+<location id="p2_think"><name>Think</name></location>
+<location id="p2_holdl"><name>HoldL</name></location>
+<location id="p2_eat"><name>Eat</name><label kind="invariant">c2&lt;=2</label></location>
+<location id="p2_drop"><name>Dropped</name></location>
+<init ref="p2_think"/>
+<transition><source ref="p2_think"/><target ref="p2_holdl"/><label kind="synchronisation">take2!</label><label kind="assignment">c2=0</label></transition>
+<transition><source ref="p2_holdl"/><target ref="p2_eat"/><label kind="synchronisation">take3!</label><label kind="assignment">c2=0</label></transition>
+<transition><source ref="p2_eat"/><target ref="p2_drop"/><label kind="guard">c2&gt;=1</label><label kind="synchronisation">put2!</label></transition>
+<transition><source ref="p2_drop"/><target ref="p2_think"/><label kind="synchronisation">put3!</label></transition>
+</template>
+<template><name>P3</name>
+<location id="p3_think"><name>Think</name></location>
+<location id="p3_holdl"><name>HoldL</name></location>
+<location id="p3_eat"><name>Eat</name><label kind="invariant">c3&lt;=2</label></location>
+<location id="p3_drop"><name>Dropped</name></location>
+<init ref="p3_think"/>
+<transition><source ref="p3_think"/><target ref="p3_holdl"/><label kind="synchronisation">take3!</label><label kind="assignment">c3=0</label></transition>
+<transition><source ref="p3_holdl"/><target ref="p3_eat"/><label kind="synchronisation">take4!</label><label kind="assignment">c3=0</label></transition>
+<transition><source ref="p3_eat"/><target ref="p3_drop"/><label kind="guard">c3&gt;=1</label><label kind="synchronisation">put3!</label></transition>
+<transition><source ref="p3_drop"/><target ref="p3_think"/><label kind="synchronisation">put4!</label></transition>
+</template>
+<template><name>P4</name>
+<location id="p4_think"><name>Think</name></location>
+<location id="p4_holdl"><name>HoldL</name></location>
+<location id="p4_eat"><name>Eat</name><label kind="invariant">c4&lt;=2</label></location>
+<location id="p4_drop"><name>Dropped</name></location>
+<init ref="p4_think"/>
+<transition><source ref="p4_think"/><target ref="p4_holdl"/><label kind="synchronisation">take4!</label><label kind="assignment">c4=0</label></transition>
+<transition><source ref="p4_holdl"/><target ref="p4_eat"/><label kind="synchronisation">take5!</label><label kind="assignment">c4=0</label></transition>
+<transition><source ref="p4_eat"/><target ref="p4_drop"/><label kind="guard">c4&gt;=1</label><label kind="synchronisation">put4!</label></transition>
+<transition><source ref="p4_drop"/><target ref="p4_think"/><label kind="synchronisation">put5!</label></transition>
+</template>
+<template><name>P5</name>
+<location id="p5_think"><name>Think</name></location>
+<location id="p5_holdl"><name>HoldL</name></location>
+<location id="p5_eat"><name>Eat</name><label kind="invariant">c5&lt;=2</label></location>
+<location id="p5_drop"><name>Dropped</name></location>
+<init ref="p5_think"/>
+<transition><source ref="p5_think"/><target ref="p5_holdl"/><label kind="synchronisation">take5!</label><label kind="assignment">c5=0</label></transition>
+<transition><source ref="p5_holdl"/><target ref="p5_eat"/><label kind="synchronisation">take6!</label><label kind="assignment">c5=0</label></transition>
+<transition><source ref="p5_eat"/><target ref="p5_drop"/><label kind="guard">c5&gt;=1</label><label kind="synchronisation">put5!</label></transition>
+<transition><source ref="p5_drop"/><target ref="p5_think"/><label kind="synchronisation">put6!</label></transition>
+</template>
+<template><name>P6</name>
+<location id="p6_think"><name>Think</name></location>
+<location id="p6_holdl"><name>HoldL</name></location>
+<location id="p6_eat"><name>Eat</name><label kind="invariant">c6&lt;=2</label></location>
+<location id="p6_drop"><name>Dropped</name></location>
+<init ref="p6_think"/>
+<transition><source ref="p6_think"/><target ref="p6_holdl"/><label kind="synchronisation">take6!</label><label kind="assignment">c6=0</label></transition>
+<transition><source ref="p6_holdl"/><target ref="p6_eat"/><label kind="synchronisation">take7!</label><label kind="assignment">c6=0</label></transition>
+<transition><source ref="p6_eat"/><target ref="p6_drop"/><label kind="guard">c6&gt;=1</label><label kind="synchronisation">put6!</label></transition>
+<transition><source ref="p6_drop"/><target ref="p6_think"/><label kind="synchronisation">put7!</label></transition>
+</template>
+<template><name>P7</name>
+<location id="p7_think"><name>Think</name></location>
+<location id="p7_holdl"><name>HoldL</name></location>
+<location id="p7_eat"><name>Eat</name><label kind="invariant">c7&lt;=2</label></location>
+<location id="p7_drop"><name>Dropped</name></location>
+<init ref="p7_think"/>
+<transition><source ref="p7_think"/><target ref="p7_holdl"/><label kind="synchronisation">take7!</label><label kind="assignment">c7=0</label></transition>
+<transition><source ref="p7_holdl"/><target ref="p7_eat"/><label kind="synchronisation">take8!</label><label kind="assignment">c7=0</label></transition>
+<transition><source ref="p7_eat"/><target ref="p7_drop"/><label kind="guard">c7&gt;=1</label><label kind="synchronisation">put7!</label></transition>
+<transition><source ref="p7_drop"/><target ref="p7_think"/><label kind="synchronisation">put8!</label></transition>
+</template>
+<template><name>P8</name>
+<location id="p8_think"><name>Think</name></location>
+<location id="p8_holdl"><name>HoldL</name></location>
+<location id="p8_eat"><name>Eat</name><label kind="invariant">c8&lt;=2</label></location>
+<location id="p8_drop"><name>Dropped</name></location>
+<init ref="p8_think"/>
+<transition><source ref="p8_think"/><target ref="p8_holdl"/><label kind="synchronisation">take8!</label><label kind="assignment">c8=0</label></transition>
+<transition><source ref="p8_holdl"/><target ref="p8_eat"/><label kind="synchronisation">take9!</label><label kind="assignment">c8=0</label></transition>
+<transition><source ref="p8_eat"/><target ref="p8_drop"/><label kind="guard">c8&gt;=1</label><label kind="synchronisation">put8!</label></transition>
+<transition><source ref="p8_drop"/><target ref="p8_think"/><label kind="synchronisation">put9!</label></transition>
+</template>
+<template><name>P9</name>
+<location id="p9_think"><name>Think</name></location>
+<location id="p9_holdl"><name>HoldL</name></location>
+<location id="p9_eat"><name>Eat</name><label kind="invariant">c9&lt;=2</label></location>
+<location id="p9_drop"><name>Dropped</name></location>
+<init ref="p9_think"/>
+<transition><source ref="p9_think"/><target ref="p9_holdl"/><label kind="synchronisation">take9!</label><label kind="assignment">c9=0</label></transition>
+<transition><source ref="p9_holdl"/><target ref="p9_eat"/><label kind="synchronisation">take10!</label><label kind="assignment">c9=0</label></transition>
+<transition><source ref="p9_eat"/><target ref="p9_drop"/><label kind="guard">c9&gt;=1</label><label kind="synchronisation">put9!</label></transition>
+<transition><source ref="p9_drop"/><target ref="p9_think"/><label kind="synchronisation">put10!</label></transition>
+</template>
+<template><name>P10</name>
+<location id="p10_think"><name>Think</name></location>
+<location id="p10_holdl"><name>HoldL</name></location>
+<location id="p10_eat"><name>Eat</name><label kind="invariant">c10&lt;=2</label></location>
+<location id="p10_drop"><name>Dropped</name></location>
+<init ref="p10_think"/>
+<transition><source ref="p10_think"/><target ref="p10_holdl"/><label kind="synchronisation">take10!</label><label kind="assignment">c10=0</label></transition>
+<transition><source ref="p10_holdl"/><target ref="p10_eat"/><label kind="synchronisation">take11!</label><label kind="assignment">c10=0</label></transition>
+<transition><source ref="p10_eat"/><target ref="p10_drop"/><label kind="guard">c10&gt;=1</label><label kind="synchronisation">put10!</label></transition>
+<transition><source ref="p10_drop"/><target ref="p10_think"/><label kind="synchronisation">put11!</label></transition>
+</template>
+<template><name>P11</name>
+<location id="p11_think"><name>Think</name></location>
+<location id="p11_holdl"><name>HoldL</name></location>
+<location id="p11_eat"><name>Eat</name><label kind="invariant">c11&lt;=2</label></location>
+<location id="p11_drop"><name>Dropped</name></location>
+<init ref="p11_think"/>
+<transition><source ref="p11_think"/><target ref="p11_holdl"/><label kind="synchronisation">take11!</label><label kind="assignment">c11=0</label></transition>
+<transition><source ref="p11_holdl"/><target ref="p11_eat"/><label kind="synchronisation">take12!</label><label kind="assignment">c11=0</label></transition>
+<transition><source ref="p11_eat"/><target ref="p11_drop"/><label kind="guard">c11&gt;=1</label><label kind="synchronisation">put11!</label></transition>
+<transition><source ref="p11_drop"/><target ref="p11_think"/><label kind="synchronisation">put12!</label></transition>
+</template>
+<template><name>P12</name>
+<location id="p12_think"><name>Think</name></location>
+<location id="p12_holdl"><name>HoldL</name></location>
+<location id="p12_eat"><name>Eat</name><label kind="invariant">c12&lt;=2</label></location>
+<location id="p12_drop"><name>Dropped</name></location>
+<init ref="p12_think"/>
+<transition><source ref="p12_think"/><target ref="p12_holdl"/><label kind="synchronisation">take12!</label><label kind="assignment">c12=0</label></transition>
+<transition><source ref="p12_holdl"/><target ref="p12_eat"/><label kind="synchronisation">take13!</label><label kind="assignment">c12=0</label></transition>
+<transition><source ref="p12_eat"/><target ref="p12_drop"/><label kind="guard">c12&gt;=1</label><label kind="synchronisation">put12!</label></transition>
+<transition><source ref="p12_drop"/><target ref="p12_think"/><label kind="synchronisation">put13!</label></transition>
+</template>
+<template><name>P13</name>
+<location id="p13_think"><name>Think</name></location>
+<location id="p13_holdl"><name>HoldL</name></location>
+<location id="p13_eat"><name>Eat</name><label kind="invariant">c13&lt;=2</label></location>
+<location id="p13_drop"><name>Dropped</name></location>
+<init ref="p13_think"/>
+<transition><source ref="p13_think"/><target ref="p13_holdl"/><label kind="synchronisation">take13!</label><label kind="assignment">c13=0</label></transition>
+<transition><source ref="p13_holdl"/><target ref="p13_eat"/><label kind="synchronisation">take14!</label><label kind="assignment">c13=0</label></transition>
+<transition><source ref="p13_eat"/><target ref="p13_drop"/><label kind="guard">c13&gt;=1</label><label kind="synchronisation">put13!</label></transition>
+<transition><source ref="p13_drop"/><target ref="p13_think"/><label kind="synchronisation">put14!</label></transition>
+</template>
+<template><name>P14</name>
+<location id="p14_think"><name>Think</name></location>
+<location id="p14_holdl"><name>HoldL</name></location>
+<location id="p14_eat"><name>Eat</name><label kind="invariant">c14&lt;=2</label></location>
+<location id="p14_drop"><name>Dropped</name></location>
+<init ref="p14_think"/>
+<transition><source ref="p14_think"/><target ref="p14_holdl"/><label kind="synchronisation">take14!</label><label kind="assignment">c14=0</label></transition>
+<transition><source ref="p14_holdl"/><target ref="p14_eat"/><label kind="synchronisation">take15!</label><label kind="assignment">c14=0</label></transition>
+<transition><source ref="p14_eat"/><target ref="p14_drop"/><label kind="guard">c14&gt;=1</label><label kind="synchronisation">put14!</label></transition>
+<transition><source ref="p14_drop"/><target ref="p14_think"/><label kind="synchronisation">put15!</label></transition>
+</template>
+<template><name>P15</name>
+<location id="p15_think"><name>Think</name></location>
+<location id="p15_holdl"><name>HoldL</name></location>
+<location id="p15_eat"><name>Eat</name><label kind="invariant">c15&lt;=2</label></location>
+<location id="p15_drop"><name>Dropped</name></location>
+<init ref="p15_think"/>
+<transition><source ref="p15_think"/><target ref="p15_holdl"/><label kind="synchronisation">take15!</label><label kind="assignment">c15=0</label></transition>
+<transition><source ref="p15_holdl"/><target ref="p15_eat"/><label kind="synchronisation">take16!</label><label kind="assignment">c15=0</label></transition>
+<transition><source ref="p15_eat"/><target ref="p15_drop"/><label kind="guard">c15&gt;=1</label><label kind="synchronisation">put15!</label></transition>
+<transition><source ref="p15_drop"/><target ref="p15_think"/><label kind="synchronisation">put16!</label></transition>
+</template>
+<template><name>P16</name>
+<location id="p16_think"><name>Think</name></location>
+<location id="p16_holdl"><name>HoldL</name></location>
+<location id="p16_eat"><name>Eat</name><label kind="invariant">c16&lt;=2</label></location>
+<location id="p16_drop"><name>Dropped</name></location>
+<init ref="p16_think"/>
+<transition><source ref="p16_think"/><target ref="p16_holdl"/><label kind="synchronisation">take16!</label><label kind="assignment">c16=0</label></transition>
+<transition><source ref="p16_holdl"/><target ref="p16_eat"/><label kind="synchronisation">take0!</label><label kind="assignment">c16=0</label></transition>
+<transition><source ref="p16_eat"/><target ref="p16_drop"/><label kind="guard">c16&gt;=1</label><label kind="synchronisation">put16!</label></transition>
+<transition><source ref="p16_drop"/><target ref="p16_think"/><label kind="synchronisation">put0!</label></transition>
+</template>
+<system>system F0,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12,F13,F14,F15,F16,P0,P1,P2,P3,P4,P5,P6,P7,P8,P9,P10,P11,P12,P13,P14,P15,P16;</system>
+</nta>

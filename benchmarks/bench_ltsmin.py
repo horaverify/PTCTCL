@@ -16,7 +16,7 @@ PLAT = "macos" if sys.platform == "darwin" else "linux"
 VIK  = os.path.join(ROOT, "src/opaal-ltsmin-succgen/tests/vikingtests")
 MOD  = os.path.join(ROOT, "models")
 SO   = os.path.join(HERE, f"so_{PLAT}")
-OPAAL   = os.path.join(ROOT, f"deps-{PLAT}/bin/opaal2lts-mc")
+OPAAL = os.path.join(ROOT, "deps/bin/opaal2lts-mc")
 PTCTLMC = os.path.abspath(os.path.join(HERE, "..", f"build-{'mac' if PLAT == 'macos' else 'omp'}", "ptctlmc"))
 if PLAT == "macos":
     VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta"

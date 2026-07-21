@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13, y, z; chan approach, leave, lower, raise;</declaration>
+<template><name>T0</name>
+<location id="t0_far"><name>far</name></location>
+<location id="t0_near"><name>near</name><label kind="invariant">x0&lt;=4</label></location>
+<location id="t0_in"><name>in</name><label kind="invariant">x0&lt;=15</label></location>
+<init ref="t0_far"/>
+<transition><source ref="t0_far"/><target ref="t0_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="t0_near"/><target ref="t0_in"/><label kind="guard">x0&gt;=4</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="t0_in"/><target ref="t0_far"/><label kind="guard">x0&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T1</name>
+<location id="t1_far"><name>far</name></location>
+<location id="t1_near"><name>near</name><label kind="invariant">x1&lt;=4</label></location>
+<location id="t1_in"><name>in</name><label kind="invariant">x1&lt;=15</label></location>
+<init ref="t1_far"/>
+<transition><source ref="t1_far"/><target ref="t1_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="t1_near"/><target ref="t1_in"/><label kind="guard">x1&gt;=4</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="t1_in"/><target ref="t1_far"/><label kind="guard">x1&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T2</name>
+<location id="t2_far"><name>far</name></location>
+<location id="t2_near"><name>near</name><label kind="invariant">x2&lt;=4</label></location>
+<location id="t2_in"><name>in</name><label kind="invariant">x2&lt;=15</label></location>
+<init ref="t2_far"/>
+<transition><source ref="t2_far"/><target ref="t2_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="t2_near"/><target ref="t2_in"/><label kind="guard">x2&gt;=4</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="t2_in"/><target ref="t2_far"/><label kind="guard">x2&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T3</name>
+<location id="t3_far"><name>far</name></location>
+<location id="t3_near"><name>near</name><label kind="invariant">x3&lt;=4</label></location>
+<location id="t3_in"><name>in</name><label kind="invariant">x3&lt;=15</label></location>
+<init ref="t3_far"/>
+<transition><source ref="t3_far"/><target ref="t3_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="t3_near"/><target ref="t3_in"/><label kind="guard">x3&gt;=4</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="t3_in"/><target ref="t3_far"/><label kind="guard">x3&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T4</name>
+<location id="t4_far"><name>far</name></location>
+<location id="t4_near"><name>near</name><label kind="invariant">x4&lt;=4</label></location>
+<location id="t4_in"><name>in</name><label kind="invariant">x4&lt;=15</label></location>
+<init ref="t4_far"/>
+<transition><source ref="t4_far"/><target ref="t4_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="t4_near"/><target ref="t4_in"/><label kind="guard">x4&gt;=4</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="t4_in"/><target ref="t4_far"/><label kind="guard">x4&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T5</name>
+<location id="t5_far"><name>far</name></location>
+<location id="t5_near"><name>near</name><label kind="invariant">x5&lt;=4</label></location>
+<location id="t5_in"><name>in</name><label kind="invariant">x5&lt;=15</label></location>
+<init ref="t5_far"/>
+<transition><source ref="t5_far"/><target ref="t5_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x5=0</label></transition>
+<transition><source ref="t5_near"/><target ref="t5_in"/><label kind="guard">x5&gt;=4</label><label kind="assignment">x5=0</label></transition>
+<transition><source ref="t5_in"/><target ref="t5_far"/><label kind="guard">x5&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T6</name>
+<location id="t6_far"><name>far</name></location>
+<location id="t6_near"><name>near</name><label kind="invariant">x6&lt;=4</label></location>
+<location id="t6_in"><name>in</name><label kind="invariant">x6&lt;=15</label></location>
+<init ref="t6_far"/>
+<transition><source ref="t6_far"/><target ref="t6_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x6=0</label></transition>
+<transition><source ref="t6_near"/><target ref="t6_in"/><label kind="guard">x6&gt;=4</label><label kind="assignment">x6=0</label></transition>
+<transition><source ref="t6_in"/><target ref="t6_far"/><label kind="guard">x6&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T7</name>
+<location id="t7_far"><name>far</name></location>
+<location id="t7_near"><name>near</name><label kind="invariant">x7&lt;=4</label></location>
+<location id="t7_in"><name>in</name><label kind="invariant">x7&lt;=15</label></location>
+<init ref="t7_far"/>
+<transition><source ref="t7_far"/><target ref="t7_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x7=0</label></transition>
+<transition><source ref="t7_near"/><target ref="t7_in"/><label kind="guard">x7&gt;=4</label><label kind="assignment">x7=0</label></transition>
+<transition><source ref="t7_in"/><target ref="t7_far"/><label kind="guard">x7&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T8</name>
+<location id="t8_far"><name>far</name></location>
+<location id="t8_near"><name>near</name><label kind="invariant">x8&lt;=4</label></location>
+<location id="t8_in"><name>in</name><label kind="invariant">x8&lt;=15</label></location>
+<init ref="t8_far"/>
+<transition><source ref="t8_far"/><target ref="t8_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x8=0</label></transition>
+<transition><source ref="t8_near"/><target ref="t8_in"/><label kind="guard">x8&gt;=4</label><label kind="assignment">x8=0</label></transition>
+<transition><source ref="t8_in"/><target ref="t8_far"/><label kind="guard">x8&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T9</name>
+<location id="t9_far"><name>far</name></location>
+<location id="t9_near"><name>near</name><label kind="invariant">x9&lt;=4</label></location>
+<location id="t9_in"><name>in</name><label kind="invariant">x9&lt;=15</label></location>
+<init ref="t9_far"/>
+<transition><source ref="t9_far"/><target ref="t9_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x9=0</label></transition>
+<transition><source ref="t9_near"/><target ref="t9_in"/><label kind="guard">x9&gt;=4</label><label kind="assignment">x9=0</label></transition>
+<transition><source ref="t9_in"/><target ref="t9_far"/><label kind="guard">x9&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T10</name>
+<location id="t10_far"><name>far</name></location>
+<location id="t10_near"><name>near</name><label kind="invariant">x10&lt;=4</label></location>
+<location id="t10_in"><name>in</name><label kind="invariant">x10&lt;=15</label></location>
+<init ref="t10_far"/>
+<transition><source ref="t10_far"/><target ref="t10_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x10=0</label></transition>
+<transition><source ref="t10_near"/><target ref="t10_in"/><label kind="guard">x10&gt;=4</label><label kind="assignment">x10=0</label></transition>
+<transition><source ref="t10_in"/><target ref="t10_far"/><label kind="guard">x10&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T11</name>
+<location id="t11_far"><name>far</name></location>
+<location id="t11_near"><name>near</name><label kind="invariant">x11&lt;=4</label></location>
+<location id="t11_in"><name>in</name><label kind="invariant">x11&lt;=15</label></location>
+<init ref="t11_far"/>
+<transition><source ref="t11_far"/><target ref="t11_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x11=0</label></transition>
+<transition><source ref="t11_near"/><target ref="t11_in"/><label kind="guard">x11&gt;=4</label><label kind="assignment">x11=0</label></transition>
+<transition><source ref="t11_in"/><target ref="t11_far"/><label kind="guard">x11&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T12</name>
+<location id="t12_far"><name>far</name></location>
+<location id="t12_near"><name>near</name><label kind="invariant">x12&lt;=4</label></location>
+<location id="t12_in"><name>in</name><label kind="invariant">x12&lt;=15</label></location>
+<init ref="t12_far"/>
+<transition><source ref="t12_far"/><target ref="t12_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x12=0</label></transition>
+<transition><source ref="t12_near"/><target ref="t12_in"/><label kind="guard">x12&gt;=4</label><label kind="assignment">x12=0</label></transition>
+<transition><source ref="t12_in"/><target ref="t12_far"/><label kind="guard">x12&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>T13</name>
+<location id="t13_far"><name>far</name></location>
+<location id="t13_near"><name>near</name><label kind="invariant">x13&lt;=4</label></location>
+<location id="t13_in"><name>in</name><label kind="invariant">x13&lt;=15</label></location>
+<init ref="t13_far"/>
+<transition><source ref="t13_far"/><target ref="t13_near"/><label kind="synchronisation">approach!</label><label kind="assignment">x13=0</label></transition>
+<transition><source ref="t13_near"/><target ref="t13_in"/><label kind="guard">x13&gt;=4</label><label kind="assignment">x13=0</label></transition>
+<transition><source ref="t13_in"/><target ref="t13_far"/><label kind="guard">x13&gt;=1</label><label kind="synchronisation">leave!</label></transition>
+</template>
+<template><name>G</name>
+<location id="g_up"><name>up</name></location>
+<location id="g_low"><name>low</name><label kind="invariant">y&lt;=2</label></location>
+<location id="g_down"><name>down</name></location>
+<location id="g_rai"><name>rai</name><label kind="invariant">y&lt;=2</label></location>
+<init ref="g_up"/>
+<transition><source ref="g_up"/><target ref="g_low"/><label kind="synchronisation">lower?</label><label kind="assignment">y=0</label></transition>
+<transition><source ref="g_low"/><target ref="g_down"/><label kind="guard">y&gt;=2</label></transition>
+<transition><source ref="g_down"/><target ref="g_rai"/><label kind="synchronisation">raise?</label><label kind="assignment">y=0</label></transition>
+<transition><source ref="g_rai"/><target ref="g_up"/><label kind="guard">y&gt;=2</label></transition>
+</template>
+<template><name>Ctl</name>
+<location id="c_up"><name>up</name></location>
+<location id="c_low1"><name>low_1</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low2"><name>low_2</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low3"><name>low_3</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low4"><name>low_4</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low5"><name>low_5</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low6"><name>low_6</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low7"><name>low_7</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low8"><name>low_8</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low9"><name>low_9</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low10"><name>low_10</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low11"><name>low_11</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low12"><name>low_12</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low13"><name>low_13</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_low14"><name>low_14</name><label kind="invariant">z&lt;=1</label></location>
+<location id="c_dn1"><name>dn_1</name></location>
+<location id="c_dn2"><name>dn_2</name></location>
+<location id="c_dn3"><name>dn_3</name></location>
+<location id="c_dn4"><name>dn_4</name></location>
+<location id="c_dn5"><name>dn_5</name></location>
+<location id="c_dn6"><name>dn_6</name></location>
+<location id="c_dn7"><name>dn_7</name></location>
+<location id="c_dn8"><name>dn_8</name></location>
+<location id="c_dn9"><name>dn_9</name></location>
+<location id="c_dn10"><name>dn_10</name></location>
+<location id="c_dn11"><name>dn_11</name></location>
+<location id="c_dn12"><name>dn_12</name></location>
+<location id="c_dn13"><name>dn_13</name></location>
+<location id="c_dn14"><name>dn_14</name></location>
+<location id="c_rai"><name>rai</name><label kind="invariant">z&lt;=1</label></location>
+<init ref="c_up"/>
+<transition><source ref="c_up"/><target ref="c_low1"/><label kind="synchronisation">approach?</label><label kind="assignment">z=0</label></transition>
+<transition><source ref="c_low1"/><target ref="c_low2"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low1"/><target ref="c_dn1"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low2"/><target ref="c_low3"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low2"/><target ref="c_dn2"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low3"/><target ref="c_low4"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low3"/><target ref="c_dn3"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low4"/><target ref="c_low5"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low4"/><target ref="c_dn4"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low5"/><target ref="c_low6"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low5"/><target ref="c_dn5"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low6"/><target ref="c_low7"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low6"/><target ref="c_dn6"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low7"/><target ref="c_low8"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low7"/><target ref="c_dn7"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low8"/><target ref="c_low9"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low8"/><target ref="c_dn8"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low9"/><target ref="c_low10"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low9"/><target ref="c_dn9"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low10"/><target ref="c_low11"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low10"/><target ref="c_dn10"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low11"/><target ref="c_low12"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low11"/><target ref="c_dn11"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low12"/><target ref="c_low13"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low12"/><target ref="c_dn12"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low13"/><target ref="c_low14"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_low13"/><target ref="c_dn13"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low14"/><target ref="c_dn14"/><label kind="synchronisation">lower!</label></transition>
+<transition><source ref="c_low1"/><target ref="c_up"/><label kind="synchronisation">leave?</label><label kind="assignment">z=0</label></transition>
+<transition><source ref="c_dn1"/><target ref="c_dn2"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn2"/><target ref="c_dn3"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn2"/><target ref="c_dn1"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn3"/><target ref="c_dn4"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn3"/><target ref="c_dn2"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn4"/><target ref="c_dn5"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn4"/><target ref="c_dn3"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn5"/><target ref="c_dn6"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn5"/><target ref="c_dn4"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn6"/><target ref="c_dn7"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn6"/><target ref="c_dn5"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn7"/><target ref="c_dn8"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn7"/><target ref="c_dn6"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn8"/><target ref="c_dn9"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn8"/><target ref="c_dn7"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn9"/><target ref="c_dn10"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn9"/><target ref="c_dn8"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn10"/><target ref="c_dn11"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn10"/><target ref="c_dn9"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn11"/><target ref="c_dn12"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn11"/><target ref="c_dn10"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn12"/><target ref="c_dn13"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn12"/><target ref="c_dn11"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn13"/><target ref="c_dn14"/><label kind="synchronisation">approach?</label></transition>
+<transition><source ref="c_dn13"/><target ref="c_dn12"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn14"/><target ref="c_dn13"/><label kind="synchronisation">leave?</label></transition>
+<transition><source ref="c_dn1"/><target ref="c_rai"/><label kind="synchronisation">leave?</label><label kind="assignment">z=0</label></transition>
+<transition><source ref="c_rai"/><target ref="c_up"/><label kind="synchronisation">raise!</label></transition>
+</template>
+<system>system T0,T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11,T12,T13,G,Ctl;</system>
+</nta>
