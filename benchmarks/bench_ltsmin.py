@@ -18,7 +18,12 @@ MOD  = os.path.join(ROOT, "models")
 SO   = os.path.join(HERE, f"so_{PLAT}")
 OPAAL   = os.path.join(ROOT, f"deps-{PLAT}/bin/opaal2lts-mc")
 PTCTLMC = os.path.abspath(os.path.join(HERE, "..", f"build-{'mac' if PLAT == 'macos' else 'omp'}", "ptctlmc"))
-VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta" if PLAT == "macos" else "/usr/bin/verifyta"
+if PLAT == "macos":
+    VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta"
+else:
+    # On Linux, find verifyta in PATH
+    import shutil
+    VERIFYTA = shutil.which("verifyta") or "verifyta"  # fallback to command name for PATH lookup
 TABLE_BITS = 26
 
 QDIR = os.path.join(HERE, f"queries_{PLAT}"); os.makedirs(QDIR, exist_ok=True)
@@ -133,7 +138,8 @@ def main():
             if todo(model, "verifyta", 1, rep):
                 s, m, st, o = run([VERIFYTA, "-u", "-s", xml, vq], {}, args.timeout, args.memgb)
                 g = re.search(r"States explored\s*:\s*([0-9]+)", o)
-                emit(fam, model, "verifyta", 1, rep, g.group(1) if g else "-", s, m, st)
+                states = g.group(1) if g else "-"
+                emit(fam, model, "verifyta", 1, rep, states, s, m, st)
         for th in args.threads:
             for rep in range(1, args.reps + 1):
                 if os.path.exists(so) and todo(model, "ltsmin", th, rep):
