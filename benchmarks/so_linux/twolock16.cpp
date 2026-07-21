@@ -1,0 +1,3032 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <assert.h>
+#include <map>
+#include <mutex>
+#include <string>
+
+typedef uint64_t ulong_long_int_t;
+typedef int64_t slong_long_int_t;
+typedef uint32_t ulong_int_t;
+typedef int32_t slong_int_t;
+typedef union
+{
+    uint16_t var;
+    uint32_t __padding__;
+} ushort_int_t;
+typedef union
+{
+    int16_t var;
+    uint32_t __padding__;
+} sshort_int_t;
+typedef union
+{
+    uint8_t var;
+    uint32_t __padding__;
+} ubyte_t;
+typedef ubyte_t byte_t;
+typedef union
+{
+    int8_t var;
+    uint32_t __padding__;
+} sbyte_t;
+typedef union
+{
+    uint8_t var;
+    uint32_t __padding__;
+} bool_t;
+typedef size_t size_int_t;
+
+typedef struct transition_info
+{
+    int* label;
+    int  group;
+} transition_info_t;
+
+#include "dbm/fed.h"
+#include "dbm/ClockAccessor.h"
+
+
+struct state_struct_t
+{
+	uint32_t a;
+	uint32_t b;
+	uint32_t P0;
+	uint32_t P1;
+	uint32_t P2;
+	uint32_t P3;
+	uint32_t P4;
+	uint32_t P5;
+	uint32_t P6;
+	uint32_t P7;
+	uint32_t P8;
+	uint32_t P9;
+	uint32_t P10;
+	uint32_t P11;
+	uint32_t P12;
+	uint32_t P13;
+	uint32_t P14;
+	uint32_t P15;
+	dbm::fed_t *fed;
+}
+__attribute__((__packed__));
+int state_size = sizeof(state_struct_t);
+
+class ClockNamesAccessor: public dbm::ClockAccessor {
+public:
+    virtual const std::string& getClockName(cindex_t i) const {
+        switch (i) {
+			case 1: { static const std::string _n("x0"); return _n; }
+			case 2: { static const std::string _n("x1"); return _n; }
+			case 3: { static const std::string _n("x2"); return _n; }
+			case 4: { static const std::string _n("x3"); return _n; }
+			case 5: { static const std::string _n("x4"); return _n; }
+			case 6: { static const std::string _n("x5"); return _n; }
+			case 7: { static const std::string _n("x6"); return _n; }
+			case 8: { static const std::string _n("x7"); return _n; }
+			case 9: { static const std::string _n("x8"); return _n; }
+			case 10: { static const std::string _n("x9"); return _n; }
+			case 11: { static const std::string _n("x10"); return _n; }
+			case 12: { static const std::string _n("x11"); return _n; }
+			case 13: { static const std::string _n("x12"); return _n; }
+			case 14: { static const std::string _n("x13"); return _n; }
+			case 15: { static const std::string _n("x14"); return _n; }
+			case 16: { static const std::string _n("x15"); return _n; }
+
+        }
+        static const std::string _ref("0");
+        return _ref;
+    }
+};
+static ClockNamesAccessor clockNames = ClockNamesAccessor();
+
+extern "C" int get_state_variable_count() 
+{
+    return 20;
+}
+
+extern "C" const char* get_state_variable_name(int var)
+{
+    switch (var)
+    {
+		case 0: return "a";
+		case 1: return "b";
+		case 2: return "P0";
+		case 3: return "P1";
+		case 4: return "P2";
+		case 5: return "P3";
+		case 6: return "P4";
+		case 7: return "P5";
+		case 8: return "P6";
+		case 9: return "P7";
+		case 10: return "P8";
+		case 11: return "P9";
+		case 12: return "P10";
+		case 13: return "P11";
+		case 14: return "P12";
+		case 15: return "P13";
+		case 16: return "P14";
+		case 17: return "P15";
+		case 18: return "fed";
+		case 19: return "fed2";
+
+        default:
+            return NULL;
+    }
+}
+
+extern "C" int get_state_variable_type(int var)
+{
+    return 0;
+}
+extern "C" int get_state_variable_type_count() 
+{
+    return 1;
+}
+extern "C" const char* get_state_variable_type_name(int type) 
+{
+    return "int";
+}
+
+extern "C" int get_state_variable_type_value_count(int type)
+{
+    return 20;
+}
+
+extern "C" const char* get_state_variable_type_value(int type, int value)
+{
+    /* Must be a *distinct* string per value: LTSmin interns these in a
+       lock-less chunk set (mc-lib/set-ll.c) that requires a bijection between
+       index and string. Returning one constant for every value trips
+       "isba_size_int(balloc) == index + 1" as soon as >1 worker installs
+       chunks concurrently.
+
+       It must also be STABLE for the lifetime of the process. LTSmin retains
+       the pointer and stores a 16-bit hash tag beside the key; when the table
+       grows, hti_copy_entry re-validates
+           (key_hash >> 16) == (ht1_ent->key >> 48)
+       against the string's *current* contents (mc-lib/hashtable.c:274). A
+       reused per-thread scratch buffer mutates the already-interned string and
+       trips that assertion -- observed on viking17 at >=4 threads, which is the
+       first model with enough distinct chunk values to force a resize.
+       So: allocate once per value, never rewrite, never free. std::map keeps
+       element addresses stable across later insertions. */
+    static std::mutex chunk_mutex;
+    static std::map<int, std::string> chunk_cache;
+    std::lock_guard<std::mutex> lock(chunk_mutex);
+    std::map<int, std::string>::iterator it = chunk_cache.find(value);
+    if (it == chunk_cache.end()) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "avar%d", value);
+        it = chunk_cache.insert(std::make_pair(value, std::string(tmp))).first;
+    }
+    return it->second.c_str();
+}
+
+extern "C" int get_transition_count() 
+{
+    return 128;
+}
+
+
+static state_struct_t initial_state = {
+	0, /* a */
+	0, /* b */
+	1, /* P0 */
+	4, /* P1 */
+	5, /* P2 */
+	0, /* P3 */
+	0, /* P4 */
+	0, /* P5 */
+	2, /* P6 */
+	3, /* P7 */
+	5, /* P8 */
+	2, /* P9 */
+	3, /* P10 */
+	0, /* P11 */
+	1, /* P12 */
+	4, /* P13 */
+	2, /* P14 */
+	3, /* P15 */
+	NULL, /* fed part */
+};
+
+/* Max clock constants {{{ */
+int max_constants_P0[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P1[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P2[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P3[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P4[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P5[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P6[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P7[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P8[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P9[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P10[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P11[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P12[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P13[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_P14[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,-dbm_INFINITY,},
+};
+int max_constants_P15[6][17] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,2,},
+};
+
+#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
+inline void extrapolate_max_constants (state_struct_t *out) {
+	int local_max_consts[17] = {0, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, };
+	int i;
+	for (i = 0; i < 17; i++) {
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P0[out->P0][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P1[out->P1][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P2[out->P2][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P3[out->P3][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P4[out->P4][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P5[out->P5][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P6[out->P6][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P7[out->P7][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P8[out->P8][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P9[out->P9][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P10[out->P10][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P11[out->P11][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P12[out->P12][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P13[out->P13][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P14[out->P14][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_P15[out->P15][i] );
+	}
+
+    out->fed->extrapolateMaxBounds(local_max_consts);
+}
+/* }}} */
+
+/* Invariants function {{{ */
+inline bool apply_invariants (state_struct_t *out) {
+	/* Invariants for P0 {{{*/
+	switch( out->P0 ) {
+		case 0: /* cs */
+		break;
+		case 1: /* idle */
+		break;
+		case 2: /* waitA */
+		break;
+		case 3: /* waitB */
+		break;
+		case 4: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for P1 {{{*/
+	switch( out->P1 ) {
+		case 0: /* cs */
+		break;
+		case 1: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(2, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(2, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* waitA */
+		break;
+		case 4: /* idle */
+		break;
+		case 5: /* waitB */
+		break;
+	}
+	/* Invariants for P2 {{{*/
+	switch( out->P2 ) {
+		case 0: /* waitB */
+		break;
+		case 1: /* waitA */
+		break;
+		case 2: /* cs */
+		break;
+		case 3: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(3, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(3, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* idle */
+		break;
+	}
+	/* Invariants for P3 {{{*/
+	switch( out->P3 ) {
+		case 0: /* idle */
+		break;
+		case 1: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(4, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* waitB */
+		break;
+		case 3: /* waitA */
+		break;
+		case 4: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(4, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* cs */
+		break;
+	}
+	/* Invariants for P4 {{{*/
+	switch( out->P4 ) {
+		case 0: /* idle */
+		break;
+		case 1: /* waitB */
+		break;
+		case 2: /* waitA */
+		break;
+		case 3: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(5, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(5, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* cs */
+		break;
+	}
+	/* Invariants for P5 {{{*/
+	switch( out->P5 ) {
+		case 0: /* idle */
+		break;
+		case 1: /* waitA */
+		break;
+		case 2: /* waitB */
+		break;
+		case 3: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(6, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(6, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* cs */
+		break;
+	}
+	/* Invariants for P6 {{{*/
+	switch( out->P6 ) {
+		case 0: /* waitB */
+		break;
+		case 1: /* waitA */
+		break;
+		case 2: /* idle */
+		break;
+		case 3: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(7, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* cs */
+		break;
+		case 5: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(7, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for P7 {{{*/
+	switch( out->P7 ) {
+		case 0: /* cs */
+		break;
+		case 1: /* waitB */
+		break;
+		case 2: /* waitA */
+		break;
+		case 3: /* idle */
+		break;
+		case 4: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(8, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(8, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for P8 {{{*/
+	switch( out->P8 ) {
+		case 0: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(9, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(9, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* waitA */
+		break;
+		case 3: /* waitB */
+		break;
+		case 4: /* cs */
+		break;
+		case 5: /* idle */
+		break;
+	}
+	/* Invariants for P9 {{{*/
+	switch( out->P9 ) {
+		case 0: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(10, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(10, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* idle */
+		break;
+		case 3: /* waitA */
+		break;
+		case 4: /* waitB */
+		break;
+		case 5: /* cs */
+		break;
+	}
+	/* Invariants for P10 {{{*/
+	switch( out->P10 ) {
+		case 0: /* cs */
+		break;
+		case 1: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(11, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(11, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* idle */
+		break;
+		case 4: /* waitB */
+		break;
+		case 5: /* waitA */
+		break;
+	}
+	/* Invariants for P11 {{{*/
+	switch( out->P11 ) {
+		case 0: /* idle */
+		break;
+		case 1: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(12, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(12, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* waitB */
+		break;
+		case 4: /* waitA */
+		break;
+		case 5: /* cs */
+		break;
+	}
+	/* Invariants for P12 {{{*/
+	switch( out->P12 ) {
+		case 0: /* cs */
+		break;
+		case 1: /* idle */
+		break;
+		case 2: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(13, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(13, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* waitA */
+		break;
+		case 5: /* waitB */
+		break;
+	}
+	/* Invariants for P13 {{{*/
+	switch( out->P13 ) {
+		case 0: /* waitA */
+		break;
+		case 1: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(14, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(14, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* waitB */
+		break;
+		case 4: /* idle */
+		break;
+		case 5: /* cs */
+		break;
+	}
+	/* Invariants for P14 {{{*/
+	switch( out->P14 ) {
+		case 0: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(15, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(15, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* idle */
+		break;
+		case 3: /* cs */
+		break;
+		case 4: /* waitB */
+		break;
+		case 5: /* waitA */
+		break;
+	}
+	/* Invariants for P15 {{{*/
+	switch( out->P15 ) {
+		case 0: /* reqA */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(16, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* reqB */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(16, 0, 2, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* cs */
+		break;
+		case 3: /* idle */
+		break;
+		case 4: /* waitB */
+		break;
+		case 5: /* waitA */
+		break;
+	}
+	if (out->fed->isEmpty()) return false;
+	return true;
+}
+/* }}} */
+
+
+extern "C" int get_state_size() {
+    return state_size;
+}
+
+extern "C" void get_initial_state( void *to )
+{
+    /* Every LTSmin worker calls this. The original built the state in the
+       shared `initial_state` global, so concurrent workers raced on it (and
+       leaked a federation per call). Build in a thread-local copy instead. */
+    state_struct_t _s = initial_state;
+	_s.fed = new dbm::fed_t(17);
+	_s.fed->setZero();
+	_s.fed->up();
+	assert(apply_invariants(&_s));
+	extrapolate_max_constants(&_s);
+
+    memcpy(to, &_s, state_size);
+}
+
+extern "C" int have_property()
+{
+    return false;
+}
+
+
+void do_callback(state_struct_t *out, transition_info_t *transition_info, void (*callback)(void *arg, transition_info_t *transition_info, state_struct_t *out), void *arg) {
+	out->fed->up();
+	if (apply_invariants(out)) {
+		extrapolate_max_constants(out);
+		out->fed->mergeReduce();
+
+                callback(arg, transition_info, out);
+        }
+}
+
+
+extern "C" int get_successors( void *model, state_struct_t *in, void (*callback)(void *arg, transition_info_t *transition_info, state_struct_t *out), void *arg ) 
+{
+    (void)model; // ignore model
+    bool system_in_deadlock = true;
+    transition_info_t transition_info = { NULL, -1 };
+    int states_emitted = 0;
+    state_struct_t tmp;
+    state_struct_t *out = &tmp;
+	/* Transitions for P0 {{{*/
+	switch( in->P0 ) {
+		case 0: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 1;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 4;
+				out->fed->updateValue(1, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 1, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 5;
+				out->fed->updateValue(1, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 1, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 1, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 1, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 1;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 2;
+				out->a = 1;out->fed->updateValue(1, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P0 = 3;
+				out->b = 1;out->fed->updateValue(1, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P1 {{{*/
+	switch( in->P1 ) {
+		case 0: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 4;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 5;
+				out->b = 2;out->fed->updateValue(2, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 3;
+				out->a = 2;out->fed->updateValue(2, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 2, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 1;
+				out->fed->updateValue(2, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 2, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 2;
+				out->fed->updateValue(2, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 2, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 2, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P1 = 4;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P2 {{{*/
+	switch( in->P2 ) {
+		case 0: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 3, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 3, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 5;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 3, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 3;
+				out->fed->updateValue(3, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 3, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 5;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 0;
+				out->b = 3;out->fed->updateValue(3, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 1;
+				out->a = 3;out->fed->updateValue(3, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P2 = 4;
+				out->fed->updateValue(3, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P3 {{{*/
+	switch( in->P3 ) {
+		case 0: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 1;
+				out->fed->updateValue(4, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 3;
+				out->a = 4;out->fed->updateValue(4, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 4, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 4, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 0;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 4, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 4;
+				out->fed->updateValue(4, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 4, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 2;
+				out->b = 4;out->fed->updateValue(4, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P3 = 0;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P4 {{{*/
+	switch( in->P4 ) {
+		case 0: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 3;
+				out->fed->updateValue(5, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 5, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 5, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 0;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 5, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 4;
+				out->fed->updateValue(5, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 5, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 2;
+				out->a = 5;out->fed->updateValue(5, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 1;
+				out->b = 5;out->fed->updateValue(5, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P4 = 0;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P5 {{{*/
+	switch( in->P5 ) {
+		case 0: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 4;
+				out->fed->updateValue(6, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 6, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 3;
+				out->fed->updateValue(6, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 6, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 6, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 6, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 0;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 2;
+				out->b = 6;out->fed->updateValue(6, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 1;
+				out->a = 6;out->fed->updateValue(6, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P5 = 0;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P6 {{{*/
+	switch( in->P6 ) {
+		case 0: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 7, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 7, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 2;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 7, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 3;
+				out->fed->updateValue(7, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 7, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 5;
+				out->fed->updateValue(7, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 0;
+				out->b = 7;out->fed->updateValue(7, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 2;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P6 = 1;
+				out->a = 7;out->fed->updateValue(7, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P7 {{{*/
+	switch( in->P7 ) {
+		case 0: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 3;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 8, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 8, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 3;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 8, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 5;
+				out->fed->updateValue(8, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 8, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 4;
+				out->fed->updateValue(8, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 2;
+				out->a = 8;out->fed->updateValue(8, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P7 = 1;
+				out->b = 8;out->fed->updateValue(8, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P8 {{{*/
+	switch( in->P8 ) {
+		case 0: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 2;
+				out->a = 9;out->fed->updateValue(9, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 3;
+				out->b = 9;out->fed->updateValue(9, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 9, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 1;
+				out->fed->updateValue(9, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 9, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 9, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 9, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 5;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 5;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P8 = 0;
+				out->fed->updateValue(9, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P9 {{{*/
+	switch( in->P9 ) {
+		case 0: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 4;
+				out->b = 10;out->fed->updateValue(10, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 3;
+				out->a = 10;out->fed->updateValue(10, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 1;
+				out->fed->updateValue(10, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 10, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 0;
+				out->fed->updateValue(10, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 10, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 10, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 10, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 2;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P9 = 2;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P10 {{{*/
+	switch( in->P10 ) {
+		case 0: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 3;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 4;
+				out->b = 11;out->fed->updateValue(11, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 5;
+				out->a = 11;out->fed->updateValue(11, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 2;
+				out->fed->updateValue(11, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 11, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 11, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 3;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 11, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 1;
+				out->fed->updateValue(11, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 11, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P10 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P11 {{{*/
+	switch( in->P11 ) {
+		case 0: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 1;
+				out->fed->updateValue(12, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 4;
+				out->a = 12;out->fed->updateValue(12, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 3;
+				out->b = 12;out->fed->updateValue(12, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 12, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 12, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 0;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 12, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 2;
+				out->fed->updateValue(12, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 12, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P11 = 0;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P12 {{{*/
+	switch( in->P12 ) {
+		case 0: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 1;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 2;
+				out->fed->updateValue(13, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 4;
+				out->a = 13;out->fed->updateValue(13, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 5;
+				out->b = 13;out->fed->updateValue(13, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 13, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 3;
+				out->fed->updateValue(13, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 13, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 13, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 13, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P12 = 1;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P13 {{{*/
+	switch( in->P13 ) {
+		case 0: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 14, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 1;
+				out->fed->updateValue(14, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 14, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 3;
+				out->b = 14;out->fed->updateValue(14, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 0;
+				out->a = 14;out->fed->updateValue(14, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 14, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 14, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 4;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 2;
+				out->fed->updateValue(14, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P13 = 4;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P14 {{{*/
+	switch( in->P14 ) {
+		case 0: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 4;
+				out->b = 15;out->fed->updateValue(15, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 5;
+				out->a = 15;out->fed->updateValue(15, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 1;
+				out->fed->updateValue(15, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 2;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 15, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 15, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 2;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 15, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 0;
+				out->fed->updateValue(15, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 15, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P14 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for P15 {{{*/
+	switch( in->P15 ) {
+		case 0: /* reqA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 5;
+				out->a = 16;out->fed->updateValue(16, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* reqB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 4;
+				out->b = 16;out->fed->updateValue(16, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* cs */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				/* nop */
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 3;
+				out->a = 0;out->b = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* idle */
+			if( (in->a == 0) ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 0;
+				out->fed->updateValue(16, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* waitB */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 16, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 16, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 3;
+				out->a = 0;
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* waitA */
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 16, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 1;
+				out->fed->updateValue(16, 0);
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 16, -2, true); 
+				if (!(out->fed->isEmpty())) {
+				out->P15 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	if (states_emitted) return states_emitted;
+	return states_emitted;
+};
+
+
+ 
+extern "C" int get_successor( void* model, int t, state_struct_t *in, void (*callback)(void* arg, transition_info_t *transition_info, state_struct_t *out), void *arg ) 
+{
+    return 0;
+}
+
+int transition_dependency[20] = { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, };
+
+extern "C" const int* get_transition_read_dependencies(int t) 
+{
+    return transition_dependency;
+}
+extern "C" const int* get_transition_write_dependencies(int t) 
+{
+    return transition_dependency;
+}
+
+extern "C" const int get_guard_count() 
+{
+    return 0;
+}
+extern "C" const int* get_guard_matrix(int g) 
+{
+    return NULL;
+}
+extern "C" const int* get_guards(int t) 
+{
+    return NULL;
+}
+extern "C" const int** get_all_guards() 
+{
+    return NULL;
+}
+extern "C" int get_guard(void* model, int g, state_struct_t* src) 
+{
+    return 0;
+}
+extern "C" void get_guard_all(void* model, state_struct_t* src, int* guard) 
+{
+}
+extern "C" const int* get_guard_may_be_coenabled_matrix(int g) 
+{
+    return NULL;
+}
+extern "C" const int* get_guard_nes_matrix(int g) 
+{
+    return NULL;
+}
+extern "C" const int* get_guard_nds_matrix(int g) 
+{
+    return NULL;
+}
+
+
+typedef union fed_u {
+   dbm::fed_t  *fed;
+   uint64_t    fill;
+} fed_u_t;
+
+extern "C" int covered_by_short( int *fed_a, int *fed_b) 
+{
+    fed_u_t pa = *((fed_u_t*)fed_a);
+    fed_u_t pb = *((fed_u_t*)fed_b);
+
+    /*std::cout << "cover: " << 
+	    pa.fed->str(clockNames) << 
+	    " " << 
+	    pb.fed->str(clockNames) << std::endl;*/
+
+    if ( *(pa.fed) <= *(pb.fed) )
+	return 1;
+    else
+        return 0;
+}
+
+/* LTSmin >= 2.x lattice interface. This opaal revision predates it, so the
+   five lattice_* hooks are supplied here. The `lattice` pointer LTSmin hands
+   us is exactly the dbm::fed_t* stored in the last two slots of the state
+   vector. LTSmin's hashtable treats cmp()==0 as "equal" (mc-lib/hashtable.c). */
+extern "C" void* lattice_clone (const void *lattice)
+{
+    return new dbm::fed_t(*((const dbm::fed_t*)lattice));
+}
+
+extern "C" int lattice_cmp (const void *l1, const void *l2)
+{
+    return (*((const dbm::fed_t*)l1) == *((const dbm::fed_t*)l2)) ? 0 : 1;
+}
+
+extern "C" uint32_t lattice_hash (const void *lattice)
+{
+    return ((const dbm::fed_t*)lattice)->hash();
+}
+
+extern "C" void lattice_delete (const void *lattice)
+{
+    delete ((const dbm::fed_t*)lattice);
+}
+
+extern "C" const char* lattice_print (const void *lattice)
+{
+    /* LTSmin only reads the result before the next call on this thread. */
+    static __thread std::string *buf = NULL;
+    if (buf == NULL) buf = new std::string();
+    *buf = ((const dbm::fed_t*)lattice)->str(clockNames);
+    return buf->c_str();
+}
+
+void dummy_cb(void *arg, transition_info_t *transition_info, state_struct_t *out) {
+	printf("succ_cb: %p\n", out->fed);
+	std::cout << "succ_cb: " << out->fed->str(clockNames) << std::endl;
+}
+
+int main() {
+    //g++ -g -shared -O0 -fPIC -I/usr/local/uppaal/include/ -L/usr/local/uppaal/lib/ -o gensuccgen gensuccgen.cpp -ludbm
+    state_struct_t *s1 = (state_struct_t*)malloc(get_state_size());
+    get_initial_state(s1);
+	std::cout << "initial: " << s1->fed->str(clockNames) << std::endl;
+
+	get_successors(NULL, s1, dummy_cb, NULL);
+
+    return 0;
+}
+/* vim:ts=4:sw=4:noexpandtab */

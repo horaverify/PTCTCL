@@ -85,6 +85,7 @@ def run(cmd, env_extra, timeout, memgb):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--viking", nargs="*", type=int, default=[10, 12, 15, 17])
+    ap.add_argument("--hddi", nargs="*", type=int, default=[])
     ap.add_argument("--fischer", nargs="*", type=int, default=[6, 7, 8, 9, 10, 11])
     ap.add_argument("--train", action="store_true", default=True)
     ap.add_argument("--threads", nargs="+", type=int, default=[4, 8, 12])
@@ -169,6 +170,9 @@ def main():
     for n in args.viking:
         bench("viking", "viking%d" % n, os.path.join(VIK, "viking%d.xml" % n),
               os.path.join(SO, "viking%d.so" % n), VIK_Q, VIK_Q)
+    for n in args.hddi:
+        bench("hddi", "hddi%d" % n, os.path.join(HERE, "models", "hddi%d.xml" % n),
+              os.path.join(SO, "hddi%d.so" % n), os.path.join(QDIR, "hddi.q"), os.path.join(QDIR, "hddi.q"))
     for n in args.fischer:
         bench("fischer", "fischer%d" % n, os.path.join(MOD, "fischer%d.xml" % n),
               os.path.join(SO, "fischer%d.so" % n), FIS_Q, FIS_Q)
