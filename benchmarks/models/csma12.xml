@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock y0,y1,y2,y3,y4,y5,y6,y7,y8,y9,y10,y11, c; broadcast chan cd; chan begin, end;</declaration>
+<template><name>Bus</name>
+<location id="bus_idle"><name>Idle</name></location>
+<location id="bus_active"><name>Active</name><label kind="invariant">c&lt;=1</label></location>
+<location id="bus_tx"><name>Transmitting</name></location>
+<location id="bus_coll"><name>Collided</name></location>
+<init ref="bus_idle"/>
+<transition><source ref="bus_idle"/><target ref="bus_active"/><label kind="synchronisation">begin?</label><label kind="assignment">c=0</label></transition>
+<transition><source ref="bus_active"/><target ref="bus_coll"/><label kind="guard">c&lt;=1</label><label kind="synchronisation">begin?</label></transition>
+<transition><source ref="bus_active"/><target ref="bus_tx"/><label kind="guard">c&gt;=1</label></transition>
+<transition><source ref="bus_tx"/><target ref="bus_idle"/><label kind="synchronisation">end?</label></transition>
+<transition><source ref="bus_coll"/><target ref="bus_idle"/><label kind="synchronisation">cd!</label></transition>
+</template>
+<template><name>S0</name>
+<location id="s0_wait"><name>Wait</name></location>
+<location id="s0_send"><name>Send</name><label kind="invariant">y0&lt;=4</label></location>
+<location id="s0_retry"><name>Retry</name></location>
+<init ref="s0_wait"/>
+<transition><source ref="s0_wait"/><target ref="s0_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y0=0</label></transition>
+<transition><source ref="s0_send"/><target ref="s0_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y0=0</label></transition>
+<transition><source ref="s0_send"/><target ref="s0_wait"/><label kind="guard">y0&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s0_retry"/><target ref="s0_wait"/><label kind="guard">y0&gt;=1</label></transition>
+</template>
+<template><name>S1</name>
+<location id="s1_wait"><name>Wait</name></location>
+<location id="s1_send"><name>Send</name><label kind="invariant">y1&lt;=4</label></location>
+<location id="s1_retry"><name>Retry</name></location>
+<init ref="s1_wait"/>
+<transition><source ref="s1_wait"/><target ref="s1_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y1=0</label></transition>
+<transition><source ref="s1_send"/><target ref="s1_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y1=0</label></transition>
+<transition><source ref="s1_send"/><target ref="s1_wait"/><label kind="guard">y1&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s1_retry"/><target ref="s1_wait"/><label kind="guard">y1&gt;=1</label></transition>
+</template>
+<template><name>S2</name>
+<location id="s2_wait"><name>Wait</name></location>
+<location id="s2_send"><name>Send</name><label kind="invariant">y2&lt;=4</label></location>
+<location id="s2_retry"><name>Retry</name></location>
+<init ref="s2_wait"/>
+<transition><source ref="s2_wait"/><target ref="s2_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y2=0</label></transition>
+<transition><source ref="s2_send"/><target ref="s2_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y2=0</label></transition>
+<transition><source ref="s2_send"/><target ref="s2_wait"/><label kind="guard">y2&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s2_retry"/><target ref="s2_wait"/><label kind="guard">y2&gt;=1</label></transition>
+</template>
+<template><name>S3</name>
+<location id="s3_wait"><name>Wait</name></location>
+<location id="s3_send"><name>Send</name><label kind="invariant">y3&lt;=4</label></location>
+<location id="s3_retry"><name>Retry</name></location>
+<init ref="s3_wait"/>
+<transition><source ref="s3_wait"/><target ref="s3_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y3=0</label></transition>
+<transition><source ref="s3_send"/><target ref="s3_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y3=0</label></transition>
+<transition><source ref="s3_send"/><target ref="s3_wait"/><label kind="guard">y3&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s3_retry"/><target ref="s3_wait"/><label kind="guard">y3&gt;=1</label></transition>
+</template>
+<template><name>S4</name>
+<location id="s4_wait"><name>Wait</name></location>
+<location id="s4_send"><name>Send</name><label kind="invariant">y4&lt;=4</label></location>
+<location id="s4_retry"><name>Retry</name></location>
+<init ref="s4_wait"/>
+<transition><source ref="s4_wait"/><target ref="s4_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y4=0</label></transition>
+<transition><source ref="s4_send"/><target ref="s4_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y4=0</label></transition>
+<transition><source ref="s4_send"/><target ref="s4_wait"/><label kind="guard">y4&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s4_retry"/><target ref="s4_wait"/><label kind="guard">y4&gt;=1</label></transition>
+</template>
+<template><name>S5</name>
+<location id="s5_wait"><name>Wait</name></location>
+<location id="s5_send"><name>Send</name><label kind="invariant">y5&lt;=4</label></location>
+<location id="s5_retry"><name>Retry</name></location>
+<init ref="s5_wait"/>
+<transition><source ref="s5_wait"/><target ref="s5_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y5=0</label></transition>
+<transition><source ref="s5_send"/><target ref="s5_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y5=0</label></transition>
+<transition><source ref="s5_send"/><target ref="s5_wait"/><label kind="guard">y5&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s5_retry"/><target ref="s5_wait"/><label kind="guard">y5&gt;=1</label></transition>
+</template>
+<template><name>S6</name>
+<location id="s6_wait"><name>Wait</name></location>
+<location id="s6_send"><name>Send</name><label kind="invariant">y6&lt;=4</label></location>
+<location id="s6_retry"><name>Retry</name></location>
+<init ref="s6_wait"/>
+<transition><source ref="s6_wait"/><target ref="s6_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y6=0</label></transition>
+<transition><source ref="s6_send"/><target ref="s6_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y6=0</label></transition>
+<transition><source ref="s6_send"/><target ref="s6_wait"/><label kind="guard">y6&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s6_retry"/><target ref="s6_wait"/><label kind="guard">y6&gt;=1</label></transition>
+</template>
+<template><name>S7</name>
+<location id="s7_wait"><name>Wait</name></location>
+<location id="s7_send"><name>Send</name><label kind="invariant">y7&lt;=4</label></location>
+<location id="s7_retry"><name>Retry</name></location>
+<init ref="s7_wait"/>
+<transition><source ref="s7_wait"/><target ref="s7_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y7=0</label></transition>
+<transition><source ref="s7_send"/><target ref="s7_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y7=0</label></transition>
+<transition><source ref="s7_send"/><target ref="s7_wait"/><label kind="guard">y7&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s7_retry"/><target ref="s7_wait"/><label kind="guard">y7&gt;=1</label></transition>
+</template>
+<template><name>S8</name>
+<location id="s8_wait"><name>Wait</name></location>
+<location id="s8_send"><name>Send</name><label kind="invariant">y8&lt;=4</label></location>
+<location id="s8_retry"><name>Retry</name></location>
+<init ref="s8_wait"/>
+<transition><source ref="s8_wait"/><target ref="s8_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y8=0</label></transition>
+<transition><source ref="s8_send"/><target ref="s8_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y8=0</label></transition>
+<transition><source ref="s8_send"/><target ref="s8_wait"/><label kind="guard">y8&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s8_retry"/><target ref="s8_wait"/><label kind="guard">y8&gt;=1</label></transition>
+</template>
+<template><name>S9</name>
+<location id="s9_wait"><name>Wait</name></location>
+<location id="s9_send"><name>Send</name><label kind="invariant">y9&lt;=4</label></location>
+<location id="s9_retry"><name>Retry</name></location>
+<init ref="s9_wait"/>
+<transition><source ref="s9_wait"/><target ref="s9_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y9=0</label></transition>
+<transition><source ref="s9_send"/><target ref="s9_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y9=0</label></transition>
+<transition><source ref="s9_send"/><target ref="s9_wait"/><label kind="guard">y9&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s9_retry"/><target ref="s9_wait"/><label kind="guard">y9&gt;=1</label></transition>
+</template>
+<template><name>S10</name>
+<location id="s10_wait"><name>Wait</name></location>
+<location id="s10_send"><name>Send</name><label kind="invariant">y10&lt;=4</label></location>
+<location id="s10_retry"><name>Retry</name></location>
+<init ref="s10_wait"/>
+<transition><source ref="s10_wait"/><target ref="s10_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y10=0</label></transition>
+<transition><source ref="s10_send"/><target ref="s10_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y10=0</label></transition>
+<transition><source ref="s10_send"/><target ref="s10_wait"/><label kind="guard">y10&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s10_retry"/><target ref="s10_wait"/><label kind="guard">y10&gt;=1</label></transition>
+</template>
+<template><name>S11</name>
+<location id="s11_wait"><name>Wait</name></location>
+<location id="s11_send"><name>Send</name><label kind="invariant">y11&lt;=4</label></location>
+<location id="s11_retry"><name>Retry</name></location>
+<init ref="s11_wait"/>
+<transition><source ref="s11_wait"/><target ref="s11_send"/><label kind="synchronisation">begin!</label><label kind="assignment">y11=0</label></transition>
+<transition><source ref="s11_send"/><target ref="s11_retry"/><label kind="synchronisation">cd?</label><label kind="assignment">y11=0</label></transition>
+<transition><source ref="s11_send"/><target ref="s11_wait"/><label kind="guard">y11&gt;=4</label><label kind="synchronisation">end!</label></transition>
+<transition><source ref="s11_retry"/><target ref="s11_wait"/><label kind="guard">y11&gt;=1</label></transition>
+</template>
+<system>system Bus,S0,S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11;</system>
+</nta>

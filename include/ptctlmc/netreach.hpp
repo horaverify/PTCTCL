@@ -23,18 +23,6 @@ bool adaptive_merge();
 void set_chunking(bool on, int states = 65536);
 bool chunking();
 
-// Passed/waiting-list architecture for the CPU (seq/omp) backend. ON by default:
-// one shared, stripe-locked table any worker may update (locking only the touched
-// discrete-state stripe), with expansion and insertion fused so there is no
-// serial per-level routing barrier -- LTSmin's shared-table/fine-grained-locking
-// shape (FORMATS'12 Alg. 3/4), but with PTCTLMC's exact aLU + convex-union merge
-// as the per-bucket operation. OFF (--legacy-passed) uses the older design that
-// statically partitions the passed list into S=nthreads shards and routes
-// successors serially each level. Identical results at 1 thread; kept for A/B.
-// No effect on the GPU backends, whose passed list is already shared.
-void set_shared_passed(bool on);
-bool shared_passed();
-
 // ---- general modelling-language guard/update -------------------------------
 // The `var OP const` / `var := const` fast paths live in NEdge::int_guard and
 // NEdge::int_updates; anything richer (arithmetic, arrays, calls) is compiled

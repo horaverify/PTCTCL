@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x0,x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12,x13,x14; chan acq, rel;</declaration>
+<template><name>Arb</name>
+<location id="arb_free"><name>Free</name></location>
+<location id="arb_busy"><name>Busy</name></location>
+<init ref="arb_free"/>
+<transition><source ref="arb_free"/><target ref="arb_busy"/><label kind="synchronisation">acq?</label></transition>
+<transition><source ref="arb_busy"/><target ref="arb_free"/><label kind="synchronisation">rel?</label></transition>
+</template>
+<template><name>C0</name>
+<location id="c0_idle"><name>idle</name></location>
+<location id="c0_want"><name>want</name></location>
+<location id="c0_cs"><name>cs</name><label kind="invariant">x0&lt;=4</label></location>
+<init ref="c0_idle"/>
+<transition><source ref="c0_idle"/><target ref="c0_want"/><label kind="guard">x0&gt;=2</label></transition>
+<transition><source ref="c0_want"/><target ref="c0_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="c0_cs"/><target ref="c0_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x0=0</label></transition>
+</template>
+<template><name>C1</name>
+<location id="c1_idle"><name>idle</name></location>
+<location id="c1_want"><name>want</name></location>
+<location id="c1_cs"><name>cs</name><label kind="invariant">x1&lt;=4</label></location>
+<init ref="c1_idle"/>
+<transition><source ref="c1_idle"/><target ref="c1_want"/><label kind="guard">x1&gt;=2</label></transition>
+<transition><source ref="c1_want"/><target ref="c1_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="c1_cs"/><target ref="c1_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x1=0</label></transition>
+</template>
+<template><name>C2</name>
+<location id="c2_idle"><name>idle</name></location>
+<location id="c2_want"><name>want</name></location>
+<location id="c2_cs"><name>cs</name><label kind="invariant">x2&lt;=4</label></location>
+<init ref="c2_idle"/>
+<transition><source ref="c2_idle"/><target ref="c2_want"/><label kind="guard">x2&gt;=2</label></transition>
+<transition><source ref="c2_want"/><target ref="c2_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="c2_cs"/><target ref="c2_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x2=0</label></transition>
+</template>
+<template><name>C3</name>
+<location id="c3_idle"><name>idle</name></location>
+<location id="c3_want"><name>want</name></location>
+<location id="c3_cs"><name>cs</name><label kind="invariant">x3&lt;=4</label></location>
+<init ref="c3_idle"/>
+<transition><source ref="c3_idle"/><target ref="c3_want"/><label kind="guard">x3&gt;=2</label></transition>
+<transition><source ref="c3_want"/><target ref="c3_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="c3_cs"/><target ref="c3_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x3=0</label></transition>
+</template>
+<template><name>C4</name>
+<location id="c4_idle"><name>idle</name></location>
+<location id="c4_want"><name>want</name></location>
+<location id="c4_cs"><name>cs</name><label kind="invariant">x4&lt;=4</label></location>
+<init ref="c4_idle"/>
+<transition><source ref="c4_idle"/><target ref="c4_want"/><label kind="guard">x4&gt;=2</label></transition>
+<transition><source ref="c4_want"/><target ref="c4_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="c4_cs"/><target ref="c4_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x4=0</label></transition>
+</template>
+<template><name>C5</name>
+<location id="c5_idle"><name>idle</name></location>
+<location id="c5_want"><name>want</name></location>
+<location id="c5_cs"><name>cs</name><label kind="invariant">x5&lt;=4</label></location>
+<init ref="c5_idle"/>
+<transition><source ref="c5_idle"/><target ref="c5_want"/><label kind="guard">x5&gt;=2</label></transition>
+<transition><source ref="c5_want"/><target ref="c5_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x5=0</label></transition>
+<transition><source ref="c5_cs"/><target ref="c5_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x5=0</label></transition>
+</template>
+<template><name>C6</name>
+<location id="c6_idle"><name>idle</name></location>
+<location id="c6_want"><name>want</name></location>
+<location id="c6_cs"><name>cs</name><label kind="invariant">x6&lt;=4</label></location>
+<init ref="c6_idle"/>
+<transition><source ref="c6_idle"/><target ref="c6_want"/><label kind="guard">x6&gt;=2</label></transition>
+<transition><source ref="c6_want"/><target ref="c6_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x6=0</label></transition>
+<transition><source ref="c6_cs"/><target ref="c6_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x6=0</label></transition>
+</template>
+<template><name>C7</name>
+<location id="c7_idle"><name>idle</name></location>
+<location id="c7_want"><name>want</name></location>
+<location id="c7_cs"><name>cs</name><label kind="invariant">x7&lt;=4</label></location>
+<init ref="c7_idle"/>
+<transition><source ref="c7_idle"/><target ref="c7_want"/><label kind="guard">x7&gt;=2</label></transition>
+<transition><source ref="c7_want"/><target ref="c7_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x7=0</label></transition>
+<transition><source ref="c7_cs"/><target ref="c7_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x7=0</label></transition>
+</template>
+<template><name>C8</name>
+<location id="c8_idle"><name>idle</name></location>
+<location id="c8_want"><name>want</name></location>
+<location id="c8_cs"><name>cs</name><label kind="invariant">x8&lt;=4</label></location>
+<init ref="c8_idle"/>
+<transition><source ref="c8_idle"/><target ref="c8_want"/><label kind="guard">x8&gt;=2</label></transition>
+<transition><source ref="c8_want"/><target ref="c8_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x8=0</label></transition>
+<transition><source ref="c8_cs"/><target ref="c8_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x8=0</label></transition>
+</template>
+<template><name>C9</name>
+<location id="c9_idle"><name>idle</name></location>
+<location id="c9_want"><name>want</name></location>
+<location id="c9_cs"><name>cs</name><label kind="invariant">x9&lt;=4</label></location>
+<init ref="c9_idle"/>
+<transition><source ref="c9_idle"/><target ref="c9_want"/><label kind="guard">x9&gt;=2</label></transition>
+<transition><source ref="c9_want"/><target ref="c9_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x9=0</label></transition>
+<transition><source ref="c9_cs"/><target ref="c9_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x9=0</label></transition>
+</template>
+<template><name>C10</name>
+<location id="c10_idle"><name>idle</name></location>
+<location id="c10_want"><name>want</name></location>
+<location id="c10_cs"><name>cs</name><label kind="invariant">x10&lt;=4</label></location>
+<init ref="c10_idle"/>
+<transition><source ref="c10_idle"/><target ref="c10_want"/><label kind="guard">x10&gt;=2</label></transition>
+<transition><source ref="c10_want"/><target ref="c10_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x10=0</label></transition>
+<transition><source ref="c10_cs"/><target ref="c10_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x10=0</label></transition>
+</template>
+<template><name>C11</name>
+<location id="c11_idle"><name>idle</name></location>
+<location id="c11_want"><name>want</name></location>
+<location id="c11_cs"><name>cs</name><label kind="invariant">x11&lt;=4</label></location>
+<init ref="c11_idle"/>
+<transition><source ref="c11_idle"/><target ref="c11_want"/><label kind="guard">x11&gt;=2</label></transition>
+<transition><source ref="c11_want"/><target ref="c11_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x11=0</label></transition>
+<transition><source ref="c11_cs"/><target ref="c11_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x11=0</label></transition>
+</template>
+<template><name>C12</name>
+<location id="c12_idle"><name>idle</name></location>
+<location id="c12_want"><name>want</name></location>
+<location id="c12_cs"><name>cs</name><label kind="invariant">x12&lt;=4</label></location>
+<init ref="c12_idle"/>
+<transition><source ref="c12_idle"/><target ref="c12_want"/><label kind="guard">x12&gt;=2</label></transition>
+<transition><source ref="c12_want"/><target ref="c12_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x12=0</label></transition>
+<transition><source ref="c12_cs"/><target ref="c12_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x12=0</label></transition>
+</template>
+<template><name>C13</name>
+<location id="c13_idle"><name>idle</name></location>
+<location id="c13_want"><name>want</name></location>
+<location id="c13_cs"><name>cs</name><label kind="invariant">x13&lt;=4</label></location>
+<init ref="c13_idle"/>
+<transition><source ref="c13_idle"/><target ref="c13_want"/><label kind="guard">x13&gt;=2</label></transition>
+<transition><source ref="c13_want"/><target ref="c13_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x13=0</label></transition>
+<transition><source ref="c13_cs"/><target ref="c13_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x13=0</label></transition>
+</template>
+<template><name>C14</name>
+<location id="c14_idle"><name>idle</name></location>
+<location id="c14_want"><name>want</name></location>
+<location id="c14_cs"><name>cs</name><label kind="invariant">x14&lt;=4</label></location>
+<init ref="c14_idle"/>
+<transition><source ref="c14_idle"/><target ref="c14_want"/><label kind="guard">x14&gt;=2</label></transition>
+<transition><source ref="c14_want"/><target ref="c14_cs"/><label kind="synchronisation">acq!</label><label kind="assignment">x14=0</label></transition>
+<transition><source ref="c14_cs"/><target ref="c14_idle"/><label kind="synchronisation">rel!</label><label kind="assignment">x14=0</label></transition>
+</template>
+<system>system Arb,C0,C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12,C13,C14;</system>
+</nta>

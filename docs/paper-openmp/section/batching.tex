@@ -1,0 +1,94 @@
+\section{Removing the Critical Section}\label{sec:batching}
+
+The analysis at the end of \cref{sec:approach} predicts where the fused engine fails, and
+profiling confirms it. On Fischer $N{=}10$ with twelve threads, a sampling profile attributes
+$6\,049$ samples to the insertion routine itself and $4\,949$ to zone interning, but roughly
+$16\,000$ to the four mutex symbols --- acquiring, waiting on, and releasing stripe locks.
+More time is spent \emph{waiting} for antichains than traversing them. Fischer concentrates
+its symbolic states on few configurations, so all twelve threads converge on a handful of
+stripes, and each holds its lock for a traversal that grows as the search proceeds. This is
+the same dependence on $\rho$ that prior work reports; the difference is what we do about it.
+
+The prior remedy weakens the data structure, replacing deletion-then-insertion with an atomic
+replacement so that threads no longer block, at the price of losing the invariant that the
+stored set is an antichain and thus allowing $|\Sigma|$ to grow. We keep the structure exactly
+as it is and change \emph{when} the work happens.
+
+Observe that nothing in \cref{alg:insert} needs to happen at the moment a successor is
+generated. Its outcome depends only on the antichain and the incoming zone, so it can be
+deferred to the end of the level, provided every successor is remembered in the meantime. Our
+second engine does precisely that. During expansion a thread appends the successor to its
+configuration's chain and nothing more: acquire, push, release. No comparison happens under
+the lock, so the critical section is $O(1)$ irrespective of $\rho$. Once expansion is
+complete, every configuration touched during the level is \emph{settled}: its chain is
+partitioned into the antichain accumulated by earlier levels and the zones appended during
+this one, and the pending zones are folded in by exactly the steps of \cref{alg:insert} ---
+with no lock held at all.
+
+Settling is lock-free by construction rather than by convention. A settling thread modifies
+only the \texttt{dead} and zone-identifier fields of nodes on the chain it owns, and never
+appends to the arena or grows the table, so two configurations that happen to share a stripe
+cannot interfere. \Cref{fig:timeline} shows the resulting schedules.
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[font=\small, x=1mm, y=1mm,
+  wait/.style={draw=black!50, fill=black!10, minimum height=5mm, inner sep=0pt},
+  work/.style={draw=black!75, fill=black!45, minimum height=5mm, inner sep=0pt, text=white},
+  free/.style={draw=black!60, pattern=north east lines, pattern color=black!45,
+               minimum height=5mm, inner sep=0pt}]
+\node[lbl,anchor=east] at (-3,14) {\textbf{(a) fused}};
+\foreach \t/\off in {1/0, 2/13, 3/26} {
+  \node[lbl,anchor=east] at (-3,14-6*\t) {$T_\t$};
+  \node[wait,minimum width=\off mm,anchor=west] at (0,14-6*\t) {};
+  \node[work,minimum width=13mm,anchor=west] at (\off,14-6*\t) {\scriptsize scan};
+  \node[wait,minimum width=39mm,anchor=west] at (\off+13,14-6*\t) {};
+  \node[work,minimum width=13mm,anchor=west] at (\off+52,14-6*\t) {\scriptsize scan};
+}
+\node[lbl,anchor=west] at (82,2) {\scriptsize the $\Theta(\rho)$ scans execute \emph{serially}};
+\node[lbl,anchor=east] at (-3,-10) {\textbf{(b) batched}};
+\foreach \t/\off in {1/0, 2/2, 3/4} {
+  \node[lbl,anchor=east] at (-3,-10-6*\t) {$T_\t$};
+  \node[work,minimum width=2mm,anchor=west] at (\off,-10-6*\t) {};
+  \node[work,minimum width=2mm,anchor=west] at (\off+4,-10-6*\t) {};
+  \node[free,minimum width=52mm,anchor=west] at (10,-10-6*\t) {\scriptsize settle};
+}
+\draw[dashed,black!55] (8,-13) -- (8,-30);
+\node[lbl,anchor=north] at (8,-31) {\scriptsize expansion ends};
+\node[lbl,anchor=west] at (82,-22) {\scriptsize the same scans execute \emph{concurrently}};
+\node[work,minimum width=6mm] at (10,26) {}; \node[lbl,anchor=west] at (14,26) {\scriptsize holds the stripe lock};
+\node[wait,minimum width=6mm] at (52,26) {}; \node[lbl,anchor=west] at (56,26) {\scriptsize blocked on it};
+\node[free,minimum width=6mm] at (92,26) {}; \node[lbl,anchor=west] at (96,26) {\scriptsize antichain fold, no lock};
+\end{tikzpicture}
+\caption{Thread schedules on a configuration with a long antichain. Under fusion (a) each
+insertion holds the stripe lock across a $\Theta(\rho)$ traversal, so threads queue and the
+traversals are effectively serialised. Under batching (b) insertions are constant-time pushes
+that barely contend, and the traversals --- now one per configuration per level rather than
+one per successor --- run concurrently outside any lock.}
+\label{fig:timeline}
+\end{figure*}
+
+Two implementation details are load-bearing. The first is that the fold must run over a
+compacted array of live nodes rather than over the chain itself. Deferring subsumption lets a
+configuration accumulate thousands of pending nodes, and a node flagged dead is skipped but
+still \emph{traversed}, so folding over the chain is quadratic in the number of pending zones;
+measured on Fischer $N{=}10$, the chain-walking version took $8.17$\,s against $2.92$\,s for
+the fused engine it was meant to improve, while the compacted version is faster than both. The
+second is that the $\aLU{}$ bounds of line~\ref{ln:bounds}, which depend only on the
+configuration, are now computed once per configuration per level instead of once per
+successor --- an optimisation the fused engine cannot make, because it never sees a
+configuration's successors together.
+
+Identifying which configurations were touched costs nothing. Because \cref{alg:insert}
+prepends, the head of a chain is always its most recent node, so its level stamp answers
+``has this configuration already been touched during this level?'' under the lock we are
+already holding. Each touched configuration is thus recorded exactly once, with no auxiliary
+set and no additional synchronisation.
+
+The two engines are complementary, and $\rho$ decides between them. Where $\rho \approx 1$
+antichains are singletons, the fused critical section is already minimal, and batching adds
+bookkeeping for nothing. Where $\rho$ is large the fused engine serialises on a few stripes
+while the batched engine performs identical comparisons in parallel. Crucially this is a
+property of the model rather than of the tool, so it can be estimated in advance --- a few
+hundred levels of exploration suffice --- and used to choose an engine before committing to a
+long run.

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x0,x1,x2,x3,x4; int[0,5] a; int[0,5] b;</declaration>
+<template><name>P0</name>
+<location id="p0_idle"><name>idle</name></location>
+<location id="p0_reqA"><name>reqA</name><label kind="invariant">x0&lt;=2</label></location>
+<location id="p0_waitA"><name>waitA</name></location>
+<location id="p0_reqB"><name>reqB</name><label kind="invariant">x0&lt;=2</label></location>
+<location id="p0_waitB"><name>waitB</name></location>
+<location id="p0_cs"><name>cs</name></location>
+<init ref="p0_idle"/>
+<transition><source ref="p0_idle"/><target ref="p0_reqA"/><label kind="guard">a==0</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="p0_reqA"/><target ref="p0_waitA"/><label kind="assignment">a=1, x0=0</label></transition>
+<transition><source ref="p0_waitA"/><target ref="p0_reqB"/><label kind="guard">x0&gt;2 &amp;&amp; a==1 &amp;&amp; b==0</label><label kind="assignment">x0=0</label></transition>
+<transition><source ref="p0_waitA"/><target ref="p0_idle"/><label kind="guard">x0&gt;2 &amp;&amp; a!=1</label></transition>
+<transition><source ref="p0_reqB"/><target ref="p0_waitB"/><label kind="assignment">b=1, x0=0</label></transition>
+<transition><source ref="p0_waitB"/><target ref="p0_cs"/><label kind="guard">x0&gt;2 &amp;&amp; b==1</label></transition>
+<transition><source ref="p0_waitB"/><target ref="p0_idle"/><label kind="guard">x0&gt;2 &amp;&amp; b!=1</label><label kind="assignment">a=0</label></transition>
+<transition><source ref="p0_cs"/><target ref="p0_idle"/><label kind="assignment">a=0, b=0</label></transition>
+</template>
+<template><name>P1</name>
+<location id="p1_idle"><name>idle</name></location>
+<location id="p1_reqA"><name>reqA</name><label kind="invariant">x1&lt;=2</label></location>
+<location id="p1_waitA"><name>waitA</name></location>
+<location id="p1_reqB"><name>reqB</name><label kind="invariant">x1&lt;=2</label></location>
+<location id="p1_waitB"><name>waitB</name></location>
+<location id="p1_cs"><name>cs</name></location>
+<init ref="p1_idle"/>
+<transition><source ref="p1_idle"/><target ref="p1_reqA"/><label kind="guard">a==0</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="p1_reqA"/><target ref="p1_waitA"/><label kind="assignment">a=2, x1=0</label></transition>
+<transition><source ref="p1_waitA"/><target ref="p1_reqB"/><label kind="guard">x1&gt;2 &amp;&amp; a==2 &amp;&amp; b==0</label><label kind="assignment">x1=0</label></transition>
+<transition><source ref="p1_waitA"/><target ref="p1_idle"/><label kind="guard">x1&gt;2 &amp;&amp; a!=2</label></transition>
+<transition><source ref="p1_reqB"/><target ref="p1_waitB"/><label kind="assignment">b=2, x1=0</label></transition>
+<transition><source ref="p1_waitB"/><target ref="p1_cs"/><label kind="guard">x1&gt;2 &amp;&amp; b==2</label></transition>
+<transition><source ref="p1_waitB"/><target ref="p1_idle"/><label kind="guard">x1&gt;2 &amp;&amp; b!=2</label><label kind="assignment">a=0</label></transition>
+<transition><source ref="p1_cs"/><target ref="p1_idle"/><label kind="assignment">a=0, b=0</label></transition>
+</template>
+<template><name>P2</name>
+<location id="p2_idle"><name>idle</name></location>
+<location id="p2_reqA"><name>reqA</name><label kind="invariant">x2&lt;=2</label></location>
+<location id="p2_waitA"><name>waitA</name></location>
+<location id="p2_reqB"><name>reqB</name><label kind="invariant">x2&lt;=2</label></location>
+<location id="p2_waitB"><name>waitB</name></location>
+<location id="p2_cs"><name>cs</name></location>
+<init ref="p2_idle"/>
+<transition><source ref="p2_idle"/><target ref="p2_reqA"/><label kind="guard">a==0</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="p2_reqA"/><target ref="p2_waitA"/><label kind="assignment">a=3, x2=0</label></transition>
+<transition><source ref="p2_waitA"/><target ref="p2_reqB"/><label kind="guard">x2&gt;2 &amp;&amp; a==3 &amp;&amp; b==0</label><label kind="assignment">x2=0</label></transition>
+<transition><source ref="p2_waitA"/><target ref="p2_idle"/><label kind="guard">x2&gt;2 &amp;&amp; a!=3</label></transition>
+<transition><source ref="p2_reqB"/><target ref="p2_waitB"/><label kind="assignment">b=3, x2=0</label></transition>
+<transition><source ref="p2_waitB"/><target ref="p2_cs"/><label kind="guard">x2&gt;2 &amp;&amp; b==3</label></transition>
+<transition><source ref="p2_waitB"/><target ref="p2_idle"/><label kind="guard">x2&gt;2 &amp;&amp; b!=3</label><label kind="assignment">a=0</label></transition>
+<transition><source ref="p2_cs"/><target ref="p2_idle"/><label kind="assignment">a=0, b=0</label></transition>
+</template>
+<template><name>P3</name>
+<location id="p3_idle"><name>idle</name></location>
+<location id="p3_reqA"><name>reqA</name><label kind="invariant">x3&lt;=2</label></location>
+<location id="p3_waitA"><name>waitA</name></location>
+<location id="p3_reqB"><name>reqB</name><label kind="invariant">x3&lt;=2</label></location>
+<location id="p3_waitB"><name>waitB</name></location>
+<location id="p3_cs"><name>cs</name></location>
+<init ref="p3_idle"/>
+<transition><source ref="p3_idle"/><target ref="p3_reqA"/><label kind="guard">a==0</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="p3_reqA"/><target ref="p3_waitA"/><label kind="assignment">a=4, x3=0</label></transition>
+<transition><source ref="p3_waitA"/><target ref="p3_reqB"/><label kind="guard">x3&gt;2 &amp;&amp; a==4 &amp;&amp; b==0</label><label kind="assignment">x3=0</label></transition>
+<transition><source ref="p3_waitA"/><target ref="p3_idle"/><label kind="guard">x3&gt;2 &amp;&amp; a!=4</label></transition>
+<transition><source ref="p3_reqB"/><target ref="p3_waitB"/><label kind="assignment">b=4, x3=0</label></transition>
+<transition><source ref="p3_waitB"/><target ref="p3_cs"/><label kind="guard">x3&gt;2 &amp;&amp; b==4</label></transition>
+<transition><source ref="p3_waitB"/><target ref="p3_idle"/><label kind="guard">x3&gt;2 &amp;&amp; b!=4</label><label kind="assignment">a=0</label></transition>
+<transition><source ref="p3_cs"/><target ref="p3_idle"/><label kind="assignment">a=0, b=0</label></transition>
+</template>
+<template><name>P4</name>
+<location id="p4_idle"><name>idle</name></location>
+<location id="p4_reqA"><name>reqA</name><label kind="invariant">x4&lt;=2</label></location>
+<location id="p4_waitA"><name>waitA</name></location>
+<location id="p4_reqB"><name>reqB</name><label kind="invariant">x4&lt;=2</label></location>
+<location id="p4_waitB"><name>waitB</name></location>
+<location id="p4_cs"><name>cs</name></location>
+<init ref="p4_idle"/>
+<transition><source ref="p4_idle"/><target ref="p4_reqA"/><label kind="guard">a==0</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="p4_reqA"/><target ref="p4_waitA"/><label kind="assignment">a=5, x4=0</label></transition>
+<transition><source ref="p4_waitA"/><target ref="p4_reqB"/><label kind="guard">x4&gt;2 &amp;&amp; a==5 &amp;&amp; b==0</label><label kind="assignment">x4=0</label></transition>
+<transition><source ref="p4_waitA"/><target ref="p4_idle"/><label kind="guard">x4&gt;2 &amp;&amp; a!=5</label></transition>
+<transition><source ref="p4_reqB"/><target ref="p4_waitB"/><label kind="assignment">b=5, x4=0</label></transition>
+<transition><source ref="p4_waitB"/><target ref="p4_cs"/><label kind="guard">x4&gt;2 &amp;&amp; b==5</label></transition>
+<transition><source ref="p4_waitB"/><target ref="p4_idle"/><label kind="guard">x4&gt;2 &amp;&amp; b!=5</label><label kind="assignment">a=0</label></transition>
+<transition><source ref="p4_cs"/><target ref="p4_idle"/><label kind="assignment">a=0, b=0</label></transition>
+</template>
+<system>system P0,P1,P2,P3,P4;</system>
+</nta>

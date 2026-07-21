@@ -211,10 +211,6 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(true);
     } else if (a == "--naive") {      // GPU merge routing: always one thread per bucket (default)
       ptctlmc::set_adaptive_merge(false);
-    } else if (a == "--legacy-passed") {  // CPU passed list: old static-shard + serial route (A/B)
-      ptctlmc::set_shared_passed(false);
-    } else if (a == "--shared-passed") {  // CPU passed list: shared stripe-locked table (default)
-      ptctlmc::set_shared_passed(true);
     } else if (a == "--chunking") {   // expand the frontier in bounded batches (caps peak memory)
       int states = 65536;             // optional size: --chunking 32768
       if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -231,7 +227,6 @@ int main(int argc, char** argv) {
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
             << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] <model.xml> <query.q>\n"
             << "       --adaptive: GPU merge auto-routes CPU/GPU per level (default --naive)\n"
-            << "       --legacy-passed: CPU passed list = static shards + serial route (default: shared table)\n"
             << "       --chunking: expand the frontier in batches of N states (default 65536),\n"
             << "                   capping peak GPU memory independently of BFS level width\n"
             << "       ptctlmc --bisim <spec>   decide timed (bi)simulation between two automata\n"

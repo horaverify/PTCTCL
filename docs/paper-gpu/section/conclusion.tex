@@ -1,0 +1,12 @@
+\section{Conclusion}
+\label{sec:concl}
+
+Across ten measured configurations and three DBM representations, GPU zone-graph exploration
+on a unified-memory Apple GPU is slower than an optimised CPU implementation of the same
+algorithm, component by component. The cause is neither branch divergence (refuted: $100\%$
+lane survival) nor arithmetic intensity (refuted: $0.5\%$ of peak, $40\times$ from the roof),
+but a working-set dilemma in which a DBM is simultaneously too large for registers and too
+large for on-chip residency at useful occupancy --- and a counting argument that forecloses
+the cooperative mappings that would otherwise escape it. We scope the result to
+unified-memory GPUs with small threadgroup budgets, and identify the shared-memory capacity
+of datacenter parts as the specific quantity that would have to change.
