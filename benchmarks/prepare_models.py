@@ -32,6 +32,7 @@ FAMILIES = {
     "csma":    ((4, 12), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),
     "grc":     ((4, 10), ("A[] not deadlock", "A[] not deadlock")),
     "single":  ((4, 10), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),
+    "viking":  ((4, 17), ("A[] not (Viking1.safe && Viking1.unsafe)", "A[] not (Viking1.safe && Viking1.unsafe)")),
 }
 
 

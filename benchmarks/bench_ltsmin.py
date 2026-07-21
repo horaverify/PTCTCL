@@ -53,21 +53,21 @@ def run(cmd, env_extra, timeout, memgb):
     try:
         time_cmd = ["/usr/bin/time", "-v"] if PLAT == "linux" else ["/usr/bin/time", "-l"]
         p = subprocess.Popen(time_cmd + cmd, env=env, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, preexec_fn=os.setsid)
+                             stderr=subprocess.STDOUT)
     except Exception as e:
         return 0.0, 0.0, "ERR", str(e)
     i, peak = 0, 0.0
     while p.poll() is None:
         if time.perf_counter() - t0 > timeout:
-            os.killpg(os.getpgid(p.pid), signal.SIGKILL); p.wait()
+            p.kill(); p.wait()
             return time.perf_counter() - t0, peak, "TIMEOUT", ""
         if i % 5 == 0:
             try:
-                rss = subprocess.check_output(["ps", "-o", "rss=", "-g", str(os.getpgid(p.pid))], text=True)
+                rss = subprocess.check_output(["ps", "-o", "rss=", "-p", str(p.pid)], text=True)
                 tot = sum(int(x) for x in rss.split()) / 1048576.0
                 peak = max(peak, tot)
                 if tot > memgb:
-                    os.killpg(os.getpgid(p.pid), signal.SIGKILL); p.wait()
+                    p.kill(); p.wait()
                     return time.perf_counter() - t0, tot, "MEMOUT", ""
             except Exception:
                 pass
