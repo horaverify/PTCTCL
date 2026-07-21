@@ -1,1 +1,1 @@
-A[] not (P1.cs && P2.cs)
+A[] not (C1.cs && C2.cs)
