@@ -1,0 +1,100 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}
+\newlabel{sec:intro@cref}{{[section][1][]1}{[1][1][]1}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
+\newlabel{sec:related}{{2}{2}{Related Work}{section.2}{}}
+\newlabel{sec:related@cref}{{[section][2][]2}{[1][2][]2}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Background}{3}{section.3}\protected@file@percent }
+\newlabel{sec:bg}{{3}{3}{Background}{section.3}{}}
+\newlabel{sec:bg@cref}{{[section][3][]3}{[1][3][]3}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces One level of the search. Each thread expands \emph  {and} inserts its own successors, so no successor is ever handed between threads. Everything here is standard breadth-first search except the box on the right, which is where the design question lies.}}{4}{figure.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:level}{{1}{4}{One level of the search. Each thread expands \emph {and} inserts its own successors, so no successor is ever handed between threads. Everything here is standard breadth-first search except the box on the right, which is where the design question lies}{figure.caption.2}{}}
+\newlabel{fig:level@cref}{{[figure][1][]1}{[1][4][]4}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Parallel Reachability with a Shared Visited Set}{4}{section.4}\protected@file@percent }
+\newlabel{sec:approach}{{4}{4}{Parallel Reachability with a Shared Visited Set}{section.4}{}}
+\newlabel{sec:approach@cref}{{[section][4][]4}{[1][4][]4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}One level of the search}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Why insertion is fused into expansion}{4}{subsection.4.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Expansion and insertion, end to end. The frontier is held as flat arrays of packed keys and zone indices; threads take slices of it under a dynamic schedule and each thread runs the whole pipeline on its own successors, inserting them itself. One multiplicative hash yields both the stripe (high bits) and the slot within it (low bits), so a thread locks only the stripe it touches while the other $p-1$ proceed. Because there is no per-thread buffer and no routing pass, every successor is written exactly once. The inset lists what one thread executes inside the lock.}}{5}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:pipeline}{{2}{5}{Expansion and insertion, end to end. The frontier is held as flat arrays of packed keys and zone indices; threads take slices of it under a dynamic schedule and each thread runs the whole pipeline on its own successors, inserting them itself. One multiplicative hash yields both the stripe (high bits) and the slot within it (low bits), so a thread locks only the stripe it touches while the other $p-1$ proceed. Because there is no per-thread buffer and no routing pass, every successor is written exactly once. The inset lists what one thread executes inside the lock}{figure.caption.3}{}}
+\newlabel{fig:pipeline@cref}{{[figure][2][]2}{[1][4][]5}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Making sharing affordable}{5}{subsection.4.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Partitioned ownership needs three writes per successor --- into a buffer, out of it during routing, and into a shard --- because a thread may not write outside its own shard. Fusing expansion and insertion removes the buffer and the routing pass, and each successor is written once.}}{6}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:dataflow}{{3}{6}{Partitioned ownership needs three writes per successor --- into a buffer, out of it during routing, and into a shard --- because a thread may not write outside its own shard. Fusing expansion and insertion removes the buffer and the routing pass, and each successor is written once}{figure.caption.4}{}}
+\newlabel{fig:dataflow@cref}{{[figure][3][]3}{[1][4][]6}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces $\textsc  {Insert}(\ell , \mathcal  {Z}, \ensuremath  {\mathit  {dk}}, k)$ --- executed under the stripe lock of $\ensuremath  {\mathit  {dk}}$}}{6}{algorithm.1}\protected@file@percent }
+\newlabel{alg:insert}{{1}{6}{$\textsc {Insert}(\ell , \Zone , \dk , k)$ --- executed under the stripe lock of $\dk $}{algorithm.1}{}}
+\newlabel{alg:insert@cref}{{[algorithm][1][]1}{[1][6][]6}}
+\newlabel{ln:bounds}{{2}{6}{$\textsc {Insert}(\ell , \Zone , \dk , k)$ --- executed under the stripe lock of $\dk $}{ALG@line.2}{}}
+\newlabel{ln:bounds@cref}{{[line][2][]2}{[1][6][]6}}
+\newlabel{ln:sub1}{{3}{6}{$\textsc {Insert}(\ell , \Zone , \dk , k)$ --- executed under the stripe lock of $\dk $}{ALG@line.3}{}}
+\newlabel{ln:sub1@cref}{{[line][3][]3}{[1][6][]6}}
+\newlabel{ln:drop}{{5}{6}{$\textsc {Insert}(\ell , \Zone , \dk , k)$ --- executed under the stripe lock of $\dk $}{ALG@line.5}{}}
+\newlabel{ln:drop@cref}{{[line][5][]5}{[1][6][]6}}
+\newlabel{ln:sub2}{{8}{6}{$\textsc {Insert}(\ell , \Zone , \dk , k)$ --- executed under the stripe lock of $\dk $}{ALG@line.8}{}}
+\newlabel{ln:sub2@cref}{{[line][8][]8}{[1][6][]6}}
+\newlabel{ln:union}{{13}{6}{$\textsc {Insert}(\ell , \Zone , \dk , k)$ --- executed under the stripe lock of $\dk $}{ALG@line.13}{}}
+\newlabel{ln:union@cref}{{[line][13][]13}{[1][6][]6}}
+\newlabel{ln:push}{{16}{6}{$\textsc {Insert}(\ell , \Zone , \dk , k)$ --- executed under the stripe lock of $\dk $}{ALG@line.16}{}}
+\newlabel{ln:push@cref}{{[line][16][]16}{[1][6][]6}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}The insertion algorithm}{6}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Removing the Critical Section}{7}{section.5}\protected@file@percent }
+\newlabel{sec:batching}{{5}{7}{Removing the Critical Section}{section.5}{}}
+\newlabel{sec:batching@cref}{{[section][5][]5}{[1][7][]7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Thread schedules on a configuration with a long antichain. Under fusion (a) each insertion holds the stripe lock across a $\Theta (\rho )$ traversal, so threads queue and the traversals are effectively serialised. Under batching (b) insertions are constant-time pushes that barely contend, and the traversals --- now one per configuration per level rather than one per successor --- run concurrently outside any lock.}}{8}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:timeline}{{4}{8}{Thread schedules on a configuration with a long antichain. Under fusion (a) each insertion holds the stripe lock across a $\Theta (\rho )$ traversal, so threads queue and the traversals are effectively serialised. Under batching (b) insertions are constant-time pushes that barely contend, and the traversals --- now one per configuration per level rather than one per successor --- run concurrently outside any lock}{figure.caption.5}{}}
+\newlabel{fig:timeline@cref}{{[figure][4][]4}{[1][7][]8}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Evaluation}{8}{section.6}\protected@file@percent }
+\newlabel{sec:eval}{{6}{8}{Evaluation}{section.6}{}}
+\newlabel{sec:eval@cref}{{[section][6][]6}{[1][8][]8}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Explored symbolic states. \textsc  {Ptctlmc}{} reproduces \texttt  {\small  verifyta} exactly on every model and at every thread count. \textsc  {LTSmin}{} explores strictly more because it stores one state per (configuration, zone) pair with no convex-union merging; the factor in parentheses is how many more states it stores, so its timings in \cref  {tab:main} reflect more work by construction.}}{9}{table.caption.7}\protected@file@percent }
+\newlabel{tab:parity}{{1}{9}{Explored symbolic states. \tool {} reproduces \code {verifyta} exactly on every model and at every thread count. \ltsmin {} explores strictly more because it stores one state per (configuration, zone) pair with no convex-union merging; the factor in parentheses is how many more states it stores, so its timings in \cref {tab:main} reflect more work by construction}{table.caption.7}{}}
+\newlabel{tab:parity@cref}{{[table][1][]1}{[1][9][]9}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Wall-clock seconds (median of two runs) and the speed-up of \textsc  {Ptctlmc}{} over each baseline. \textsf  {T}/\textsf  {M} mark runs stopped by the 30-minute / 15\,GB cap; a speed-up against a capped baseline is a lower bound, written $>$. \textsc  {Ptctlmc}{} is fastest on every row.}}{10}{table.caption.8}\protected@file@percent }
+\newlabel{tab:main}{{2}{10}{Wall-clock seconds (median of two runs) and the speed-up of \tool {} over each baseline. \textsf {T}/\textsf {M} mark runs stopped by the 30-minute / 15\,GB cap; a speed-up against a capped baseline is a lower bound, written $>$. \tool {} is fastest on every row}{table.caption.8}{}}
+\newlabel{tab:main@cref}{{[table][2][]2}{[1][9][]10}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Verification time, log scale. Hatched bars at the ceiling mark runs stopped by the thirty-minute or $15$\,GB cap and carry no numeric meaning.}}{10}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:time}{{5}{10}{Verification time, log scale. Hatched bars at the ceiling mark runs stopped by the thirty-minute or $15$\,GB cap and carry no numeric meaning}{figure.caption.9}{}}
+\newlabel{fig:time@cref}{{[figure][5][]5}{[1][10][]10}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Peak resident set (GB) and the factor by which \textsc  {Ptctlmc}{} undercuts each baseline. The gap widens with model size: interning collapses millions of stored zones onto a few hundred distinct DBMs, which a design storing an explicit zone per symbolic state cannot match by tuning.}}{11}{table.caption.10}\protected@file@percent }
+\newlabel{tab:mem}{{3}{11}{Peak resident set (GB) and the factor by which \tool {} undercuts each baseline. The gap widens with model size: interning collapses millions of stored zones onto a few hundred distinct DBMs, which a design storing an explicit zone per symbolic state cannot match by tuning}{table.caption.10}{}}
+\newlabel{tab:mem@cref}{{[table][3][]3}{[1][10][]11}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Peak resident set, log scale; conventions as in \cref  {fig:time}.}}{11}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:mem}{{6}{11}{Peak resident set, log scale; conventions as in \cref {fig:time}}{figure.caption.11}{}}
+\newlabel{fig:mem@cref}{{[figure][6][]6}{[1][11][]11}}
+\newlabel{fig:scale-ours}{{7a}{12}{This paper: shared visited set, fused insertion}{figure.caption.12}{}}
+\newlabel{fig:scale-ours@cref}{{[subfigure][1][7]7a}{[1][11][]12}}
+\newlabel{sub@fig:scale-ours}{{a}{12}{This paper: shared visited set, fused insertion}{figure.caption.12}{}}
+\newlabel{sub@fig:scale-ours@cref}{{[subfigure][1][7]7a}{[1][11][]12}}
+\newlabel{fig:scale-ltsmin}{{7b}{12}{\textsc {opaal}+\ltsmin {}: multimap, per-state locking}{figure.caption.12}{}}
+\newlabel{fig:scale-ltsmin@cref}{{[subfigure][2][7]7b}{[1][11][]12}}
+\newlabel{sub@fig:scale-ltsmin}{{b}{12}{\textsc {opaal}+\ltsmin {}: multimap, per-state locking}{figure.caption.12}{}}
+\newlabel{sub@fig:scale-ltsmin@cref}{{[subfigure][2][7]7b}{[1][11][]12}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Speed-up against the same tool at the lowest measured thread count, one curve per model, bars showing the spread across repetitions; the dashed line is linear. Both designs flatten beyond eight threads, and in both panels the models order themselves by $\rho $.}}{12}{figure.caption.12}\protected@file@percent }
+\newlabel{fig:scaling}{{7}{12}{Speed-up against the same tool at the lowest measured thread count, one curve per model, bars showing the spread across repetitions; the dashed line is linear. Both designs flatten beyond eight threads, and in both panels the models order themselves by $\rho $}{figure.caption.12}{}}
+\newlabel{fig:scaling@cref}{{[figure][7][]7}{[1][11][]12}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion}{12}{section.7}\protected@file@percent }
+\newlabel{sec:concl}{{7}{12}{Conclusion}{section.7}{}}
+\newlabel{sec:concl@cref}{{[section][7][]7}{[1][12][]12}}
+\bibcite{dalsgaard2012multicore}{1}
+\bibcite{laarman2011ltsmin}{2}
+\bibcite{behrmann2004tutorial}{3}
+\bibcite{behrmann2006lower}{4}
+\bibcite{larsen1997efficient}{5}
+\newlabel{fig:t-ours}{{8a}{13}{This paper}{figure.caption.13}{}}
+\newlabel{fig:t-ours@cref}{{[subfigure][1][8]8a}{[1][11][]13}}
+\newlabel{sub@fig:t-ours}{{a}{13}{This paper}{figure.caption.13}{}}
+\newlabel{sub@fig:t-ours@cref}{{[subfigure][1][8]8a}{[1][11][]13}}
+\newlabel{fig:t-ltsmin}{{8b}{13}{\textsc {opaal}+\ltsmin {}}{figure.caption.13}{}}
+\newlabel{fig:t-ltsmin@cref}{{[subfigure][2][8]8b}{[1][11][]13}}
+\newlabel{sub@fig:t-ltsmin}{{b}{13}{\textsc {opaal}+\ltsmin {}}{figure.caption.13}{}}
+\newlabel{sub@fig:t-ltsmin@cref}{{[subfigure][2][8]8b}{[1][11][]13}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Absolute wall-clock time against thread count, log scale. Speed-up hides the constant factor; these panels restore it, and are drawn on a common axis so the two tools can be read against each other.}}{13}{figure.caption.13}\protected@file@percent }
+\newlabel{fig:abstime}{{8}{13}{Absolute wall-clock time against thread count, log scale. Speed-up hides the constant factor; these panels restore it, and are drawn on a common axis so the two tools can be read against each other}{figure.caption.13}{}}
+\newlabel{fig:abstime@cref}{{[figure][8][]8}{[1][11][]13}}
+\gdef \@abspage@last{13}
