@@ -40,12 +40,13 @@ def main():
     ap.add_argument("--range", nargs=2, type=int, default=None, metavar=("LO", "HI"))
     ap.add_argument("--so", action="store_true", help="also build LTSmin .so modules")
     ap.add_argument("--outdir", default=HERE)
+    ap.add_argument("--linux", action="store_true", help="specific For linux stuff")
     args = ap.parse_args()
 
     want = [f.strip() for f in args.only.split(",") if f.strip()] or sorted(FAMILIES)
     mdir = os.path.join(args.outdir, "models"); os.makedirs(mdir, exist_ok=True)
     qdir = os.path.join(args.outdir, "queries"); os.makedirs(qdir, exist_ok=True)
-    sodir = os.path.join(args.outdir, "so"); os.makedirs(sodir, exist_ok=True)
+    sodir = os.path.join(args.outdir, "so_linux" if args.linux else "so_macos"); os.makedirs(sodir, exist_ok=True)
 
     made, failed = 0, []
     for fam in want:
@@ -70,8 +71,12 @@ def main():
             made += 1
             if args.so:
                 so = os.path.join(sodir, "%s%d.so" % (fam, n))
-                r = subprocess.run([os.path.join(HERE, "gen_so_macos.sh"), xml, so],
-                                   capture_output=True)
+                if args.linux:
+                    r = subprocess.run([os.path.join(HERE, "gen_so_linux.sh"), xml, so],
+                                       capture_output=True)
+                else:
+                    r = subprocess.run([os.path.join(HERE, "gen_so_macos.sh"), xml, so],
+                                       capture_output=True)
                 if r.returncode:
                     failed.append("%s%d.so: %s" % (fam, n, r.stderr.decode().strip()[:70]))
     print("generated %d models into %s" % (made, mdir))
