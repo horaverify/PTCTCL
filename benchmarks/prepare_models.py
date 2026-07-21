@@ -25,7 +25,7 @@ GEN = os.path.join(HERE, "generators")
 # family -> (default N range, (macOS query, Linux query)). Queries explore the whole space rather
 # than terminating early, so timings measure exploration and not luck.
 FAMILIES = {
-    "fischer": ((4, 11), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),
+    "fischer": ((4, 11), ("A[] not (P1.cs && P2.cs)", "A[] not (P1.cs && P2.cs)")),
     "phil":    ((4, 11), ("A[] not (P0.Eat && P1.Eat)", "A[] not (C0.Eat && C1.Eat)")),
     "twolock": ((4, 11), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),
     "arbiter": ((4, 16), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),
