@@ -8,7 +8,7 @@ raw.csv after every run so progress is watchable live.
 Already-completed (model, tool, threads, rep) pairs with status OK are SKIPPED, and are
 seeded from any earlier CSV given with --seed, so nothing is measured twice.
 """
-import argparse, csv, os, re, signal, statistics, subprocess, sys, time, platform
+import argparse, csv, os, re, signal, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "LTStest"))   # opaal+LTSmin tree
@@ -143,19 +143,16 @@ def main():
                     g = re.search(r"explored ([0-9]+) symbolic", o)
                     emit(fam, model, "ptctlmc-omp", th, rep, g.group(1) if g else "-", s, m, st)
 
-    # generated families: benchmarks/models/<fam><N>.xml with queries/<fam>.q.
+    # generated families: benchmarks/models/<fam><N>.xml with queries_<plat>/<fam>.q.
     # An LTSmin module is used when one exists; otherwise the harness records
     # verifyta and PTCTLMC only, rather than skipping the model.
-    import glob, re as _re
     for fam, ns in sorted(args.families.items()):
         for n in ns:
             xml = os.path.join(HERE, "models", "%s%d.xml" % (fam, n))
             if not os.path.exists(xml):
                 continue
             q = os.path.join(QDIR, "%s.q" % fam)
-            so = os.path.join(HERE, "so", "%s%d.so" % (fam, n))
-            if not os.path.exists(so):
-                so = os.path.join(SO, "%s%d.so" % (fam, n))
+            so = os.path.join(SO, "%s%d.so" % (fam, n))
             bench(fam, "%s%d" % (fam, n), xml, so, q, q)
 
     for n in args.viking:
