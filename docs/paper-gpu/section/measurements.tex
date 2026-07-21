@@ -1,0 +1,28 @@
+\section{Measurements}
+\label{sec:meas}
+
+All numbers are on an Apple M4 Pro: 8 performance + 4 efficiency CPU cores, a 16-core GPU
+(${\approx}2000$ shader lanes), 24\,GB unified memory. Models are Viking N=15
+($m{+}1=12$, so a $12\times12$ DBM $=576$\,B; $8\,355\,840$ successors) and Fischer N=10.
+
+\begin{table}[t]
+\centering
+\caption{GPU components against their CPU counterparts. Every row favours the CPU.}
+\label{tab:head}
+\begin{tabular}{lrrl}
+\toprule
+Operation & GPU & CPU & Note \\
+\midrule
+Expansion (Viking 15) & 1400\,ms & \textbf{491\,ms} & CPU $2.85\times$ faster \\
+Merge, zones written by GPU & 258\,ms & \textbf{100\,ms} & GPU's best case \\
+Merge, zones written by CPU & 571\,ms & \textbf{100\,ms} & coherency penalty \\
+Adaptive router's free choice & 2 levels & \textbf{122 levels} & of 124 total \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A consequence worth stating plainly: the configuration that is fastest on Fischer nominally
+uses the Metal backend, but performs $100\%$ of its work on the CPU. Its advantage is
+\emph{algorithmic} --- a bucketed, batched per-state merge over compact arrays --- and
+removing the GPU from that configuration makes it faster still ($0.59$\,s $\to$ $0.42$\,s).
+It must not be reported as GPU acceleration.

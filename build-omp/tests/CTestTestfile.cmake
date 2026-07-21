@@ -10,3 +10,5 @@ add_test(selftest "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/ptct
 set_tests_properties(selftest PROPERTIES  FAIL_REGULAR_EXPRESSION "failed" _BACKTRACE_TRIPLES "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/CMakeLists.txt;2;add_test;/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/CMakeLists.txt;0;")
 add_test(unit "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/ptctlmc_unit")
 set_tests_properties(unit PROPERTIES  FAIL_REGULAR_EXPRESSION "FAIL" _BACKTRACE_TRIPLES "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/CMakeLists.txt;7;add_test;/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/CMakeLists.txt;0;")
+add_test(bisim "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-omp/tests/ptctlmc_bisim")
+set_tests_properties(bisim PROPERTIES  FAIL_REGULAR_EXPRESSION "FAIL " _BACKTRACE_TRIPLES "/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/CMakeLists.txt;12;add_test;/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/tests/CMakeLists.txt;0;")

@@ -40,11 +40,17 @@ approach.
 | backend | what's parallel |
 |---|---|
 | `seq` | reference (sequential passed/waiting) |
-| `omp` | level-synchronized frontier BFS: DBM successor pipeline parallel across the frontier, serial subsumption merge |
-| `cuda` | one GPU thread per (frontier-state, edge): full DBM pipeline on device; host does the subsumption merge. Auto-enabled when a CUDA toolkit is present (`sm_90`/H100) |
+| `omp` | **shared‑passed hybrid**: one stripe‑locked passed table (no static partition, no serial barrier) with fused expand+insert, zone interning, and successor storage reuse — LTSmin's parallel shape with PTCTLMC's exact convex‑union merge (`--legacy-passed` for the old static‑shard design) |
+| `metal` / `cuda` | one GPU thread per (frontier-state, edge): full DBM pipeline on device; host does the subsumption merge. Auto-enabled when the toolkit/framework is present |
 
-All three give identical verdicts (`seq`==`omp` is unit-tested; `cuda` mirrors them
-and shares the validated DBM ops).
+All give identical verdicts (`seq`==`omp` is unit-tested; GPU mirrors them and
+shares the validated DBM ops).
+
+**Head‑to‑head vs the 2012 opaal+LTSmin multi‑core tool** (rebuilt from source; see
+`LTStest/`): the `omp` hybrid **wins every viking size** — LTSmin's own benchmark —
+and **crushes Fischer** (~1000× at N=6), because PTCTLMC's exact‑zone convex‑union
+merge keeps the symbolic/discrete ratio ≈1 where LTSmin's extrapolation explodes it
+to ~50.
 
 ## Build & run
 

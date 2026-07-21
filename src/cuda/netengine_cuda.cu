@@ -67,15 +67,19 @@ __global__ void net_expand_k(const int* front_locs, const int* front_ints, const
   int w = blockIdx.x * blockDim.x + threadIdx.x;
   if (w >= nwork) return;
   const int dim = net.dim, d2 = dim * dim, nprocs = net.nprocs, nintvars = net.nintvars, nclocks = net.nclocks;
+  // Index the big output/frontier arrays in size_t: `w * d2` in int overflows at ~3.7M work items
+  // (d2=576), which is reachable on a datacentre GPU (that zone pool is only ~8.6 GB).
+  const std::size_t wbase = static_cast<std::size_t>(w);
   out_valid[w] = 0;
   const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
+  const std::size_t sbase = static_cast<std::size_t>(si);
 
   int nlocs[kMaxProc];
-  for (int q = 0; q < nprocs; ++q) nlocs[q] = front_locs[si * nprocs + q];
+  for (int q = 0; q < nprocs; ++q) nlocs[q] = front_locs[sbase * nprocs + q];
   for (int t = 0; t < pc; ++t) nlocs[part_proc[po + t]] = net.edge_tgt[part_edge[po + t]];
 
   raw_t z[kMaxDim * kMaxDim];
-  for (int k = 0; k < d2; ++k) z[k] = front_zone[si * d2 + k];
+  for (int k = 0; k < d2; ++k) z[k] = front_zone[sbase * d2 + k];
   for (int t = 0; t < pc; ++t) {
     int ge = part_edge[po + t];
     for (int c = net.cg_off[ge]; c < net.cg_off[ge + 1]; ++c)
@@ -102,16 +106,16 @@ __global__ void net_expand_k(const int* front_locs, const int* front_ints, const
   if (dbm_empty(z, dim)) return;
 
   int nints[kMaxInt];
-  for (int v = 0; v < nintvars; ++v) nints[v] = front_ints[si * nintvars + v];
+  for (int v = 0; v < nintvars; ++v) nints[v] = front_ints[sbase * nintvars + v];
   for (int t = 0; t < pc; ++t) {
     int ge = part_edge[po + t];
     for (int u = net.iu_off[ge]; u < net.iu_off[ge + 1]; ++u) nints[net.iu_data[2 * u]] = net.iu_data[2 * u + 1];
   }
 
   out_valid[w] = 1;
-  for (int q = 0; q < nprocs; ++q) out_locs[w * nprocs + q] = nlocs[q];
-  for (int v = 0; v < nintvars; ++v) out_ints[w * nintvars + v] = nints[v];
-  for (int k = 0; k < d2; ++k) out_zone[w * d2 + k] = z[k];
+  for (int q = 0; q < nprocs; ++q) out_locs[wbase * nprocs + q] = nlocs[q];
+  for (int v = 0; v < nintvars; ++v) out_ints[wbase * nintvars + v] = nints[v];
+  for (int k = 0; k < d2; ++k) out_zone[wbase * d2 + k] = z[k];
 }
 
 // Device convex-union: dbm_ops.hpp's dbm_try_union is host-only (and sized to kDbmMaxDim=64),
@@ -140,14 +144,16 @@ __device__ inline bool d_try_union(raw_t* a, const raw_t* b, int dim) {
 
 // One thread per discrete-state bucket; replicates add_to (aLU-subsumption both ways + exact
 // convex-union) over the work pool the host prefilled with existing zones (isnew = 0).
-__global__ void net_merge_k(const int* work_off, const int* exist_cnt, const int* oz,
+__global__ void net_merge_k(const int* work_off, const int* exist_cnt, const raw_t* oz,
                            const int* new_idx, const int* new_off, const int* new_cnt,
                            const int* Lb, const int* Ub, raw_t* work, int* work_isnew,
                            int* out_count, int dim, int nb, int has_diag) {
   int b = blockIdx.x * blockDim.x + threadIdx.x;
   if (b >= nb) return;
   const int d2 = dim * dim;
-  raw_t* W = work + work_off[b] * d2;
+  // size_t indexing: work_off[b]*d2 and widx*d2 overflow int once the pools exceed ~3.7M zones
+  // at d2=576, which is reachable on a datacentre GPU.
+  raw_t* W = work + static_cast<std::size_t>(work_off[b]) * d2;
   int* WI = work_isnew + work_off[b];
   const int* L = Lb + b * dim;
   const int* U = Ub + b * dim;
@@ -156,7 +162,7 @@ __global__ void net_merge_k(const int* work_off, const int* exist_cnt, const int
 
   for (int t = 0; t < new_cnt[b]; ++t) {
     const int widx = new_idx[new_off[b] + t];   // read the new zone in place from the expand output
-    for (int k = 0; k < d2; ++k) zn[k] = oz[widx * d2 + k];
+    for (int k = 0; k < d2; ++k) zn[k] = oz[static_cast<std::size_t>(widx) * d2 + k];
 
     bool subsumed = false;
     for (int i = 0; i < cur; ++i) {
@@ -202,11 +208,11 @@ class NetGpuCuda : public NetGpuExpander {
  public:
   explicit NetGpuCuda(NetEncoding&& en) : en_(std::move(en)) {
     d_.dim = en_.dim; d_.nprocs = en_.nprocs; d_.nintvars = en_.nintvars; d_.nclocks = en_.nclocks;
-    d_.edge_tgt = dev_upload(en_.edge_tgt); d_.cg_off = dev_upload(en_.cg_off); d_.cg_data = dev_upload(en_.cg_data);
-    d_.rs_off = dev_upload(en_.rs_off); d_.rs_clk = dev_upload(en_.rs_clk);
-    d_.iu_off = dev_upload(en_.iu_off); d_.iu_data = dev_upload(en_.iu_data);
-    d_.locbase = dev_upload(en_.locbase); d_.inv_off = dev_upload(en_.inv_off); d_.inv_data = dev_upload(en_.inv_data);
-    d_.frozen = dev_upload(en_.frozen); d_.active = dev_upload(en_.active); d_.qmask = dev_upload(en_.qmask);
+    d_.edge_tgt = own(en_.edge_tgt); d_.cg_off = own(en_.cg_off); d_.cg_data = own(en_.cg_data);
+    d_.rs_off = own(en_.rs_off); d_.rs_clk = own(en_.rs_clk);
+    d_.iu_off = own(en_.iu_off); d_.iu_data = own(en_.iu_data);
+    d_.locbase = own(en_.locbase); d_.inv_off = own(en_.inv_off); d_.inv_data = own(en_.inv_data);
+    d_.frozen = own(en_.frozen); d_.active = own(en_.active); d_.qmask = own(en_.qmask);
   }
   ~NetGpuCuda() override {
     for (void* p : owned_) cudaFree(p);
@@ -302,8 +308,16 @@ class NetGpuCuda : public NetGpuExpander {
     const int nwork = static_cast<int>(ws.size());
     if (nwork == 0) return 0;
 
-    // frontier + work list -> device; outputs -> managed (host reads in place)
-    int* d_fl = tmp(dev_upload(locs)); int* d_fi = tmp(dev_upload(ints32)); raw_t* d_fz = tmp(dev_upload(zones));
+    // Frontier -> PERSISTENT managed buffers. These were re-uploaded (cudaMalloc + memcpy +
+    // cudaFree) every BFS level; `zones` is frtot*d2 raw_t, i.e. GBs on the large models, and both
+    // cudaMalloc and cudaFree synchronize the device. Metal keeps the same pools persistent for
+    // exactly this reason (see netengine_metal.mm grow()).
+    int* d_fl = grow_i(mfl_, locs.size() ? locs.size() : 1);
+    int* d_fi = grow_i(mfi_, ints32.size() ? ints32.size() : 1);
+    raw_t* d_fz = grow_r(mfz_, zones.size() ? zones.size() : 1);
+    if (!locs.empty())   std::memcpy(d_fl, locs.data(), locs.size() * sizeof(int));
+    if (!ints32.empty()) std::memcpy(d_fi, ints32.data(), ints32.size() * sizeof(int));
+    if (!zones.empty())  std::memcpy(d_fz, zones.data(), zones.size() * sizeof(raw_t));
     int* d_ws = tmp(dev_upload(ws)); int* d_po = tmp(dev_upload(part_off)); int* d_pc = tmp(dev_upload(part_cnt));
     int* d_pp = tmp(dev_upload(part_proc)); int* d_pe = tmp(dev_upload(part_edge));
     int* ov = grow_i(mv_, static_cast<std::size_t>(nwork));
@@ -352,23 +366,49 @@ class NetGpuCuda : public NetGpuExpander {
     out_isnew = mwi_.p;
   }
 
+  // Total bytes held in persistent managed buffers (diagnostics: PTCTLMC_MEMPROF). Mirrors
+  // NetGpuMetal::device_bytes() so the two backends stay comparable on the memory metric.
+  std::size_t device_bytes() const override {
+    return (mv_.cap + mol_.cap + moi_.cap + moc_.cap + mwi_.cap + mfl_.cap + mfi_.cap) * sizeof(int)
+         + (moz_.cap + mwork_.cap + mfz_.cap) * sizeof(raw_t);
+  }
+
  private:
   template <class T> struct Managed { T* p = nullptr; std::size_t cap = 0; };
   // persistent managed (unified) buffers, grown on demand
   Managed<int> mv_, mol_, moi_, moc_, mwi_;
   Managed<raw_t> moz_, mwork_;
+  Managed<int> mfl_, mfi_;     // persistent frontier locs/ints (were re-uploaded every level)
+  Managed<raw_t> mfz_;         // persistent frontier zones   (were re-uploaded every level)
   std::vector<void*> owned_;   // static device buffers to free
   std::vector<void*> tmps_;    // per-call device uploads to free after the launch
   NetEncoding en_;
   DevNet d_{};
 
+  // Upload a static (per-run) table and RECORD it so the destructor frees it. Recording happens
+  // immediately, so a throw from a later upload still leaves the earlier ones owned.
+  template <class T> T* own(const std::vector<T>& v) {
+    T* p = dev_upload(v);
+    owned_.push_back(p);
+    return p;
+  }
+
   int* grow_i(Managed<int>& m, std::size_t n) { return grow_m(m, n); }
   raw_t* grow_r(Managed<raw_t>& m, std::size_t n) { return grow_m(m, n); }
   template <class T> T* grow_m(Managed<T>& m, std::size_t n) {
+    if (n == 0) n = 1;                       // never hand back an unallocated pointer
     if (m.cap < n) {
+      // Grow GEOMETRICALLY (>=1.5x), mirroring the Metal allocator: a steadily-widening BFS
+      // otherwise re-allocates on nearly every level, and cudaFree/cudaMallocManaged both
+      // synchronize the device.
+      const std::size_t want = std::max(n, m.cap + m.cap / 2);
       if (m.p) cudaFree(m.p);
-      CUDA_CHECK(cudaMallocManaged(reinterpret_cast<void**>(&m.p), (n ? n : 1) * sizeof(T)));
-      m.cap = n;
+      CUDA_CHECK(cudaMallocManaged(reinterpret_cast<void**>(&m.p), want * sizeof(T)));
+      m.cap = want;
+      // The --adaptive merge routing runs the per-bucket merge on the HOST over these managed
+      // buffers. On a discrete GPU that would fault-and-migrate every page; tell the driver both
+      // processors touch them so the runtime can keep them mapped instead.
+      cudaMemAdvise(m.p, want * sizeof(T), cudaMemAdviseSetAccessedBy, cudaCpuDeviceId);
     }
     return m.p;
   }

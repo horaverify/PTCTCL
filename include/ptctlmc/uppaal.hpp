@@ -24,7 +24,10 @@ struct UppaalError : std::runtime_error {
 TimedAutomaton load_uppaal_xml(const std::string& path);
 
 // Number of <template> elements (>1 => a network).
-int uppaal_template_count(const std::string& path);
+// Number of processes the <system> declaration puts in the network (one
+// template may be instantiated several times); falls back to the template
+// count for models with no system list.
+int uppaal_process_count(const std::string& path);
 // Load a multi-template network (clocks + integer variables + int guards/updates).
 Network load_uppaal_network(const std::string& path);
 

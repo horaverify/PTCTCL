@@ -23,6 +23,24 @@ bool adaptive_merge();
 void set_chunking(bool on, int states = 65536);
 bool chunking();
 
+// ---- general modelling-language guard/update -------------------------------
+// The `var OP const` / `var := const` fast paths live in NEdge::int_guard and
+// NEdge::int_updates; anything richer (arithmetic, arrays, calls) is compiled
+// into NEdge::gen_guard / NEdge::gen_update. Both backends MUST route through
+// these two so CPU and GPU cannot drift apart.
+//
+// gen_ok:    evaluates gen_guard against `ints` WITHOUT mutating it (a guard may
+//            call a function, so it runs on a scratch copy). True if absent.
+// gen_apply: runs gen_update in place, AFTER int_updates have been applied.
+//            Returns false if it faulted (bad index, division by zero, runaway
+//            loop) or if a write left a variable's declared range -- either way
+//            the transition is discarded. True (and a no-op) if absent.
+//
+// Taken as pointer + length rather than a vector so the pool-allocated IntVec of
+// the CPU path and the plain std::vector of the GPU host loop can both call them.
+bool gen_ok(const Network& net, const NEdge& e, const long* ints, std::size_t n);
+bool gen_apply(const Network& net, const NEdge& e, long* ints, std::size_t n);
+
 // E<> : is a discrete/clock state matching `target` reachable? Zone-graph
 // exploration with a passed list keyed by discrete state (location vector + int
 // values), inclusion subsumption + exact-DBM hash + LU extrapolation.

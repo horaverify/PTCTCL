@@ -60,10 +60,6 @@ class NetGpuExpander {
   // the persistent work buffer (valid until the next expand/merge call): bucket b's final
   // antichain is out_zones[(out_work_off[b]+i)*d2 ..] for i in [0, out_count[b]), with
   // out_isnew[out_work_off[b]+i] flagging survivors — read straight from unified memory.
-  // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
-  // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
-  virtual std::size_t device_bytes() const { return 0; }
-
   virtual void merge(int nb, int dim, bool has_diag,
                      const std::vector<int>& work_off, const std::vector<int>& exist_cnt,
                      const std::vector<int>& new_idx, const std::vector<int>& new_off,
@@ -71,6 +67,27 @@ class NetGpuExpander {
                      const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
                      std::vector<int>& out_work_off, std::vector<int>& out_count,
                      const raw_t*& out_zones, const int*& out_isnew) = 0;
+
+  // CPU-EXPAND / GPU-MERGE hybrid. Measurements say the two phases want different
+  // hardware: successor generation is branchy, serially-dependent small-matrix work
+  // (the CPU wins), while the per-bucket subsumption/convex-union merge is thousands
+  // of independent bucket jobs (the GPU wins — 3x over 12 OpenMP threads on Fischer).
+  // On unified memory we can have both: this stages the SAME output buffers the GPU
+  // expand would have produced and hands back host-writable pointers, so the CPU
+  // expander fills them in place and the existing merge path runs on the GPU with
+  // ZERO copies. Capacity is `nwork` work items.
+  //
+  // The caller cannot know the successor count before expanding, so it stages an
+  // ESTIMATED capacity, fills it, and — on the rare level where the estimate was too
+  // small — calls again with the true size and `preserve=true`, which keeps the bytes
+  // already written so only the overflow tail has to be appended.
+  virtual void stage_expand(std::size_t nwork, int nprocs, int nintvars, int d2,
+                            int*& valid, int*& locs, int*& ints, raw_t*& zones,
+                            bool preserve = false) = 0;
+
+  // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
+  // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
+  virtual std::size_t device_bytes() const { return 0; }
 };
 
 // Build a Metal / CUDA expander for `net`. `qmask[c]` marks clocks the query reads (kept active

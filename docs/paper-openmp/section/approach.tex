@@ -1,0 +1,271 @@
+\section{Parallel Reachability with a Shared Visited Set}\label{sec:approach}
+
+Our starting point is the observation that a parallel timed checker spends its effort in two
+places --- generating successors and inserting them --- and that only the first is naturally
+parallel. How the second is organised determines everything else, so we describe the design as
+a sequence of decisions, each forced by the previous one.
+
+\subsection{One level of the search}
+
+The search is level-synchronous. \Cref{fig:level} shows a single iteration: the frontier holds
+the symbolic states discovered at level $k$, threads take slices of it under a dynamic
+schedule, and each thread expands its slice and inserts the resulting successors into the
+shared visited set. States that survive insertion are stamped with the level number and form
+the frontier of level $k{+}1$; a barrier closes the level.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\small,x=1mm,y=1mm]
+\node[cpubox, minimum width=24mm, minimum height=13mm] (fr) at (0,0)
+  {\textbf{frontier} $F_k$\\[1pt]\scriptsize states found at level $k$};
+\node[cpubox, minimum width=30mm] (t1) at (46,11) {expand \textbf{and} insert};
+\node[cpubox, minimum width=30mm] (t2) at (46,0)  {expand \textbf{and} insert};
+\node[cpubox, minimum width=30mm] (t3) at (46,-11){expand \textbf{and} insert};
+\node[lbl] at (46,19) {\ttfamily \#pragma omp for schedule(dynamic)};
+\node[cpubox, fill=black!6, draw=black!55, minimum width=26mm, minimum height=30mm] (tab) at (92,0)
+  {shared visited set\\[2pt]\scriptsize striped: one lock per stripe};
+\node[cpubox, minimum width=24mm, minimum height=13mm] (nx) at (132,0)
+  {\textbf{frontier} $F_{k+1}$\\[1pt]\scriptsize survivors of level $k$};
+\foreach \t in {t1,t2,t3} { \draw[flow] (fr) -- (\t); \draw[flow] (\t) -- (tab); }
+\draw[flow] (tab) -- node[lbl,above]{stamped $k$} (nx);
+\draw[flow, dashed] (nx.south) -- ++(0,-20)
+  -- node[lbl,above]{\textbf{barrier}: level $k$ ends} ($(fr.south)+(0,-20)$) -- (fr.south);
+\end{tikzpicture}
+\caption{One level of the search. Each thread expands \emph{and} inserts its own successors,
+so no successor is ever handed between threads. Everything here is standard breadth-first
+search except the box on the right, which is where the design question lies.}
+\label{fig:level}
+\end{figure}
+
+Level synchronisation costs one barrier per level, of which there are typically a few hundred,
+and buys two properties we rely on. Membership of the current level becomes a single integer
+comparison against the stamp, which is how survivors are identified without an auxiliary set.
+And there is a well-defined point at which per-level work can be scheduled, which
+\cref{sec:batching} exploits.
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[font=\small, x=1mm, y=1mm,
+  ppanel/.style={draw=black!45, rounded corners=2pt, fill=black!3},
+  parr/.style={draw=black!55, rounded corners=1pt, fill=white, minimum height=6mm,
+              font=\ttfamily\scriptsize, inner xsep=3pt},
+  pstep/.style={draw=black!55, rounded corners=1pt, fill=black!8, minimum height=5.5mm,
+               font=\scriptsize, inner xsep=3pt},
+  pthr/.style={draw=black!60, rounded corners=1pt, fill=white, minimum width=8mm,
+              minimum height=5.5mm, font=\ttfamily\scriptsize},
+  pchain/.style={draw=black!55, fill=white, minimum width=7mm, minimum height=5mm,
+                font=\scriptsize},
+  pdead/.style={pchain, fill=black!12, text=black!45},
+  pnote/.style={font=\scriptsize\itshape, text=black!60},
+  pfl/.style={-{Latex[length=1.7mm]}, draw=black!65}]
+
+% ================= LEFT: frontier =================
+\node[ppanel, minimum width=44mm, minimum height=52mm, anchor=north west] (P1) at (0,0) {};
+\node[font=\bfseries\small, anchor=north] at (22,-2) {FRONTIER $F_k$};
+\node[pnote, anchor=north] at (22,-8) {flat, struct-of-arrays};
+\node[parr, anchor=north west, minimum width=36mm] at (4,-14) {fk[\,] -- packed 64-bit keys};
+\node[parr, anchor=north west, minimum width=36mm] at (4,-23) {fz[\,] -- zone indices (4 B)};
+\node[pnote, anchor=north west, text width=36mm] at (4,-32)
+  {the discrete configuration is \emph{recovered} from the key, never stored beside a zone};
+\node[pnote, anchor=north west, text width=36mm] at (4,-44)
+  {one slice per thread, \texttt{schedule(dynamic)}};
+
+% ================= MIDDLE: one thread =================
+\node[ppanel, minimum width=62mm, minimum height=52mm, anchor=north west] (P2) at (50,0) {};
+\node[font=\bfseries\small, anchor=north] at (81,-2) {WHAT ONE THREAD DOES};
+\foreach \i/\x in {0/54, 1/64, 2/74, 3/84, 4/94, 5/104} \node[pthr] at (\x,-10) {t\i};
+\node[pnote, anchor=west] at (54,-16) {each takes a slice of $F_k$; no successor is ever handed over};
+
+\node[pstep, anchor=north west, minimum width=52mm] at (56,-20)
+  {\textbf{1} \texttt{gen\_succ\_reuse}: build successor \emph{in place}};
+\node[pstep, anchor=north west, minimum width=52mm] at (56,-27)
+  {\textbf{2} $\dk \gets$ pack(locations, integers) \quad 64-bit};
+\node[pstep, anchor=north west, minimum width=52mm] at (56,-34)
+  {\textbf{3} $h \gets \dk\cdot\varphi^{-1}$: \emph{high} bits $\to$ stripe, \emph{low} $\to$ slot};
+\node[pstep, anchor=north west, minimum width=52mm, fill=black!18] at (56,-41)
+  {\textbf{4} \textsc{lock}(stripe) $\to$ \textsc{Insert} $\to$ \textsc{unlock}};
+\node[pnote, anchor=north west, text width=52mm] at (56,-48)
+  {no private buffer, no routing pass: the producer stores it};
+
+% ================= RIGHT: the table =================
+\node[ppanel, minimum width=58mm, minimum height=52mm, anchor=north west] (P3) at (118,0) {};
+\node[font=\bfseries\small, anchor=north] at (147,-2) {SHARED VISITED SET};
+\node[pnote, anchor=north] at (147,-8) {$N_B \ge \max(1024,\,64p)$ stripes, one mutex each};
+
+\foreach \s/\y in {0/-14, 1/-23, 2/-32} {
+  \node[draw=black!55, fill=black!10, minimum width=7mm, minimum height=5mm,
+        font=\scriptsize, anchor=west] (L\s) at (122,\y) {\s};
+  \node[pnote, anchor=east] at (122,\y) {};
+}
+\node[pchain, anchor=west] (a1) at (133,-14) {$z_5$};
+\node[pchain, anchor=west] (a2) at (141,-14) {$z_3$};
+\node[pdead,  anchor=west] (a3) at (149,-14) {$z_1$};
+\draw[pfl] (L0) -- (a1); \draw[pfl] (a1) -- (a2); \draw[pfl] (a2) -- (a3);
+\node[pchain, anchor=west] (b1) at (133,-23) {$z_9$};
+\draw[pfl] (L1) -- (b1);
+\node[pchain, anchor=west] (c1) at (133,-32) {$z_7$};
+\node[pchain, anchor=west] (c2) at (141,-32) {$z_4$};
+\draw[pfl] (L2) -- (c1); \draw[pfl] (c1) -- (c2);
+\node[pnote, anchor=north west, text width=52mm] at (122,-38)
+  {an antichain per configuration, newest first; a subsumed zone is flagged \emph{dead}, never
+   unlinked, so a thread reading one chain is never disturbed by another};
+
+% ================= flows between panels =================
+\draw[pfl, line width=0.5pt] (44,-26) -- (50,-26);
+\draw[pfl, line width=0.5pt] (112,-26) -- (118,-26);
+
+% ================= bottom: survivors + inset =================
+\node[ppanel, minimum width=176mm, minimum height=26mm, anchor=north west] (P4) at (0,-56) {};
+\node[font=\bfseries\small, anchor=north west] at (4,-58) {\textsc{Insert}, under the stripe lock};
+\node[anchor=north west, text width=86mm, font=\scriptsize] at (4,-64)
+  {(a) is the newcomer subsumed by a stored zone? $\Rightarrow$ discard\\
+   (b) does it subsume stored zones? $\Rightarrow$ flag them dead\\
+   (c) is any union with a stored zone convex? $\Rightarrow$ absorb, repeat\\
+   (d) intern the zone, prepend the node, stamp it with level $k$};
+\node[anchor=north west, text width=80mm, font=\scriptsize\itshape, text=black!60] at (94,-64)
+  {(a)--(c) each traverse the antichain, so the critical section is $\Theta(\rho)$ --- this is
+   the term \cref{sec:batching} removes. Interning in (d) is what makes a stored state cost a
+   4-byte index: Viking $N{=}15$ has $2\,768\,894$ symbolic states drawn from $120$ distinct
+   matrices. The stamp in (d) makes ``survivor of level $k$'' an integer comparison, so the
+   next frontier is gathered without an auxiliary set.};
+\end{tikzpicture}
+\caption{Expansion and insertion, end to end. The frontier is held as flat arrays of packed
+keys and zone indices; threads take slices of it under a dynamic schedule and each thread runs
+the whole pipeline on its own successors, inserting them itself. One multiplicative hash yields
+both the stripe (high bits) and the slot within it (low bits), so a thread locks only the
+stripe it touches while the other $p-1$ proceed. Because there is no per-thread buffer and no
+routing pass, every successor is written exactly once. The inset lists what one thread executes
+inside the lock.}
+\label{fig:pipeline}
+\end{figure*}
+
+\subsection{Why insertion is fused into expansion}
+
+The natural way to parallelise while avoiding locks is to partition: hash each discrete
+configuration to a shard, give each shard to one thread, and let that thread own its slice of
+the visited set outright. We built such a backend and it has a structural cost that is easy to
+overlook. Because a thread may not write into another thread's shard, expansion cannot insert;
+it can only \emph{accumulate}. Successors are written to a private buffer, a routing pass then
+reads every successor and dispatches it to the owning shard, and only then can merging begin.
+\Cref{fig:pipeline} shows the resulting pipeline in full, and \cref{fig:dataflow} isolates the difference from partitioned ownership. Routing is serial bookkeeping proportional
+to the number of successors --- tens of millions over a run --- and the private buffers hold a
+second complete copy of the level at exactly the moment memory peaks.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\small]
+\node[lbl] at (0,1.55) {\textbf{(a) partitioned ownership}};
+\node[cpubox,minimum width=15mm] (afr) at (0,0.7) {frontier};
+\node[cpubox,minimum width=15mm] (aex) at (2.4,0.7) {expand};
+\node[box,fill=black!4,draw=black!35,minimum width=17mm] (abuf) at (4.9,0.7)
+   {private buffers\\[-1pt]\scriptsize\emph{2nd copy of level}};
+\node[box,fill=black!12,draw=black!60,minimum width=15mm] (art) at (7.4,0.7)
+   {route\\[-1pt]\scriptsize\emph{serial}};
+\node[cpubox,fill=black!6,draw=black!55,minimum width=15mm] (ash) at (9.8,0.7) {merge\\shards};
+\draw[flow] (afr)--(aex); \draw[flow] (aex)--(abuf); \draw[flow] (abuf)--(art);
+\draw[flow] (art)--(ash);
+\node[lbl] at (0,-0.85) {\textbf{(b) fused (this paper)}};
+\node[cpubox,minimum width=15mm] (bfr) at (0,-1.7) {frontier};
+\node[cpubox,minimum width=26mm] (bex) at (3.2,-1.7)
+   {expand \textbf{and} insert\\[-1pt]\scriptsize one pass, no buffer};
+\node[cpubox,fill=black!6,draw=black!55,minimum width=24mm] (btab) at (7.4,-1.7)
+   {shared visited set\\[-1pt]\scriptsize stripe lock per key};
+\draw[flow] (bfr)--(bex); \draw[flow] (bex)--(btab);
+\draw[flow,dashed] (btab.south) -- ++(0,-0.62)
+   -- node[lbl,below]{survivors $=$ next frontier} ($(bfr.south)+(0,-0.62)$) -- (bfr.south);
+\end{tikzpicture}
+\caption{Partitioned ownership needs three writes per successor --- into a buffer, out of it
+during routing, and into a shard --- because a thread may not write outside its own shard.
+Fusing expansion and insertion removes the buffer and the routing pass, and each successor is
+written once.}
+\label{fig:dataflow}
+\end{figure}
+
+We therefore share the visited set and pay for it with locking, but at a granularity fine
+enough that the payment is small. The set is an array of $N_B$ independent open-addressed
+sub-tables, each with its own mutex. A discrete key selects its stripe from the high bits of a
+multiplicative hash and its slot within that stripe from the low bits of the same product, so
+one multiplication serves both and the two choices are uncorrelated. We take
+$N_B \ge \max(1024, 64p)$ for $p$ threads: with at least sixty-four stripes per thread,
+collisions between threads are rare, at a cost of a few kilobytes of headers. Within a stripe,
+each configuration owns a singly linked chain of nodes $\langle$zone id, level, next,
+dead$\rangle$ drawn from an arena, so chains are addressed by integer indices that survive
+table growth, and removal is logical: a subsumed zone is flagged dead rather than unlinked,
+so a thread traversing one chain is never disturbed by activity on another.
+
+\subsection{Making sharing affordable}
+
+Fusing insertion into expansion only pays if insertion is cheap in memory as well as in time,
+and two representation choices do most of that work.
+
+The first concerns the discrete configuration. Rather than store it beside every zone, we pack
+it losslessly into a single 64-bit key: a fixed bit-field per process location and per integer
+variable, each width derived from the number of locations or the declared range of the
+variable. Keys are then hashed and compared as machine words, and --- more usefully --- the
+configuration is \emph{recovered} from the key by the inverse map when it is needed, so it
+costs nothing per stored state. The packing is injective only when integer variables carry
+declared ranges; an unranged variable claims sixteen bits, and a model whose fields exceed the
+budget is rejected with a diagnostic rather than silently aliased, since aliasing two distinct
+configurations would be unsound.
+
+The second concerns zones, and rests on a measurement. Across an entire Viking $N{=}15$ run,
+$2\,768\,894$ symbolic states contain only $120$ \emph{distinct} DBMs. Storing an explicit
+matrix per symbolic state therefore wastes almost all of the space it occupies. We store each
+distinct zone once in a shared interning table and refer to it by a four-byte index, with a
+per-thread cache in front of the shared structure so repeated zones are resolved without
+touching it. Together with key packing, this is what produces the memory results of
+\cref{sec:eval}, and it is not a constant-factor saving: it converts the dominant term from
+the number of symbolic states to the number of distinct zones.
+
+A third choice concerns time rather than space. A generator returning a vector of successors
+allocates a location vector, an integer vector and a DBM for each one, all discarded moments
+later by insertion, which interns the zone by copy. Ours instead builds each successor
+\emph{in place} in a reused slot of a per-thread buffer and returns a count; slots survive to
+be overwritten by the next frontier state, so after a brief warm-up per-successor allocation
+is zero. On Viking $N{=}17$ this alone took a run from roughly twelve seconds to $8.2$.
+
+\subsection{The insertion algorithm}
+
+\Cref{alg:insert} gives insertion in full. The parameters are the successor $(\ell,\Zone)$,
+its packed key $\dk$, and the current level $k$; the stripe lock for $\dk$ is held throughout.
+
+\begin{algorithm}[t]
+\caption{$\textsc{Insert}(\ell, \Zone, \dk, k)$ --- executed under the stripe lock of $\dk$}
+\label{alg:insert}
+\begin{algorithmic}[1]
+\State $A \gets \textsc{Chain}(\dk)$ \Comment{antichain currently stored for this configuration}
+\State $(L,U) \gets \textsc{Bounds}(\ell)$ \label{ln:bounds}
+\ForAll{live $v \in A$} \label{ln:sub1}
+  \If{$\Zone \aLU[L,U] \Zone_v$} \State \Return $\bot$ \Comment{redundant: nothing to do}\label{ln:drop}
+  \EndIf
+\EndFor
+\ForAll{live $v \in A$} \label{ln:sub2}
+  \If{$\Zone_v \aLU[L,U] \Zone$} \State $v.\mathit{dead} \gets \mathbf{true}$ \Comment{$\Zone$ makes $v$ redundant}
+  \EndIf
+\EndFor
+\While{$\exists$ live $v \in A$ with $\Zone \cup \Zone_v$ convex} \label{ln:union}
+  \State $\Zone \gets \Zone \cup \Zone_v$; \quad $v.\mathit{dead} \gets \mathbf{true}$
+\EndWhile
+\State prepend $\langle \textsc{Intern}(\Zone),\, k,\, \mathit{head},\, \mathbf{false}\rangle$ to $A$ \label{ln:push}
+\State \Return the new node
+\end{algorithmic}
+\end{algorithm}
+
+Line~\ref{ln:bounds} computes the $\aLU{}$ bounds, which depend only on the configuration and
+not on the zone. The loop at line~\ref{ln:sub1} decides whether the newcomer adds anything: if
+any stored zone already subsumes it the work is finished and we return without touching the
+structure, which is the common case in a mature search. Line~\ref{ln:sub2} performs the
+converse test, flagging stored zones the newcomer has made redundant --- note that both loops
+must run in full, since subsumption is not symmetric and several stored zones may fall to a
+single new one. The loop at line~\ref{ln:union} then absorbs any stored zone whose union with
+the newcomer is exactly representable, repeating because absorbing one zone can make a further
+union convex; it mutates only the incoming zone, never an interned one, which is what makes it
+safe while other threads read the table. Finally line~\ref{ln:push} interns the zone and
+prepends the node, stamping it with the level so that survivors can be identified later by
+integer comparison. Prepending rather than appending is deliberate: it puts the most recently
+added zone first, which \cref{sec:batching} uses to detect first touches for free.
+
+The cost of \cref{alg:insert} is dominated by three traversals of $A$, each performing an
+$O(m^2)$ matrix comparison per element. The critical section is therefore $\Theta(|A|)$, and
+$|A|$ averages $\rho$. When $\rho \approx 1$ this is a formality. When $\rho$ is large it is
+the entire program, and the next section is about what to do then.
