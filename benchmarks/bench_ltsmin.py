@@ -79,7 +79,7 @@ def main():
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=1800)   # 30 minutes
     ap.add_argument("--memgb", type=float, default=15.0)
-    ap.add_argument("--out", default=os.path.join(HERE, "results", "ltsmin_raw.csv"))
+    ap.add_argument("--out", default=os.path.join(HERE, "results", "full.csv"))
     ap.add_argument("--seed", nargs="*", default=[])
     ap.add_argument("--families", default="",
                     help="fam:N,N,N;fam:N,N  e.g. phil:6,8,10;arbiter:8,12,16")

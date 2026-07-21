@@ -25,7 +25,7 @@ TOOLS = [("verifyta",    "1",  "UPPAAL verifyta",   "0.55", ""),
          ("ptctlmc-omp", "12", "PTCTLMC (12)",      "0.05", "..")]
 
 def load():
-    rows = list(csv.DictReader(open(os.path.join(HERE, "results", "ltsmin_raw.csv"))))
+    rows = list(csv.DictReader(open(os.path.join(HERE, "results", "full.csv"))))
     ok, cens = collections.defaultdict(list), {}
     for r in rows:
         k = (r["model"], r["tool"], r["threads"])
