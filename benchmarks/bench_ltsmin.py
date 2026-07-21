@@ -8,16 +8,17 @@ raw.csv after every run so progress is watchable live.
 Already-completed (model, tool, threads, rep) pairs with status OK are SKIPPED, and are
 seeded from any earlier CSV given with --seed, so nothing is measured twice.
 """
-import argparse, csv, os, re, signal, statistics, subprocess, sys, time
+import argparse, csv, os, re, signal, statistics, subprocess, sys, time, platform
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "LTStest"))   # opaal+LTSmin tree
+PLAT = "macos" if sys.platform == "darwin" else "linux"
 VIK  = os.path.join(ROOT, "src/opaal-ltsmin-succgen/tests/vikingtests")
 MOD  = os.path.join(ROOT, "models")
-SO   = os.path.join(ROOT, "so-macos")
-OPAAL   = os.path.join(ROOT, "deps-macos/bin/opaal2lts-mc")
-PTCTLMC = os.path.abspath(os.path.join(HERE, "..", "build-mac", "ptctlmc"))
-VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta"
+SO   = os.path.join(HERE, f"so_{PLAT}")
+OPAAL   = os.path.join(ROOT, f"deps-{PLAT}/bin/opaal2lts-mc")
+PTCTLMC = os.path.abspath(os.path.join(HERE, "..", f"build-{'mac' if PLAT == 'macos' else 'omp'}", "ptctlmc"))
+VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta" if PLAT == "macos" else "/usr/bin/verifyta"
 TABLE_BITS = 26
 
 QDIR = os.path.join(HERE, "queries"); os.makedirs(QDIR, exist_ok=True)
