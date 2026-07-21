@@ -45,7 +45,7 @@ def main():
 
     want = [f.strip() for f in args.only.split(",") if f.strip()] or sorted(FAMILIES)
     mdir = os.path.join(args.outdir, "models"); os.makedirs(mdir, exist_ok=True)
-    qdir = os.path.join(args.outdir, "queries"); os.makedirs(qdir, exist_ok=True)
+    qdir = os.path.join(args.outdir, "queries_linux" if args.linux else "queries_macos"); os.makedirs(qdir, exist_ok=True)
     sodir = os.path.join(args.outdir, "so_linux" if args.linux else "so_macos"); os.makedirs(sodir, exist_ok=True)
 
     made, failed = 0, []

@@ -21,7 +21,7 @@ PTCTLMC = os.path.abspath(os.path.join(HERE, "..", f"build-{'mac' if PLAT == 'ma
 VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta" if PLAT == "macos" else "/usr/bin/verifyta"
 TABLE_BITS = 26
 
-QDIR = os.path.join(HERE, "queries"); os.makedirs(QDIR, exist_ok=True)
+QDIR = os.path.join(HERE, f"queries_{PLAT}"); os.makedirs(QDIR, exist_ok=True)
 def q(name, text):
     p = os.path.join(QDIR, name)
     open(p, "w").write(text + "\n")

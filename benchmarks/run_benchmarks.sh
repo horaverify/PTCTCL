@@ -15,20 +15,20 @@ cd "$HERE"
 mkdir -p results
 
 OUT="results/full.csv"
-TIMEOUT=3000
+TIMEOUT=600 # seconds, which is 10 minutes
 MEMGB=100
 THREADS=(4 8 12)
 REPS=2
 
-VIKING=(4 6 10 12 15 17)
-FISCHER=(4 5 6 7 8 9 10 11)
+VIKING=( 6 12 15 17)
+FISCHER=( 6 9 10 11)
 # generated families: <name>:<N,N,N>. Each needs models/<name><N>.xml and queries/<name>.q.
 FAMILIES="phil:6,8,10;twolock:7,9,11;arbiter:8,12,16;csma:8,11,14;grc:5,7,9"
 
 for a in "$@"; do
   case "$a" in
     --quick)
-      TIMEOUT=60; REPS=1; THREADS=(4 8)
+      TIMEOUT=6; REPS=1; THREADS=(4 8)
       VIKING=(4 6 10); FISCHER=(4 5 6)
       FAMILIES="phil:6;twolock:7;arbiter:8;csma:8;grc:5"
       ;;
