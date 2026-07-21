@@ -1,1 +1,1 @@
-A[] not (C0.Eat && C1.Eat)
+A[] not (F0.Eat && F1.Eat)
