@@ -1,0 +1,5095 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <assert.h>
+#include <map>
+#include <mutex>
+#include <string>
+
+typedef uint64_t ulong_long_int_t;
+typedef int64_t slong_long_int_t;
+typedef uint32_t ulong_int_t;
+typedef int32_t slong_int_t;
+typedef union
+{
+    uint16_t var;
+    uint32_t __padding__;
+} ushort_int_t;
+typedef union
+{
+    int16_t var;
+    uint32_t __padding__;
+} sshort_int_t;
+typedef union
+{
+    uint8_t var;
+    uint32_t __padding__;
+} ubyte_t;
+typedef ubyte_t byte_t;
+typedef union
+{
+    int8_t var;
+    uint32_t __padding__;
+} sbyte_t;
+typedef union
+{
+    uint8_t var;
+    uint32_t __padding__;
+} bool_t;
+typedef size_t size_int_t;
+
+typedef struct transition_info
+{
+    int* label;
+    int  group;
+} transition_info_t;
+
+#include "dbm/fed.h"
+#include "dbm/ClockAccessor.h"
+
+const uint32_t SA = 20;
+const uint32_t td = 0;
+const uint32_t TRTT = 1020;
+
+struct state_struct_t
+{
+	uint32_t RING;
+	uint32_t ST1;
+	uint32_t ST2;
+	uint32_t ST3;
+	uint32_t ST4;
+	uint32_t ST5;
+	uint32_t ST6;
+	uint32_t ST7;
+	uint32_t ST8;
+	uint32_t ST9;
+	uint32_t ST10;
+	uint32_t ST11;
+	uint32_t ST12;
+	uint32_t ST13;
+	uint32_t ST14;
+	uint32_t ST15;
+	uint32_t ST16;
+	uint32_t ST17;
+	uint32_t ST18;
+	uint32_t ST19;
+	uint32_t ST20;
+	dbm::fed_t *fed;
+}
+__attribute__((__packed__));
+int state_size = sizeof(state_struct_t);
+
+class ClockNamesAccessor: public dbm::ClockAccessor {
+public:
+    virtual const std::string& getClockName(cindex_t i) const {
+        switch (i) {
+			case 1: { static const std::string _n("RING_x"); return _n; }
+			case 2: { static const std::string _n("ST1_x"); return _n; }
+			case 3: { static const std::string _n("ST1_y"); return _n; }
+			case 4: { static const std::string _n("ST1_z"); return _n; }
+			case 5: { static const std::string _n("ST2_x"); return _n; }
+			case 6: { static const std::string _n("ST2_y"); return _n; }
+			case 7: { static const std::string _n("ST2_z"); return _n; }
+			case 8: { static const std::string _n("ST3_x"); return _n; }
+			case 9: { static const std::string _n("ST3_y"); return _n; }
+			case 10: { static const std::string _n("ST3_z"); return _n; }
+			case 11: { static const std::string _n("ST4_x"); return _n; }
+			case 12: { static const std::string _n("ST4_y"); return _n; }
+			case 13: { static const std::string _n("ST4_z"); return _n; }
+			case 14: { static const std::string _n("ST5_x"); return _n; }
+			case 15: { static const std::string _n("ST5_y"); return _n; }
+			case 16: { static const std::string _n("ST5_z"); return _n; }
+			case 17: { static const std::string _n("ST6_x"); return _n; }
+			case 18: { static const std::string _n("ST6_y"); return _n; }
+			case 19: { static const std::string _n("ST6_z"); return _n; }
+			case 20: { static const std::string _n("ST7_x"); return _n; }
+			case 21: { static const std::string _n("ST7_y"); return _n; }
+			case 22: { static const std::string _n("ST7_z"); return _n; }
+			case 23: { static const std::string _n("ST8_x"); return _n; }
+			case 24: { static const std::string _n("ST8_y"); return _n; }
+			case 25: { static const std::string _n("ST8_z"); return _n; }
+			case 26: { static const std::string _n("ST9_x"); return _n; }
+			case 27: { static const std::string _n("ST9_y"); return _n; }
+			case 28: { static const std::string _n("ST9_z"); return _n; }
+			case 29: { static const std::string _n("ST10_x"); return _n; }
+			case 30: { static const std::string _n("ST10_y"); return _n; }
+			case 31: { static const std::string _n("ST10_z"); return _n; }
+			case 32: { static const std::string _n("ST11_x"); return _n; }
+			case 33: { static const std::string _n("ST11_y"); return _n; }
+			case 34: { static const std::string _n("ST11_z"); return _n; }
+			case 35: { static const std::string _n("ST12_x"); return _n; }
+			case 36: { static const std::string _n("ST12_y"); return _n; }
+			case 37: { static const std::string _n("ST12_z"); return _n; }
+			case 38: { static const std::string _n("ST13_x"); return _n; }
+			case 39: { static const std::string _n("ST13_y"); return _n; }
+			case 40: { static const std::string _n("ST13_z"); return _n; }
+			case 41: { static const std::string _n("ST14_x"); return _n; }
+			case 42: { static const std::string _n("ST14_y"); return _n; }
+			case 43: { static const std::string _n("ST14_z"); return _n; }
+			case 44: { static const std::string _n("ST15_x"); return _n; }
+			case 45: { static const std::string _n("ST15_y"); return _n; }
+			case 46: { static const std::string _n("ST15_z"); return _n; }
+			case 47: { static const std::string _n("ST16_x"); return _n; }
+			case 48: { static const std::string _n("ST16_y"); return _n; }
+			case 49: { static const std::string _n("ST16_z"); return _n; }
+			case 50: { static const std::string _n("ST17_x"); return _n; }
+			case 51: { static const std::string _n("ST17_y"); return _n; }
+			case 52: { static const std::string _n("ST17_z"); return _n; }
+			case 53: { static const std::string _n("ST18_x"); return _n; }
+			case 54: { static const std::string _n("ST18_y"); return _n; }
+			case 55: { static const std::string _n("ST18_z"); return _n; }
+			case 56: { static const std::string _n("ST19_x"); return _n; }
+			case 57: { static const std::string _n("ST19_y"); return _n; }
+			case 58: { static const std::string _n("ST19_z"); return _n; }
+			case 59: { static const std::string _n("ST20_x"); return _n; }
+			case 60: { static const std::string _n("ST20_y"); return _n; }
+			case 61: { static const std::string _n("ST20_z"); return _n; }
+
+        }
+        static const std::string _ref("0");
+        return _ref;
+    }
+};
+static ClockNamesAccessor clockNames = ClockNamesAccessor();
+
+extern "C" int get_state_variable_count() 
+{
+    return 23;
+}
+
+extern "C" const char* get_state_variable_name(int var)
+{
+    switch (var)
+    {
+		case 0: return "RING";
+		case 1: return "ST1";
+		case 2: return "ST2";
+		case 3: return "ST3";
+		case 4: return "ST4";
+		case 5: return "ST5";
+		case 6: return "ST6";
+		case 7: return "ST7";
+		case 8: return "ST8";
+		case 9: return "ST9";
+		case 10: return "ST10";
+		case 11: return "ST11";
+		case 12: return "ST12";
+		case 13: return "ST13";
+		case 14: return "ST14";
+		case 15: return "ST15";
+		case 16: return "ST16";
+		case 17: return "ST17";
+		case 18: return "ST18";
+		case 19: return "ST19";
+		case 20: return "ST20";
+		case 21: return "fed";
+		case 22: return "fed2";
+
+        default:
+            return NULL;
+    }
+}
+
+extern "C" int get_state_variable_type(int var)
+{
+    return 0;
+}
+extern "C" int get_state_variable_type_count() 
+{
+    return 1;
+}
+extern "C" const char* get_state_variable_type_name(int type) 
+{
+    return "int";
+}
+
+extern "C" int get_state_variable_type_value_count(int type)
+{
+    return 23;
+}
+
+extern "C" const char* get_state_variable_type_value(int type, int value)
+{
+    /* Must be a *distinct* string per value: LTSmin interns these in a
+       lock-less chunk set (mc-lib/set-ll.c) that requires a bijection between
+       index and string. Returning one constant for every value trips
+       "isba_size_int(balloc) == index + 1" as soon as >1 worker installs
+       chunks concurrently.
+
+       It must also be STABLE for the lifetime of the process. LTSmin retains
+       the pointer and stores a 16-bit hash tag beside the key; when the table
+       grows, hti_copy_entry re-validates
+           (key_hash >> 16) == (ht1_ent->key >> 48)
+       against the string's *current* contents (mc-lib/hashtable.c:274). A
+       reused per-thread scratch buffer mutates the already-interned string and
+       trips that assertion -- observed on viking17 at >=4 threads, which is the
+       first model with enough distinct chunk values to force a resize.
+       So: allocate once per value, never rewrite, never free. std::map keeps
+       element addresses stable across later insertions. */
+    static std::mutex chunk_mutex;
+    static std::map<int, std::string> chunk_cache;
+    std::lock_guard<std::mutex> lock(chunk_mutex);
+    std::map<int, std::string>::iterator it = chunk_cache.find(value);
+    if (it == chunk_cache.end()) {
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "avar%d", value);
+        it = chunk_cache.insert(std::make_pair(value, std::string(tmp))).first;
+    }
+    return it->second.c_str();
+}
+
+extern "C" int get_transition_count() 
+{
+    return 200;
+}
+
+
+static state_struct_t initial_state = {
+	8, /* RING */
+	5, /* ST1 */
+	3, /* ST2 */
+	4, /* ST3 */
+	0, /* ST4 */
+	1, /* ST5 */
+	2, /* ST6 */
+	2, /* ST7 */
+	1, /* ST8 */
+	1, /* ST9 */
+	2, /* ST10 */
+	1, /* ST11 */
+	5, /* ST12 */
+	0, /* ST13 */
+	0, /* ST14 */
+	3, /* ST15 */
+	0, /* ST16 */
+	2, /* ST17 */
+	5, /* ST18 */
+	5, /* ST19 */
+	2, /* ST20 */
+	NULL, /* fed part */
+};
+
+/* Max clock constants {{{ */
+int max_constants_RING[40][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST1[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST2[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST3[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST4[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST5[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST6[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST7[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST8[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST9[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST10[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST11[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST12[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST13[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST14[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST15[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST16[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST17[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST18[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST19[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+int max_constants_ST20[6][62] = {
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+	{-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,-dbm_INFINITY,},
+};
+
+#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
+inline void extrapolate_max_constants (state_struct_t *out) {
+	int local_max_consts[62] = {0, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, -dbm_INFINITY, };
+	int i;
+	for (i = 0; i < 62; i++) {
+		local_max_consts[i] = max( local_max_consts[i], max_constants_RING[out->RING][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST1[out->ST1][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST2[out->ST2][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST3[out->ST3][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST4[out->ST4][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST5[out->ST5][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST6[out->ST6][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST7[out->ST7][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST8[out->ST8][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST9[out->ST9][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST10[out->ST10][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST11[out->ST11][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST12[out->ST12][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST13[out->ST13][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST14[out->ST14][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST15[out->ST15][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST16[out->ST16][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST17[out->ST17][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST18[out->ST18][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST19[out->ST19][i] );
+		local_max_consts[i] = max( local_max_consts[i], max_constants_ST20[out->ST20][i] );
+	}
+
+    out->fed->extrapolateMaxBounds(local_max_consts);
+}
+/* }}} */
+
+/* Invariants function {{{ */
+inline bool apply_invariants (state_struct_t *out) {
+	/* Invariants for RING {{{*/
+	switch( out->RING ) {
+		case 0: /* ring_to_5 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* ring_5 */
+			/* nop */ ; 
+		break;
+		case 2: /* ring_to_4 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* ring_4 */
+			/* nop */ ; 
+		break;
+		case 4: /* ring_to_3 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* ring_3 */
+			/* nop */ ; 
+		break;
+		case 6: /* ring_to_2 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 7: /* ring_2 */
+			/* nop */ ; 
+		break;
+		case 8: /* ring_to_1 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 9: /* ring_1 */
+			/* nop */ ; 
+		break;
+		case 10: /* ring_to_6 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 11: /* ring_6 */
+			/* nop */ ; 
+		break;
+		case 12: /* ring_to_7 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 13: /* ring_7 */
+			/* nop */ ; 
+		break;
+		case 14: /* ring_to_8 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 15: /* ring_8 */
+			/* nop */ ; 
+		break;
+		case 16: /* ring_to_9 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 17: /* ring_9 */
+			/* nop */ ; 
+		break;
+		case 18: /* ring_to_10 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 19: /* ring_10 */
+			/* nop */ ; 
+		break;
+		case 20: /* ring_to_18 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 21: /* ring_18 */
+			/* nop */ ; 
+		break;
+		case 22: /* ring_to_17 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 23: /* ring_17 */
+			/* nop */ ; 
+		break;
+		case 24: /* ring_to_16 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 25: /* ring_16 */
+			/* nop */ ; 
+		break;
+		case 26: /* ring_to_20 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 27: /* ring_20 */
+			/* nop */ ; 
+		break;
+		case 28: /* ring_to_19 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 29: /* ring_19 */
+			/* nop */ ; 
+		break;
+		case 30: /* ring_15 */
+			/* nop */ ; 
+		break;
+		case 31: /* ring_to_15 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 32: /* ring_11 */
+			/* nop */ ; 
+		break;
+		case 33: /* ring_to_11 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 34: /* ring_12 */
+			/* nop */ ; 
+		break;
+		case 35: /* ring_to_12 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 36: /* ring_13 */
+			/* nop */ ; 
+		break;
+		case 37: /* ring_to_13 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+		case 38: /* ring_14 */
+			/* nop */ ; 
+		break;
+		case 39: /* ring_to_14 */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(1, 0, td, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST1 {{{*/
+	switch( out->ST1 ) {
+		case 0: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(3, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(2, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(4, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(2, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_z_idle */
+			/* nop */ ; 
+		break;
+	}
+	/* Invariants for ST2 {{{*/
+	switch( out->ST2 ) {
+		case 0: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(7, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(5, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 4: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(5, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(6, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST3 {{{*/
+	switch( out->ST3 ) {
+		case 0: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(10, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(8, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(9, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 5: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(8, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST4 {{{*/
+	switch( out->ST4 ) {
+		case 0: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(11, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(13, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(12, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(11, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST5 {{{*/
+	switch( out->ST5 ) {
+		case 0: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(14, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(16, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(15, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(14, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST6 {{{*/
+	switch( out->ST6 ) {
+		case 0: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(19, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(17, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(17, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(18, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST7 {{{*/
+	switch( out->ST7 ) {
+		case 0: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(22, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(20, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(21, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(20, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST8 {{{*/
+	switch( out->ST8 ) {
+		case 0: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(23, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(24, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(23, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 5: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(25, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST9 {{{*/
+	switch( out->ST9 ) {
+		case 0: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(26, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(28, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 4: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(26, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(27, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST10 {{{*/
+	switch( out->ST10 ) {
+		case 0: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(29, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(30, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(29, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(31, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_idle */
+			/* nop */ ; 
+		break;
+	}
+	/* Invariants for ST11 {{{*/
+	switch( out->ST11 ) {
+		case 0: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(32, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(34, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(33, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(32, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST12 {{{*/
+	switch( out->ST12 ) {
+		case 0: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(37, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(35, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(36, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(35, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_z_idle */
+			/* nop */ ; 
+		break;
+	}
+	/* Invariants for ST13 {{{*/
+	switch( out->ST13 ) {
+		case 0: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(38, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(38, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(39, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(40, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_idle */
+			/* nop */ ; 
+		break;
+	}
+	/* Invariants for ST14 {{{*/
+	switch( out->ST14 ) {
+		case 0: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(41, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(42, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(41, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 5: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(43, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST15 {{{*/
+	switch( out->ST15 ) {
+		case 0: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(46, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(44, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 4: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(45, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(44, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST16 {{{*/
+	switch( out->ST16 ) {
+		case 0: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(47, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(49, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 4: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(47, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(48, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+	}
+	/* Invariants for ST17 {{{*/
+	switch( out->ST17 ) {
+		case 0: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(51, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(50, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(50, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(52, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_idle */
+			/* nop */ ; 
+		break;
+	}
+	/* Invariants for ST18 {{{*/
+	switch( out->ST18 ) {
+		case 0: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 1: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(55, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(54, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(53, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(53, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_z_idle */
+			/* nop */ ; 
+		break;
+	}
+	/* Invariants for ST19 {{{*/
+	switch( out->ST19 ) {
+		case 0: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(56, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(57, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 2: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(58, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 3: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 4: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(56, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_z_idle */
+			/* nop */ ; 
+		break;
+	}
+	/* Invariants for ST20 {{{*/
+	switch( out->ST20 ) {
+		case 0: /* station_z_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(61, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+		case 1: /* station_y_idle */
+			/* nop */ ; 
+		break;
+		case 2: /* station_z_idle */
+			/* nop */ ; 
+		break;
+		case 3: /* station_z_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(59, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 4: /* station_y_sync */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(59, 0, SA, false); 
+			if (!(true)) return false;
+		break;
+		case 5: /* station_y_async */
+			/* nop */ ; *(out->fed) &= dbm_constraint2(60, 0, TRTT, false); 
+			if (!(true)) return false;
+		break;
+	}
+	if (out->fed->isEmpty()) return false;
+	return true;
+}
+/* }}} */
+
+
+extern "C" int get_state_size() {
+    return state_size;
+}
+
+extern "C" void get_initial_state( void *to )
+{
+    /* Every LTSmin worker calls this. The original built the state in the
+       shared `initial_state` global, so concurrent workers raced on it (and
+       leaked a federation per call). Build in a thread-local copy instead. */
+    state_struct_t _s = initial_state;
+	_s.fed = new dbm::fed_t(62);
+	_s.fed->setZero();
+	_s.fed->up();
+	assert(apply_invariants(&_s));
+	extrapolate_max_constants(&_s);
+
+    memcpy(to, &_s, state_size);
+}
+
+extern "C" int have_property()
+{
+    return false;
+}
+
+
+void do_callback(state_struct_t *out, transition_info_t *transition_info, void (*callback)(void *arg, transition_info_t *transition_info, state_struct_t *out), void *arg) {
+	out->fed->up();
+	if (apply_invariants(out)) {
+		extrapolate_max_constants(out);
+		out->fed->mergeReduce();
+
+                callback(arg, transition_info, out);
+        }
+}
+
+
+extern "C" int get_successors( void *model, state_struct_t *in, void (*callback)(void *arg, transition_info_t *transition_info, state_struct_t *out), void *arg ) 
+{
+    (void)model; // ignore model
+    bool system_in_deadlock = true;
+    transition_info_t transition_info = { NULL, -1 };
+    int states_emitted = 0;
+    state_struct_t tmp;
+    state_struct_t *out = &tmp;
+	/* Transitions for RING {{{*/
+	switch( in->RING ) {
+		case 0: /* ring_to_5 */
+			if( true ) {
+				/* Syncs with ST5 on tt5 {{{*/
+				switch( in->ST5 ) {
+					case 1: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 1;
+							out->ST5 = 0;
+							/* nop */
+							out->fed->updateValue(15, 0);out->fed->updateValue(14, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 2: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 1;
+							out->ST5 = 5;
+							/* nop */
+							out->fed->updateValue(16, 0);out->fed->updateValue(14, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 1: /* ring_5 */
+		break;
+		case 2: /* ring_to_4 */
+			if( true ) {
+				/* Syncs with ST4 on tt4 {{{*/
+				switch( in->ST4 ) {
+					case 0: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 3;
+							out->ST4 = 1;
+							/* nop */
+							out->fed->updateValue(12, 0);out->fed->updateValue(11, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 2: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 3;
+							out->ST4 = 5;
+							/* nop */
+							out->fed->updateValue(13, 0);out->fed->updateValue(11, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 3: /* ring_4 */
+		break;
+		case 4: /* ring_to_3 */
+			if( true ) {
+				/* Syncs with ST3 on tt3 {{{*/
+				switch( in->ST3 ) {
+					case 1: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 5;
+							out->ST3 = 2;
+							/* nop */
+							out->fed->updateValue(10, 0);out->fed->updateValue(8, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 4: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 5;
+							out->ST3 = 5;
+							/* nop */
+							out->fed->updateValue(9, 0);out->fed->updateValue(8, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* ring_3 */
+		break;
+		case 6: /* ring_to_2 */
+			if( true ) {
+				/* Syncs with ST2 on tt2 {{{*/
+				switch( in->ST2 ) {
+					case 0: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 7;
+							out->ST2 = 4;
+							/* nop */
+							out->fed->updateValue(7, 0);out->fed->updateValue(5, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 3: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 7;
+							out->ST2 = 2;
+							/* nop */
+							out->fed->updateValue(6, 0);out->fed->updateValue(5, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 7: /* ring_2 */
+		break;
+		case 8: /* ring_to_1 */
+			if( true ) {
+				/* Syncs with ST1 on tt1 {{{*/
+				switch( in->ST1 ) {
+					case 2: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 9;
+							out->ST1 = 1;
+							/* nop */
+							out->fed->updateValue(4, 0);out->fed->updateValue(2, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 5: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 9;
+							out->ST1 = 4;
+							/* nop */
+							out->fed->updateValue(3, 0);out->fed->updateValue(2, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 9: /* ring_1 */
+		break;
+		case 10: /* ring_to_6 */
+			if( true ) {
+				/* Syncs with ST6 on tt6 {{{*/
+				switch( in->ST6 ) {
+					case 1: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 11;
+							out->ST6 = 4;
+							/* nop */
+							out->fed->updateValue(19, 0);out->fed->updateValue(17, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 2: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 11;
+							out->ST6 = 3;
+							/* nop */
+							out->fed->updateValue(18, 0);out->fed->updateValue(17, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 11: /* ring_6 */
+		break;
+		case 12: /* ring_to_7 */
+			if( true ) {
+				/* Syncs with ST7 on tt7 {{{*/
+				switch( in->ST7 ) {
+					case 1: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 13;
+							out->ST7 = 5;
+							/* nop */
+							out->fed->updateValue(22, 0);out->fed->updateValue(20, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 2: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 13;
+							out->ST7 = 3;
+							/* nop */
+							out->fed->updateValue(21, 0);out->fed->updateValue(20, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 13: /* ring_7 */
+		break;
+		case 14: /* ring_to_8 */
+			if( true ) {
+				/* Syncs with ST8 on tt8 {{{*/
+				switch( in->ST8 ) {
+					case 1: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 15;
+							out->ST8 = 0;
+							/* nop */
+							out->fed->updateValue(24, 0);out->fed->updateValue(23, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 4: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 15;
+							out->ST8 = 3;
+							/* nop */
+							out->fed->updateValue(25, 0);out->fed->updateValue(23, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 15: /* ring_8 */
+		break;
+		case 16: /* ring_to_9 */
+			if( true ) {
+				/* Syncs with ST9 on tt9 {{{*/
+				switch( in->ST9 ) {
+					case 1: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 17;
+							out->ST9 = 0;
+							/* nop */
+							out->fed->updateValue(27, 0);out->fed->updateValue(26, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 3: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 17;
+							out->ST9 = 4;
+							/* nop */
+							out->fed->updateValue(28, 0);out->fed->updateValue(26, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 17: /* ring_9 */
+		break;
+		case 18: /* ring_to_10 */
+			if( true ) {
+				/* Syncs with ST10 on tt10 {{{*/
+				switch( in->ST10 ) {
+					case 2: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 19;
+							out->ST10 = 3;
+							/* nop */
+							out->fed->updateValue(30, 0);out->fed->updateValue(29, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 5: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 19;
+							out->ST10 = 0;
+							/* nop */
+							out->fed->updateValue(31, 0);out->fed->updateValue(29, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 19: /* ring_10 */
+		break;
+		case 20: /* ring_to_18 */
+			if( true ) {
+				/* Syncs with ST18 on tt18 {{{*/
+				switch( in->ST18 ) {
+					case 0: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 21;
+							out->ST18 = 3;
+							/* nop */
+							out->fed->updateValue(55, 0);out->fed->updateValue(53, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 5: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 21;
+							out->ST18 = 4;
+							/* nop */
+							out->fed->updateValue(54, 0);out->fed->updateValue(53, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 21: /* ring_18 */
+		break;
+		case 22: /* ring_to_17 */
+			if( true ) {
+				/* Syncs with ST17 on tt17 {{{*/
+				switch( in->ST17 ) {
+					case 2: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 23;
+							out->ST17 = 3;
+							/* nop */
+							out->fed->updateValue(51, 0);out->fed->updateValue(50, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 5: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 23;
+							out->ST17 = 1;
+							/* nop */
+							out->fed->updateValue(52, 0);out->fed->updateValue(50, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 23: /* ring_17 */
+		break;
+		case 24: /* ring_to_16 */
+			if( true ) {
+				/* Syncs with ST16 on tt16 {{{*/
+				switch( in->ST16 ) {
+					case 0: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 25;
+							out->ST16 = 1;
+							/* nop */
+							out->fed->updateValue(48, 0);out->fed->updateValue(47, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 3: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 25;
+							out->ST16 = 4;
+							/* nop */
+							out->fed->updateValue(49, 0);out->fed->updateValue(47, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 25: /* ring_16 */
+		break;
+		case 26: /* ring_to_20 */
+			if( true ) {
+				/* Syncs with ST20 on tt20 {{{*/
+				switch( in->ST20 ) {
+					case 1: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 27;
+							out->ST20 = 4;
+							/* nop */
+							out->fed->updateValue(61, 0);out->fed->updateValue(59, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 2: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 27;
+							out->ST20 = 3;
+							/* nop */
+							out->fed->updateValue(60, 0);out->fed->updateValue(59, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 27: /* ring_20 */
+		break;
+		case 28: /* ring_to_19 */
+			if( true ) {
+				/* Syncs with ST19 on tt19 {{{*/
+				switch( in->ST19 ) {
+					case 3: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 29;
+							out->ST19 = 0;
+							/* nop */
+							out->fed->updateValue(58, 0);out->fed->updateValue(56, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 5: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 29;
+							out->ST19 = 4;
+							/* nop */
+							out->fed->updateValue(57, 0);out->fed->updateValue(56, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 29: /* ring_19 */
+		break;
+		case 30: /* ring_15 */
+		break;
+		case 31: /* ring_to_15 */
+			if( true ) {
+				/* Syncs with ST15 on tt15 {{{*/
+				switch( in->ST15 ) {
+					case 0: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 30;
+							out->ST15 = 5;
+							/* nop */
+							out->fed->updateValue(46, 0);out->fed->updateValue(44, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 3: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 30;
+							out->ST15 = 2;
+							/* nop */
+							out->fed->updateValue(45, 0);out->fed->updateValue(44, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 32: /* ring_11 */
+		break;
+		case 33: /* ring_to_11 */
+			if( true ) {
+				/* Syncs with ST11 on tt11 {{{*/
+				switch( in->ST11 ) {
+					case 1: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 32;
+							out->ST11 = 0;
+							/* nop */
+							out->fed->updateValue(33, 0);out->fed->updateValue(32, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 2: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 32;
+							out->ST11 = 5;
+							/* nop */
+							out->fed->updateValue(34, 0);out->fed->updateValue(32, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 34: /* ring_12 */
+		break;
+		case 35: /* ring_to_12 */
+			if( true ) {
+				/* Syncs with ST12 on tt12 {{{*/
+				switch( in->ST12 ) {
+					case 0: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 34;
+							out->ST12 = 2;
+							/* nop */
+							out->fed->updateValue(37, 0);out->fed->updateValue(35, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 5: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 34;
+							out->ST12 = 4;
+							/* nop */
+							out->fed->updateValue(36, 0);out->fed->updateValue(35, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 36: /* ring_13 */
+		break;
+		case 37: /* ring_to_13 */
+			if( true ) {
+				/* Syncs with ST13 on tt13 {{{*/
+				switch( in->ST13 ) {
+					case 0: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 36;
+							out->ST13 = 1;
+							/* nop */
+							out->fed->updateValue(39, 0);out->fed->updateValue(38, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 5: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 36;
+							out->ST13 = 2;
+							/* nop */
+							out->fed->updateValue(40, 0);out->fed->updateValue(38, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 38: /* ring_14 */
+		break;
+		case 39: /* ring_to_14 */
+			if( true ) {
+				/* Syncs with ST14 on tt14 {{{*/
+				switch( in->ST14 ) {
+					case 0: /* station_z_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 38;
+							out->ST14 = 1;
+							/* nop */
+							out->fed->updateValue(42, 0);out->fed->updateValue(41, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+					case 4: /* station_y_idle */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(1, 0, td, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->RING = 38;
+							out->ST14 = 3;
+							/* nop */
+							out->fed->updateValue(43, 0);out->fed->updateValue(41, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST1 {{{*/
+	switch( in->ST1 ) {
+		case 0: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt1 {{{*/
+				switch( in->RING ) {
+					case 9: /* ring_1 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST1 = 5;
+							out->RING = 6;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 1: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt1 {{{*/
+				switch( in->RING ) {
+					case 9: /* ring_1 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 2, -SA, false); *(out->fed) &= dbm_constraint2(0, 3, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST1 = 5;
+							out->RING = 6;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 2, -SA, false); *(out->fed) &= dbm_constraint2(3, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST1 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* station_y_idle */
+		break;
+		case 3: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt1 {{{*/
+				switch( in->RING ) {
+					case 9: /* ring_1 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST1 = 2;
+							out->RING = 6;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 4: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt1 {{{*/
+				switch( in->RING ) {
+					case 9: /* ring_1 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 2, -SA, false); *(out->fed) &= dbm_constraint2(0, 4, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST1 = 2;
+							out->RING = 6;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 2, -SA, false); *(out->fed) &= dbm_constraint2(4, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST1 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_z_idle */
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST2 {{{*/
+	switch( in->ST2 ) {
+		case 0: /* station_y_idle */
+		break;
+		case 1: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt2 {{{*/
+				switch( in->RING ) {
+					case 7: /* ring_2 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST2 = 0;
+							out->RING = 4;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 2: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt2 {{{*/
+				switch( in->RING ) {
+					case 7: /* ring_2 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 5, -SA, false); *(out->fed) &= dbm_constraint2(0, 7, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST2 = 0;
+							out->RING = 4;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 5, -SA, false); *(out->fed) &= dbm_constraint2(7, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST2 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* station_z_idle */
+		break;
+		case 4: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt2 {{{*/
+				switch( in->RING ) {
+					case 7: /* ring_2 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 5, -SA, false); *(out->fed) &= dbm_constraint2(0, 6, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST2 = 3;
+							out->RING = 4;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 5, -SA, false); *(out->fed) &= dbm_constraint2(6, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST2 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt2 {{{*/
+				switch( in->RING ) {
+					case 7: /* ring_2 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST2 = 3;
+							out->RING = 4;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST3 {{{*/
+	switch( in->ST3 ) {
+		case 0: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt3 {{{*/
+				switch( in->RING ) {
+					case 5: /* ring_3 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST3 = 1;
+							out->RING = 2;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 1: /* station_y_idle */
+		break;
+		case 2: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt3 {{{*/
+				switch( in->RING ) {
+					case 5: /* ring_3 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 8, -SA, false); *(out->fed) &= dbm_constraint2(0, 9, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST3 = 4;
+							out->RING = 2;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 8, -SA, false); *(out->fed) &= dbm_constraint2(9, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST3 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt3 {{{*/
+				switch( in->RING ) {
+					case 5: /* ring_3 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST3 = 4;
+							out->RING = 2;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 4: /* station_z_idle */
+		break;
+		case 5: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt3 {{{*/
+				switch( in->RING ) {
+					case 5: /* ring_3 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 8, -SA, false); *(out->fed) &= dbm_constraint2(0, 10, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST3 = 1;
+							out->RING = 2;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 8, -SA, false); *(out->fed) &= dbm_constraint2(10, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST3 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST4 {{{*/
+	switch( in->ST4 ) {
+		case 0: /* station_z_idle */
+		break;
+		case 1: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt4 {{{*/
+				switch( in->RING ) {
+					case 3: /* ring_4 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 11, -SA, false); *(out->fed) &= dbm_constraint2(0, 13, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST4 = 2;
+							out->RING = 0;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 11, -SA, false); *(out->fed) &= dbm_constraint2(13, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST4 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* station_y_idle */
+		break;
+		case 3: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt4 {{{*/
+				switch( in->RING ) {
+					case 3: /* ring_4 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST4 = 2;
+							out->RING = 0;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 4: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt4 {{{*/
+				switch( in->RING ) {
+					case 3: /* ring_4 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST4 = 0;
+							out->RING = 0;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt4 {{{*/
+				switch( in->RING ) {
+					case 3: /* ring_4 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 11, -SA, false); *(out->fed) &= dbm_constraint2(0, 12, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST4 = 0;
+							out->RING = 0;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 11, -SA, false); *(out->fed) &= dbm_constraint2(12, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST4 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST5 {{{*/
+	switch( in->ST5 ) {
+		case 0: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt5 {{{*/
+				switch( in->RING ) {
+					case 1: /* ring_5 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 14, -SA, false); *(out->fed) &= dbm_constraint2(0, 16, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST5 = 2;
+							out->RING = 10;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 14, -SA, false); *(out->fed) &= dbm_constraint2(16, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST5 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* station_z_idle */
+		break;
+		case 2: /* station_y_idle */
+		break;
+		case 3: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt5 {{{*/
+				switch( in->RING ) {
+					case 1: /* ring_5 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST5 = 2;
+							out->RING = 10;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 4: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt5 {{{*/
+				switch( in->RING ) {
+					case 1: /* ring_5 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST5 = 1;
+							out->RING = 10;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt5 {{{*/
+				switch( in->RING ) {
+					case 1: /* ring_5 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 14, -SA, false); *(out->fed) &= dbm_constraint2(0, 15, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST5 = 1;
+							out->RING = 10;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 14, -SA, false); *(out->fed) &= dbm_constraint2(15, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST5 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST6 {{{*/
+	switch( in->ST6 ) {
+		case 0: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt6 {{{*/
+				switch( in->RING ) {
+					case 11: /* ring_6 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST6 = 1;
+							out->RING = 12;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 1: /* station_y_idle */
+		break;
+		case 2: /* station_z_idle */
+		break;
+		case 3: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt6 {{{*/
+				switch( in->RING ) {
+					case 11: /* ring_6 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 17, -SA, false); *(out->fed) &= dbm_constraint2(0, 19, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST6 = 1;
+							out->RING = 12;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 17, -SA, false); *(out->fed) &= dbm_constraint2(19, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST6 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt6 {{{*/
+				switch( in->RING ) {
+					case 11: /* ring_6 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 17, -SA, false); *(out->fed) &= dbm_constraint2(0, 18, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST6 = 2;
+							out->RING = 12;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 17, -SA, false); *(out->fed) &= dbm_constraint2(18, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST6 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt6 {{{*/
+				switch( in->RING ) {
+					case 11: /* ring_6 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST6 = 2;
+							out->RING = 12;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST7 {{{*/
+	switch( in->ST7 ) {
+		case 0: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt7 {{{*/
+				switch( in->RING ) {
+					case 13: /* ring_7 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST7 = 1;
+							out->RING = 14;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 1: /* station_y_idle */
+		break;
+		case 2: /* station_z_idle */
+		break;
+		case 3: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt7 {{{*/
+				switch( in->RING ) {
+					case 13: /* ring_7 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 20, -SA, false); *(out->fed) &= dbm_constraint2(0, 22, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST7 = 1;
+							out->RING = 14;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 20, -SA, false); *(out->fed) &= dbm_constraint2(22, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST7 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt7 {{{*/
+				switch( in->RING ) {
+					case 13: /* ring_7 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST7 = 2;
+							out->RING = 14;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt7 {{{*/
+				switch( in->RING ) {
+					case 13: /* ring_7 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 20, -SA, false); *(out->fed) &= dbm_constraint2(0, 21, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST7 = 2;
+							out->RING = 14;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 20, -SA, false); *(out->fed) &= dbm_constraint2(21, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST7 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST8 {{{*/
+	switch( in->ST8 ) {
+		case 0: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt8 {{{*/
+				switch( in->RING ) {
+					case 15: /* ring_8 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 23, -SA, false); *(out->fed) &= dbm_constraint2(0, 25, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST8 = 4;
+							out->RING = 16;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 23, -SA, false); *(out->fed) &= dbm_constraint2(25, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST8 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* station_z_idle */
+		break;
+		case 2: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt8 {{{*/
+				switch( in->RING ) {
+					case 15: /* ring_8 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST8 = 1;
+							out->RING = 16;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 3: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt8 {{{*/
+				switch( in->RING ) {
+					case 15: /* ring_8 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 23, -SA, false); *(out->fed) &= dbm_constraint2(0, 24, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST8 = 1;
+							out->RING = 16;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 23, -SA, false); *(out->fed) &= dbm_constraint2(24, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST8 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_y_idle */
+		break;
+		case 5: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt8 {{{*/
+				switch( in->RING ) {
+					case 15: /* ring_8 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST8 = 4;
+							out->RING = 16;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST9 {{{*/
+	switch( in->ST9 ) {
+		case 0: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt9 {{{*/
+				switch( in->RING ) {
+					case 17: /* ring_9 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 26, -SA, false); *(out->fed) &= dbm_constraint2(0, 28, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST9 = 3;
+							out->RING = 18;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 26, -SA, false); *(out->fed) &= dbm_constraint2(28, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST9 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* station_z_idle */
+		break;
+		case 2: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt9 {{{*/
+				switch( in->RING ) {
+					case 17: /* ring_9 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST9 = 3;
+							out->RING = 18;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 3: /* station_y_idle */
+		break;
+		case 4: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt9 {{{*/
+				switch( in->RING ) {
+					case 17: /* ring_9 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 26, -SA, false); *(out->fed) &= dbm_constraint2(0, 27, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST9 = 1;
+							out->RING = 18;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 26, -SA, false); *(out->fed) &= dbm_constraint2(27, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST9 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt9 {{{*/
+				switch( in->RING ) {
+					case 17: /* ring_9 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST9 = 1;
+							out->RING = 18;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST10 {{{*/
+	switch( in->ST10 ) {
+		case 0: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt10 {{{*/
+				switch( in->RING ) {
+					case 19: /* ring_10 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 29, -SA, false); *(out->fed) &= dbm_constraint2(0, 30, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST10 = 2;
+							out->RING = 33;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 29, -SA, false); *(out->fed) &= dbm_constraint2(30, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST10 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt10 {{{*/
+				switch( in->RING ) {
+					case 19: /* ring_10 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST10 = 2;
+							out->RING = 33;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 2: /* station_z_idle */
+		break;
+		case 3: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt10 {{{*/
+				switch( in->RING ) {
+					case 19: /* ring_10 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 29, -SA, false); *(out->fed) &= dbm_constraint2(0, 31, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST10 = 5;
+							out->RING = 33;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 29, -SA, false); *(out->fed) &= dbm_constraint2(31, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST10 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt10 {{{*/
+				switch( in->RING ) {
+					case 19: /* ring_10 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST10 = 5;
+							out->RING = 33;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_idle */
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST11 {{{*/
+	switch( in->ST11 ) {
+		case 0: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt11 {{{*/
+				switch( in->RING ) {
+					case 32: /* ring_11 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 32, -SA, false); *(out->fed) &= dbm_constraint2(0, 34, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST11 = 2;
+							out->RING = 35;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 32, -SA, false); *(out->fed) &= dbm_constraint2(34, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST11 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* station_z_idle */
+		break;
+		case 2: /* station_y_idle */
+		break;
+		case 3: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt11 {{{*/
+				switch( in->RING ) {
+					case 32: /* ring_11 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST11 = 2;
+							out->RING = 35;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 4: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt11 {{{*/
+				switch( in->RING ) {
+					case 32: /* ring_11 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST11 = 1;
+							out->RING = 35;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt11 {{{*/
+				switch( in->RING ) {
+					case 32: /* ring_11 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 32, -SA, false); *(out->fed) &= dbm_constraint2(0, 33, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST11 = 1;
+							out->RING = 35;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 32, -SA, false); *(out->fed) &= dbm_constraint2(33, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST11 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST12 {{{*/
+	switch( in->ST12 ) {
+		case 0: /* station_y_idle */
+		break;
+		case 1: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt12 {{{*/
+				switch( in->RING ) {
+					case 34: /* ring_12 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST12 = 0;
+							out->RING = 37;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 2: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt12 {{{*/
+				switch( in->RING ) {
+					case 34: /* ring_12 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 35, -SA, false); *(out->fed) &= dbm_constraint2(0, 36, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST12 = 5;
+							out->RING = 37;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 35, -SA, false); *(out->fed) &= dbm_constraint2(36, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST12 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt12 {{{*/
+				switch( in->RING ) {
+					case 34: /* ring_12 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST12 = 5;
+							out->RING = 37;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 4: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt12 {{{*/
+				switch( in->RING ) {
+					case 34: /* ring_12 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 35, -SA, false); *(out->fed) &= dbm_constraint2(0, 37, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST12 = 0;
+							out->RING = 37;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 35, -SA, false); *(out->fed) &= dbm_constraint2(37, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST12 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_z_idle */
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST13 {{{*/
+	switch( in->ST13 ) {
+		case 0: /* station_z_idle */
+		break;
+		case 1: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt13 {{{*/
+				switch( in->RING ) {
+					case 36: /* ring_13 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 38, -SA, false); *(out->fed) &= dbm_constraint2(0, 40, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST13 = 5;
+							out->RING = 39;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 38, -SA, false); *(out->fed) &= dbm_constraint2(40, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST13 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt13 {{{*/
+				switch( in->RING ) {
+					case 36: /* ring_13 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 38, -SA, false); *(out->fed) &= dbm_constraint2(0, 39, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST13 = 0;
+							out->RING = 39;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 38, -SA, false); *(out->fed) &= dbm_constraint2(39, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST13 = 3;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt13 {{{*/
+				switch( in->RING ) {
+					case 36: /* ring_13 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST13 = 0;
+							out->RING = 39;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 4: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt13 {{{*/
+				switch( in->RING ) {
+					case 36: /* ring_13 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST13 = 5;
+							out->RING = 39;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_idle */
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST14 {{{*/
+	switch( in->ST14 ) {
+		case 0: /* station_z_idle */
+		break;
+		case 1: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt14 {{{*/
+				switch( in->RING ) {
+					case 38: /* ring_14 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 41, -SA, false); *(out->fed) &= dbm_constraint2(0, 43, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST14 = 4;
+							out->RING = 31;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 41, -SA, false); *(out->fed) &= dbm_constraint2(43, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST14 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt14 {{{*/
+				switch( in->RING ) {
+					case 38: /* ring_14 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST14 = 0;
+							out->RING = 31;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 3: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt14 {{{*/
+				switch( in->RING ) {
+					case 38: /* ring_14 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 41, -SA, false); *(out->fed) &= dbm_constraint2(0, 42, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST14 = 0;
+							out->RING = 31;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 41, -SA, false); *(out->fed) &= dbm_constraint2(42, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST14 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_y_idle */
+		break;
+		case 5: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt14 {{{*/
+				switch( in->RING ) {
+					case 38: /* ring_14 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST14 = 4;
+							out->RING = 31;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST15 {{{*/
+	switch( in->ST15 ) {
+		case 0: /* station_y_idle */
+		break;
+		case 1: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt15 {{{*/
+				switch( in->RING ) {
+					case 30: /* ring_15 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST15 = 0;
+							out->RING = 24;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 2: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt15 {{{*/
+				switch( in->RING ) {
+					case 30: /* ring_15 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 44, -SA, false); *(out->fed) &= dbm_constraint2(0, 46, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST15 = 0;
+							out->RING = 24;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 44, -SA, false); *(out->fed) &= dbm_constraint2(46, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST15 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 3: /* station_z_idle */
+		break;
+		case 4: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt15 {{{*/
+				switch( in->RING ) {
+					case 30: /* ring_15 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST15 = 3;
+							out->RING = 24;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt15 {{{*/
+				switch( in->RING ) {
+					case 30: /* ring_15 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 44, -SA, false); *(out->fed) &= dbm_constraint2(0, 45, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST15 = 3;
+							out->RING = 24;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 44, -SA, false); *(out->fed) &= dbm_constraint2(45, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST15 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST16 {{{*/
+	switch( in->ST16 ) {
+		case 0: /* station_z_idle */
+		break;
+		case 1: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt16 {{{*/
+				switch( in->RING ) {
+					case 25: /* ring_16 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 47, -SA, false); *(out->fed) &= dbm_constraint2(0, 49, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST16 = 3;
+							out->RING = 22;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 47, -SA, false); *(out->fed) &= dbm_constraint2(49, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST16 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt16 {{{*/
+				switch( in->RING ) {
+					case 25: /* ring_16 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST16 = 3;
+							out->RING = 22;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 3: /* station_y_idle */
+		break;
+		case 4: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt16 {{{*/
+				switch( in->RING ) {
+					case 25: /* ring_16 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 47, -SA, false); *(out->fed) &= dbm_constraint2(0, 48, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST16 = 0;
+							out->RING = 22;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 47, -SA, false); *(out->fed) &= dbm_constraint2(48, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST16 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt16 {{{*/
+				switch( in->RING ) {
+					case 25: /* ring_16 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST16 = 0;
+							out->RING = 22;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST17 {{{*/
+	switch( in->ST17 ) {
+		case 0: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt17 {{{*/
+				switch( in->RING ) {
+					case 23: /* ring_17 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST17 = 2;
+							out->RING = 20;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 1: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt17 {{{*/
+				switch( in->RING ) {
+					case 23: /* ring_17 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 50, -SA, false); *(out->fed) &= dbm_constraint2(0, 51, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST17 = 2;
+							out->RING = 20;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 50, -SA, false); *(out->fed) &= dbm_constraint2(51, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST17 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 2: /* station_z_idle */
+		break;
+		case 3: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt17 {{{*/
+				switch( in->RING ) {
+					case 23: /* ring_17 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 50, -SA, false); *(out->fed) &= dbm_constraint2(0, 52, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST17 = 5;
+							out->RING = 20;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 50, -SA, false); *(out->fed) &= dbm_constraint2(52, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST17 = 4;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt17 {{{*/
+				switch( in->RING ) {
+					case 23: /* ring_17 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST17 = 5;
+							out->RING = 20;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 5: /* station_y_idle */
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST18 {{{*/
+	switch( in->ST18 ) {
+		case 0: /* station_y_idle */
+		break;
+		case 1: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt18 {{{*/
+				switch( in->RING ) {
+					case 21: /* ring_18 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST18 = 0;
+							out->RING = 28;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 2: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt18 {{{*/
+				switch( in->RING ) {
+					case 21: /* ring_18 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST18 = 5;
+							out->RING = 28;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 3: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt18 {{{*/
+				switch( in->RING ) {
+					case 21: /* ring_18 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 53, -SA, false); *(out->fed) &= dbm_constraint2(0, 54, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST18 = 5;
+							out->RING = 28;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 53, -SA, false); *(out->fed) &= dbm_constraint2(54, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST18 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt18 {{{*/
+				switch( in->RING ) {
+					case 21: /* ring_18 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 53, -SA, false); *(out->fed) &= dbm_constraint2(0, 55, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST18 = 0;
+							out->RING = 28;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 53, -SA, false); *(out->fed) &= dbm_constraint2(55, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST18 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_z_idle */
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST19 {{{*/
+	switch( in->ST19 ) {
+		case 0: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt19 {{{*/
+				switch( in->RING ) {
+					case 29: /* ring_19 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 56, -SA, false); *(out->fed) &= dbm_constraint2(0, 57, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST19 = 5;
+							out->RING = 26;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 56, -SA, false); *(out->fed) &= dbm_constraint2(57, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST19 = 1;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 1: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt19 {{{*/
+				switch( in->RING ) {
+					case 29: /* ring_19 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST19 = 5;
+							out->RING = 26;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 2: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt19 {{{*/
+				switch( in->RING ) {
+					case 29: /* ring_19 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST19 = 3;
+							out->RING = 26;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 3: /* station_y_idle */
+		break;
+		case 4: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt19 {{{*/
+				switch( in->RING ) {
+					case 29: /* ring_19 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 56, -SA, false); *(out->fed) &= dbm_constraint2(0, 58, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST19 = 3;
+							out->RING = 26;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 56, -SA, false); *(out->fed) &= dbm_constraint2(58, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST19 = 2;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_z_idle */
+		break;
+	}
+	/* }}} */
+	/* Transitions for ST20 {{{*/
+	switch( in->ST20 ) {
+		case 0: /* station_z_async */
+			if( true ) {
+				/* Syncs with RING on rt20 {{{*/
+				switch( in->RING ) {
+					case 27: /* ring_20 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST20 = 1;
+							out->RING = 8;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+		case 1: /* station_y_idle */
+		break;
+		case 2: /* station_z_idle */
+		break;
+		case 3: /* station_z_sync */
+			if( true ) {
+				/* Syncs with RING on rt20 {{{*/
+				switch( in->RING ) {
+					case 27: /* ring_20 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 59, -SA, false); *(out->fed) &= dbm_constraint2(0, 61, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST20 = 1;
+							out->RING = 8;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 59, -SA, false); *(out->fed) &= dbm_constraint2(61, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST20 = 0;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 4: /* station_y_sync */
+			if( true ) {
+				/* Syncs with RING on rt20 {{{*/
+				switch( in->RING ) {
+					case 27: /* ring_20 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							*(out->fed) &= dbm_constraint2(0, 59, -SA, false); *(out->fed) &= dbm_constraint2(0, 60, -TRTT, false);  ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST20 = 2;
+							out->RING = 8;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+			if( true ) {
+				*out = *in;
+				out->fed = new dbm::fed_t(*(in->fed));
+				*(out->fed) &= dbm_constraint2(0, 59, -SA, false); *(out->fed) &= dbm_constraint2(60, 0, TRTT, true); 
+				if (!(out->fed->isEmpty())) {
+				out->ST20 = 5;
+				/* nop */
+
+				system_in_deadlock = false;
+				transition_info.group = -1;
+				do_callback(out, &transition_info, callback, arg);
+				++states_emitted;
+				}
+
+			}
+		break;
+		case 5: /* station_y_async */
+			if( true ) {
+				/* Syncs with RING on rt20 {{{*/
+				switch( in->RING ) {
+					case 27: /* ring_20 */
+						if( true ) {
+							*out = *in;
+							out->fed = new dbm::fed_t(*(in->fed));
+							/* nop */ ; /* nop */
+							if (!(out->fed->isEmpty())) {
+							out->ST20 = 2;
+							out->RING = 8;
+							/* nop */
+							out->fed->updateValue(1, 0);
+
+                        system_in_deadlock = false;
+                        transition_info.group = -1;
+                        do_callback(out, &transition_info, callback, arg);
+                        ++states_emitted;
+							}
+						}
+					break;
+				}
+				/* }}} */
+			}
+		break;
+	}
+	/* }}} */
+	if (states_emitted) return states_emitted;
+	return states_emitted;
+};
+
+
+ 
+extern "C" int get_successor( void* model, int t, state_struct_t *in, void (*callback)(void* arg, transition_info_t *transition_info, state_struct_t *out), void *arg ) 
+{
+    return 0;
+}
+
+int transition_dependency[23] = { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, };
+
+extern "C" const int* get_transition_read_dependencies(int t) 
+{
+    return transition_dependency;
+}
+extern "C" const int* get_transition_write_dependencies(int t) 
+{
+    return transition_dependency;
+}
+
+extern "C" const int get_guard_count() 
+{
+    return 0;
+}
+extern "C" const int* get_guard_matrix(int g) 
+{
+    return NULL;
+}
+extern "C" const int* get_guards(int t) 
+{
+    return NULL;
+}
+extern "C" const int** get_all_guards() 
+{
+    return NULL;
+}
+extern "C" int get_guard(void* model, int g, state_struct_t* src) 
+{
+    return 0;
+}
+extern "C" void get_guard_all(void* model, state_struct_t* src, int* guard) 
+{
+}
+extern "C" const int* get_guard_may_be_coenabled_matrix(int g) 
+{
+    return NULL;
+}
+extern "C" const int* get_guard_nes_matrix(int g) 
+{
+    return NULL;
+}
+extern "C" const int* get_guard_nds_matrix(int g) 
+{
+    return NULL;
+}
+
+
+typedef union fed_u {
+   dbm::fed_t  *fed;
+   uint64_t    fill;
+} fed_u_t;
+
+extern "C" int covered_by_short( int *fed_a, int *fed_b) 
+{
+    fed_u_t pa = *((fed_u_t*)fed_a);
+    fed_u_t pb = *((fed_u_t*)fed_b);
+
+    /*std::cout << "cover: " << 
+	    pa.fed->str(clockNames) << 
+	    " " << 
+	    pb.fed->str(clockNames) << std::endl;*/
+
+    if ( *(pa.fed) <= *(pb.fed) )
+	return 1;
+    else
+        return 0;
+}
+
+/* LTSmin >= 2.x lattice interface. This opaal revision predates it, so the
+   five lattice_* hooks are supplied here. The `lattice` pointer LTSmin hands
+   us is exactly the dbm::fed_t* stored in the last two slots of the state
+   vector. LTSmin's hashtable treats cmp()==0 as "equal" (mc-lib/hashtable.c). */
+extern "C" void* lattice_clone (const void *lattice)
+{
+    return new dbm::fed_t(*((const dbm::fed_t*)lattice));
+}
+
+extern "C" int lattice_cmp (const void *l1, const void *l2)
+{
+    return (*((const dbm::fed_t*)l1) == *((const dbm::fed_t*)l2)) ? 0 : 1;
+}
+
+extern "C" uint32_t lattice_hash (const void *lattice)
+{
+    return ((const dbm::fed_t*)lattice)->hash();
+}
+
+extern "C" void lattice_delete (const void *lattice)
+{
+    delete ((const dbm::fed_t*)lattice);
+}
+
+extern "C" const char* lattice_print (const void *lattice)
+{
+    /* LTSmin only reads the result before the next call on this thread. */
+    static __thread std::string *buf = NULL;
+    if (buf == NULL) buf = new std::string();
+    *buf = ((const dbm::fed_t*)lattice)->str(clockNames);
+    return buf->c_str();
+}
+
+void dummy_cb(void *arg, transition_info_t *transition_info, state_struct_t *out) {
+	printf("succ_cb: %p\n", out->fed);
+	std::cout << "succ_cb: " << out->fed->str(clockNames) << std::endl;
+}
+
+int main() {
+    //g++ -g -shared -O0 -fPIC -I/usr/local/uppaal/include/ -L/usr/local/uppaal/lib/ -o gensuccgen gensuccgen.cpp -ludbm
+    state_struct_t *s1 = (state_struct_t*)malloc(get_state_size());
+    get_initial_state(s1);
+	std::cout << "initial: " << s1->fed->str(clockNames) << std::endl;
+
+	get_successors(NULL, s1, dummy_cb, NULL);
+
+    return 0;
+}
+/* vim:ts=4:sw=4:noexpandtab */

@@ -17,19 +17,20 @@ mkdir -p results
 OUT="results/full.csv"
 TIMEOUT=600 # seconds, which is 10 minutes
 MEMGB=100
-THREADS=(4 8 12)
+THREADS=(4 6)
 REPS=2
 
-VIKING=( 6 12 15 17)
+VIKING=( 4 6 10 12 15 17 20 )
+HDDI=( 2 10 15 20)
 FISCHER=( 6 9 10 11)
 # generated families: <name>:<N,N,N>. Each needs models/<name><N>.xml and queries/<name>.q.
-FAMILIES="phil:6,8,10;twolock:7,9,11;arbiter:8,12,16;csma:8,11,14;grc:5,7,9"
+FAMILIES="phil:4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20;twolock:4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20;arbiter:4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25;csma:4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22;grc:4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20"
 
 for a in "$@"; do
   case "$a" in
     --quick)
       TIMEOUT=6; REPS=1; THREADS=(2 4 6)
-      VIKING=(4 6 10); FISCHER=(4 5 6)
+      VIKING=(4 6 10); HDDI=(2 10); FISCHER=(4 5 6)
       FAMILIES="phil:6;twolock:7;arbiter:8;csma:8;grc:5"
       ;;
     --prepare)
@@ -45,6 +46,7 @@ echo "    cap ${TIMEOUT}s / ${MEMGB}GB, threads ${THREADS[*]}, ${REPS} rep(s)"
 echo "    -> $OUT (resumable; already-OK runs are skipped)"
 python3 bench_ltsmin.py \
   --viking  "${VIKING[@]}" \
+  --hddi    "${HDDI[@]}" \
   --fischer "${FISCHER[@]}" \
   --families "$FAMILIES" \
   --threads "${THREADS[@]}" --reps "$REPS" \

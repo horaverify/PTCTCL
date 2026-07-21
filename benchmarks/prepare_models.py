@@ -33,7 +33,8 @@ FAMILIES = {
     "grc":     ((4, 20), ("A[] not deadlock", "A[] not deadlock")),  # OK for both
     "single":  ((4, 20), ("A[] not (P1.cs && P2.cs)", "A[] not (P.cs)")),  # Linux uses single P
     "viking":  ((4, 26), ("A[] not (Viking1.safe && Viking1.unsafe)", "A[] not (Viking1.safe && Viking1.unsafe)")),
-    "train":   ((0, 5), ("A[] not (Train1.Cross && Train2.Cross)", "A[] not (Train1.Cross && Train2.Cross)")),
+    "train":   ((0,1), ("A[] not deadlock", "A[] not deadlock")),
+    "hddi":    ((0, 20), ("A[] !((ST1==station_y_sync || ST1==station_y_async || ST1==station_z_async || ST1==station_z_sync) && (ST2==station_y_sync || ST2==station_y_async || ST2==station_z_async || ST2==station_z_sync))", "A[] !((ST1==station_y_sync || ST1==station_y_async || ST1==station_z_async || ST1==station_z_sync) && (ST2==station_y_sync || ST2==station_y_async || ST2==station_z_async || ST2==station_z_sync))")),
 }
 
 
@@ -73,11 +74,12 @@ def main():
         for n in tqdm(range(lo, hi + 1), desc=fam, leave=False):
             xml = os.path.join(mdir, "%s%d.xml" % (fam, n))
             try:
-                with open(xml, "w") as fh:
-                    subprocess.run([sys.executable, gen, str(n)], stdout=fh, check=True,
-                                   stderr=subprocess.PIPE)
+                r = subprocess.run([sys.executable, gen, str(n)], capture_output=True, check=True, text=True)
+                open(xml, "w").write(r.stdout)
             except subprocess.CalledProcessError as e:
-                failed.append("%s%d: %s" % (fam, n, e.stderr.decode()[:70])); continue
+                if os.path.exists(xml):
+                    os.remove(xml)
+                failed.append("%s%d: %s" % (fam, n, e.stderr[:70])); continue
             made += 1
             if args.so:
                 so = os.path.join(sodir, "%s%d.so" % (fam, n))
@@ -88,6 +90,8 @@ def main():
                     r = subprocess.run([os.path.join(HERE, "gen_so_macos.sh"), xml, so],
                                        capture_output=True)
                 if r.returncode:
+                    if os.path.exists(so):
+                        os.remove(so)
                     failed.append("%s%d.so: %s" % (fam, n, r.stderr.decode().strip()[:70]))
     print("generated %d models into %s" % (made, mdir))
     if failed:
