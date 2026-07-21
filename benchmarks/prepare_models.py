@@ -33,6 +33,7 @@ FAMILIES = {
     "grc":     ((4, 10), ("A[] not deadlock", "A[] not deadlock")),
     "single":  ((4, 10), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),
     "viking":  ((4, 17), ("A[] not (Viking1.safe && Viking1.unsafe)", "A[] not (Viking1.safe && Viking1.unsafe)")),
+    "train":   ((0, 1), ("A[] not (Train1.Cross && Train2.Cross)", "A[] not (Train1.Cross && Train2.Cross)")),
 }
 
 
