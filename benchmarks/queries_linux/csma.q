@@ -1,1 +1,1 @@
-A[] not (S1.cs && S2.cs)
+A[] not (S1.Send && S2.Send)

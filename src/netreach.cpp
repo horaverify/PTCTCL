@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "ptctlmc/fed.hpp"
 #include "ptctlmc/net_gpu.hpp"
 
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -1576,7 +1577,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
           int dl[64]; long di[32];
           for (const std::uint64_t dk : tdk) {
             if (!has_diag) { decode_key(dk, dl, di); state_bounds(dl, Ls, Us); }
-            smap[stripe_of(dk)].merge_level(dk, level, has_diag, Ls, Us, 0, pend);
+            smap[stripe_of(dk)].merge_level(dk, level, has_diag, Ls, Us, 0, pend, live);
           }
         }
 #endif
@@ -1852,6 +1853,219 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   // p --> q fails iff a reachable p ∧ ¬q state can stay in ¬q forever (escape).
   for (int i = 0; i < N; ++i) if (pv[i] && !qv[i] && escape[i]) return false;
   return true;
+}
+
+// Does the (delay-closed, extrapolated) symbolic state `s` contain a concrete valuation
+// with no outgoing action transition -- a deadlock?  A whole zone that has no successor is
+// the easy case; the hard case is a PARTIAL deadlock, where the zone has successors but a
+// sub-region of it can never reach any of them (e.g. an invariant caps time before the only
+// guard opens). We compute it exactly: mirror successors_net's three transition kinds, but
+// for each transition that CAN fire collect its SOURCE zone within `s.zone` -- the pre-reset
+// valuations from which it fires and lands in a legal target (guards ∧ reset^{-1}(target
+// invariant)). The union of the time-pasts (down()) of those source zones is the set of
+// non-deadlocked valuations (for a frozen source -- committed/urgent -- no time may pass, so
+// there is no down()). Anything in `s.zone` left over after subtracting that union is a set
+// of deadlock states. Enabledness is invariant under LU-extrapolation, so working on the
+// extrapolated zone is sound -- the same assumption the rest of the engine already relies on.
+static bool state_has_deadlock(const Network& net, const SymState& s) {
+  if (s.zone.empty()) return false;
+  bool src_committed, src_urgent;
+  frozen_flags(net, s.locs, &src_committed, &src_urgent);
+  const bool frozen = src_committed || src_urgent;  // no delay allowed from this state
+
+  // Rebuild the true delay-closure of this state's zone. The stored zone has the
+  // active-clock reduction applied, which pins DEAD clocks to 0 with an upper bound and so
+  // is no longer delay-closed -- down() could not let time pass those clocks, inventing
+  // spurious deadlocks. Re-opening every upper bound (delay) and re-imposing only the real
+  // location invariant restores the closure; dead clocks become free, which is sound since
+  // no guard or invariant here reads them. Frozen locations do not delay, so leave them be.
+  Dbm Z = s.zone;
+  if (!frozen) {
+    Z.delay();
+    std::vector<Constraint> cinv;
+    all_invariants(net, s.locs, cinv);
+    if (!apply_all(Z, cinv)) return false;  // real invariant unsatisfiable: no concrete state
+  }
+
+  std::vector<Constraint> tinv;  // target-invariant scratch
+  Federation live;
+
+  // `guarded` = Z ∩ (participant clock guards), pre-reset. Pull it back through the target
+  // invariant under the transition's resets and, if a non-empty source region survives, add
+  // it to `live`. reset^{-1}(inv): a constraint on a reset clock becomes one on clock 0 (its
+  // post-reset value), so it either constrains the surviving source clocks or, if it reduces
+  // to `0 <| bound`, gates the whole transition on feasibility of that constant.
+  auto add_src = [&](Dbm guarded, const LocVec& tgt_locs,
+                     const std::vector<const std::vector<int>*>& reset_lists) {
+    if (guarded.empty()) return;
+    auto is_reset = [&](int c) {
+      for (auto* rl : reset_lists) for (int r : *rl) if (r == c) return true;
+      return false;
+    };
+    all_invariants(net, tgt_locs, tinv);
+    for (const auto& c : tinv) {
+      const int i = is_reset(c.i) ? 0 : c.i;
+      const int j = is_reset(c.j) ? 0 : c.j;
+      if (i == j) { if (c.bound < kZeroLe) return; continue; }  // 0 <| bound: constant gate
+      if (!guarded.constrain(i, j, c.bound)) return;
+    }
+    if (!guarded.empty()) live.push_back(std::move(guarded));
+  };
+
+  // ---- local (unsynchronised) edges ----
+  for (int p = 0; p < net.nprocs(); ++p) {
+    if (src_committed && !net.procs[p].locations[s.locs[p]].committed) continue;
+    for (int ei : net.procs[p].edges_of(s.locs[p])) {
+      const NEdge& e = net.procs[p].edges[ei];
+      if (e.sync_chan >= 0) continue;
+      if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints.data(), s.ints.size())) continue;
+      IntVec nints = s.ints;
+      for (const auto& a : e.int_updates) nints[a.var] = a.val;
+      if (!gen_apply(net, e, nints.data(), nints.size())) continue;
+      Dbm g = Z;
+      if (!apply_all(g, e.clock_guard)) continue;
+      LocVec tl = s.locs; tl[p] = e.tgt;
+      add_src(std::move(g), tl, {&e.clock_resets});
+    }
+  }
+
+  // ---- binary channel synchronisation (a! || a?) ----
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1) continue;
+      if (net.chan_broadcast[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      const bool i_comm = net.procs[i].locations[s.locs[i]].committed;
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan != se.sync_chan || re.sync_dir != -1) continue;
+          if (src_committed && !(i_comm || net.procs[j].locations[s.locs[j]].committed)) continue;
+          if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints.data(), s.ints.size())) continue;
+          IntVec nints = s.ints;
+          for (const auto& a : se.int_updates) nints[a.var] = a.val;
+          for (const auto& a : re.int_updates) nints[a.var] = a.val;
+          if (!gen_apply(net, se, nints.data(), nints.size()) ||
+              !gen_apply(net, re, nints.data(), nints.size())) continue;
+          Dbm g = Z;
+          if (!apply_all(g, se.clock_guard) || !apply_all(g, re.clock_guard)) continue;
+          LocVec tl = s.locs; tl[i] = se.tgt; tl[j] = re.tgt;
+          add_src(std::move(g), tl, {&se.clock_resets, &re.clock_resets});
+        }
+      }
+    }
+  }
+
+  // ---- broadcast synchronisation: a! fires with all enabled a? (0 or more) ----
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      std::vector<std::pair<int, std::vector<int>>> parts;
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        std::vector<int> es;
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 &&
+              int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
+            es.push_back(ej);
+        }
+        if (!es.empty()) parts.push_back({j, std::move(es)});
+      }
+      std::vector<std::size_t> pick(parts.size(), 0);
+      for (;;) {
+        bool part_committed = net.procs[i].locations[s.locs[i]].committed;
+        for (const auto& pr : parts)
+          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        if (!src_committed || part_committed) {
+          Dbm g = Z;
+          bool ok = apply_all(g, se.clock_guard);
+          std::vector<const std::vector<int>*> rls{&se.clock_resets};
+          LocVec tl = s.locs; tl[i] = se.tgt;
+          for (std::size_t t = 0; ok && t < parts.size(); ++t) {
+            const NEdge& re = net.procs[parts[t].first].edges[parts[t].second[pick[t]]];
+            ok = apply_all(g, re.clock_guard);
+            rls.push_back(&re.clock_resets);
+            tl[parts[t].first] = re.tgt;
+          }
+          if (ok) add_src(std::move(g), tl, rls);
+        }
+        if (parts.empty()) break;
+        std::size_t k = 0;
+        for (; k < parts.size(); ++k) { if (++pick[k] < parts[k].second.size()) break; pick[k] = 0; }
+        if (k == parts.size()) break;
+      }
+    }
+  }
+
+  // Non-deadlocked = valuations that can (delay into, unless frozen) some enabled source
+  // region. Subtract that from the zone; a non-empty remainder is a set of deadlock states.
+  if (!frozen)
+    for (auto& W : live) W.down();
+  return !fed_subtract(Z, live).empty();
+}
+
+bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats) {
+  (void)backend;  // zone-graph search with subsumption is sequential, like leads_to_net
+  std::vector<std::int32_t> L = net.lbound, U = net.ubound;
+  const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;  // diagonals: keep exact
+  // Active-clock reduction stays ON here (small state space); state_has_deadlock rebuilds the
+  // delay-closure it perturbs, so the exploration keeps the same zones reachable_net would.
+  const std::vector<char> qmask(net.nclocks + 1, 0);
+  auto extrap = [&](Dbm& z) {
+    if (emode == ExLuPlus) z.extrapolate_lu_plus(L, U);
+    else if (emode == ExNoDiag) z.extrapolate_lu_plus_nodiag(L, U);
+  };
+
+  // Initial symbolic state -- same construction as reachable_net / leads_to_net.
+  SymState s0;
+  s0.locs.resize(net.nprocs());
+  for (int p = 0; p < net.nprocs(); ++p) s0.locs[p] = net.procs[p].initial;
+  s0.ints.resize(net.intvars.size());
+  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
+  s0.zone = Dbm(net.nclocks);
+  {
+    std::vector<Constraint> inv;
+    all_invariants(net, s0.locs, inv);
+    if (!apply_all(s0.zone, inv)) return false;  // empty init => no reachable state, no deadlock
+    bool c, u;
+    frozen_flags(net, s0.locs, &c, &u);
+    if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
+    reset_inactive(net, s0.locs, s0.zone, qmask);
+    extrap(s0.zone);
+  }
+
+  // Passed list keyed by discrete state, storing an antichain of extrapolated zones under
+  // inclusion subsumption. Subsumption is SOUND for deadlock because deadlock is a
+  // per-valuation property: the deadlock valuations of a subsumed zone lie inside the
+  // subsuming zone and are found when that one is checked. (aLU subsumption would NOT be
+  // sound here -- it can drop concrete valuations -- so we use exact inclusion.)
+  std::unordered_map<std::string, std::vector<Dbm>> passed;
+  std::vector<SymState> work;
+  auto try_insert = [&](SymState&& s) {
+    auto& bucket = passed[disc_key(s.locs, s.ints)];
+    for (const auto& z : bucket) if (z.includes(s.zone)) return;  // subsumed => skip
+    bucket.erase(std::remove_if(bucket.begin(), bucket.end(),
+                 [&](const Dbm& z) { return s.zone.includes(z); }), bucket.end());
+    bucket.push_back(s.zone);
+    work.push_back(std::move(s));
+  };
+
+  try_insert(std::move(s0));
+  while (!work.empty()) {
+    SymState s = std::move(work.back());
+    work.pop_back();
+    if (stats) ++stats->explored;
+    if (state_has_deadlock(net, s)) return true;
+    std::vector<SymState> succ;
+    successors_net(net, s, s.zone, L, U, qmask, emode, succ);
+    for (auto& ns : succ) { if (stats) ++stats->generated; try_insert(std::move(ns)); }
+  }
+  return false;
 }
 
 }  // namespace ptctlmc

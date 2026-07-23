@@ -68,4 +68,14 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
 bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q,
                   Backend backend = Backend::Seq, ReachStats* stats = nullptr);
 
+// E<> deadlock : is a deadlock state reachable? A symbolic state is a deadlock when it
+// has NO action successor -- no edge (including synchronisation) is enabled anywhere in
+// its delay-closed zone, so the network can only let time pass with nothing left to do.
+// Explored on the exact-hash LU-extrapolated zone graph; extrapolation preserves guard
+// enabledness (guards only compare clocks to constants <= the max), so a state deadlocks
+// iff its extrapolated image does -- the same `adj.empty()` convention leads_to_net uses.
+// `A[] not deadlock` is then !deadlock_reachable(...).
+bool deadlock_reachable(const Network& net, Backend backend = Backend::Seq,
+                        ReachStats* stats = nullptr);
+
 }  // namespace ptctlmc
