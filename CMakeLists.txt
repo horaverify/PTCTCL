@@ -74,10 +74,27 @@ if(PTCTLMC_ENABLE_METAL AND APPLE)
   endif()
 endif()
 
+# ---- HDBM: the difference-bound-matrix zone library, now standalone (its own repo). -----
+# Prefer an in-tree checkout (HDBM/); if it is absent, fetch it. HDBM exports target `hdbm`
+# and owns the ptctlmc/{dbm,dbm_ops,dbm_pool,constraint,fed}.hpp headers — the __host__
+# __device__ zone ops the CPU, CUDA and Metal paths all share.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/HDBM/CMakeLists.txt)
+  message(STATUS "PTCTLMC: using in-tree HDBM (${CMAKE_CURRENT_SOURCE_DIR}/HDBM)")
+  add_subdirectory(HDBM)
+else()
+  message(STATUS "PTCTLMC: HDBM not found in tree — fetching it via FetchContent")
+  include(FetchContent)
+  FetchContent_Declare(hdbm
+    GIT_REPOSITORY https://github.com/horaverify/HDBM.git   # FIXME: placeholder — real repo TBD
+    GIT_TAG        main)
+  FetchContent_MakeAvailable(hdbm)
+endif()
+
 file(GLOB PTCTLMC_CORE_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(ptctlmc_core ${PTCTLMC_CORE_SRC})
 target_include_directories(ptctlmc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(ptctlmc_core PUBLIC cxx_std_17)
+target_link_libraries(ptctlmc_core PUBLIC hdbm)   # DBM zone algebra + its headers
 if(OpenMP_CXX_FOUND)
   target_link_libraries(ptctlmc_core PUBLIC OpenMP::OpenMP_CXX)
   target_compile_definitions(ptctlmc_core PUBLIC PTCTLMC_HAVE_OPENMP=1)

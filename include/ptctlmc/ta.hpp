@@ -10,27 +10,10 @@
 #include <string>
 #include <vector>
 
+#include "ptctlmc/constraint.hpp"  // Constraint, c_le/.., negate — now in HDBM
 #include "ptctlmc/dbm.hpp"
 
 namespace ptctlmc {
-
-struct Constraint {
-  int i, j;      // clocks (0..nclocks); 0 = reference
-  raw_t bound;   // x_i - x_j <| bound
-};
-
-// Readable constraint builders.
-inline Constraint c_le(int x, std::int32_t v) { return {x, 0, le(v)}; }   // x <= v
-inline Constraint c_lt(int x, std::int32_t v) { return {x, 0, lt(v)}; }   // x <  v
-inline Constraint c_ge(int x, std::int32_t v) { return {0, x, le(-v)}; }  // x >= v
-inline Constraint c_gt(int x, std::int32_t v) { return {0, x, lt(-v)}; }  // x >  v
-inline Constraint c_diff_le(int x, int y, std::int32_t v) { return {x, y, le(v)}; }  // x - y <= v
-
-// Negation of  x_i - x_j <| b  is  x_j - x_i <| -b  with flipped strictness.
-inline Constraint negate(const Constraint& c) {
-  const std::int32_t v = raw_bound(c.bound);
-  return {c.j, c.i, raw_is_strict(c.bound) ? le(-v) : lt(-v)};
-}
 
 struct Location {
   std::string name;

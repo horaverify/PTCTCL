@@ -5,3 +5,4 @@ A[] x <= 14
 A[] x <= 13
 E<> P.Commit and x >= 1
 E<> P.Done and y >= 15
+A[] not deadlock

@@ -1306,6 +1306,10 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   };
 
   if (q.kind == Query::EF) {
+    if (trim(q.note) == "deadlock") {  // E<> deadlock
+      *satisfied = deadlock_reachable(net, backend, stats);
+      return true;
+    }
     NetTarget tgt;
     if (!build_target(q.note, tgt)) return false;
     *satisfied = reachable_net(net, tgt, backend, stats);
@@ -1356,6 +1360,10 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     else if (body.compare(0, 4, "not(") == 0 || body.compare(0, 4, "not ") == 0) inner = trim(body.substr(3));
     if (!inner.empty()) {
       if (inner.size() >= 2 && inner.front() == '(' && inner.back() == ')') inner = trim(inner.substr(1, inner.size() - 2));
+      if (inner == "deadlock") {  // A[] not deadlock = ! E<> deadlock
+        *satisfied = !deadlock_reachable(net, backend, stats);
+        return true;
+      }
       NetTarget tgt;
       if (!build_target(inner, tgt)) return false;
       *satisfied = !reachable_net(net, tgt, backend, stats);
