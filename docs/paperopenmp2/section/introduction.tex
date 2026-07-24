@@ -1,0 +1,53 @@
+\section{Introduction}\label{sec:intro}
+
+Timed automata (TA)~\cite{AlurDill94} are the standard formalism behind
+\textsc{UPPAAL}~\cite{Larsen97}, the leading industrial tool for verifying
+real-time systems.  UPPAAL's core is a symbolic reachability procedure: it
+unfolds the system's behaviour into a \emph{zone graph}, a directed graph
+whose nodes are pairs $(\ell, Z)$ of a control location $\ell$ and a convex
+set of clock valuations $Z$, represented as a Difference Bound
+Matrix~(DBM)~\cite{Dill89}.  The graph is explored breadth-first with a
+\emph{passed list} that prunes any newly discovered zone that is already
+\emph{subsumed} (contained) by a previously stored one.  Together with
+LU$^+$~extrapolation~\cite{Behrmann06}, this guarantees termination.
+
+This procedure is inherently sequential: each iteration of the exploration
+loop dequeues one state, computes its successors, checks them against the
+passed list, and re-enqueues whatever survives.  Every step writes to shared
+data structures, so no two iterations can safely run at the same time.  As a
+result, UPPAAL leaves all but one CPU core idle, regardless of how many cores
+the machine has.
+
+\textbf{Our contribution.}  We show that the sequential bottleneck is
+artificial.  The successor function $\succfn(\ell, Z)$---which applies
+guard, reset, invariant, delay, and LU$^+$ extrapolation to produce the
+next zone---depends only on the automaton structure (read-only) and on the
+pair $(\ell, Z)$ itself.  It reads \emph{nothing} from the passed list and
+writes \emph{nothing} to any shared structure.  It is, in the formal sense,
+a \emph{pure function}.
+
+This purity is the key that unlocks parallelism.  We organise exploration as
+a \emph{level-synchronous} BFS: all states at BFS depth $k$---the
+\emph{frontier} $\Frontier_k$---are expanded simultaneously by $T$ OpenMP
+threads, each depositing its results into a private buffer.  Only after all
+threads finish does a single sequential \emph{merge} phase update the passed
+list and assemble $\Frontier_{k+1}$.  No lock is ever acquired during
+expansion; no thread reads or writes another thread's data.
+
+The design makes a deliberate trade-off: sequential merge vs.\ parallel expand.
+The merge is fast in practice because LU$^+$ extrapolation bounds the number
+of zones stored per location to a small constant (independent of model size),
+so the per-successor subsumption check is cheap.  The expansion, on the other
+hand, is the expensive part---it involves up to $|\delta(\ell)|$ DBM
+operations each costing $O(n^3)$---and scales linearly with the number of
+threads.
+
+\textbf{Paper structure.}
+\Cref{sec:background} recalls UPPAAL's sequential algorithm precisely, since
+understanding \emph{where} the serialisation lives is essential.
+\Cref{sec:approach} presents the parallel algorithm and the purity argument
+that justifies it.
+\Cref{sec:correctness} proves correctness and termination.
+\Cref{sec:impl} discusses the OpenMP implementation.
+\Cref{sec:related} surveys related work.
+\Cref{sec:conclusion} concludes.

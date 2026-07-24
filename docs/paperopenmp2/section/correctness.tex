@@ -1,0 +1,64 @@
+\section{Correctness and Termination}\label{sec:correctness}
+
+\begin{theorem}[Correctness]\label{thm:correct}
+\Cref{alg:par} returns \textbf{true} if and only if the target $(\ell^\star,\phi)$
+is reachable in $\mathcal{A}$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+We show by induction on $k$ that after processing frontier level $k$, the
+set $\Passed$ contains a symbolic state $(\ell, Z)$ for every reachable
+(location, zone) pair at BFS depth $\leq k$, \emph{or} that pair is subsumed
+by one that is already in $\Passed$.
+
+\textit{Base case ($k=0$).}  The initial zone $Z_0$ is placed in $\Passed[\Init]$
+directly.
+
+\textit{Inductive step.}  Assume the invariant holds after level $k{-}1$.
+At level $k$, Phase~1 calls $\succfn$ on every $(\ell_i, Z_i) \in \Frontier_{k-1}$
+and collects all successors.  By the definition of $\succfn$ and the
+inductive hypothesis, every symbolic state reachable at depth $k$ is either
+already in $\Passed$ (from a shorter path) or appears as a candidate in one of
+the buffers.  Phase~2 processes all candidates: any that is not yet subsumed
+is added to $\Passed$ and placed in $\Frontier_k$.
+
+\textit{Soundness.}  If the algorithm returns \textbf{true} at line~7, then
+$(\ell',Z')$ meets the target test, so the target is reachable.
+
+\textit{Completeness.}  If the target is reachable, a witnessing symbolic
+state $(\ell^\star, Z^\star)$ with $Z^\star \cap \phi \neq \emptyset$
+eventually appears as a candidate in Phase~1.  Either it is added to
+$\Frontier$ (and the target check fires) or it is subsumed by a zone $Z_p
+\supseteq Z^\star$.  Since $Z^\star \subseteq Z_p$ and $Z^\star \cap \phi
+\neq \emptyset$, we have $Z_p \cap \phi \neq \emptyset$ as well.  That zone
+was added earlier and will also trigger the target check when it is expanded.
+\qed
+\end{proof}
+
+\begin{theorem}[Termination]\label{thm:term}
+For any TA without diagonal constraints (or after diagonal-splitting),
+\cref{alg:par} terminates.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+LU$^+$ extrapolation on a diagonal-free TA produces a finite zone
+graph~\cite{Behrmann06}: the number of distinct zones at each location is
+bounded by the finite set of LU$^+$-equivalence classes.  Each state added to
+$\Passed$ is strictly new (not subsumed by any existing entry), so $|\Passed|$
+is bounded.  Each state is added to $\Frontier$ at most once (after that it is
+in $\Passed$ and any future duplicate is subsumed).  Hence the frontiers
+eventually exhaust all new states and $\Frontier = \emptyset$.
+\qed
+\end{proof}
+
+\begin{remark}[Verdict equivalence with \cref{alg:seq}]
+\Cref{alg:par} and \cref{alg:seq} produce the same Boolean verdict on every
+input.  The \emph{exact contents} of $\Passed$ may differ in the rare case
+where two candidates at the same BFS level are in a subsumption relationship:
+the sequential algorithm's verdict depends on which one it dequeues first,
+while the parallel algorithm's verdict depends on the buffer-iteration order.
+Either way, the zone that ``wins'' (the larger one, if one subsumes the other;
+or both, if neither does) is added to $\Passed$, and all further exploration
+proceeds from that zone.  The set of reachable symbolic states and the
+reachability verdict are identical in both cases.
+\end{remark}

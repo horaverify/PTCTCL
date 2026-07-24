@@ -23,4 +23,8 @@ bool reachable(const TimedAutomaton& ta, int target_loc,
                const std::vector<Constraint>& target = {}, ReachStats* stats = nullptr,
                Backend backend = Backend::Seq);
 
+// Set the OpenMP dynamic-schedule chunk size (default 8).
+// Larger values reduce scheduling overhead but coarsen early-exit granularity.
+void set_omp_chunk(int chunk);
+
 }  // namespace ptctlmc

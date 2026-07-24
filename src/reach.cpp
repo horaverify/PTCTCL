@@ -1,5 +1,6 @@
 #include "ptctlmc/reach.hpp"
 
+#include <atomic>
 #include <cstdlib>
 #include <deque>
 #include <stdexcept>
@@ -15,6 +16,10 @@
 #endif
 
 namespace ptctlmc {
+
+static int g_omp_chunk = 8;  // tunable via set_omp_chunk() / --omp-chunk CLI flag
+void set_omp_chunk(int chunk) { if (chunk > 0) g_omp_chunk = chunk; }
+
 namespace {
 
 bool apply_cs(Dbm& z, const std::vector<Constraint>& cs) {
@@ -319,16 +324,36 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
   const int nthreads = omp_get_max_threads();
   std::vector<std::pair<int, Dbm>> frontier;
   frontier.emplace_back(W.initial, z0);
+  // hit: set by whichever thread first finds the target.
+  // With OpenMP 4.0 cancel, other threads stop at their next iteration
+  // boundary (cancellation point) — independent of chunk size.
+  std::atomic<bool> hit{false};
   while (!frontier.empty()) {
     std::vector<std::vector<std::pair<int, Dbm>>> tls(nthreads);
-#pragma omp parallel
+#pragma omp parallel shared(hit)
     {
       const int tid = omp_get_thread_num();
       auto& buf = tls[tid];
-#pragma omp for schedule(dynamic, 8)
-      for (long i = 0; i < static_cast<long>(frontier.size()); ++i)
+#pragma omp for schedule(dynamic, g_omp_chunk)
+      for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
+        // Cancellation point: every thread checks here at each new iteration.
+        // If any thread executed `omp cancel for` below, all others stop here
+        // immediately — no need to finish the current chunk first.
+#pragma omp cancellation point for
+        const std::size_t prev = buf.size();
         successors(W, frontier[i].first, frontier[i].second, buf, ex);
+        for (std::size_t j = prev; j < buf.size(); ++j) {
+          if (is_target(buf[j].first, buf[j].second)) {
+            hit.store(true, std::memory_order_relaxed);
+            // Signal all threads to stop at their next cancellation point.
+#pragma omp cancel for
+            break;
+          }
+        }
+      }
     }
+    // Early exit: target was found during parallel expansion.
+    if (hit.load()) return true;
     std::vector<std::pair<int, Dbm>> next;
     for (auto& buf : tls)
       for (auto& s : buf) {

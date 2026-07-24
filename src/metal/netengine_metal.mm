@@ -229,6 +229,118 @@ inline bool d_try_union(thread int* a, thread const int* b, int dim) {
   return true;
 }
 
+// ---- gpusplit: cooperative merge primitives ---------------------------------------------
+// One SIMD-group (32 lanes) processes ONE bucket's antichain: the O(cur^2) subsumption /
+// convex-union loop is split across the lanes, and the current new zone `zn` lives in
+// threadgroup memory shared by all lanes. These helpers are address-space-GENERIC (templated
+// on the pointer type) so a threadgroup `zn` can be compared against a per-lane private `zw`
+// without copying either into the other's space. Semantics are byte-identical to the
+// per-thread d_* ops above; only the address spaces differ.
+
+// Strided view of one zone: entry e at base[e*stride]. stride=1 => AoS (base=W+i*d2), stride=cap
+// => SoA (base=W+i). Presenting it via operator[] lets the templated ops read either layout
+// unchanged; in SoA, 32 lanes reading the same entry of consecutive zones hit consecutive
+// addresses (coalesced).
+struct SoaZone {
+  device const int* base;
+  int stride;
+  int operator[](int e) const { return base[e * stride]; }
+};
+
+template <typename PZ, typename PZP>
+inline bool g_alu_le(PZ Z, PZP Zp, int dim, device const int* L, device const int* U) {
+  // Border (row-0) pre-filter: the y=0 witness of the full test, evaluated in O(dim) over just
+  // the reference rows Z[0][*], Zp[0][*] (contiguous, coalescing-friendly). Zp tighter than Z on
+  // some clock's lower bound is a real witness => not subsumed. Catches the common non-subsumed
+  // case before the O(dim^2) scan; if none found we fall through to the exact test unchanged.
+  if (L[0] != kAluNegInf) {
+    for (int x = 1; x < dim; ++x) {
+      if (U[x] == kAluNegInf) continue;
+      if (Z[0*dim+x] < r_le(-U[x])) continue;
+      if (Zp[0*dim+x] < Z[0*dim+x] && r_add(Zp[0*dim+x], r_lt(-L[0])) < Z[0*dim+x]) return false;
+    }
+  }
+  for (int x = 0; x < dim; ++x) {
+    if (U[x] == kAluNegInf) continue;
+    if (Z[0*dim+x] < r_le(-U[x])) continue;
+    for (int y = 1; y < dim; ++y) {          // y=0 already covered by the border pre-filter
+      if (x == y) continue;
+      if (L[y] == kAluNegInf) continue;
+      if (Zp[y*dim+x] < Z[y*dim+x] && r_add(Zp[y*dim+x], r_lt(-L[y])) < Z[0*dim+x]) return false;
+    }
+  }
+  return true;
+}
+template <typename PA, typename PB>
+inline bool g_includes(PA a, PB b, int dim) {
+  for (int i = 0; i < dim*dim; ++i) if (b[i] > a[i]) return false;
+  return true;
+}
+// Facet test of the convex-union check for one operand `z` (its facets) against `other`.
+// `H` (elementwise max hull) and scratch `R` are private. Returns false if crossing a strict
+// facet of z escapes `other` (=> union not convex).
+template <typename PZ, typename POTHER>
+inline bool g_facets_ok(PZ z, POTHER other, thread const int* H, int dim) {
+  int R[MAXDIM*MAXDIM];
+  for (int i = 0; i < dim; ++i)
+    for (int j = 0; j < dim; ++j) {
+      if (i == j || z[i*dim+j] >= H[i*dim+j]) continue;
+      for (int k = 0; k < dim*dim; ++k) R[k] = H[k];
+      int v = r_bound(z[i*dim+j]);
+      int neg = r_strict(z[i*dim+j]) ? r_le(-v) : r_lt(-v);
+      if (neg < R[j*dim+i]) { R[j*dim+i] = neg; d_close(R, dim); }
+      if (d_empty(R, dim)) continue;
+      if (!g_includes(other, R, dim)) return false;
+    }
+  return true;
+}
+// Cheap SOUND rejection before the O(dim^3) convex-union test: if the two zones' projections
+// onto ANY single clock axis have a strict gap (one's upper bound is below the other's lower
+// bound), their union has a hole on that axis and cannot be convex. Uses only the 2*dim border
+// entries (row 0 = lower bounds, col 0 = upper bounds) -- no dim^2 scratch, no close. A missed
+// non-convexity (diagonal, not axial) just falls through to the full test, so this is a pure
+// necessary condition -- it never wrongly merges (and convex-union is only a compression step
+// anyway, so even a false reject would cost compactness, never correctness).
+template <typename PA, typename PB>
+inline bool g_union_axisgap(PA a, PB b, int dim) {
+  for (int i = 1; i < dim; ++i) {
+    // clock i:  upper = r_bound(z[i*dim+0]) (unless kInf);  lower value = -r_bound(z[0*dim+i]).
+    if (b[i*dim+0] < kInf && a[0*dim+i] < kInf &&
+        -r_bound(a[0*dim+i]) > r_bound(b[i*dim+0])) return true;   // a's lower above b's upper -> gap
+    if (a[i*dim+0] < kInf && b[0*dim+i] < kInf &&
+        -r_bound(b[0*dim+i]) > r_bound(a[i*dim+0])) return true;   // b's lower above a's upper -> gap
+  }
+  return false;
+}
+// Is a ∪ b exactly convex?  PURE TEST (does not mutate a) so lanes can test different
+// candidates in parallel; the winning union is applied cooperatively afterwards.
+template <typename PA, typename PB>
+inline bool g_union_convex(PA a, PB b, int dim) {
+  if (g_union_axisgap(a, b, dim)) return false;      // cheap border pre-filter
+  int H[MAXDIM*MAXDIM];
+  for (int k = 0; k < dim*dim; ++k) H[k] = a[k] > b[k] ? a[k] : b[k];
+  return g_facets_ok(a, b, H, dim) && g_facets_ok(b, a, H, dim);
+}
+// Cooperative all-pairs-shortest-path close of a threadgroup zone: lane L owns row L (dim<=24
+// <32, so <=1 row/lane). The k-loop is sequential (row k must be final before it relaxes the
+// others); row k is invariant during step k (d[k][k]=0), so lane k's writes are no-ops and no
+// intra-step race exists. A barrier per step publishes each row before the next reads it.
+inline void sg_close(threadgroup int* d, int dim, uint lane) {
+  const bool act = (int)lane < dim;
+  for (int k = 0; k < dim; ++k) {
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    if (act) {
+      int ik = d[lane*dim + k];
+      if (ik < kInf)
+        for (int j = 0; j < dim; ++j) {
+          int s = r_add(ik, d[k*dim + j]);
+          if (s < d[lane*dim + j]) d[lane*dim + j] = s;
+        }
+    }
+  }
+  simdgroup_barrier(mem_flags::mem_threadgroup);
+}
+
 // ---- SIMD-group cooperative DBM ops (zone in THREADGROUP memory) -------------
 // The per-thread kernel below gives each thread its own `int z[MAXDIM*MAXDIM]`.
 // Because it is indexed dynamically (z[i*dim+j]), the compiler cannot keep it in
@@ -303,7 +415,7 @@ inline bool sg_apply_inv(threadgroup int* d, threadgroup int* rowb, int dim, int
 }
 
 struct Params { int dim, nprocs, nintvars, nclocks, nwork; };
-struct MergeParams { int dim, nb, has_diag; };
+struct MergeParams { int dim, nb, has_diag, union_on, soa; };
 
 // One thread per successor "recipe": a participant list of (proc, global-edge) — 1 for a
 // location step, 2 for a binary handshake, 1+K for a broadcast. Int guards, committed
@@ -713,6 +825,136 @@ kernel void net_merge(
   }
   out_count[b] = cur;
 }
+
+// gpusplit: cooperative merge — ONE SIMD-GROUP (32 lanes) per bucket. Byte-identical antichain
+// semantics to net_merge, but the per-bucket O(cur^2) subsumption/convex-union loop (the loop
+// that a single thread grinds serially, and whose per-bucket cost varies wildly -> SIMD
+// divergence in net_merge) is split across the 32 lanes, and the DBM close inside a convex
+// union is done cooperatively. Wins exactly where net_merge is starved/divergent: few or
+// uneven buckets with long antichains (e.g. philosophers). SG_PER_TG groups share a
+// threadgroup; each group's current new zone `zn` lives in threadgroup slot [sgid].
+kernel void net_merge_sg(
+    device const int* work_off   [[buffer(0)]],
+    device const int* exist_cnt  [[buffer(1)]],
+    device const int* new_off    [[buffer(2)]],
+    device const int* new_cnt    [[buffer(3)]],
+    device const int* oz         [[buffer(4)]],
+    device const int* new_idx    [[buffer(5)]],
+    device const int* Lb         [[buffer(6)]],
+    device const int* Ub         [[buffer(7)]],
+    device int*       work       [[buffer(8)]],
+    device int*       work_isnew [[buffer(9)]],
+    device int*       out_count  [[buffer(10)]],
+    constant MergeParams& P      [[buffer(11)]],
+    device atomic_int* nextb     [[buffer(12)]],   // work-stealing bucket counter
+    threadgroup int*  znbuf      [[threadgroup(0)]],   // SG_PER_TG * d2 ints
+    uint tgpos [[threadgroup_position_in_grid]],
+    uint sgid  [[simdgroup_index_in_threadgroup]],
+    uint lane  [[thread_index_in_simdgroup]])
+{
+  const int dim = P.dim, d2 = dim * dim, has_diag = P.has_diag;
+  threadgroup int* zn = znbuf + int(sgid) * d2;   // this SIMD-group's zn scratch
+
+  // Persistent-thread WORK-STEALING: rather than a static tgpos->bucket map (which idles a
+  // SIMD-group the moment its bucket finishes while its warp-mates grind a big one), each
+  // SIMD-group repeatedly grabs the NEXT unclaimed bucket from a global atomic counter. This is
+  // GPU-side dynamic scheduling — the same mechanism that lets 12 CPU cores beat the naive GPU
+  // merge — so no lane idles on load imbalance. Lane 0 does the atomic; the index is broadcast.
+  for (;;) {
+    int b;
+    if (lane == 0) b = atomic_fetch_add_explicit(nextb, 1, memory_order_relaxed);
+    b = simd_broadcast(b, 0);
+    if (b >= P.nb) break;
+
+    device int* W  = work + (ulong)work_off[b] * d2;   // SoA pool: zone i entry e at W[e*cap + i]
+    device int* WI = work_isnew + work_off[b];
+    device const int* L = Lb + b * dim;
+    device const int* U = Ub + b * dim;
+    const int cap = exist_cnt[b] + new_cnt[b];         // bucket zone-capacity = SoA stride
+    const int zstr = P.soa ? cap : 1;                  // per-zone entry stride (SoA vs AoS)
+    int cur = exist_cnt[b];
+
+  for (int t = 0; t < new_cnt[b]; ++t) {
+    const int widx = new_idx[new_off[b] + t];
+    for (int k = int(lane); k < d2; k += 32) zn[k] = oz[(ulong)widx * d2 + k];
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Phase A: is zn subsumed by an existing zone? Lanes split the antichain; simd_any reduces.
+    // Read W[i] DIRECTLY from device (read-only test) — no private-memory spill of the operand.
+    bool sub = false;
+    for (int i = int(lane); i < cur; i += 32) {
+      SoaZone zw{W + (P.soa ? (ulong)i : (ulong)i * d2), zstr};
+      // zn subsumed by existing zw?  diag: zw ⊇ zn (d_includes(zw,zn)); non-diag: aLU(zn≼zw).
+      if (has_diag ? g_includes(zw, zn, dim) : g_alu_le(zn, zw, dim, L, U)) sub = true;
+    }
+    if (simd_any(sub)) { simdgroup_barrier(mem_flags::mem_threadgroup); continue; }
+
+    // Phase B: drop existing zones subsumed by zn, compacting W in place. Chunked
+    // stream-compaction: each lane tests one zone, ballot+popcount gives its packed slot.
+    int w = 0;
+    for (int base = 0; base < cur; base += 32) {
+      const int i = base + int(lane);
+      int zw[MAXDIM * MAXDIM];
+      bool keep = false;
+      int isnew_i = 0;
+      if (i < cur) {
+        for (int k = 0; k < d2; ++k) zw[k] = W[P.soa ? (k*cap + i) : (i*d2 + k)];
+        const bool kill = has_diag ? g_includes(zn, (thread const int*)zw, dim)
+                                   : g_alu_le((thread const int*)zw, zn, dim, L, U);
+        keep = !kill;
+        isnew_i = WI[i];
+      }
+      const uint kb = (uint)(simd_vote::vote_t)simd_ballot(keep);
+      const int dst = w + popcount(kb & ((1u << lane) - 1u));
+      simdgroup_barrier(mem_flags::mem_threadgroup);   // all reads of W done before any write
+      if (keep) { for (int k = 0; k < d2; ++k) W[P.soa ? (k*cap + dst) : (dst*d2 + k)] = zw[k]; WI[dst] = isnew_i; }
+      w += popcount(kb);
+      simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    cur = w;
+
+    // Phase C: convex-union absorb. Lanes test different candidates in parallel (pure test);
+    // the first that unions is applied cooperatively (hull + cooperative close), the absorbed
+    // zone is shifted out, and we repeat until no candidate unions. Skippable (union_on): it is
+    // a compression step only, so skipping it never affects correctness — just stores more zones.
+    while (P.union_on) {
+      // Bounded convex-union: only attempt to merge zn against the last `union_on` antichain
+      // members (aligned down to a warp). Caps union cost at O(K*dim^3) while still catching the
+      // common case (temporally-adjacent zones merge). union_on is the cap; a huge value = full.
+      int cbase = (cur > P.union_on ? cur - P.union_on : 0) & ~31;
+      int winner = -1;
+      for (int base = cbase; base < cur && winner < 0; base += 32) {
+        const int kk = base + int(lane);
+        bool ok = false;
+        if (kk < cur)   // read-only convex-union test straight from device (AoS/SoA strided view)
+          ok = g_union_convex(zn, SoaZone{W + (P.soa ? (ulong)kk : (ulong)kk * d2), zstr}, dim);
+        const uint vb = (uint)(simd_vote::vote_t)simd_ballot(ok);
+        if (vb != 0u) winner = base + int(ctz(vb));
+      }
+      if (winner < 0) break;
+      for (int k = int(lane); k < d2; k += 32) {       // zn := elementwise-max hull
+        const int wv = W[P.soa ? (k*cap + winner) : (winner*d2 + k)];
+        if (wv > zn[k]) zn[k] = wv;
+      }
+      simdgroup_barrier(mem_flags::mem_threadgroup);
+      sg_close(zn, dim, lane);                          // re-canonicalise the hull cooperatively
+      for (int i = winner; i < cur - 1; ++i) {          // shift the absorbed zone out
+        for (int k = int(lane); k < d2; k += 32)
+          W[P.soa ? (k*cap + i) : (i*d2 + k)] = W[P.soa ? (k*cap + (i+1)) : ((i+1)*d2 + k)];
+        if (lane == 0) WI[i] = WI[i+1];
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+      }
+      --cur;
+    }
+
+    for (int k = int(lane); k < d2; k += 32) W[P.soa ? (k*cap + cur) : (cur*d2 + k)] = zn[k];   // append
+    if (lane == 0) WI[cur] = 1;
+    ++cur;
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+  }
+    if (lane == 0) out_count[b] = cur;
+  }  // work-stealing loop
+}
 )MSL";
 
 using netgpu::NetEncoding;  // shared network encoding (net_gpu_encode.hpp)
@@ -757,6 +999,15 @@ class NetGpuMetal : public NetGpuExpander {
     PTCTLMC_MTL_CHECK(fm != nil, "kernel 'net_merge' not found");
     pso_merge_ = [device_ newComputePipelineStateWithFunction:fm error:&err];
     PTCTLMC_MTL_CHECK(pso_merge_ != nil, "merge pipeline creation failed");
+    // gpusplit: SIMD-group-per-bucket cooperative work-stealing merge is now the DEFAULT GPU
+    // merge (PTCTLMC_NOGPUSPLIT falls back to the one-thread-per-bucket net_merge for A/B).
+    use_gpusplit_ = std::getenv("PTCTLMC_NOGPUSPLIT") == nullptr;
+    if (use_gpusplit_) {
+      id<MTLFunction> fmsg = [lib newFunctionWithName:@"net_merge_sg"];
+      PTCTLMC_MTL_CHECK(fmsg != nil, "kernel 'net_merge_sg' not found");
+      pso_merge_sg_ = [device_ newComputePipelineStateWithFunction:fmsg error:&err];
+      PTCTLMC_MTL_CHECK(pso_merge_sg_ != nil, "merge_sg pipeline creation failed");
+    }
     // Occupancy reflection (PTCTLMC_MTLOCC): maxTotalThreadsPerThreadgroup is the
     // compiler's verdict on register pressure -- if it is far below the device
     // maximum (1024), each thread is holding too much private state (here a whole
@@ -1014,16 +1265,44 @@ class NetGpuMetal : public NetGpuExpander {
       id<MTLBuffer> b_work = pb_work_, b_wi = pb_wi_;   // work in place; new zones via interned idx
       id<MTLBuffer> b_woff = ibuf(work_off), b_ec = ibuf(exist_cnt), b_ni = ibuf(new_idx),
                     b_noff = ibuf(new_off), b_nc = ibuf(new_cnt), b_L = Lbuf(L), b_U = Lbuf(U), b_oc = newi(nb);
-      MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0};
+      // Convex-union is OFF by default on the GPU merge: it is a compression-only step (like
+      // opaal/LTSmin, which omit it) that is expensive on the GPU and reduces zero states on
+      // most models, so skipping it is faster everywhere and stays correct. PTCTLMC_UNION=1
+      // re-enables it (fewer stored zones for union-compressible models like philosophers).
+      // union_on doubles as the bounded-union CAP: 0 = off (default), K = merge against last K,
+      // huge = full. PTCTLMC_UNIONCAP=K for the bounded experiment; PTCTLMC_UNION=1 = full.
+      int union_cap = 0;
+      if (const char* c = std::getenv("PTCTLMC_UNIONCAP")) union_cap = std::atoi(c);
+      else if (std::getenv("PTCTLMC_UNION")) union_cap = 1 << 20;
+      MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0, union_cap, soa_work_pool() ? 1 : 0};
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-      [enc setComputePipelineState:pso_merge_];
       id<MTLBuffer> bufs[11] = {b_woff, b_ec, b_noff, b_nc, pb_oz_, b_ni, b_L, b_U, b_work, b_wi, b_oc};
-      for (int i = 0; i < 11; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
-      [enc setBytes:&MP length:sizeof(MP) atIndex:11];
-      NSUInteger tg = pso_merge_.maxTotalThreadsPerThreadgroup;
-      if (tg > static_cast<NSUInteger>(nb)) tg = nb;
-      [enc dispatchThreads:MTLSizeMake(nb, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+      if (use_gpusplit_) {
+        // gpusplit: one SIMD-group (32 lanes) per bucket; SG_PER_TG groups per threadgroup.
+        // zn threadgroup scratch = SG_PER_TG * d2 ints (must match SG_PER_TG in the kernel).
+        constexpr NSUInteger kSg = 8, kTg = kSg * 32;
+        // Work-stealing bucket counter (device atomic int), reset to 0 for this merge.
+        id<MTLBuffer> b_next = newi(1);
+        *static_cast<int*>(b_next.contents) = 0;
+        [enc setComputePipelineState:pso_merge_sg_];
+        for (int i = 0; i < 11; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
+        [enc setBytes:&MP length:sizeof(MP) atIndex:11];
+        [enc setBuffer:b_next offset:0 atIndex:12];
+        [enc setThreadgroupMemoryLength:kSg * static_cast<NSUInteger>(dim) * dim * sizeof(int) atIndex:0];
+        // FIXED GPU-saturating grid: SIMD-groups steal buckets from the atomic counter, so the
+        // grid size decouples from nb. Cap so groups are long-lived (steal many) yet saturate.
+        NSUInteger wantGroups = (static_cast<NSUInteger>(nb) + kSg - 1) / kSg;
+        const NSUInteger groups = wantGroups < 128 ? wantGroups : 128;   // 128*8 = 1024 SIMD-groups
+        [enc dispatchThreadgroups:MTLSizeMake(groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(kTg, 1, 1)];
+      } else {
+        [enc setComputePipelineState:pso_merge_];
+        for (int i = 0; i < 11; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
+        [enc setBytes:&MP length:sizeof(MP) atIndex:11];
+        NSUInteger tg = pso_merge_.maxTotalThreadsPerThreadgroup;
+        if (tg > static_cast<NSUInteger>(nb)) tg = nb;
+        [enc dispatchThreads:MTLSizeMake(nb, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+      }
       [enc endEncoding];
       [cb commit];
       [cb waitUntilCompleted];
@@ -1037,7 +1316,7 @@ class NetGpuMetal : public NetGpuExpander {
   }
 
  private:
-  struct MergeParamsGPU { std::int32_t dim, nb, has_diag; };
+  struct MergeParamsGPU { std::int32_t dim, nb, has_diag, union_on, soa; };
   id<MTLBuffer> Lbuf(const std::vector<std::int32_t>& v) {
     const void* p = v.empty() ? (const void*)&kZeroPad_ : (const void*)v.data();
     std::size_t bytes = v.empty() ? sizeof(std::int32_t) : v.size() * sizeof(std::int32_t);
@@ -1099,6 +1378,8 @@ class NetGpuMetal : public NetGpuExpander {
   id<MTLCommandQueue> queue_ = nil;
   id<MTLComputePipelineState> pso_ = nil;
   id<MTLComputePipelineState> pso_merge_ = nil;
+  id<MTLComputePipelineState> pso_merge_sg_ = nil;   // gpusplit cooperative merge
+  bool use_gpusplit_ = false;
   id<MTLComputePipelineState> pso_sg_ = nil;   // cooperative expand (PTCTLMC_MTLSG)
   bool use_sg_ = false;
   bool use_tg_ = false;
@@ -1120,6 +1401,9 @@ class NetGpuMetal : public NetGpuExpander {
       if (b != nil) t += static_cast<std::size_t>(b.length);
     return t;
   }
+  // net_merge_sg can read/write the work pool transposed (SoA) for coalesced cross-lane loads.
+  // Opt-in via PTCTLMC_SOA (default AoS — SoA lost in back-to-back tests, see kernel notes).
+  bool soa_work_pool() const override { return use_gpusplit_ && std::getenv("PTCTLMC_SOA") != nullptr; }
 
  private:
 };
@@ -1136,6 +1420,9 @@ std::unique_ptr<NetGpuExpander> make_net_gpu_metal(const Network& net,
   if (MTLCreateSystemDefaultDevice() == nil) return nullptr;
   try {
     return std::make_unique<NetGpuMetal>(net, encode(net, qmask));
+  } catch (const std::exception& e) {
+    if (std::getenv("PTCTLMC_MTLDEBUG")) std::fprintf(stderr, "[mtldebug] %s\n", e.what());
+    return nullptr;  // any Metal failure -> CPU fallback
   } catch (...) {
     return nullptr;  // any Metal failure -> CPU fallback
   }
