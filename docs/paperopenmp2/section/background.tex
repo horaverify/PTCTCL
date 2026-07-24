@@ -1,0 +1,89 @@
+\section{UPPAAL's Sequential Algorithm}\label{sec:background}
+
+We recall the sequential zone-graph exploration as implemented in UPPAAL and
+in the sequential path of \tool{}.  This section is deliberately concrete: our
+goal is to exhibit the exact data-structure accesses that force serialisation,
+so the reader can see immediately what the parallel approach changes.
+
+\subsection{Symbolic states and zones}
+
+A \emph{symbolic state} of a timed automaton with clock set
+$\clocks = \{x_1,\ldots,x_n\}$ is a pair $(\ell, Z)$ where $\ell \in \Loc$
+is a control location and $Z$ is a \emph{zone}: a convex polyhedron over
+$\mathbb{R}_{\geq 0}^n$ defined by constraints $x_i - x_j \leq b_{ij}$.
+Zones are stored as Difference Bound Matrices~\cite{Dill89}: an
+$(n{+}1)\times(n{+}1)$ matrix over $\mathbb{Z}\cup\{+\infty\}$, kept in
+canonical (shortest-path-closed) form so that inclusion and intersection run
+in $O(n^2)$.
+
+The successor function $\succfn(\ell, Z)$ maps one symbolic state to a
+set of symbolic states.  For each edge $e = (\ell, g, R, \ell')$ leaving
+$\ell$ it:
+\begin{enumerate}
+  \item intersects $Z$ with the guard $g$;
+  \item resets the clocks in $R$ to zero;
+  \item intersects with the target invariant $\Inv(\ell')$;
+  \item applies time elapse (\textsc{delay}) if $\ell'$ is neither urgent nor
+        committed;
+  \item applies LU$^+$ extrapolation $\extraLU(Z, L, U)$ to widen the zone
+        and guarantee termination~\cite{Behrmann06};
+  \item discards the result if it is empty.
+\end{enumerate}
+Each of these steps touches only the local DBM and the (globally read-only)
+automaton structure.  The passed list is \emph{never consulted}.
+
+\subsection{The sequential exploration loop}
+
+\begin{algorithm}[t]
+\caption{Sequential zone-graph BFS (UPPAAL-style)}\label{alg:seq}
+\begin{algorithmic}[1]
+\Require TA $\mathcal{A}$,\ target $(\ell^\star, \phi)$
+\State $Z_0 \leftarrow \mathit{init}(\mathcal{A})$;\enspace
+       $\Passed[\Init] \leftarrow \{Z_0\}$;\enspace
+       $\Wait \leftarrow \langle (\Init, Z_0) \rangle$
+\While{$\Wait \neq \emptyset$}
+  \State $(\ell, Z) \leftarrow \Wait.\mathbf{pop}()$
+  \ForAll{$(\ell', Z') \in \succfn(\ell, Z)$}
+    \If{$\mathit{isTarget}(\ell', Z')$} \Return \textbf{true} \EndIf
+    \If{$\exists Z_p \in \Passed[\ell'] : Z' \subseteq Z_p$}
+      \textbf{continue}
+    \EndIf
+    \State $\Passed[\ell'] \mathrel{+}= Z'$;\quad
+           $\Wait.\mathbf{push}(\ell', Z')$
+                                              \Comment{\textit{shared writes}}
+  \EndFor
+\EndWhile
+\Return \textbf{false}
+\end{algorithmic}
+\end{algorithm}
+
+\Cref{alg:seq} is the exact sequential algorithm (see \cref{fig:seq-loop} for a
+data-flow view).  Three operations touch shared mutable state:
+\begin{itemize}
+  \item \textbf{Pop} from $\Wait$ (line~2): one state per iteration.
+  \item \textbf{Read} from $\Passed[\ell']$ (line~4): the subsumption check.
+  \item \textbf{Write} to $\Passed[\ell']$ and $\Wait$ (line~6): only when a
+        state is genuinely new.
+\end{itemize}
+Because line~4 reads the same data that line~6 writes, no two iterations
+can overlap: iteration $i+1$ might see a zone that iteration $i$ is about to
+write.  This \emph{read-after-write dependency between consecutive iterations}
+is the sole source of serialisation.
+
+\subsection{What LU\texorpdfstring{$^+$}{+} extrapolation guarantees}
+
+The LU$^+$ operator widens each zone so that clock values above the maximum
+upper-bound constant $U_i$ are treated as ``large'' and values below
+$-L_i$ are treated as ``small''.  Two important consequences follow:
+\begin{itemize}
+  \item \textbf{Finite quotient:} the number of distinct extrapolated zones at
+        any location is bounded by a constant that depends only on the
+        automaton's clock constants, not on the depth of exploration.
+  \item \textbf{Small passed lists:} $|\Passed[\ell]|$ is therefore bounded
+        above by this constant.  In practice it is rarely more than a few
+        hundred entries even for large models.
+\end{itemize}
+The second point is crucial for the efficiency of our sequential merge phase:
+the subsumption check for one candidate state costs
+$O(n^2 \cdot |\Passed[\ell]|)$, which is $O(n^2)$ up to a model-dependent
+constant.

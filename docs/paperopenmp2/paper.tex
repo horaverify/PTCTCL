@@ -1,0 +1,98 @@
+\documentclass[runningheads]{llncs}
+
+\makeatletter
+\@ifclassloaded{llncs}{}{%
+  \PassOptionsToClass{a4paper,11pt}{article}%
+  \LoadClass{article}%
+  \usepackage[a4paper,margin=2.4cm]{geometry}}
+\makeatother
+
+\input{preamble}
+
+\title{Parallel Zone-Graph Reachability for Timed Automata:\\
+  A Level-Synchronous Approach via OpenMP}
+\titlerunning{Parallel TA Reachability via Level-Sync BFS}
+
+\author{PTCTLMC Project}
+\authorrunning{PTCTLMC Project}
+\institute{Anonymous Submission}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a shared-memory parallel algorithm for symbolic reachability in
+timed automata, implemented as the OpenMP backend of \tool{}.  The core
+contribution is a single observation: the successor function of the zone
+graph---which applies guards, resets, invariants, time-elapse, and
+LU$^+$~extrapolation---is a \emph{pure function} that neither reads nor writes
+the passed list.  This purity makes all expansion calls within a BFS level
+embarrassingly parallel.  We exploit it through a \emph{level-synchronous}
+design: all states in the current BFS frontier are expanded by $T$ OpenMP
+threads writing to private buffers; a single sequential merge phase then
+performs subsumption filtering and assembles the next frontier.  No lock is
+ever acquired during expansion.  We argue correctness, termination, and why
+the sequential merge phase is not a bottleneck in practice.
+\end{abstract}
+
+\keywords{Timed automata \and Zone graph \and Parallel BFS \and
+          Pure function \and OpenMP \and Reachability}
+
+% figures live in figs/; they are floated by LaTeX to the right place
+\input{figs/tikz_figures}
+
+\input{section/introduction}
+\input{section/background}
+\input{section/approach}
+\input{section/correctness}
+\input{section/implementation}
+\input{section/related}
+\input{section/conclusion}
+
+\begin{thebibliography}{10}
+
+\bibitem{AlurDill94}
+R.~Alur and D.~Dill.
+\newblock A theory of timed automata.
+\newblock {\em Theoretical Computer Science}, 126(2):183--235, 1994.
+
+\bibitem{Dill89}
+D.~L. Dill.
+\newblock Timing assumptions and verification of finite-state concurrent
+  systems.
+\newblock In {\em CAV}, LNCS 407, pp.~197--212. Springer, 1989.
+
+\bibitem{Behrmann06}
+G.~Behrmann, P.~Bouyer, K.~G. Larsen, and R.~Pel{\'a}nek.
+\newblock Lower and upper bounds in zone-based abstractions of timed automata.
+\newblock {\em STTT}, 8(3):204--215, 2006.
+
+\bibitem{Larsen97}
+K.~G. Larsen, P.~Pettersson, and W.~Yi.
+\newblock \textsc{UPPAAL} in a nutshell.
+\newblock {\em STTT}, 1(1--2):134--152, 1997.
+
+\bibitem{Stern01}
+U.~Stern and D.~Dill.
+\newblock Parallelizing the Mur$\varphi$ verifier.
+\newblock {\em Formal Methods in System Design}, 18(2):117--129, 2001.
+
+\bibitem{Kant15}
+G.~Kant, A.~Laarman, J.~Meijer, J.~van de Pol, S.~Blom, and T.~van Dijk.
+\newblock \textsc{LTSmin}: High-performance language-independent model checking.
+\newblock In {\em TACAS}, LNCS 9035, pp.~692--707. Springer, 2015.
+
+\bibitem{Barnat12}
+J.~Barnat et al.
+\newblock \textsc{DiVinE}~3.0 -- an explicit-state model checker for
+  multithreaded C \& C++ programs.
+\newblock In {\em CAV}, LNCS 7358, pp.~863--868. Springer, 2012.
+
+\bibitem{Merrill12}
+D.~Merrill, M.~Garland, and A.~Grimshaw.
+\newblock Scalable GPU graph traversal.
+\newblock In {\em PPoPP}, pp.~117--128. ACM, 2012.
+
+\end{thebibliography}
+
+\end{document}

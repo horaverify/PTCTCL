@@ -1,0 +1,31 @@
+\section{Conclusion}\label{sec:conclusion}
+
+We have presented a level-synchronous parallel algorithm for timed-automata
+reachability.  The key insight is that UPPAAL's sequential bottleneck is an
+artefact of interleaving pure successor computation with stateful passed-list
+updates.  Separating them into a parallel expand phase and a sequential merge
+phase removes the bottleneck without sacrificing the subsumption-based pruning
+that keeps the zone graph small.
+
+The design has three practical virtues.  First, it requires no concurrent
+data structures: the only shared state during Phase~1 is the read-only
+frontier array and the read-only automaton.  Second, it is correct by a
+simple purity argument: $\succfn$ neither reads nor writes the passed list,
+so concurrent calls are safe.  Third, the sequential merge is fast in
+practice because LU$^+$ extrapolation bounds the passed-list size to a small
+constant.
+
+\textbf{Limitations and future work.}
+\begin{itemize}
+  \item \emph{Frontier imbalance.}  If $\Frontier_k$ is small (early levels,
+    or near the end of exploration), Phase~1 cannot saturate $T$ threads.
+    A \emph{work-stealing} strategy that mixes levels could mitigate this.
+  \item \emph{Concurrent merge.}  For very large frontiers the sequential
+    merge can become a bottleneck.  A concurrent passed list---using per-location
+    reader-writer locks or a lock-free zone trie---would allow Phase~2 to
+    scale as well.
+  \item \emph{CTL model checking.}  The $\mathsf{E}\langle\rangle$ (reachability)
+    operator is handled here.  Extending the parallel frontier approach to the
+    full CTL fixed-point computation requires lifting it to the alternating
+    reachability that underlies $\mathsf{A}[\,]$, $\mathsf{E}[\,U\,]$, etc.
+\end{itemize}

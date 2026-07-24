@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "ptctlmc/fed.hpp"
+#include "ptctlmc/mindbm.hpp"   // minimal-graph packed zone storage (UDBM mingraph port)
 #include "ptctlmc/net_gpu.hpp"
 
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -59,71 +60,207 @@ struct SymState {
 // intern is a lock-free hit. Low-sharing models (fischer, ~80% distinct) simply
 // intern more zones; correctness is unaffected -- two byte-identical canonical
 // DBMs are the same zone, and the merge is unchanged.
-struct ZoneKey {
-  const raw_t* p;
-  int n;
-  bool operator==(const ZoneKey& o) const {
-    return n == o.n && std::memcmp(p, o.p, static_cast<std::size_t>(n) * sizeof(raw_t)) == 0;
-  }
-};
-struct ZoneKeyHash {
-  std::size_t operator()(const ZoneKey& k) const {
-    std::uint64_t h = 1469598103934665603ULL;
-    for (int i = 0; i < k.n; ++i) { h ^= static_cast<std::uint32_t>(k.p[i]); h *= 1099511628211ULL; }
-    return static_cast<std::size_t>(h);
-  }
-};
+// Distinct zones are stored as MINIMAL-GRAPH packed records (see mindbm.hpp): only the
+// non-redundant constraints, 16-bit bounds when they fit, ~144 B for a 21-clock zone vs 1764 B
+// dense. Dedup on the packed bytes is exact (packing is a deterministic function of the
+// canonical matrix), so byte-identical records are the same zone.
+//
+// The interner is engineered so its *bookkeeping* stays a small fraction of the zone bytes --
+// the node-based std::unordered_map it replaced cost as much as the zones themselves (and the
+// per-thread map caches DOUBLED that). Three structures instead:
+//   * a BUMP ARENA of slabs owns the packed bytes contiguously (no per-record vector object or
+//     malloc header/rounding -- ~40 B/zone saved),
+//   * a FLAT open-addressing table holds one int32 index per slot (0=empty); the KEY BYTES are
+//     recovered from the stored record on probe, so the table is ~5.7 B/zone, not ~56,
+//   * a small fixed per-thread DIRECT-MAPPED cache (bounded, ~0.5 MB/thread) absorbs repeat
+//     interns lock-free -- all a high-sharing model (viking: ~120 distinct zones) needs, and
+//     cheap for a low-sharing one (fischer) where no cache would help anyway.
+//
+// `get(idx)` UNPACKS on read into a per-thread dense scratch Dbm (the algebra needs a dense
+// matrix); stored bytes are immutable, so reads are lock-free. Every get() call site consumes
+// the zone before this thread's next get(), so one scratch per thread is safe.
 struct ZoneIntern {
-  // Index -> stored-Dbm pointer, in fixed-size CHUNKs allocated ON DEMAND. This
-  // makes the table grow ADAPTIVELY: a model with 120 distinct zones allocates a
-  // single 64 K-pointer chunk, not a multi-MB reserve, while a model with
-  // millions of distinct zones keeps growing (up to kChunks*kChunk entries). The
-  // chunk-pointer array itself is fixed and small, so reads stay lock-free: get()
-  // indexes chunks[idx>>bits][idx&mask], and each slot is published (with the
-  // chunk it lives in) under mtx before `n` is release-stored, so any reader
-  // holding an index < n (acquired through the stripe/phase locks) sees it.
+  // idx -> record pointer, in fixed CHUNKs allocated on demand (adaptive growth). Each slot is
+  // published under mtx before `n` is release-stored, so a reader holding idx < n sees it.
   static constexpr int kChunkBits = 16;
   static constexpr int kChunk = 1 << kChunkBits;        // 65536 zones/chunk
   static constexpr int kChunkMask = kChunk - 1;
   static constexpr int kChunks = 1 << 14;               // -> up to ~1.07e9 distinct zones
-  std::deque<Dbm> store;                                // owns the Dbm objects (stable addresses)
-  std::vector<const Dbm**> chunks;                      // chunks[c] = new const Dbm*[kChunk] (on demand)
-  std::unordered_map<ZoneKey, int, ZoneKeyHash> map;    // global dedup; keys point into `store`
-  std::vector<std::unordered_map<ZoneKey, int, ZoneKeyHash>> tcache;  // per-thread cache; keys into `store`
+  static constexpr std::size_t kSlabBytes = 1u << 22;   // 4 MB packed-record slabs
+  static constexpr int kCacheBits = 15;                 // 32768 lines/thread (~0.5 MB)
+  static constexpr std::uint32_t kCacheMask = (1u << kCacheBits) - 1;
+
+  struct CacheLine { std::uint64_t h; std::int32_t idx; };
+
+  std::deque<std::vector<std::uint8_t>> slabs;          // bump arena; slab data addresses are stable
+  std::uint8_t* bumpPtr = nullptr;                      // current slab cursor (mtx-guarded)
+  std::size_t bumpLeft = 0;
+  std::vector<const std::uint8_t**> chunks;             // chunks[c][.] -> packed-record bytes
+  std::vector<std::int32_t> htab;                       // open-addressing: 0=empty, else idx+1
+  std::uint64_t hmask;
+  std::size_t hcount = 0;
+  std::vector<std::vector<CacheLine>> tcache;           // [thread][line] direct-mapped
+  // Reclamation: dead records are recycled in place (no rebuild, no zidx remap). A freed
+  // record slot returns to a free-list keyed by its exact byte length (packed records take
+  // only a few distinct lengths per model, so reuse is near-total); a freed zidx returns to
+  // `freeIdx`. intern() reuses both before growing the arena, so slab memory is bounded by the
+  // PEAK LIVE working set and recycled internally -- RSS never depends on the OS reclaiming.
+  std::unordered_map<std::uint32_t, std::vector<std::uint8_t*>> freeRecs;
+  std::vector<int> freeIdx;
+  std::vector<std::int32_t> htabScratch;                // reused sweep buffer (avoids per-level realloc)
   std::mutex mtx;
   std::atomic<int> n{0};
-  int dim2;
+  int dim;                                              // clock dim (nclocks+1); all zones share it
 
-  ZoneIntern(int dim2_, int nthreads) : chunks(kChunks, nullptr),
-                                        tcache(nthreads > 0 ? nthreads : 1), dim2(dim2_) {}
+  ZoneIntern(int dim2_, int nthreads)
+      : chunks(kChunks, nullptr), htab(1u << 16, 0), hmask((1u << 16) - 1),
+        tcache(nthreads > 0 ? nthreads : 1) {
+    dim = 1; while (dim * dim < dim2_) ++dim;           // dim2_ = dim*dim
+    for (auto& tc : tcache) tc.assign(1u << kCacheBits, CacheLine{0, -1});
+  }
   ~ZoneIntern() { for (auto* c : chunks) delete[] c; }
 
-  const Dbm& get(int idx) const { return *chunks[idx >> kChunkBits][idx & kChunkMask]; }
+  static std::uint64_t hash_bytes(const std::uint8_t* p, std::size_t len) {
+    std::uint64_t h = 1469598103934665603ULL;
+    for (std::size_t i = 0; i < len; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
+    return h;
+  }
+  const std::uint8_t* record(int idx) const { return chunks[idx >> kChunkBits][idx & kChunkMask]; }
 
-  // Intern `z`, returning its distinct-zone index. `z` is not modified.
-  int intern(const Dbm& z, int tid) {
-    ZoneKey qk{z.data().data(), dim2};
-    auto& tc = tcache[tid];
-    auto tit = tc.find(qk);
-    if (tit != tc.end()) return tit->second;            // lock-free hit (all of viking after level 1)
-    std::lock_guard<std::mutex> lk(mtx);
-    int idx;
-    auto it = map.find(qk);
-    if (it != map.end()) {
-      idx = it->second;
-    } else {
-      idx = n.load(std::memory_order_relaxed);
-      const int c = idx >> kChunkBits;
-      if (c >= kChunks) throw std::runtime_error("zone intern table overflow (too many distinct zones)");
-      if (!chunks[c]) chunks[c] = new const Dbm*[kChunk];   // grow adaptively, one chunk at a time
-      store.push_back(z);                                    // the one deep copy per DISTINCT zone
-      const Dbm& d = store.back();
-      chunks[c][idx & kChunkMask] = &d;
-      map.emplace(ZoneKey{d.data().data(), dim2}, idx);
-      n.store(idx + 1, std::memory_order_release);
+  const Dbm& get(int idx) const {
+    const std::uint8_t* rec = record(idx);
+    static thread_local Dbm scratch;
+    if (scratch.dim() != dim) scratch = Dbm(dim - 1);
+    mindbm_unpack(rec, scratch.data().data());
+    return scratch;
+  }
+
+  // Probe the flat table for the packed bytes [q,q+qlen). Returns idx or -1; on miss, *slot is
+  // the empty table position to insert at. Caller holds mtx.
+  int find_locked(const std::uint8_t* q, std::size_t qlen, std::uint64_t h, std::size_t* slot) const {
+    std::size_t i = h & hmask;
+    while (htab[i]) {
+      const int idx = htab[i] - 1;
+      const std::uint8_t* rec = record(idx);
+      if (mindbm_size(rec) == qlen && std::memcmp(rec, q, qlen) == 0) return idx;
+      i = (i + 1) & hmask;
     }
-    tc.emplace(ZoneKey{get(idx).data().data(), dim2}, idx);  // cache with the STABLE stored bytes
+    *slot = i;
+    return -1;
+  }
+  void rehash_locked() {
+    const std::size_t ncap = (hmask + 1) * 2;
+    std::vector<std::int32_t> nt(ncap, 0);
+    const std::uint64_t nmask = ncap - 1;
+    const int cnt = n.load(std::memory_order_relaxed);
+    for (int idx = 0; idx < cnt; ++idx) {
+      const std::uint8_t* rec = record(idx);
+      std::size_t i = hash_bytes(rec, mindbm_size(rec)) & nmask;
+      while (nt[i]) i = (i + 1) & nmask;
+      nt[i] = idx + 1;
+    }
+    htab.swap(nt);
+    hmask = nmask;
+  }
+
+  // Intern `z` (canonical, non-empty), returning its distinct-zone index. `z` is not modified.
+  int intern(const Dbm& z, int tid) {
+    static thread_local std::vector<std::uint8_t> qbuf;
+    static thread_local std::vector<std::uint32_t> bits;
+    static thread_local std::vector<int> first, next;
+    if (static_cast<int>(first.size()) != dim) { first.resize(dim); next.resize(dim); }
+    bits.resize(mindbm_bits2words(static_cast<std::uint32_t>(dim) * dim));
+    qbuf.resize(mindbm_bound(dim));
+    const std::size_t qlen =
+        mindbm_pack(z.data().data(), dim, qbuf.data(), bits.data(), first.data(), next.data());
+    const std::uint64_t h = hash_bytes(qbuf.data(), qlen);
+
+    // Lock-free fast path: per-thread direct-mapped cache. Verify bytes (a 64-bit-hash clash
+    // returning the wrong index would be UNSOUND), so a hit is always correct.
+    CacheLine& cl = tcache[tid][static_cast<std::uint32_t>(h) & kCacheMask];
+    if (cl.idx >= 0 && cl.h == h) {
+      const std::uint8_t* rec = record(cl.idx);
+      if (mindbm_size(rec) == qlen && std::memcmp(rec, qbuf.data(), qlen) == 0) return cl.idx;
+    }
+
+    std::lock_guard<std::mutex> lk(mtx);
+    std::size_t slot = 0;
+    int idx = find_locked(qbuf.data(), qlen, h, &slot);
+    if (idx < 0) {
+      // A record slot: reuse a freed one of the exact length, else bump-allocate (qlen is a
+      // multiple of 4 -> stays 4-aligned).
+      std::uint8_t* rec;
+      auto fit = freeRecs.find(static_cast<std::uint32_t>(qlen));
+      if (fit != freeRecs.end() && !fit->second.empty()) {
+        rec = fit->second.back();
+        fit->second.pop_back();
+      } else {
+        if (bumpLeft < qlen) {
+          const std::size_t sz = qlen > kSlabBytes ? qlen : kSlabBytes;
+          slabs.emplace_back(sz);
+          bumpPtr = slabs.back().data();
+          bumpLeft = sz;
+        }
+        rec = bumpPtr;
+        bumpPtr += qlen; bumpLeft -= qlen;
+      }
+      std::memcpy(rec, qbuf.data(), qlen);
+      // A zidx: reuse a freed one, else grow.
+      if (!freeIdx.empty()) {
+        idx = freeIdx.back();
+        freeIdx.pop_back();
+      } else {
+        idx = n.load(std::memory_order_relaxed);
+        const int c = idx >> kChunkBits;
+        if (c >= kChunks) throw std::runtime_error("zone intern table overflow (too many distinct zones)");
+        if (!chunks[c]) chunks[c] = new const std::uint8_t*[kChunk];
+        n.store(idx + 1, std::memory_order_release);
+      }
+      chunks[idx >> kChunkBits][idx & kChunkMask] = rec;
+      htab[slot] = idx + 1;
+      ++hcount;
+      if (hcount * 10 >= (hmask + 1) * 7) rehash_locked();  // htab-only; record ptrs unaffected
+    }
+    cl = CacheLine{h, idx};   // fill this thread's cache (single-writer per tid)
     return idx;
+  }
+
+  // Reclaim interned records no longer referenced by any live passed-set node. `alive[idx]` is
+  // set for every zidx still referenced (a live arena node or the next frontier). Dead records
+  // return to the size-classed free-list and their zidx to `freeIdx` (recycled in place -- no
+  // rebuild, no remap); the htab is rebuilt from survivors. The per-thread caches are NOT
+  // cleared: a hit verifies bytes, so a stale hash->idx entry (idx since recycled to another
+  // zone) simply fails the byte-compare and falls through. STOP-THE-WORLD (all workers joined).
+  void sweep(const std::vector<std::uint8_t>& alive) {
+    htabScratch.assign(htab.size(), 0);      // reused buffer; htab.size() only grows
+    std::vector<std::int32_t>& nh = htabScratch;
+    const std::uint64_t nmask = htab.size() - 1;
+    std::size_t live = 0;
+    for (std::size_t s = 0; s < htab.size(); ++s) {
+      const std::int32_t v = htab[s];
+      if (!v) continue;
+      const int idx = v - 1;
+      std::uint8_t* rec = const_cast<std::uint8_t*>(record(idx));
+      if (idx < static_cast<int>(alive.size()) && alive[idx]) {
+        std::size_t i = hash_bytes(rec, mindbm_size(rec)) & nmask;
+        while (nh[i]) i = (i + 1) & nmask;
+        nh[i] = idx + 1;
+        ++live;
+      } else {
+        freeRecs[static_cast<std::uint32_t>(mindbm_size(rec))].push_back(rec);
+        freeIdx.push_back(idx);
+      }
+    }
+    htab.swap(nh);
+    hmask = nmask;
+    hcount = live;
+  }
+
+  // Byte accounting (PTCTLMC_STATS): where the interner's resident bytes go.
+  void account(std::size_t& packed, std::size_t& mapb, std::size_t& cacheb) const {
+    for (const auto& s : slabs) packed += s.capacity();
+    mapb += htab.capacity() * sizeof(std::int32_t);
+    for (const auto& tc : tcache) cacheb += tc.capacity() * sizeof(CacheLine);
   }
 };
 
@@ -158,6 +295,7 @@ struct NetPassed {
   std::vector<Slot> tab;
   std::uint64_t mask;
   std::size_t used = 0;   // distinct discrete states (occupied slots)
+  std::size_t lastCompact = 0;  // arena.size() at last compaction (geometric trigger)
   ZoneIntern* zi = nullptr;   // shared distinct-zone table (set before first add)
 
   NetPassed() : tab(1024, Slot{0, -1}), mask(1023) {}
@@ -316,6 +454,39 @@ struct NetPassed {
     }
   }
 
+  // Reclaim dead arena tombstones by rebuilding every chain live-only. Subsumption/merge mark
+  // nodes dead but never free them, so the arena accumulates the whole history (~two-thirds
+  // dead on fischer). This rebuild drops them, shrinking the arena to the live antichain.
+  //
+  // MUST be called in a between-levels phase with EXACTLY ONE thread per stripe (no other
+  // access to this NetPassed) -- it swaps `arena` and rewrites `tab[].head`/`next`. Amortized
+  // O(1) per node: the geometric guard only scans after the arena has doubled since the last
+  // compaction, and a rebuild resets that baseline. Every occupied slot keeps >=1 live node
+  // (both add() and merge_level revive `s`), so a chain never becomes empty and the
+  // open-addressing probe chain is preserved.
+  void maybe_compact() {
+    const std::size_t sz = arena.size();
+    if (sz < 8192 || sz < lastCompact * 2) return;
+    std::size_t dead = 0;
+    for (const auto& n : arena) if (n.dead) ++dead;
+    if (dead * 2 < sz) { lastCompact = sz; return; }   // not enough waste yet
+    std::deque<Node> na;
+    for (auto& s : tab) {
+      if (s.head == -1) continue;
+      int newhead = -1, tail = -1;
+      for (int i = s.head; i != -1; i = arena[i].next) {
+        if (arena[i].dead) continue;
+        const int ni = static_cast<int>(na.size());
+        na.push_back(Node{arena[i].zidx, arena[i].level, -1, false});
+        if (newhead == -1) newhead = ni; else na[tail].next = ni;
+        tail = ni;
+      }
+      s.head = newhead;   // invariant: >=1 live per occupied slot, so never -1
+    }
+    arena.swap(na);
+    lastCompact = arena.size();
+  }
+
   // Visit the live zones stamped `level` for discrete state dk. The callback
   // receives the stored zone; the caller reconstructs locs/ints from dk.
   template <class F>
@@ -331,6 +502,14 @@ struct NetPassed {
     disc += used;
     for (const auto& n : arena)
       if (!n.dead) ++zones;
+  }
+  // Byte accounting (PTCTLMC_STATS): arena nodes (incl. dead tombstones) + slot table.
+  void account(std::size_t& arenaNodes, std::size_t& deadNodes, std::size_t& arenaB,
+               std::size_t& tabB) const {
+    arenaNodes += arena.size();
+    for (const auto& n : arena) if (n.dead) ++deadNodes;
+    arenaB += arena.size() * sizeof(Node);
+    tabB += tab.capacity() * sizeof(Slot);
   }
   // Probe (PTCTLMC_STATS): visit every live zone, to measure distinct-zone sharing.
   template <class F>
@@ -922,6 +1101,9 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   if (backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
 #endif
   use_gpu = (gpu != nullptr);
+  // SoA work pool (Metal gpusplit merge): host gather/rebuild transpose to/from the transposed
+  // layout, and the CPU-merge fallback (AoS) is disabled since it can't read it.
+  const bool soa = use_gpu && gpu->soa_work_pool();
   if (use_gpu && std::getenv("PTCTLMC_STATS"))
     std::fprintf(stderr, "[gpu] network expander ACTIVE\n");
 
@@ -1254,9 +1436,18 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 #endif
       for (int b = 0; b < nb; ++b) {
         auto pit = passed.find(bdk[b]);
-        if (pit != passed.end())
-          std::memcpy(work_buf + static_cast<std::size_t>(work_off[b]) * d2, pit->second.data(),
-                      static_cast<std::size_t>(exist_cnt[b]) * d2 * sizeof(raw_t));
+        if (pit != passed.end()) {
+          raw_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
+          const raw_t* src = pit->second.data();
+          if (soa) {   // transpose AoS antichain -> SoA pool: zone i entry k at dst[k*cap + i]
+            const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
+            for (int i = 0; i < exist_cnt[b]; ++i)
+              for (int k = 0; k < d2; ++k)
+                dst[static_cast<std::size_t>(k) * cap + i] = src[static_cast<std::size_t>(i) * d2 + k];
+          } else {
+            std::memcpy(dst, src, static_cast<std::size_t>(exist_cnt[b]) * d2 * sizeof(raw_t));
+          }
+        }
         int dl[64]; long di[32];
         std::vector<std::int32_t> L2, U2;
         decode_key(bdk[b], dl, di);
@@ -1276,7 +1467,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       for (int b = 0; b < nb; ++b) { const long long s = exist_cnt[b] + new_cnt[b]; sum2 += s*s; sumsz += s; if (s > maxsz) maxsz = (int)s; }
       if (mtlprof && sum2 > prof_peak_sum2) { prof_peak_sum2 = sum2; prof_nb = nb; prof_maxsz = maxsz; prof_meansz = nb ? (double)sumsz/nb : 0; }
       bool cpu_merge = false;
-      if (g_adaptive_merge) {
+      if (g_adaptive_merge && !soa) {   // SoA pool is unreadable by the AoS CPU merge -> GPU only
         if (cpu_rate < 0) cpu_merge = true;         // calibrate the CPU path first (never catastrophic)
         else if (gpu_rate < 0) cpu_merge = false;   // then calibrate the GPU path
         else cpu_merge = (cpu_rate >= gpu_rate);    // route to the higher-throughput path
@@ -1337,15 +1528,20 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         decode_key(bdk[b], dl, di);
         auto& pz = *pzp[b];
         pz.resize(static_cast<std::size_t>(out_count[b]) * d2);
+        const std::size_t poolbase = static_cast<std::size_t>(out_work_off[b]) * d2;
+        const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
         int fpos = fr_off[b];
         for (int i = 0; i < out_count[b]; ++i) {
           const std::size_t slot = static_cast<std::size_t>(out_work_off[b]) + i;
-          const raw_t* zb = out_zones + slot * d2;
-          std::memcpy(pz.data() + static_cast<std::size_t>(i) * d2, zb, static_cast<std::size_t>(d2) * sizeof(raw_t));
+          raw_t* pzi = pz.data() + static_cast<std::size_t>(i) * d2;
+          if (soa)   // transpose SoA pool -> AoS zone: entry k at poolbase + k*cap + i
+            for (int k = 0; k < d2; ++k) pzi[k] = out_zones[poolbase + static_cast<std::size_t>(k) * cap + i];
+          else
+            std::memcpy(pzi, out_zones + slot * d2, static_cast<std::size_t>(d2) * sizeof(raw_t));
           if (out_isnew[slot]) {
             for (int p = 0; p < np; ++p) nl[static_cast<std::size_t>(fpos) * np + p] = dl[p];
             for (int v = 0; v < ni; ++v) nin[static_cast<std::size_t>(fpos) * ni + v] = di[v];
-            std::memcpy(nz.data() + static_cast<std::size_t>(fpos) * d2, zb, static_cast<std::size_t>(d2) * sizeof(raw_t));
+            std::memcpy(nz.data() + static_cast<std::size_t>(fpos) * d2, pzi, static_cast<std::size_t>(d2) * sizeof(raw_t));
             ++fpos;
           }
         }
@@ -1469,6 +1665,11 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 
     int level = 0;
     std::size_t nexpanded = 0;
+    // Peak-RSS composition sampler (PTCTLMC_MEMPROF): sample at each level boundary and
+    // remember the composition at the moment RSS was highest.
+    const bool memprof = std::getenv("PTCTLMC_MEMPROF") != nullptr;
+    std::size_t pk_rss = 0, pk_lvl = 0, pk_front = 0, pk_pack = 0, pk_map = 0, pk_cache = 0,
+                pk_arena = 0, pk_tab = 0, pk_heap = 0;
     std::atomic<bool> found{false};
     const bool single = (nthreads == 1);   // seq / omp -p1: skip locks + the touched union
     // Fused batched merge: O(1) critical section + one lock-free settle pass per level.
@@ -1607,6 +1808,52 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       for (auto& v : nf)
         for (auto& p : v) next.push_back(p);
       frontier.swap(next);
+      // Reclaim dead arena tombstones: one thread per stripe (exclusive), between levels.
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
+#endif
+      for (long s = 0; s < static_cast<long>(smap.size()); ++s) smap[s].maybe_compact();
+
+      // Reclaim interned zones that no live passed-set node references any more (subsumed /
+      // merged out). Mark the survivors -- referenced by a live arena node or the next frontier
+      // -- then sweep the rest back to the interner's free-list for in-place reuse. Runs every
+      // level once the table is non-trivial; the scan is O(live nodes) and keeps the interner
+      // pinned to the live working set instead of accumulating garbage.
+      if (zi.n.load() > 50000) {
+        std::vector<std::uint8_t> alive(zi.n.load(), 0);
+        for (auto& mp : smap)
+          for (const auto& nd : mp.arena)
+            if (!nd.dead) alive[nd.zidx] = 1;
+        for (const auto& pr : frontier) alive[pr.second] = 1;
+        zi.sweep(alive);
+      }
+
+      if (memprof) {
+        mach_task_basic_info info{};
+        mach_msg_type_number_t c = MACH_TASK_BASIC_INFO_COUNT;
+        if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &c) == KERN_SUCCESS &&
+            info.resident_size > pk_rss) {
+          std::size_t pack = 0, mapb = 0, cacheb = 0, an = 0, dn = 0, ab = 0, tb = 0;
+          zi.account(pack, mapb, cacheb);
+          for (const auto& mp : smap) mp.account(an, dn, ab, tb);
+          pk_rss = info.resident_size; pk_lvl = level;
+          pk_front = frontier.capacity() * sizeof(std::pair<std::uint64_t, int>);
+          pk_pack = pack; pk_map = mapb; pk_cache = cacheb; pk_arena = ab; pk_tab = tb;
+          pk_heap = mstats().bytes_used;   // process-wide live heap (all zones)
+        }
+      }
+    }
+    if (memprof) {
+      auto MB = [](std::size_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
+      const std::size_t known = pk_front + pk_pack + pk_map + pk_cache + pk_arena + pk_tab;
+      std::fprintf(stderr,
+                   "[memprof] peak-RSS=%.0fMB @level %zu | heap-in-use=%.0fMB | packed=%.0f map=%.0f "
+                   "cache=%.0f arena=%.0f tab=%.0f frontier=%.0f known=%.0f other=%.0f\n",
+                   MB(pk_rss), pk_lvl, MB(pk_heap), MB(pk_pack), MB(pk_map), MB(pk_cache),
+                   MB(pk_arena), MB(pk_tab), MB(pk_front), MB(known), MB(pk_rss) - MB(known));
+      std::fprintf(stderr, "[memprof] distinct-zones=%d htab-slots=%zu (load=%.2f)\n",
+                   zi.n.load(), zi.htab.capacity(),
+                   zi.htab.capacity() ? double(zi.n.load()) / zi.htab.capacity() : 0.0);
     }
     if (std::getenv("PTCTLMC_STATS")) {
       std::size_t zones = 0, disc = 0;
@@ -1621,6 +1868,16 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         });
       std::fprintf(stderr, "[stats] discrete-states=%zu stored-zones=%zu distinct-zones=%zu generated=%zu (shared-passed, %zu stripes)\n",
                    disc, zones, distinct.size(), stats ? stats->generated : 0, NB);
+      std::size_t packedB = 0, mapB = 0, cacheB = 0;
+      zi.account(packedB, mapB, cacheB);
+      std::size_t arenaNodes = 0, deadNodes = 0, arenaB = 0, tabB = 0;
+      for (const auto& mp : smap) mp.account(arenaNodes, deadNodes, arenaB, tabB);
+      auto MB = [](std::size_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
+      std::fprintf(stderr,
+                   "[bytes] packed-zones=%.0fMB intern-map=%.0fMB tcaches=%.0fMB | arena=%.0fMB "
+                   "(%zu nodes, %zu dead=%.0f%%) tab=%.0fMB\n",
+                   MB(packedB), MB(mapB), MB(cacheB), MB(arenaB), arenaNodes, deadNodes,
+                   arenaNodes ? 100.0 * deadNodes / arenaNodes : 0.0, MB(tabB));
     }
     return false;
 }

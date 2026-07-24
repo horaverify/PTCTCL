@@ -88,6 +88,12 @@ class NetGpuExpander {
   // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
   // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
   virtual std::size_t device_bytes() const { return 0; }
+
+  // If true, the merge work pool is laid out STRUCTURE-OF-ARRAYS (zone i entry e at
+  // [work_off[b]*d2 + e*cap_b + i], cap_b = exist_cnt[b]+new_cnt[b]) so the GPU merge coalesces
+  // cross-lane reads. The host gather/rebuild must transpose accordingly, and the CPU-merge
+  // fallback (which reads AoS) must not be used. Default AoS.
+  virtual bool soa_work_pool() const { return false; }
 };
 
 // Build a Metal / CUDA expander for `net`. `qmask[c]` marks clocks the query reads (kept active

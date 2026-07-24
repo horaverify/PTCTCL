@@ -1,0 +1,34 @@
+\section{Related Work}\label{sec:related}
+
+\textbf{Parallel model checking of untimed systems.}
+Parallel explicit-state BFS is well studied~\cite{Stern01}.  The standard
+approach uses a globally shared hash table with fine-grained locking or
+lock-free operations (compare-and-swap).  Our setting differs in two ways:
+(i)~symbolic states carry a zone, not just a configuration, making hashing and
+equality non-trivial; (ii)~subsumption (inclusion between zones) means that
+the semantics of ``already seen'' is richer than equality.  These two
+properties make concurrent passed-list updates significantly harder to reason
+about, which is why we opt for a sequential merge instead.
+
+\textbf{Parallel symbolic model checking of timed systems.}
+\textsc{LTSmin}~\cite{Kant15} parallelises timed-automata exploration using a
+global hash table, but it stores one entry per (configuration, zone) pair
+\emph{without} subsumption.  As a result it stores more symbolic states than
+a subsumption-based tool and explores more transitions.  Our approach retains
+subsumption and therefore explores the same (minimal) number of states as
+sequential UPPAAL.
+
+\textbf{Level-synchronous BFS for model checking.}
+The ``frontier'' structure (sometimes called BFS-level parallelism) appears
+in distributed-memory model checkers such as \textsc{DiVinE}~\cite{Barnat12}
+and in GPU-accelerated BFS~\cite{Merrill12}.  The technical novelty here is
+applying it to symbolic zone-graph exploration, where the independence of
+$\succfn$ calls within a level is less obvious because states share the same
+data structures (passed list), and arguing correctness requires the purity
+observation of \cref{sec:approach}.
+
+\textbf{GPU backends.}
+\tool{} also has CUDA and Metal backends that offload DBM operations to
+the GPU.  Those backends use a different parallelisation strategy (data
+parallelism over the entries of all frontier DBMs simultaneously) and are
+outside the scope of this paper.

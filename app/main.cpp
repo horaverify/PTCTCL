@@ -211,6 +211,11 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(true);
     } else if (a == "--naive") {      // GPU merge routing: always one thread per bucket (default)
       ptctlmc::set_adaptive_merge(false);
+    } else if (a == "--omp-chunk") {  // OpenMP dynamic-schedule chunk size (default 8)
+      if (i + 1 < argc) {
+        const int v = std::atoi(argv[++i]);
+        ptctlmc::set_omp_chunk(v);
+      }
     } else if (a == "--chunking") {   // expand the frontier in bounded batches (caps peak memory)
       int states = 65536;             // optional size: --chunking 32768
       if (i + 1 < argc && argv[i + 1][0] != '-') {

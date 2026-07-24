@@ -1,0 +1,72 @@
+\section{Implementation}\label{sec:impl}
+
+\subsection{OpenMP integration}
+
+The parallel expansion (Phase~1 of \cref{alg:par}) is implemented with a
+single OpenMP pragma:
+
+\begin{lstlisting}[language=C++, caption={The parallel expansion loop.}]
+// tls[t] is thread t's private buffer (std::vector<pair<int,Dbm>>)
+std::vector<std::vector<std::pair<int,Dbm>>> tls(nthreads);
+#pragma omp parallel
+{
+    const int tid = omp_get_thread_num();
+    auto& buf = tls[tid];   // private reference -- no sharing
+#pragma omp for schedule(dynamic, 8)
+    for (long i = 0; i < (long)frontier.size(); ++i)
+        successors(W, frontier[i].first, frontier[i].second, buf, ex);
+}
+// Phase 2: sequential merge (single thread, no pragma needed)
+std::vector<std::pair<int,Dbm>> next;
+for (auto& buf : tls)
+    for (auto& s : buf) { /* subsumption check + passed update */ }
+frontier.swap(next);
+\end{lstlisting}
+
+\noindent\textbf{Thread-local buffers.}  The outer \texttt{tls} vector has
+one entry per thread, pre-allocated once at the start of each level.  Inside
+the parallel region each thread holds a reference to its own entry and never
+touches another's.  The reference is resolved before the \texttt{for} loop,
+so even the indirection through \texttt{tls} is private.
+
+\noindent\textbf{Dynamic scheduling.}  The chunk size~8 in
+\texttt{schedule(dynamic,8)} is chosen empirically.  The cost per state varies
+widely: a state at a location with many enabled edges generates many
+successors, while a state at a deadlock location generates none.  Static
+assignment would create severe load imbalance.  A chunk of 8 amortises the
+scheduling overhead (a few hundred nanoseconds per chunk dispatch) while
+remaining fine enough for good balance.
+
+\noindent\textbf{Graceful fallback.}  If the build has no OpenMP support
+(\texttt{PTCTLMC\_HAVE\_OPENMP} not defined), the \texttt{parallel} flag is
+set to \texttt{false} and the exact sequential loop of \cref{alg:seq} runs.
+The two paths share the same passed-list and successor logic; only the outer
+loop structure differs.
+
+\subsection{Passed-list data structures}
+
+The passed list for location $\ell$ is a \emph{pair} of structures:
+
+\begin{itemize}
+  \item A \texttt{std::unordered\_set<std::string>} keyed on the raw
+        byte-string of the canonical DBM.  This answers the
+        \emph{exact-duplicate} query (``has this precise zone been seen
+        before?'') in $O(n^2)$ via hashing---the common case when two paths
+        produce the same zone.
+  \item A \texttt{std::vector<Dbm>} for \emph{subsumption} queries
+        ($Z' \subseteq Z_p$ for some $Z_p$).  A linear scan suffices because
+        LU$^+$ bounds the vector length.
+\end{itemize}
+
+In Phase~2, every candidate $(\ell', Z')$ first hits the hash set (cheap) and
+only falls through to the vector scan if the exact key is absent.  This
+two-tier design avoids the $O(n^2)$ inclusion test for the most frequent case.
+
+\subsection{Zone operations}
+
+All DBM operations (intersection, reset, delay, LU$^+$ extrapolation,
+canonical closure, inclusion) are provided by the \textsc{HDBM} library
+bundled with \tool{}.  Each DBM is stored as a flat
+\texttt{std::vector<raw\_t>} where \texttt{raw\_t} is a 32-bit integer
+encoding both the bound value and its strictness in the MSB.  Canonical form
+is maintained after every mutating operation.
