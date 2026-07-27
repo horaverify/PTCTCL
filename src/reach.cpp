@@ -19,6 +19,7 @@ namespace ptctlmc {
 
 static int g_omp_chunk = 8;  // tunable via set_omp_chunk() / --omp-chunk CLI flag
 void set_omp_chunk(int chunk) { if (chunk > 0) g_omp_chunk = chunk; }
+int omp_chunk() { return g_omp_chunk; }
 
 namespace {
 
