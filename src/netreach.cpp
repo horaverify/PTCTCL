@@ -106,52 +106,94 @@ static std::size_t linux_heap_bytes() {
 // matrix); stored bytes are immutable, so reads are lock-free. Every get() call site consumes
 // the zone before this thread's next get(), so one scratch per thread is safe.
 struct ZoneIntern {
-  // idx -> record pointer, in fixed CHUNKs allocated on demand (adaptive growth). Each slot is
-  // published under mtx before `n` is release-stored, so a reader holding idx < n sees it.
-  static constexpr int kChunkBits = 16;
-  static constexpr int kChunk = 1 << kChunkBits;        // 65536 zones/chunk
+  // SHARDED. This table used to be one arena behind one mutex, and intern() sits on the
+  // per-successor hot path, so every inserted state serialized there. The per-thread cache
+  // below cannot absorb that: a symbolic run interns each distinct zone exactly ONCE (on
+  // arbiter16, 589,824 states -> 589,824 distinct zones and 1 cache hit in 589,825 calls),
+  // so ~100% of calls reached the lock. Hold time was tiny (~0.2 CPU-s) but the acquisition
+  // RATE was not -- threads waited ~20x longer than the lock was ever held, and the wait grew
+  // with thread count (0.5 / 2.5 / 4.5 CPU-s at 4 / 8 / 12), capping speedup at ~5.5x.
+  //
+  // The table is now split into independent shards selected by the zone's hash, each with its
+  // own mutex, arena, and htab -- the same fine-grained-locking shape the passed list already
+  // uses for its stripes. A given zone always hashes to the same shard, so distinct-zone
+  // identity is unchanged and state counts stay identical.
+  static constexpr int kShardBits = 6;
+  static constexpr int kShards = 1 << kShardBits;
+  static constexpr std::uint64_t kShardMask = kShards - 1;
+  // zidx = (local << kShardBits) | shard. INTERLEAVED on purpose: with the shard in the high
+  // bits the maximum index would be kShards x the zone count, and the GC's `alive` array is
+  // sized by that bound. Interleaved, the bound stays ~= the zone count.
+  //
+  // Chunk-pointer arrays are preallocated and never resized, so lock-free readers in record()
+  // cannot race a reallocation. Both constants are therefore sized so the fixed cost summed
+  // over ALL shards stays small (~1 MB), not per table as before.
+  static constexpr int kChunkBits = 10;
+  static constexpr int kChunk = 1 << kChunkBits;        // 1024 zones/chunk (8 KB of pointers)
   static constexpr int kChunkMask = kChunk - 1;
-  static constexpr int kChunks = 1 << 14;               // -> up to ~1.07e9 distinct zones
-  static constexpr std::size_t kSlabBytes = 1u << 22;   // 4 MB packed-record slabs
+  static constexpr int kChunks = 1 << 11;               // -> 2.1M zones/shard, ~134M total
+  // Slabs start small and double, so 64 shards do not each commit a big slab up front. The CAP
+  // matters as much as the floor: whatever a shard's final slab is, the unused tail of it is
+  // wasted, and that waste is paid 64 times. Doubling all the way to 4 MB cost ~40 MB on
+  // arbiter17 (+17% RSS); capping at 128 KB bounds total slack to kShards * 128 KB (~8 MB
+  // worst case) while still keeping the slab count low for large runs.
+  static constexpr std::size_t kSlabMin = 1u << 14;     // 16 KB
+  static constexpr std::size_t kSlabMax = 1u << 17;     // 128 KB
+  static constexpr int kHtabInitBits = 10;              // 1024 slots/shard, grows by rehash
   static constexpr int kCacheBits = 15;                 // 32768 lines/thread (~0.5 MB)
   static constexpr std::uint32_t kCacheMask = (1u << kCacheBits) - 1;
 
   struct CacheLine { std::uint64_t h; std::int32_t idx; };
 
-  std::deque<std::vector<std::uint8_t>> slabs;          // bump arena; slab data addresses are stable
-  std::uint8_t* bumpPtr = nullptr;                      // current slab cursor (mtx-guarded)
-  std::size_t bumpLeft = 0;
-  std::vector<const std::uint8_t**> chunks;             // chunks[c][.] -> packed-record bytes
-  std::vector<std::int32_t> htab;                       // open-addressing: 0=empty, else idx+1
-  std::uint64_t hmask;
-  std::size_t hcount = 0;
+  // One independently-locked partition. Cache-line aligned so neighbouring shards' mutexes and
+  // bump cursors do not share a line (false sharing here would undo the point of sharding).
+  struct alignas(128) Shard {
+    std::deque<std::vector<std::uint8_t>> slabs;        // bump arena; slab data addresses are stable
+    std::uint8_t* bumpPtr = nullptr;                    // current slab cursor (mtx-guarded)
+    std::size_t bumpLeft = 0;
+    std::size_t slabSz = kSlabMin;                      // next slab's size (doubles to kSlabMax)
+    std::vector<const std::uint8_t**> chunks;           // chunks[c][.] -> packed-record bytes
+    std::vector<std::int32_t> htab;                     // open-addressing: 0=empty, else local+1
+    std::uint64_t hmask;
+    std::size_t hcount = 0;
+    // Reclamation: dead records are recycled in place (no rebuild, no zidx remap). A freed
+    // record slot returns to a free-list keyed by its exact byte length (packed records take
+    // only a few distinct lengths per model, so reuse is near-total); a freed local index
+    // returns to `freeIdx`. intern() reuses both before growing the arena, so slab memory is
+    // bounded by the PEAK LIVE working set -- RSS never depends on the OS reclaiming.
+    std::unordered_map<std::uint32_t, std::vector<std::uint8_t*>> freeRecs;
+    std::vector<int> freeIdx;
+    std::vector<std::int32_t> htabScratch;              // reused sweep buffer (avoids per-level realloc)
+    std::mutex mtx;
+    std::atomic<int> n{0};                              // high-water LOCAL index for this shard
+    Shard()
+        : chunks(kChunks, nullptr), htab(std::size_t(1) << kHtabInitBits, 0),
+          hmask((std::size_t(1) << kHtabInitBits) - 1) {}
+    ~Shard() { for (auto* c : chunks) delete[] c; }
+  };
+
+  std::vector<Shard> shards;
   std::vector<std::vector<CacheLine>> tcache;           // [thread][line] direct-mapped
-  // Reclamation: dead records are recycled in place (no rebuild, no zidx remap). A freed
-  // record slot returns to a free-list keyed by its exact byte length (packed records take
-  // only a few distinct lengths per model, so reuse is near-total); a freed zidx returns to
-  // `freeIdx`. intern() reuses both before growing the arena, so slab memory is bounded by the
-  // PEAK LIVE working set and recycled internally -- RSS never depends on the OS reclaiming.
-  std::unordered_map<std::uint32_t, std::vector<std::uint8_t*>> freeRecs;
-  std::vector<int> freeIdx;
-  std::vector<std::int32_t> htabScratch;                // reused sweep buffer (avoids per-level realloc)
-  std::mutex mtx;
-  std::atomic<int> n{0};
   int dim;                                              // clock dim (nclocks+1); all zones share it
 
   ZoneIntern(int dim2_, int nthreads)
-      : chunks(kChunks, nullptr), htab(1u << 16, 0), hmask((1u << 16) - 1),
-        tcache(nthreads > 0 ? nthreads : 1) {
+      : shards(kShards), tcache(nthreads > 0 ? nthreads : 1) {
     dim = 1; while (dim * dim < dim2_) ++dim;           // dim2_ = dim*dim
     for (auto& tc : tcache) tc.assign(1u << kCacheBits, CacheLine{0, -1});
   }
-  ~ZoneIntern() { for (auto* c : chunks) delete[] c; }
+
+  static int enc(int local, int shard) { return (local << kShardBits) | shard; }
 
   static std::uint64_t hash_bytes(const std::uint8_t* p, std::size_t len) {
     std::uint64_t h = 1469598103934665603ULL;
     for (std::size_t i = 0; i < len; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
     return h;
   }
-  const std::uint8_t* record(int idx) const { return chunks[idx >> kChunkBits][idx & kChunkMask]; }
+  const std::uint8_t* record(int idx) const {
+    const Shard& sh = shards[idx & kShardMask];
+    const int loc = idx >> kShardBits;
+    return sh.chunks[loc >> kChunkBits][loc & kChunkMask];
+  }
 
   const Dbm& get(int idx) const {
     const std::uint8_t* rec = record(idx);
@@ -170,32 +212,40 @@ struct ZoneIntern {
   }
   int zdim() const { return dim; }
 
-  // Probe the flat table for the packed bytes [q,q+qlen). Returns idx or -1; on miss, *slot is
-  // the empty table position to insert at. Caller holds mtx.
-  int find_locked(const std::uint8_t* q, std::size_t qlen, std::uint64_t h, std::size_t* slot) const {
-    std::size_t i = h & hmask;
-    while (htab[i]) {
-      const int idx = htab[i] - 1;
-      const std::uint8_t* rec = record(idx);
-      if (mindbm_size(rec) == qlen && std::memcmp(rec, q, qlen) == 0) return idx;
-      i = (i + 1) & hmask;
+  // Probe one shard's table for the packed bytes [q,q+qlen). Returns the shard-LOCAL index or
+  // -1; on miss, *slot is the empty table position to insert at. Caller holds sh.mtx.
+  static int find_locked(const Shard& sh, const std::uint8_t* q, std::size_t qlen,
+                         std::uint64_t h, std::size_t* slot) {
+    std::size_t i = h & sh.hmask;
+    while (sh.htab[i]) {
+      const int loc = sh.htab[i] - 1;
+      const std::uint8_t* rec = sh.chunks[loc >> kChunkBits][loc & kChunkMask];
+      if (mindbm_size(rec) == qlen && std::memcmp(rec, q, qlen) == 0) return loc;
+      i = (i + 1) & sh.hmask;
     }
     *slot = i;
     return -1;
   }
-  void rehash_locked() {
-    const std::size_t ncap = (hmask + 1) * 2;
+  // Grow one shard's table. Rebuilt from the LIVE htab entries rather than by walking
+  // 0..n-1: after a sweep, indices sitting in `freeIdx` are not live, and their chunk slots
+  // still point at records that have been returned to `freeRecs` (and may already have been
+  // handed to a different zone). Re-inserting those would put stale entries in the table and
+  // let a later probe dedup a zone against another zone's bytes.
+  static void rehash_locked(Shard& sh) {
+    const std::size_t ncap = (sh.hmask + 1) * 2;
     std::vector<std::int32_t> nt(ncap, 0);
     const std::uint64_t nmask = ncap - 1;
-    const int cnt = n.load(std::memory_order_relaxed);
-    for (int idx = 0; idx < cnt; ++idx) {
-      const std::uint8_t* rec = record(idx);
+    for (std::size_t s = 0; s < sh.htab.size(); ++s) {
+      const std::int32_t v = sh.htab[s];
+      if (!v) continue;
+      const int loc = v - 1;
+      const std::uint8_t* rec = sh.chunks[loc >> kChunkBits][loc & kChunkMask];
       std::size_t i = hash_bytes(rec, mindbm_size(rec)) & nmask;
       while (nt[i]) i = (i + 1) & nmask;
-      nt[i] = idx + 1;
+      nt[i] = loc + 1;
     }
-    htab.swap(nt);
-    hmask = nmask;
+    sh.htab.swap(nt);
+    sh.hmask = nmask;
   }
 
   // Intern `z` (canonical, non-empty), returning its distinct-zone index. `z` is not modified.
@@ -218,44 +268,52 @@ struct ZoneIntern {
       if (mindbm_size(rec) == qlen && std::memcmp(rec, qbuf.data(), qlen) == 0) return cl.idx;
     }
 
-    std::lock_guard<std::mutex> lk(mtx);
+    // The hash picks the shard, so a given zone always lands in the same one -- dedup stays
+    // exact and only this shard's lock is taken.
+    const int sid = static_cast<int>(h & kShardMask);
+    Shard& sh = shards[sid];
+    std::lock_guard<std::mutex> lk(sh.mtx);
     std::size_t slot = 0;
-    int idx = find_locked(qbuf.data(), qlen, h, &slot);
-    if (idx < 0) {
+    int loc = find_locked(sh, qbuf.data(), qlen, h, &slot);
+    if (loc < 0) {
       // A record slot: reuse a freed one of the exact length, else bump-allocate (qlen is a
       // multiple of 4 -> stays 4-aligned).
       std::uint8_t* rec;
-      auto fit = freeRecs.find(static_cast<std::uint32_t>(qlen));
-      if (fit != freeRecs.end() && !fit->second.empty()) {
+      auto fit = sh.freeRecs.find(static_cast<std::uint32_t>(qlen));
+      if (fit != sh.freeRecs.end() && !fit->second.empty()) {
         rec = fit->second.back();
         fit->second.pop_back();
       } else {
-        if (bumpLeft < qlen) {
-          const std::size_t sz = qlen > kSlabBytes ? qlen : kSlabBytes;
-          slabs.emplace_back(sz);
-          bumpPtr = slabs.back().data();
-          bumpLeft = sz;
+        if (sh.bumpLeft < qlen) {
+          const std::size_t sz = qlen > sh.slabSz ? qlen : sh.slabSz;
+          sh.slabs.emplace_back(sz);
+          sh.bumpPtr = sh.slabs.back().data();
+          sh.bumpLeft = sz;
+          if (sh.slabSz < kSlabMax) sh.slabSz = std::min(kSlabMax, sh.slabSz * 2);
         }
-        rec = bumpPtr;
-        bumpPtr += qlen; bumpLeft -= qlen;
+        rec = sh.bumpPtr;
+        sh.bumpPtr += qlen; sh.bumpLeft -= qlen;
       }
       std::memcpy(rec, qbuf.data(), qlen);
-      // A zidx: reuse a freed one, else grow.
-      if (!freeIdx.empty()) {
-        idx = freeIdx.back();
-        freeIdx.pop_back();
+      // A local index: reuse a freed one, else grow. The record pointer is published BEFORE
+      // the release-store of `n`, so any reader holding an index < n sees readable storage.
+      if (!sh.freeIdx.empty()) {
+        loc = sh.freeIdx.back();
+        sh.freeIdx.pop_back();
+        sh.chunks[loc >> kChunkBits][loc & kChunkMask] = rec;
       } else {
-        idx = n.load(std::memory_order_relaxed);
-        const int c = idx >> kChunkBits;
+        loc = sh.n.load(std::memory_order_relaxed);
+        const int c = loc >> kChunkBits;
         if (c >= kChunks) throw std::runtime_error("zone intern table overflow (too many distinct zones)");
-        if (!chunks[c]) chunks[c] = new const std::uint8_t*[kChunk];
-        n.store(idx + 1, std::memory_order_release);
+        if (!sh.chunks[c]) sh.chunks[c] = new const std::uint8_t*[kChunk];
+        sh.chunks[c][loc & kChunkMask] = rec;
+        sh.n.store(loc + 1, std::memory_order_release);
       }
-      chunks[idx >> kChunkBits][idx & kChunkMask] = rec;
-      htab[slot] = idx + 1;
-      ++hcount;
-      if (hcount * 10 >= (hmask + 1) * 7) rehash_locked();  // htab-only; record ptrs unaffected
+      sh.htab[slot] = loc + 1;
+      ++sh.hcount;
+      if (sh.hcount * 10 >= (sh.hmask + 1) * 7) rehash_locked(sh);  // htab-only; records unaffected
     }
+    const int idx = enc(loc, sid);
     cl = CacheLine{h, idx};   // fill this thread's cache (single-writer per tid)
     return idx;
   }
@@ -267,28 +325,32 @@ struct ZoneIntern {
   // cleared: a hit verifies bytes, so a stale hash->idx entry (idx since recycled to another
   // zone) simply fails the byte-compare and falls through. STOP-THE-WORLD (all workers joined).
   void sweep(const std::vector<std::uint8_t>& alive) {
-    htabScratch.assign(htab.size(), 0);      // reused buffer; htab.size() only grows
-    std::vector<std::int32_t>& nh = htabScratch;
-    const std::uint64_t nmask = htab.size() - 1;
-    std::size_t live = 0;
-    for (std::size_t s = 0; s < htab.size(); ++s) {
-      const std::int32_t v = htab[s];
-      if (!v) continue;
-      const int idx = v - 1;
-      std::uint8_t* rec = const_cast<std::uint8_t*>(record(idx));
-      if (idx < static_cast<int>(alive.size()) && alive[idx]) {
-        std::size_t i = hash_bytes(rec, mindbm_size(rec)) & nmask;
-        while (nh[i]) i = (i + 1) & nmask;
-        nh[i] = idx + 1;
-        ++live;
-      } else {
-        freeRecs[static_cast<std::uint32_t>(mindbm_size(rec))].push_back(rec);
-        freeIdx.push_back(idx);
+    for (int sid = 0; sid < kShards; ++sid) {
+      Shard& sh = shards[sid];
+      sh.htabScratch.assign(sh.htab.size(), 0);   // reused buffer; htab.size() only grows
+      std::vector<std::int32_t>& nh = sh.htabScratch;
+      const std::uint64_t nmask = sh.htab.size() - 1;
+      std::size_t live = 0;
+      for (std::size_t s = 0; s < sh.htab.size(); ++s) {
+        const std::int32_t v = sh.htab[s];
+        if (!v) continue;
+        const int loc = v - 1;
+        const int idx = enc(loc, sid);            // `alive` is indexed by the ENCODED zidx
+        std::uint8_t* rec = const_cast<std::uint8_t*>(record(idx));
+        if (idx < static_cast<int>(alive.size()) && alive[idx]) {
+          std::size_t i = hash_bytes(rec, mindbm_size(rec)) & nmask;
+          while (nh[i]) i = (i + 1) & nmask;
+          nh[i] = loc + 1;
+          ++live;
+        } else {
+          sh.freeRecs[static_cast<std::uint32_t>(mindbm_size(rec))].push_back(rec);
+          sh.freeIdx.push_back(loc);
+        }
       }
+      sh.htab.swap(nh);
+      sh.hmask = nmask;
+      sh.hcount = live;
     }
-    htab.swap(nh);
-    hmask = nmask;
-    hcount = live;
   }
 
   // Records currently handed out: live zones PLUS garbage not yet reclaimed. `n` is a
@@ -297,13 +359,40 @@ struct ZoneIntern {
   // fixed threshold once and stays there. This is the quantity a growth-based trigger must
   // watch: it rises with every fresh intern and drops back to the live set after a sweep.
   std::size_t allocated() const {
-    return static_cast<std::size_t>(n.load(std::memory_order_relaxed)) - freeIdx.size();
+    std::size_t a = 0;
+    for (const auto& sh : shards)
+      a += static_cast<std::size_t>(sh.n.load(std::memory_order_relaxed)) - sh.freeIdx.size();
+    return a;
+  }
+
+  // Exclusive upper bound on any zidx currently handed out -- what the GC's `alive` array must
+  // be sized to. Every valid index is (local << kShardBits) | shard with local < shard.n, so
+  // the largest possible index is below (max local n) << kShardBits.
+  std::size_t index_bound() const {
+    int mx = 0;
+    for (const auto& sh : shards) mx = std::max(mx, sh.n.load(std::memory_order_relaxed));
+    return static_cast<std::size_t>(mx) << kShardBits;
+  }
+
+  // High-water distinct-zone count across all shards (PTCTLMC_STATS/MEMPROF reporting).
+  std::size_t distinct() const {
+    std::size_t d = 0;
+    for (const auto& sh : shards) d += static_cast<std::size_t>(sh.n.load(std::memory_order_relaxed));
+    return d;
+  }
+  std::size_t htab_slots() const {
+    std::size_t s = 0;
+    for (const auto& sh : shards) s += sh.htab.capacity();
+    return s;
   }
 
   // Byte accounting (PTCTLMC_STATS): where the interner's resident bytes go.
   void account(std::size_t& packed, std::size_t& mapb, std::size_t& cacheb) const {
-    for (const auto& s : slabs) packed += s.capacity();
-    mapb += htab.capacity() * sizeof(std::int32_t);
+    for (const auto& sh : shards) {
+      for (const auto& s : sh.slabs) packed += s.capacity();
+      mapb += sh.htab.capacity() * sizeof(std::int32_t);
+      mapb += sh.chunks.capacity() * sizeof(const std::uint8_t**);
+    }
     for (const auto& tc : tcache) cacheb += tc.capacity() * sizeof(CacheLine);
   }
 };
@@ -1990,7 +2079,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // memory it trades away is bounded: garbage never exceeds the live set, i.e. the
       // interner stays within 2x of its pinned-to-live size.
       if (zi.allocated() >= sweep_at) {
-        std::vector<std::uint8_t> alive(zi.n.load(), 0);
+        std::vector<std::uint8_t> alive(zi.index_bound(), 0);
         for (auto& mp : smap)
           for (const auto& nd : mp.arena)
             if (!nd.dead) alive[nd.zidx] = 1;
@@ -2035,9 +2124,9 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                    "cache=%.0f arena=%.0f tab=%.0f frontier=%.0f known=%.0f other=%.0f\n",
                    MB(pk_rss), pk_lvl, MB(pk_heap), MB(pk_pack), MB(pk_map), MB(pk_cache),
                    MB(pk_arena), MB(pk_tab), MB(pk_front), MB(known), MB(pk_rss) - MB(known));
-      std::fprintf(stderr, "[memprof] distinct-zones=%d htab-slots=%zu (load=%.2f)\n",
-                   zi.n.load(), zi.htab.capacity(),
-                   zi.htab.capacity() ? double(zi.n.load()) / zi.htab.capacity() : 0.0);
+      std::fprintf(stderr, "[memprof] distinct-zones=%zu htab-slots=%zu (load=%.2f)\n",
+                   zi.distinct(), zi.htab_slots(),
+                   zi.htab_slots() ? double(zi.distinct()) / zi.htab_slots() : 0.0);
     }
     if (std::getenv("PTCTLMC_STATS")) {
       std::size_t zones = 0, disc = 0;
