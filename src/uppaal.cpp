@@ -454,80 +454,6 @@ bool check_query(const TimedAutomaton& ta, const Query& q_in, bool* satisfied, B
 // ============================ networks ======================================
 namespace {
 
-void collect_ints(const std::string& decl, std::unordered_map<std::string, int>& im,
-                  std::vector<IntVar>& vars) {
-  std::size_t p = 0;
-  while ((p = decl.find("int", p)) != std::string::npos) {
-    const bool wb = (p == 0 || !(std::isalnum((unsigned char)decl[p - 1]) || decl[p - 1] == '_')) &&
-                    (p + 3 >= decl.size() || !(std::isalnum((unsigned char)decl[p + 3]) || decl[p + 3] == '_'));
-    if (!wb) { p += 3; continue; }
-    std::size_t q = p + 3;
-    while (q < decl.size() && std::isspace((unsigned char)decl[q])) ++q;
-    // Parse the declared bounds `int[lo,hi] ...`. These widths are load-bearing:
-    // reachable_net packs the discrete state into a uint64 with bits(hi-lo+1) bits
-    // per int var, so a dropped range (lo==hi==0 => 0 bits) silently collides
-    // distinct values of any 2nd int var. Unbounded `int` falls back to UPPAAL's
-    // default 16-bit range so the field is wide enough for any legal value.
-    long rlo = -32768, rhi = 32767;
-    if (q < decl.size() && decl[q] == '[') {
-      const std::size_t rb = decl.find(']', q);
-      if (rb == std::string::npos) break;
-      const std::string range = decl.substr(q + 1, rb - q - 1);
-      const std::size_t comma = range.find(',');
-      if (comma != std::string::npos) {
-        try {
-          rlo = std::stol(trim(range.substr(0, comma)));
-          rhi = std::stol(trim(range.substr(comma + 1)));
-        } catch (...) {}
-      }
-      q = rb + 1;
-    }
-    std::size_t e = decl.find(';', q);
-    std::string list = decl.substr(q, (e == std::string::npos ? decl.size() : e) - q);
-    for (auto part : split_conjuncts(list)) {
-      part = trim(part);
-      long init = 0;
-      std::string name = part;
-      std::size_t eq = part.find('=');
-      if (eq != std::string::npos) {
-        name = trim(part.substr(0, eq));
-        try { init = std::stol(trim(part.substr(eq + 1))); } catch (...) {}
-      }
-      name = trim(name);
-      if (!name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_') && !im.count(name)) {
-        im[name] = (int)vars.size();
-        vars.push_back({name, rlo, rhi, init});
-      }
-    }
-    p = (e == std::string::npos) ? decl.size() : e + 1;
-  }
-}
-
-void collect_channels(const std::string& decl, std::unordered_map<std::string, int>& chm,
-                      std::vector<std::string>& names, std::vector<char>& bcast) {
-  std::size_t p = 0;
-  while ((p = decl.find("chan", p)) != std::string::npos) {
-    const bool wb = (p == 0 || !(std::isalnum((unsigned char)decl[p - 1]) || decl[p - 1] == '_')) &&
-                    (p + 4 >= decl.size() || !(std::isalnum((unsigned char)decl[p + 4]) || decl[p + 4] == '_'));
-    if (!wb) { p += 4; continue; }
-    // `broadcast chan ...` => broadcast channels.
-    std::size_t q = p;
-    while (q > 0 && std::isspace((unsigned char)decl[q - 1])) --q;
-    const bool is_b = q >= 9 && decl.compare(q - 9, 9, "broadcast") == 0 &&
-                      (q == 9 || !(std::isalnum((unsigned char)decl[q - 10]) || decl[q - 10] == '_'));
-    std::size_t e = decl.find(';', p);
-    std::string list = decl.substr(p + 4, (e == std::string::npos ? decl.size() : e) - (p + 4));
-    for (auto part : split_conjuncts(list)) {
-      part = trim(part);
-      if (!part.empty() && (std::isalpha((unsigned char)part[0]) || part[0] == '_') && !chm.count(part)) {
-        chm[part] = (int)names.size();
-        names.push_back(part);
-        bcast.push_back(is_b ? 1 : 0);
-      }
-    }
-    p = (e == std::string::npos) ? decl.size() : e + 1;
-  }
-}
 
 enum class SideKind { Const, Clock, ClockDiff, Int };
 struct Side2 { SideKind kind; int a; int b; long val; };
@@ -613,12 +539,12 @@ int uppaal_process_count(const std::string& path) {
 }
 
 // ---- full modelling-language declarations ----------------------------------
-// The v1 collect_ints/collect_channels scanners above handle `int[lo,hi] x;` and
-// `chan a, b;`, which covers Fischer and the viking suite. Idiomatic UPPAAL also
-// needs: `const int N = 8;`, `typedef int[0,N-1] id_t;`, arrays (`int list[N+1];`,
-// `chan appr[N];`) and user functions. Those are parsed here, into the SAME
-// structures -- arrays become consecutive IntVar cells and channel arrays become
-// consecutive channels -- so nothing downstream has to know they exist.
+// Everything the modelling language can declare is parsed here: `const int N = 8;`,
+// `typedef int[0,N-1] id_t;`, arrays (`int list[N+1];`, `chan appr[N];`) and user
+// functions, as well as the plain `int[lo,hi] x;` / `chan a, b;` forms. Arrays become
+// consecutive IntVar cells and channel arrays become consecutive channels, so nothing
+// downstream has to know they exist. (Earlier standalone collect_ints/collect_channels
+// scanners handled only the plain forms and were subsumed by this; they are gone.)
 
 struct DeclCtx {
   SymTab st;                                           // constants, cells, arrays, functions

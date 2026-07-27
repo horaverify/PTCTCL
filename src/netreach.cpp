@@ -189,6 +189,19 @@ struct ZoneIntern {
     for (std::size_t i = 0; i < len; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
     return h;
   }
+  // Shard selector. MUST NOT reuse the low bits that index a shard's htab (`h & hmask`):
+  // every key routed to shard s has `h & kShardMask == s`, so if the slot index also came from
+  // the low bits, only hmask/kShards of a shard's slots could ever be a home position -- the
+  // other 63/64 are reachable only by linear probing. At the 70% growth trigger that packs
+  // ~0.7*cap entries into cap/64 home slots (~45 deep each), and a probe is not cheap here: it
+  // chases chunks[][] and byte-compares the record. Measured on arbiter16 that cost 31.2
+  // probes per locked lookup versus 1.68 for the unsharded table -- which is what ate the
+  // sharding win. Mixing and taking the HIGH bits makes the two indices independent.
+  static int shard_of(std::uint64_t h) {
+    std::uint64_t x = h;
+    x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33;
+    return static_cast<int>(x >> (64 - kShardBits));
+  }
   const std::uint8_t* record(int idx) const {
     const Shard& sh = shards[idx & kShardMask];
     const int loc = idx >> kShardBits;
@@ -270,7 +283,7 @@ struct ZoneIntern {
 
     // The hash picks the shard, so a given zone always lands in the same one -- dedup stays
     // exact and only this shard's lock is taken.
-    const int sid = static_cast<int>(h & kShardMask);
+    const int sid = shard_of(h);
     Shard& sh = shards[sid];
     std::lock_guard<std::mutex> lk(sh.mtx);
     std::size_t slot = 0;
@@ -834,8 +847,13 @@ void frozen_flags(const Network& net, const LocVec& locs, bool* committed, bool*
 // read (qmask) — collapses zones that differ only in dead clocks, soundly.
 void reset_inactive(const Network& net, const LocVec& locs, Dbm& z,
                     const std::vector<char>& qmask) {
+#ifdef PTCTLMC_DEBUG_KNOBS
+  // Ablation switch for this optimization. Compiled out by default: this function runs once per
+  // generated successor, and a function-local static with dynamic initialization costs a guarded
+  // acquire-load on EVERY call, which is pure overhead in a build that never sets the variable.
   static const bool off = std::getenv("PTCTLMC_NOACTIVE") != nullptr;
   if (off) return;
+#endif
   if (net.active.empty()) return;
   std::vector<char> a(net.nclocks + 1, 0);
   for (int p = 0; p < net.nprocs(); ++p) {
@@ -1324,9 +1342,6 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   if (backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
 #endif
   use_gpu = (gpu != nullptr);
-  // SoA work pool (Metal gpusplit merge): host gather/rebuild transpose to/from the transposed
-  // layout, and the CPU-merge fallback (AoS) is disabled since it can't read it.
-  const bool soa = use_gpu && gpu->soa_work_pool();
   if (use_gpu && std::getenv("PTCTLMC_STATS"))
     std::fprintf(stderr, "[gpu] network expander ACTIVE\n");
 
@@ -1413,6 +1428,11 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   // GPU does expand + the per-bucket subsumption/convex-union merge; the host only groups by
   // dk (cheap integer hashing) and marshals flat zone spans.
   if (use_gpu) {
+    // SoA work pool (Metal gpusplit merge): host gather/rebuild transpose to/from the transposed
+    // layout, and the CPU-merge fallback (AoS) is disabled since it can't read it. Declared here
+    // rather than beside use_gpu: every reader is inside this GPU-only block, so at file scope it
+    // was an unused variable (and a -Wunused-variable warning) in every CPU-only build.
+    const bool soa = use_gpu && gpu->soa_work_pool();
     const int np = net.nprocs(), ni = static_cast<int>(net.intvars.size()), dim = net.nclocks + 1, d2 = dim * dim;
     auto int_ok_flat = [&](const std::vector<IntAtom>& g, const int* iv) {
       for (const auto& a : g) {
@@ -1929,6 +1949,21 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     auto stripe_of = [&](std::uint64_t dk) -> std::size_t {
       return static_cast<std::size_t>((dk * 0x9e3779b97f4a7c15ULL) >> shift);
     };
+    // Buckets for the per-level survivor collection below (see the level loop). Taken from the
+    // SAME high bits of the same mix as stripe_of, so bucket b owns a CONTIGUOUS range of
+    // stripes: a bucket's for_level probes stay inside one slice of `smap` instead of scattering
+    // across all NB tables. >= 4 buckets per thread keeps a dynamic schedule balanced.
+    int nbkbits = 0;
+    while ((1 << nbkbits) < nthreads * 4) ++nbkbits;
+    const int nbk = nbkbits ? (1 << nbkbits) : 1;
+    const int bshift = 64 - nbkbits;
+    auto bucket_of = [&](std::uint64_t dk) -> std::size_t {   // only called when nbkbits > 0
+      return static_cast<std::size_t>((dk * 0x9e3779b97f4a7c15ULL) >> bshift);
+    };
+    // Dynamic-schedule chunk for the frontier expansion. Loop-invariant, so OpenMP accepts a
+    // runtime value here; --omp-chunk previously reached only reach.cpp's single-TA loop, which
+    // made it a no-op for every network (multi-process) model.
+    const int expand_chunk = std::max(1, omp_chunk());
 
     // The frontier holds only (dk, zone-index) per state -- 12 B, not a full
     // SymState. locs/ints come from dk (decode_key) and the zone from the intern
@@ -1980,7 +2015,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         SymState cur;                    // reused per thread: reconstructed frontier state
         cur.locs.resize(np_);
         cur.ints.resize(ni_);
-#pragma omp for schedule(dynamic, 8)
+#pragma omp for schedule(dynamic, expand_chunk)
         for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
           if (found.load(std::memory_order_relaxed)) continue;
           decode_key(frontier[i].first, cur.locs.data(), cur.ints.data());
@@ -2026,35 +2061,66 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       if (stats) for (std::size_t g : tls_gen) stats->generated += g;
       if (found.load()) return true;
 
-      // Collect this level's survivors (entries stamped `level`) into the next
-      // frontier. Union the per-thread touched sets so each dk is scanned once;
-      // the tables are read-only here (no writers), so for_level is a safe read.
-      std::vector<std::uint64_t> tdk;
+      // Collect this level's survivors (entries stamped `level`) into the next frontier.
+      // Each dk must be scanned ONCE, so the per-thread touched sets have to be merged; the
+      // tables are read-only here (no writers), so for_level is a safe read.
+      //
+      // The merge used to be one serial std::unordered_set fed from every thread's set. That
+      // was the largest serial phase left in the level loop (0.149s of a 3.83s arbiter16 run
+      // at 8 threads) and it grows with level width, so it caps the speedup by Amdahl.
+      //
+      // Instead dk is BUCKETED by hash and each bucket is deduplicated independently. A given
+      // dk hashes to exactly one bucket, so that bucket's set observes every copy of it and
+      // the deduplicated key set is identical to the serial union's -- only the order differs,
+      // and the order was never fixed anyway (the old for_level pass was a dynamic-schedule
+      // loop appending into per-thread buffers, so which thread saw which dk already varied
+      // run to run). Dedup and the for_level scan then happen in the SAME parallel loop, which
+      // also removes the separate scan pass.
+      //
+      // `nbk` / bucket_of are set up next to stripe_of above.
+      const int nbuk = single ? 1 : nbk;
+      // part[t * nbuk + b]: thread t's touched keys destined for bucket b.
+      std::vector<std::vector<std::uint64_t>> part(static_cast<std::size_t>(nthreads) * nbuk);
       if (single) {
-        tdk.assign(tls_touched[0].begin(), tls_touched[0].end());
+        part[0].assign(tls_touched[0].begin(), tls_touched[0].end());
       } else {
-        std::unordered_set<std::uint64_t> allt;
-        for (auto& t : tls_touched) allt.insert(t.begin(), t.end());
-        tdk.assign(allt.begin(), allt.end());
-      }
-      // Survivors go into the next frontier as (dk, zone-index) pairs -- no
-      // SymState build, no zone copy here (that happens once, lazily, at the next
-      // expansion into the reused `cur`).
-      std::vector<std::vector<std::pair<std::uint64_t, int>>> nf(nthreads);
 #ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic, 64) num_threads(nthreads)
-      for (long k = 0; k < static_cast<long>(tdk.size()); ++k) {
-        const std::uint64_t dk = tdk[k];
-        auto& buf = nf[omp_get_thread_num()];
-        smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
-      }
-#else
-      for (const std::uint64_t dk : tdk)
-        smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { nf[0].push_back({dk, zidx}); });
+#pragma omp parallel for schedule(static) num_threads(nthreads)
 #endif
+        for (long t = 0; t < static_cast<long>(nthreads); ++t) {
+          const std::size_t base = static_cast<std::size_t>(t) * nbuk;
+          for (const std::uint64_t dk : tls_touched[t]) part[base + bucket_of(dk)].push_back(dk);
+        }
+      }
+      // Survivors go into the next frontier as (dk, zone-index) pairs -- no SymState build,
+      // no zone copy here (that happens once, lazily, at the next expansion into `cur`).
+      std::vector<std::vector<std::pair<std::uint64_t, int>>> nf(nbuk);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(nthreads)
+#endif
+      for (long b = 0; b < static_cast<long>(nbuk); ++b) {
+        auto& buf = nf[b];
+        // `single` already deduplicated inside the one touched set, so no second pass is
+        // needed there; the parallel path can see the same dk from several threads.
+        if (single) {
+          for (const std::uint64_t dk : part[b])
+            smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
+          continue;
+        }
+        std::unordered_set<std::uint64_t> seen;
+        for (int t = 0; t < nthreads; ++t) {
+          for (const std::uint64_t dk : part[static_cast<std::size_t>(t) * nbuk + b]) {
+            if (!seen.insert(dk).second) continue;
+            smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
+          }
+        }
+      }
       std::vector<std::pair<std::uint64_t, int>> next;
+      std::size_t ntot = 0;
+      for (auto& v : nf) ntot += v.size();
+      next.reserve(ntot);                    // one allocation instead of a realloc chain
       for (auto& v : nf)
-        for (auto& p : v) next.push_back(p);
+        next.insert(next.end(), v.begin(), v.end());
       frontier.swap(next);
       // Reclaim dead arena tombstones: one thread per stripe (exclusive), between levels.
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -2080,10 +2146,24 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // interner stays within 2x of its pinned-to-live size.
       if (zi.allocated() >= sweep_at) {
         std::vector<std::uint8_t> alive(zi.index_bound(), 0);
-        for (auto& mp : smap)
-          for (const auto& nd : mp.arena)
-            if (!nd.dead) alive[nd.zidx] = 1;
-        for (const auto& pr : frontier) alive[pr.second] = 1;
+        // MARK IN PARALLEL over stripes. Every writer stores the same value (1) and nothing
+        // reads `alive` until the sweep below, so two threads marking the same zidx cannot
+        // disagree -- but concurrent plain stores to one byte are still formally a race, so
+        // the store is a relaxed atomic. On x86/ARM that is the same instruction as a plain
+        // byte store (no lock prefix, no fence): the parallelism is free. The mark walks
+        // every live arena node, which was the serial half of the sweep (0.128s of a 3.83s
+        // arbiter16 run at 8 threads, and it grows with the state space).
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
+#endif
+        for (long s = 0; s < static_cast<long>(smap.size()); ++s)
+          for (const auto& nd : smap[s].arena)
+            if (!nd.dead) __atomic_store_n(&alive[nd.zidx], std::uint8_t(1), __ATOMIC_RELAXED);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+#endif
+        for (long k = 0; k < static_cast<long>(frontier.size()); ++k)
+          __atomic_store_n(&alive[frontier[k].second], std::uint8_t(1), __ATOMIC_RELAXED);
         zi.sweep(alive);
         sweep_at = std::max<std::size_t>(kSweepFloor, zi.allocated() * 2);
       }
