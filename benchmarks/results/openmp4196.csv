@@ -94,3 +94,4 @@ arbiter,arbiter19,ptctlmc-omp,32,2,5505024,60.291,0.926,OK
 arbiter,arbiter19,ptctlmc-omp,16,1,5505024,63.017,0.894,OK
 arbiter,arbiter19,ptctlmc-omp,16,2,5505024,63.691,0.893,OK
 arbiter,arbiter19,ptctlmc-omp,12,1,5505024,66.141,0.891,OK
+arbiter,arbiter19,ptctlmc-omp,12,2,5505024,65.466,0.876,OK
