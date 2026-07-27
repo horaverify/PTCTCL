@@ -1,0 +1,18 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[>=Latex, font=\small]
+  \tikzstyle{box}=[draw, rounded corners, minimum width=33mm, minimum height=7mm]
+  \node[box] (p0) at (0,0) {Pending for $dk_c$: 40 zones};
+  \node[box] (l0) at (0,-1.2) {Live antichain: 55 zones};
+  \node[box] (m0) at (0,-2.4) {Settle: subsume/merge scans};
+  \node[box] (o0) at (0,-3.6) {Survivors feed next frontier};
+
+  \draw[->] (p0) -- (m0);
+  \draw[->] (l0) -- (m0);
+  \draw[->] (m0) -- (o0);
+
+  \node at (5.6,-1.8) {$\cost(dk_c) \approx \alpha p\,l + \beta p^2$};
+\end{tikzpicture}
+\caption{A heavy chain forms when both pending and live sets are large.}
+\label{fig:chain-growth}
+\end{figure}

@@ -1,0 +1,21 @@
+\section{Related Approaches for Similar Irregular Tasks}
+The same pattern appears in graph analytics, sparse linear algebra, SAT/SMT propagation, and symbolic model checking.
+Common strategies:
+
+\subsection*{1) Cost-aware scheduling}
+Estimate $\hat C(dk)$ online and process heavy chains first.
+This reduces end-of-level tails.
+
+\subsection*{2) Work stealing with heavy-task splitting}
+Idle workers steal remaining tasks.
+For very large chains, split into bounded chunks and requeue, preserving local order constraints.
+
+\subsection*{3) Hybrid policies}
+Switch between incremental insertion and fused settle based on observed skew and contention.
+No single policy is best across all levels.
+
+\subsection*{4) Hierarchical queues}
+Maintain separate heavy/light queues; keep heavy queue globally visible and light queue local to reduce contention.
+
+\subsection*{5) NUMA-aware ownership}
+Keep frequently-hit chains on stable worker sockets when possible, reducing remote memory penalties.

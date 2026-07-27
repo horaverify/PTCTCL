@@ -132,6 +132,10 @@ def main():
     ap.add_argument("--fischer", nargs="*", type=int, default=[6, 7, 8, 9, 10, 11])
     ap.add_argument("--train", action="store_true", default=True)
     ap.add_argument("--threads", nargs="+", type=int, default=[4, 8, 12])
+    ap.add_argument("--only-ptctl-omp", action="store_true",
+                    help="run only PTCTLMC OpenMP backend (skip verifyta and ltsmin)")
+    ap.add_argument("--omp-chunk", type=int, default=None,
+                    help="pass --omp-chunk N to PTCTLMC when using backend omp")
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=1800)   # 30 minutes
     ap.add_argument("--memgb", type=float, default=15.0)
@@ -276,8 +280,9 @@ def main():
                     timed_out = timed_out or st in ("TIMEOUT", "MEMOUT")
             return sts
 
-        run_tool("verifyta", verifyta_runs)
-        if os.path.exists(so):
+        if not args.only_ptctl_omp:
+            run_tool("verifyta", verifyta_runs)
+        if (not args.only_ptctl_omp) and os.path.exists(so):
             run_tool("ltsmin", lambda: threaded_runs(
                 "ltsmin",
                 lambda th: [OPAAL, "--threads=%d" % th, "--strategy=sbfs", "-s", str(TABLE_BITS), so],
@@ -285,7 +290,9 @@ def main():
                 r"Explored ([0-9]+) states"))
         run_tool("ptctlmc-omp", lambda: threaded_runs(
             "ptctlmc-omp",
-            lambda th: [PTCTLMC, "--backend", "omp", xml, pq],
+            lambda th: ([PTCTLMC, "--backend", "omp"] +
+                        (["--omp-chunk", str(args.omp_chunk)] if args.omp_chunk is not None else []) +
+                        [xml, pq]),
             lambda th: {"OMP_NUM_THREADS": str(th)},
             r"explored ([0-9]+) symbolic"))
 

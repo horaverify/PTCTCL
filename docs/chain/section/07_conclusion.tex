@@ -1,0 +1,7 @@
+\section{Conclusion}
+The key bottleneck is not simply thread count; it is chain-level irregularity under level barriers.
+A small number of hot chains can dominate per-level makespan, creating starvation of otherwise idle workers.
+
+The right optimization objective is therefore tail reduction under semantic constraints:
+measure skew, predict heavy chains, schedule by cost, and chunk heavy settles when needed.
+These are established techniques in irregular parallel systems and are directly applicable here.
