@@ -5,6 +5,10 @@
 #include <malloc/malloc.h>
 #include <mach/mach.h>
 #endif
+#ifdef __linux__
+#include <malloc.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -45,6 +49,28 @@ struct SymState {
   IntVec ints;
   Dbm zone;
 };
+
+#ifdef __linux__
+static std::size_t linux_rss_bytes() {
+  FILE* f = std::fopen("/proc/self/statm", "r");
+  if (!f) return 0;
+  unsigned long size = 0, resident = 0;
+  const int n = std::fscanf(f, "%lu %lu", &size, &resident);
+  std::fclose(f);
+  if (n < 2) return 0;
+  const long ps = sysconf(_SC_PAGESIZE);
+  if (ps <= 0) return 0;
+  return static_cast<std::size_t>(resident) * static_cast<std::size_t>(ps);
+}
+
+static std::size_t linux_heap_bytes() {
+#if defined(__GLIBC__)
+  return static_cast<std::size_t>(mallinfo2().uordblks);
+#else
+  return 0;
+#endif
+}
+#endif
 
 
 // ---- zone interning --------------------------------------------------------
@@ -1974,6 +2000,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       }
 
       if (memprof) {
+#ifdef __APPLE__
         mach_task_basic_info info{};
         mach_msg_type_number_t c = MACH_TASK_BASIC_INFO_COUNT;
         if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &c) == KERN_SUCCESS &&
@@ -1986,6 +2013,18 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
           pk_pack = pack; pk_map = mapb; pk_cache = cacheb; pk_arena = ab; pk_tab = tb;
           pk_heap = mstats().bytes_used;   // process-wide live heap (all zones)
         }
+#elif defined(__linux__)
+        const std::size_t rss = linux_rss_bytes();
+        if (rss > pk_rss) {
+          std::size_t pack = 0, mapb = 0, cacheb = 0, an = 0, dn = 0, ab = 0, tb = 0;
+          zi.account(pack, mapb, cacheb);
+          for (const auto& mp : smap) mp.account(an, dn, ab, tb);
+          pk_rss = rss; pk_lvl = level;
+          pk_front = frontier.capacity() * sizeof(std::pair<std::uint64_t, int>);
+          pk_pack = pack; pk_map = mapb; pk_cache = cacheb; pk_arena = ab; pk_tab = tb;
+          pk_heap = linux_heap_bytes();
+        }
+#endif
       }
     }
     if (memprof) {
