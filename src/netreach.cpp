@@ -135,6 +135,15 @@ struct ZoneIntern {
     return scratch;
   }
 
+  // Decode into caller-owned storage instead of the shared per-thread scratch, so a caller
+  // can hold several zones live at once. get() overwrites one scratch, which forces any
+  // multi-zone fold to re-unpack on every visit; with this the fold unpacks each zone once.
+  void get_into(int idx, Dbm& out) const {
+    if (out.dim() != dim) out = Dbm(dim - 1);
+    mindbm_unpack(record(idx), out.data().data());
+  }
+  int zdim() const { return dim; }
+
   // Probe the flat table for the packed bytes [q,q+qlen). Returns idx or -1; on miss, *slot is
   // the empty table position to insert at. Caller holds mtx.
   int find_locked(const std::uint8_t* q, std::size_t qlen, std::uint64_t h, std::size_t* slot) const {
@@ -256,12 +265,137 @@ struct ZoneIntern {
     hcount = live;
   }
 
+  // Records currently handed out: live zones PLUS garbage not yet reclaimed. `n` is a
+  // high-water index counter that never shrinks (sweep recycles indices into `freeIdx`
+  // instead of renumbering), so `n` alone cannot drive the sweep trigger -- it crosses any
+  // fixed threshold once and stays there. This is the quantity a growth-based trigger must
+  // watch: it rises with every fresh intern and drops back to the live set after a sweep.
+  std::size_t allocated() const {
+    return static_cast<std::size_t>(n.load(std::memory_order_relaxed)) - freeIdx.size();
+  }
+
   // Byte accounting (PTCTLMC_STATS): where the interner's resident bytes go.
   void account(std::size_t& packed, std::size_t& mapb, std::size_t& cacheb) const {
     for (const auto& s : slabs) packed += s.capacity();
     mapb += htab.capacity() * sizeof(std::int32_t);
     for (const auto& tc : tcache) cacheb += tc.capacity() * sizeof(CacheLine);
   }
+};
+
+// Shared dense-zone interner for the GPU driver's passed set. NOT currently wired in -- see the
+// note at the passed-set declaration in the GPU driver for why (it is a memory/time trade that
+// only pays on low-distinct-zone models and needs per-model routing to be a win).
+//
+// The GPU merge kernels consume DENSE matrices, so unlike the CPU path (which stores minimal
+// constraint systems, see ZoneIntern) this keeps zones dense -- but it stores each distinct zone
+// ONCE and hands out an index. The passed set then costs 4 bytes per (discrete state, zone)
+// instead of d2 words. On models with few distinct zones the saving is enormous (viking15: 2.77M
+// stored zones, 120 distinct); on models where every zone differs it costs one hash per survivor
+// and nothing is lost, because the dense copy had to be written anyway.
+//
+// Thread-safety mirrors the CPU interner: records live in fixed-size chunks that are never moved,
+// so an index handed out to a reader stays valid while other threads intern. `n` is published with
+// release semantics after its chunk is installed, so any index < n has readable storage.
+struct GpuZoneIntern {
+  static constexpr int kChunkBits = 13;                 // 8192 zones per chunk
+  static constexpr int kChunk = 1 << kChunkBits;
+  static constexpr int kChunkMask = kChunk - 1;
+  static constexpr int kMaxChunks = 1 << 17;            // 1G zones ceiling
+  static constexpr int kStripes = 512;
+
+  explicit GpuZoneIntern(int d2) : d2_(d2), stripes_(kStripes) {}
+  ~GpuZoneIntern() { for (auto& c : chunks_) delete c.load(std::memory_order_relaxed); }
+
+  const raw_t* get(int idx) const {
+    return chunks_[idx >> kChunkBits].load(std::memory_order_acquire)->data() +
+           static_cast<std::size_t>(idx & kChunkMask) * d2_;
+  }
+
+  // mode: Dedup interns (one copy per distinct zone); Append stores every zone without hashing,
+  // which isolates the cost of the hash+lookup from the cost of the indexed layout itself.
+  enum class Mode { Dedup, Append };
+  void set_mode(Mode m) { mode_ = m; }
+
+  int intern(const raw_t* z) {
+    if (mode_ == Mode::Append) {
+      const int idx = alloc();
+      std::memcpy(const_cast<raw_t*>(get(idx)), z, static_cast<std::size_t>(d2_) * sizeof(raw_t));
+      return idx;
+    }
+    const std::uint64_t h = hash(reinterpret_cast<const std::uint32_t*>(z));
+    Stripe& s = stripes_[h & (kStripes - 1)];
+    std::lock_guard<std::mutex> lk(s.m);
+    auto& bucket = s.tab[h];
+    for (const int cand : bucket)
+      if (std::memcmp(get(cand), z, static_cast<std::size_t>(d2_) * sizeof(raw_t)) == 0) return cand;
+    const int idx = alloc();
+    std::memcpy(const_cast<raw_t*>(get(idx)), z, static_cast<std::size_t>(d2_) * sizeof(raw_t));
+    bucket.push_back(idx);
+    return idx;
+  }
+
+  int count() const { return n_.load(std::memory_order_acquire); }
+  std::size_t bytes() const {
+    return static_cast<std::size_t>(chunks_.size()) * kChunk * d2_ * sizeof(raw_t);
+  }
+
+ private:
+  // Hash the WHOLE zone, in four independent lanes.
+  //
+  // Two failure modes to avoid. Hashing a prefix is catastrophic: canonical DBMs routinely agree
+  // on their leading rows, so a prefix key collapses hundreds of thousands of distinct zones into
+  // one bucket and the linear scan below goes quadratic (fischer11: 2.6s -> 395s). Hashing all
+  // words with textbook FNV is correct but serial -- one multiply per word on the critical path,
+  // and this runs for every merged zone on every level. Four lanes give the same coverage with
+  // four multiplies in flight, then mix once at the end.
+  std::uint64_t hash(const std::uint32_t* z) const {
+    std::uint64_t h0 = 1469598103934665603ULL, h1 = h0 ^ 0x9e3779b97f4a7c15ULL,
+                  h2 = h0 ^ 0xc2b2ae3d27d4eb4fULL, h3 = h0 ^ 0x165667b19e3779f9ULL;
+    int k = 0;
+    for (; k + 4 <= d2_; k += 4) {
+      h0 = (h0 ^ z[k])     * 1099511628211ULL;
+      h1 = (h1 ^ z[k + 1]) * 1099511628211ULL;
+      h2 = (h2 ^ z[k + 2]) * 1099511628211ULL;
+      h3 = (h3 ^ z[k + 3]) * 1099511628211ULL;
+    }
+    for (; k < d2_; ++k) h0 = (h0 ^ z[k]) * 1099511628211ULL;
+    std::uint64_t h = h0 ^ (h1 * 3) ^ (h2 * 5) ^ (h3 * 7);
+    h ^= h >> 29; h *= 0xbf58476d1ce4e5b9ULL; h ^= h >> 32;   // final avalanche
+    return h;
+  }
+  // LOCK-FREE in the common case. This used to take `growMtx_` on every call, which serialised
+  // all 12 threads on one mutex for millions of zones -- 8-12 CPU-seconds of contention per run,
+  // and the dominant cost of the passed rebuild. The index comes from an atomic bump; the mutex
+  // is taken only when a chunk boundary is crossed (once per kChunk allocations), and then only
+  // to install the chunk.
+  //
+  // `chunks_` is pre-sized and never resized: growing it with push_back would reallocate the
+  // pointer array under readers calling get() concurrently, which is a use-after-free (it
+  // segfaulted on fischer11). Slots are published with release / read with acquire, so a reader
+  // that sees the pointer also sees the storage it points to.
+  int alloc() {
+    const int idx = n_.fetch_add(1, std::memory_order_relaxed);
+    const int c = idx >> kChunkBits;
+    if (c >= kMaxChunks) throw std::runtime_error("GPU zone interner overflow");
+    if (!chunks_[c].load(std::memory_order_acquire)) {
+      std::lock_guard<std::mutex> lk(growMtx_);
+      if (!chunks_[c].load(std::memory_order_relaxed))
+        chunks_[c].store(new std::vector<raw_t>(static_cast<std::size_t>(kChunk) * d2_),
+                         std::memory_order_release);
+    }
+    return idx;
+  }
+
+  struct Stripe {
+    std::unordered_map<std::uint64_t, std::vector<int>> tab;
+    std::mutex m;
+  };
+  int d2_;
+  Mode mode_ = Mode::Dedup;
+  std::vector<std::atomic<std::vector<raw_t>*>> chunks_{kMaxChunks};   // fixed: never resized
+  std::deque<Stripe> stripes_;
+  std::mutex growMtx_;
+  std::atomic<int> n_{0};
 };
 
 // Flat open-addressing passed/waiting table for one shared-passed stripe.
@@ -340,28 +474,83 @@ struct NetPassed {
     thread_local std::vector<std::int32_t> Ls, Us;
     if (!has_diag) bounds(s.locs.data(), Ls, Us);
     const int head = tab[si].head;
-    // (2) s subsumed by a stored zone? -> drop
+    // Unpack the live chain ONCE into a reused thread-local array, then fold over the array
+    // rather than re-walking the chain. zi->get() decodes a packed min-graph record into a
+    // single shared scratch on every call, so the three folds below used to re-run
+    // mindbm_unpack for each node they visited -- and (4) restarts its scan after every
+    // successful union, re-unpacking the whole chain again each time. Chains also thread
+    // through a std::deque via `next`, so walking them three times is three passes of
+    // pointer-chasing over cache-cold nodes, and dead nodes are traversed to be skipped.
+    // merge_level (the batched path) already folds over a compact `live` array for exactly
+    // this reason; this brings the incremental path in line. Same order, same predicates,
+    // same results -- only the number of unpacks changes.
+    // (1) FAST PATH -- decide the overwhelmingly common "duplicate, drop it" case straight
+    // off the PACKED records, with no unpack and no closure.
+    //
+    // Profiling arbiter17: of 12.3M add() calls, 89.8% are killed
+    // immediately by the subsumption test below against a chain whose mean length is 1.00 --
+    // and reaching that test cost a mindbm_unpack per probe, i.e. a full O(dim^3) dbm_close
+    // to rebuild the redundant entries. That was 36.3s of unpacking to feed 1.6s of actual
+    // comparisons: 22x more time decompressing the stored zone than comparing against it.
+    //
+    // mindbm_includes_dense answers "s.zone subseteq stored" directly from the minimal
+    // constraint system in O(|G|) (|G| ~ dim). Firing it early is sound in both modes:
+    //   * has_diag: test (2) IS plain inclusion, so this is that test, verbatim.
+    //   * aLU: plain inclusion implies aLU subsumption -- a witness needs
+    //     Zp[y][x] < Z[y][x], which cannot happen when Z subseteq Z'. So an early hit is a
+    //     conclusion the aLU test would also have reached.
+    // When it does NOT fire we fall through to the full dense folds below, so nothing is
+    // lost -- aLU still prunes everything it pruned before. State counts are unchanged.
     for (int i = head; i != -1; i = arena[i].next) {
       if (arena[i].dead) continue;
-      const Dbm& ez = zi->get(arena[i].zidx);
+      if (mindbm_includes_dense(zi->record(arena[i].zidx), s.zone.data().data(), s.zone.dim()))
+        return -1;
+    }
+    // `chain` holds the unpacked zones by fixed position; `live` indexes the ones still in
+    // play. Removals go through `live` with an ORDERED erase (never swap-with-last): the
+    // convex union in (4) is order-sensitive, so the survivors must keep their newest-first
+    // relative order for the merge to reproduce the chain-walking result exactly. This is
+    // the same discipline merge_level uses on its own `live` array.
+    thread_local std::vector<Dbm> chain;
+    thread_local std::vector<int> cidx;
+    thread_local std::vector<std::size_t> live;
+    cidx.clear();
+    live.clear();
+    std::size_t nc = 0;
+    for (int i = head; i != -1; i = arena[i].next) {
+      if (arena[i].dead) continue;
+      if (nc == chain.size()) chain.emplace_back(zi->zdim() - 1);
+      zi->get_into(arena[i].zidx, chain[nc]);
+      cidx.push_back(i);
+      live.push_back(nc);
+      ++nc;
+    }
+    // (2) s subsumed by a stored zone? -> drop
+    for (std::size_t k = 0; k < nc; ++k) {
+      const Dbm& ez = chain[k];
       if (has_diag ? ez.includes(s.zone) : s.zone.alu_subsumed_by(ez, Ls, Us))
         return -1;
     }
     // (3) drop stored zones now subsumed by s
-    for (int i = head; i != -1; i = arena[i].next) {
-      if (arena[i].dead) continue;
-      const Dbm& ez = zi->get(arena[i].zidx);
-      if (has_diag ? s.zone.includes(ez) : ez.alu_subsumed_by(s.zone, Ls, Us))
-        arena[i].dead = true;
+    for (std::size_t k = 0; k < live.size();) {
+      const Dbm& ez = chain[live[k]];
+      if (has_diag ? s.zone.includes(ez) : ez.alu_subsumed_by(s.zone, Ls, Us)) {
+        arena[cidx[live[k]]].dead = true;
+        live.erase(live.begin() + k);
+      } else ++k;
     }
     // (4) convex-union merge: absorb stored zones whose union with s is exact.
     // try_union mutates only s.zone (the incoming fresh zone); the interned zone
     // is read-only, so this never disturbs another state's stored zone.
     for (bool merged = true; merged;) {
       merged = false;
-      for (int i = head; i != -1; i = arena[i].next) {
-        if (arena[i].dead) continue;
-        if (s.zone.try_union(zi->get(arena[i].zidx))) { arena[i].dead = true; merged = true; break; }
+      for (std::size_t k = 0; k < live.size(); ++k) {
+        if (s.zone.try_union(chain[live[k]])) {
+          arena[cidx[live[k]]].dead = true;
+          live.erase(live.begin() + k);
+          merged = true;
+          break;
+        }
       }
     }
     // (5) prepend s to the chain
@@ -369,89 +558,6 @@ struct NetPassed {
     arena.push_back(Node{zi->intern(s.zone, tid), level, tab[si].head, false});
     tab[si].head = idx;
     return idx;
-  }
-
-  // ---- fused batched path (PTCTLMC_FUSED) ----
-  // Append a successor WITHOUT subsuming: O(1) under the stripe lock, where add() holds
-  // it for an O(antichain) scan plus an intern. On Fischer that scan is what a sample
-  // profile blames for ~16k samples of mutex contention (more than add+intern combined),
-  // because few discrete states carry long antichains and every thread piles onto the
-  // same stripes. Returns true if this is the FIRST zone appended for `dk` at `level` --
-  // the chain is newest-first, so the head's level answers that with no extra field --
-  // letting the caller record each touched state exactly once instead of per successor.
-  bool append_pending(int zidx, std::uint64_t dk, int level) {
-    if (used * 10 >= (mask + 1) * 7) grow();
-    const std::size_t si = slot_of(dk);
-    const int idx = static_cast<int>(arena.size());
-    if (tab[si].head == -1) {
-      arena.push_back(Node{zidx, level, -1, false});
-      tab[si] = Slot{dk, idx};
-      ++used;
-      return true;
-    }
-    const bool first = (arena[tab[si].head].level != level);
-    arena.push_back(Node{zidx, level, tab[si].head, false});
-    tab[si].head = idx;
-    return first;
-  }
-
-  // Settle one discrete state's pending zones. This replays add()'s exact (2)(3)(4) fold
-  // -- subsumed-by, subsumes, convex-union -- but ONCE per (state, level) with NO lock
-  // held, instead of once per successor with the stripe lock held. Ls/Us are computed by
-  // the caller, also once per state rather than once per successor.
-  // Lock-free by construction: it only flips `dead`/`zidx` on nodes of ITS OWN chain and
-  // never pushes to `arena` or calls grow(), so distinct discrete states never conflict
-  // even when they share a stripe.
-  void merge_level(std::uint64_t dk, int level, bool has_diag,
-                   const std::vector<std::int32_t>& Ls, const std::vector<std::int32_t>& Us,
-                   int tid, std::vector<int>& pend, std::vector<int>& live) {
-    std::size_t i0 = static_cast<std::size_t>(mix(dk) & mask);
-    while (tab[i0].head != -1 && tab[i0].dk != dk) i0 = (i0 + 1) & mask;
-    if (tab[i0].head == -1) return;
-    // Partition the chain ONCE into the settled antichain and this level's pending zones,
-    // then fold over the compact `live` ARRAY -- never over the chain. Walking the chain
-    // per pending zone is quadratic: deferring subsumption lets a Fischer state accumulate
-    // thousands of pending nodes, and a dead node is skipped but still traversed. That
-    // cost 8.17s on fischer10 versus 2.92s incremental; folding over `live` is O(pending x
-    // antichain), the same as incremental, but with no lock and bounds computed once.
-    pend.clear(); live.clear();
-    for (int n = tab[i0].head; n != -1; n = arena[n].next) {
-      if (arena[n].dead) continue;
-      if (arena[n].level == level) pend.push_back(n); else live.push_back(n);
-    }
-    if (pend.empty()) return;
-    std::reverse(pend.begin(), pend.end());     // chain is newest-first -> insertion order
-    Dbm z(0);
-    for (int n : pend) {
-      z = zi->get(arena[n].zidx);               // copy: try_union mutates the incoming zone
-      bool drop = false;
-      for (std::size_t k = 0; k < live.size(); ++k) {          // (2) subsumed by a live zone?
-        const Dbm& ez = zi->get(arena[live[k]].zidx);
-        if (has_diag ? ez.includes(z) : z.alu_subsumed_by(ez, Ls, Us)) { drop = true; break; }
-      }
-      if (drop) { arena[n].dead = true; continue; }
-      for (std::size_t k = 0; k < live.size();) {              // (3) kill zones subsumed by z
-        const Dbm& ez = zi->get(arena[live[k]].zidx);
-        if (has_diag ? z.includes(ez) : ez.alu_subsumed_by(z, Ls, Us)) {
-          arena[live[k]].dead = true;
-          live.erase(live.begin() + k);         // ordered erase: the convex union below is
-        } else ++k;                             // order-sensitive, so keep insertion order
-      }
-      for (bool merged = true; merged;) {                       // (4) convex-union absorb
-        merged = false;
-        for (std::size_t k = 0; k < live.size(); ++k) {
-          if (z.try_union(zi->get(arena[live[k]].zidx))) {
-            arena[live[k]].dead = true;
-            live.erase(live.begin() + k);
-            merged = true;
-            break;
-          }
-        }
-      }
-      arena[n].zidx = zi->intern(z, tid);       // (5) revive in place
-      arena[n].dead = false;
-      live.push_back(n);
-    }
   }
 
   // Reclaim dead arena tombstones by rebuilding every chain live-only. Subsumption/merge mark
@@ -973,6 +1079,8 @@ void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
 // merge (the original, published behavior); --adaptive turns on the calibrated CPU/GPU routing.
 static bool g_adaptive_merge = false;
 void set_adaptive_merge(bool on) { g_adaptive_merge = on; }
+static bool g_gpu_intern = false;
+void set_gpu_intern(bool on) { g_gpu_intern = on; }
 bool adaptive_merge() { return g_adaptive_merge; }
 
 // Frontier chunking (see netreach.hpp). Off by default = expand a whole BFS level at once.
@@ -1201,11 +1309,19 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       }
       return true;
     };
-    std::unordered_map<std::uint64_t, std::vector<raw_t>> passed;   // dk -> concat antichain zones
+    // The passed set holds ZONE INDICES into a shared dense pool rather than a private dense copy
+    // per (discrete state, zone). With `--gpu-intern` the pool DEDUPLICATES, which is a large win
+    // wherever few distinct zones are reachable: viking15 stores 2.77M zones drawn from just 120
+    // distinct ones, i.e. GBs of unified memory representing ~120 KB of zone data. Without the
+    // flag the pool simply appends, reproducing the old layout's memory with the same indexed
+    // access path, so the flag isolates deduplication from everything else.
+    GpuZoneIntern zi(d2);
+    zi.set_mode(g_gpu_intern ? GpuZoneIntern::Mode::Dedup : GpuZoneIntern::Mode::Append);
+    std::unordered_map<std::uint64_t, std::vector<int>> passed;   // dk -> antichain zone indices
     std::vector<int> fl(s0.locs.begin(), s0.locs.end());
     std::vector<long> fi(s0.ints.begin(), s0.ints.end());
     std::vector<raw_t> fz(s0.zone.data().begin(), s0.zone.data().end());
-    passed[disc_key(s0.locs, s0.ints)].assign(s0.zone.data().begin(), s0.zone.data().end());
+    passed[disc_key(s0.locs, s0.ints)].assign(1, zi.intern(s0.zone.data().data()));
     // Optional phase profiler (PTCTLMC_MTLPROF): host-side timing of the two synchronous GPU
     // calls (expand/merge, which block until the kernel finishes since outputs are read in place)
     // vs. the host marshaling/rebuild. Zero overhead when the env var is unset.
@@ -1233,6 +1349,21 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     auto _now = [] { return std::chrono::steady_clock::now(); };
     auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
       return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    // Rebuild sub-phase attribution (PTCTLMC_RBPROF): copy/transpose vs intern vs frontier write.
+    const bool rbprof = std::getenv("PTCTLMC_RBPROF") != nullptr;
+    const int RBT = std::max(1, hyb_threads);
+    std::vector<double> rb_copy(RBT * 8, 0.0), rb_intern(RBT * 8, 0.0), rb_front(RBT * 8, 0.0);
+    auto rbnow = [](bool on) {
+      return on ? std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now().time_since_epoch()).count() : 0.0;
+    };
+    auto ompt = [] {
+#ifdef PTCTLMC_HAVE_OPENMP
+      return omp_get_thread_num() * 8;   // stride 8 doubles = 64B, one cache line per thread
+#else
+      return 0;
+#endif
     };
     const auto _wall0 = _now();
     const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
@@ -1341,7 +1472,16 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         std::vector<raw_t> cfz(fz.begin(), fz.begin() + static_cast<std::size_t>(nfr) * d2);
         nwork = gpu->expand(nfr, cfl, cfi, cfz, ev, ol, oi, oz);
       }
-      if (mtlprof) { t_expand += _ms(_te, _now()); tot_work += nwork; }
+      if (mtlprof) {
+        const double _dte = _ms(_te, _now());
+        t_expand += _dte; tot_work += nwork;
+        // Per-level (items, ms) so the fixed-vs-variable split of a dispatch can be REGRESSED
+        // from many points within one model, instead of inferred from a two-point fit across
+        // models (which is exactly determined, hence unfalsifiable -- and wrong: it mispredicts
+        // arbiter17 by 2.7x because per-item cost scales with the zone size).
+        if (std::getenv("PTCTLMC_LVLPROF"))
+          std::fprintf(stderr, "[lvl] frontier=%d nwork=%zu expand_ms=%.3f\n", nfr, nwork, _dte);
+      }
       if (memprof && nwork > peak_nwork) peak_nwork = nwork;
       if (nwork == 0) {
         if (whole) break;
@@ -1367,9 +1507,11 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // Bucketing stays SERIAL by measurement, not by omission. A lock-free open-addressing
       // table (one CAS per key, stable counting-sort scatter) was implemented and measured
       // three ways -- oversized table 328ms, nb-sized 467ms, monotonic 336ms -- against this
-      // loop's ~200ms. The map holds only nb entries (~1.2MB), stays L2-resident, and costs
-      // ~17ns per successor; a shared atomic table trades that locality for cross-core
-      // coherency traffic and loses even on 12 threads. See docs/GUIDE.md.
+      // loop's ~200ms. A private-map parallel version (per-thread maps + distinct-key merge +
+      // parallel counting-sort scatter) was also measured: 268ms -> 241ms on viking15, i.e. ~1%
+      // of wall time, because the loop is bound by streaming the expand output out of unified
+      // memory while the GPU is using the same bandwidth -- not by the hashing. Neither variant
+      // is worth the complexity here. See docs/GUIDE.md.
       std::unordered_map<std::uint64_t, int> bidx;
       std::vector<std::uint64_t> bdk;
       std::vector<int> bcnt;                              // per-bucket count of new zones
@@ -1407,7 +1549,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       for (int b = 0; b < nb; ++b) {
         new_cnt[b] = bcnt[b];
         auto pit = passed.find(bdk[b]);
-        exist_cnt[b] = (pit == passed.end()) ? 0 : static_cast<int>(pit->second.size() / d2);
+        exist_cnt[b] = (pit == passed.end()) ? 0 : static_cast<int>(pit->second.size());
         new_off[b] = static_cast<int>(ntot); ntot += new_cnt[b];
         work_off[b] = static_cast<int>(wtot); wtot += exist_cnt[b] + new_cnt[b];
       }
@@ -1438,14 +1580,16 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         auto pit = passed.find(bdk[b]);
         if (pit != passed.end()) {
           raw_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
-          const raw_t* src = pit->second.data();
           if (soa) {   // transpose AoS antichain -> SoA pool: zone i entry k at dst[k*cap + i]
             const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
-            for (int i = 0; i < exist_cnt[b]; ++i)
-              for (int k = 0; k < d2; ++k)
-                dst[static_cast<std::size_t>(k) * cap + i] = src[static_cast<std::size_t>(i) * d2 + k];
+            for (int i = 0; i < exist_cnt[b]; ++i) {
+              const raw_t* src = zi.get(pit->second[i]);
+              for (int k = 0; k < d2; ++k) dst[static_cast<std::size_t>(k) * cap + i] = src[k];
+            }
           } else {
-            std::memcpy(dst, src, static_cast<std::size_t>(exist_cnt[b]) * d2 * sizeof(raw_t));
+            for (int i = 0; i < exist_cnt[b]; ++i)
+              std::memcpy(dst + static_cast<std::size_t>(i) * d2, zi.get(pit->second[i]),
+                          static_cast<std::size_t>(d2) * sizeof(raw_t));
           }
         }
         int dl[64]; long di[32];
@@ -1503,6 +1647,16 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // rebuild passed + assemble the flat next frontier (survivors). Prefix-sum the per-bucket
       // survivor counts, pre-create the passed nodes, then fill everything in parallel.
       const auto _tr = _now();
+      // Survivor counts, then offsets. Counting scans every merged zone -- O(total zones), the
+      // same order as the rebuild copies below -- so it runs in parallel; only the offset
+      // prefix-sum stays serial, and that is O(nb) integer adds over data already in cache.
+      // (Fusing the two, as this loop used to, forced the whole O(total zones) scan to be
+      // serial purely because `frtot` was carried through it.)
+      // Survivor counts and offsets. Kept fused and serial deliberately: splitting the count
+      // into an omp parallel-for and leaving only the offset prefix-sum serial was measured on
+      // arbiter17/Metal and is not faster (rebuild 563ms vs 545ms) -- buckets average ~10 zones,
+      // so the scan is memory-bound and the per-bucket parallel overhead plus false sharing on
+      // fr_cnt costs more than the scan itself.
       std::vector<int> fr_off(nb), fr_cnt(nb);
       std::size_t frtot = 0;
       for (int b = 0; b < nb; ++b) {
@@ -1517,7 +1671,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // A bucket with NO survivor had all its new zones subsumed — its antichain is unchanged, so
       // `passed[dk]` is already correct. Skip its rebuild copy AND frontier gather entirely; only
       // changed buckets are cleared + refilled (their element ptrs stay stable across later inserts).
-      std::vector<std::vector<raw_t>*> pzp(nb, nullptr);
+      std::vector<std::vector<int>*> pzp(nb, nullptr);
       for (int b = 0; b < nb; ++b) if (fr_cnt[b] > 0) { pzp[b] = &passed[bdk[b]]; }
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 32)
@@ -1527,22 +1681,30 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         int dl[64]; long di[32];
         decode_key(bdk[b], dl, di);
         auto& pz = *pzp[b];
-        pz.resize(static_cast<std::size_t>(out_count[b]) * d2);
+        pz.resize(static_cast<std::size_t>(out_count[b]));
         const std::size_t poolbase = static_cast<std::size_t>(out_work_off[b]) * d2;
         const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
         int fpos = fr_off[b];
+        std::vector<raw_t> tmp(d2);        // one merged zone, reused across this bucket
+        const int _tid = ompt();
         for (int i = 0; i < out_count[b]; ++i) {
           const std::size_t slot = static_cast<std::size_t>(out_work_off[b]) + i;
-          raw_t* pzi = pz.data() + static_cast<std::size_t>(i) * d2;
+          raw_t* pzi = tmp.data();
+          const auto _r0 = rbnow(rbprof);
           if (soa)   // transpose SoA pool -> AoS zone: entry k at poolbase + k*cap + i
             for (int k = 0; k < d2; ++k) pzi[k] = out_zones[poolbase + static_cast<std::size_t>(k) * cap + i];
           else
             std::memcpy(pzi, out_zones + slot * d2, static_cast<std::size_t>(d2) * sizeof(raw_t));
+          const auto _r1 = rbnow(rbprof);
+          pz[i] = zi.intern(pzi);
+          const auto _r2 = rbnow(rbprof);
+          if (rbprof) { rb_copy[_tid] += _r1 - _r0; rb_intern[_tid] += _r2 - _r1; }
           if (out_isnew[slot]) {
             for (int p = 0; p < np; ++p) nl[static_cast<std::size_t>(fpos) * np + p] = dl[p];
             for (int v = 0; v < ni; ++v) nin[static_cast<std::size_t>(fpos) * ni + v] = di[v];
             std::memcpy(nz.data() + static_cast<std::size_t>(fpos) * d2, pzi, static_cast<std::size_t>(d2) * sizeof(raw_t));
             ++fpos;
+            if (rbprof) rb_front[_tid] += rbnow(true) - _r2;
           }
         }
       }
@@ -1621,6 +1783,11 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                    t_bucket, t_bpfx, t_gather, t_rebuild,
                    wall - t_expand - t_merge - t_bucket - t_gather - t_rebuild, lvl_cpu, lvl_gpu, tot_work, tot_valid,
                    tot_work ? 100.0 * (double)tot_valid / (double)tot_work : 0.0);
+      if (rbprof) {
+        double c = 0, in = 0, f = 0;
+        for (int t = 0; t < RBT; ++t) { c += rb_copy[t*8]; in += rb_intern[t*8]; f += rb_front[t*8]; }
+        std::fprintf(stderr, "[rbprof]   rebuild CPU-time split: copy/transpose=%.0fms intern=%.0fms frontier-write=%.0fms\n", c, in, f);
+      }
     }
     return false;
   }
@@ -1673,7 +1840,10 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     std::atomic<bool> found{false};
     const bool single = (nthreads == 1);   // seq / omp -p1: skip locks + the touched union
     // Fused batched merge: O(1) critical section + one lock-free settle pass per level.
-    const bool fused = std::getenv("PTCTLMC_FUSED") != nullptr;
+    // Zone-interner GC trigger: sweep once the allocation level reaches `sweep_at`, then set
+    // the next target to double the surviving live set (see the sweep site below).
+    constexpr std::size_t kSweepFloor = 50000;   // don't bother GCing a small interner
+    std::size_t sweep_at = kSweepFloor;
     while (!frontier.empty()) {
       if (stats) stats->explored += frontier.size();
       if (has_diag && (nexpanded += frontier.size()) > 500000)
@@ -1682,10 +1852,9 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 
       // Expand each frontier state and insert its successors DIRECTLY into the
       // shared table, locking only the touched stripe (expansion and insertion
-      // fused → no serial routing barrier). Fused insertion is what keeps the
+      // → no serial routing barrier). Inserting during expansion is what keeps the
       // convex-union merge order stable enough to match the legacy state counts.
       std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
-      std::vector<std::vector<std::uint64_t>> tls_tou(nthreads);   // fused: dup-free (first-touch is decided under the lock)
       std::vector<std::size_t> tls_gen(nthreads, 0);
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel num_threads(nthreads)
@@ -1709,13 +1878,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
             if (is_target(s)) { found.store(true, std::memory_order_relaxed); break; }
             const std::uint64_t dk = disc_key(s.locs, s.ints);
             const std::size_t si = stripe_of(dk);
-            if (fused) {
-              const int zidx = zi.intern(s.zone, tid);   // OUTSIDE the stripe lock
-              bool first;
-              if (single) first = smap[si].append_pending(zidx, dk, level);
-              else { std::lock_guard<std::mutex> lk(smtx[si]); first = smap[si].append_pending(zidx, dk, level); }
-              if (first) tls_tou[tid].push_back(dk);
-            } else if (single) {
+            if (single) {
               if (smap[si].add(std::move(s), dk, level, has_diag, state_bounds, tid) >= 0) touched.insert(dk);
             } else {
               std::lock_guard<std::mutex> lk(smtx[si]);
@@ -1752,37 +1915,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // frontier. Union the per-thread touched sets so each dk is scanned once;
       // the tables are read-only here (no writers), so for_level is a safe read.
       std::vector<std::uint64_t> tdk;
-      if (fused) {
-        // First-touch is decided while holding the stripe lock, so no dk appears in two
-        // thread lists: concatenating is enough, no set union needed.
-        for (auto& v : tls_tou) tdk.insert(tdk.end(), v.begin(), v.end());
-        // Settle every touched state. No locks: merge_level touches only its own chain.
-#ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp parallel num_threads(nthreads)
-        {
-          const int tid = omp_get_thread_num();
-          std::vector<std::int32_t> Ls, Us;
-          std::vector<int> pend, live;
-          int dl[64]; long di[32];
-#pragma omp for schedule(dynamic, 16)
-          for (long t = 0; t < static_cast<long>(tdk.size()); ++t) {
-            const std::uint64_t dk = tdk[t];
-            if (!has_diag) { decode_key(dk, dl, di); state_bounds(dl, Ls, Us); }
-            smap[stripe_of(dk)].merge_level(dk, level, has_diag, Ls, Us, tid, pend, live);
-          }
-        }
-#else
-        {
-          std::vector<std::int32_t> Ls, Us;
-          std::vector<int> pend, live;
-          int dl[64]; long di[32];
-          for (const std::uint64_t dk : tdk) {
-            if (!has_diag) { decode_key(dk, dl, di); state_bounds(dl, Ls, Us); }
-            smap[stripe_of(dk)].merge_level(dk, level, has_diag, Ls, Us, 0, pend, live);
-          }
-        }
-#endif
-      } else if (single) {
+      if (single) {
         tdk.assign(tls_touched[0].begin(), tls_touched[0].end());
       } else {
         std::unordered_set<std::uint64_t> allt;
@@ -1816,16 +1949,28 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 
       // Reclaim interned zones that no live passed-set node references any more (subsumed /
       // merged out). Mark the survivors -- referenced by a live arena node or the next frontier
-      // -- then sweep the rest back to the interner's free-list for in-place reuse. Runs every
-      // level once the table is non-trivial; the scan is O(live nodes) and keeps the interner
-      // pinned to the live working set instead of accumulating garbage.
-      if (zi.n.load() > 50000) {
+      // -- then sweep the rest back to the interner's free-list for in-place reuse.
+      //
+      // TRIGGER: growth-based, not per-level. The old guard was `zi.n > 50000`, but `n` is a
+      // high-water counter that never shrinks, so it latched true at the first big level and
+      // ran a full mark+sweep on EVERY level thereafter. Both halves are serial and O(all
+      // arena nodes + htab slots), so the cost grew with the state space while the expand
+      // phase stayed parallel -- on arbiter17 that was 2.8s of a 9.3s run (30%), and it is
+      // what capped the 12-thread speedup at ~5x.
+      //
+      // Sweeping when the allocation level has DOUBLED since the last sweep makes the work
+      // amortized O(1) per interned zone (a sweep costing O(A) is paid for by the A/2 fresh
+      // interns that triggered it), so a run does O(log) sweeps instead of one per level. The
+      // memory it trades away is bounded: garbage never exceeds the live set, i.e. the
+      // interner stays within 2x of its pinned-to-live size.
+      if (zi.allocated() >= sweep_at) {
         std::vector<std::uint8_t> alive(zi.n.load(), 0);
         for (auto& mp : smap)
           for (const auto& nd : mp.arena)
             if (!nd.dead) alive[nd.zidx] = 1;
         for (const auto& pr : frontier) alive[pr.second] = 1;
         zi.sweep(alive);
+        sweep_at = std::max<std::size_t>(kSweepFloor, zi.allocated() * 2);
       }
 
       if (memprof) {

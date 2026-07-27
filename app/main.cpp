@@ -211,6 +211,8 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(true);
     } else if (a == "--naive") {      // GPU merge routing: always one thread per bucket (default)
       ptctlmc::set_adaptive_merge(false);
+    } else if (a == "--gpu-intern") {   // GPU passed set: deduplicate zones (memory over speed)
+      ptctlmc::set_gpu_intern(true);
     } else if (a == "--omp-chunk") {  // OpenMP dynamic-schedule chunk size (default 8)
       if (i + 1 < argc) {
         const int v = std::atoi(argv[++i]);
@@ -231,6 +233,8 @@ int main(int argc, char** argv) {
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
             << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] <model.xml> <query.q>\n"
+            << "       --gpu-intern: GPU passed set deduplicates zones (large win on models with\n"
+            << "                     few distinct zones, e.g. viking; neutral elsewhere)\n"
             << "       --adaptive: GPU merge auto-routes CPU/GPU per level (default --naive)\n"
             << "       --chunking: expand the frontier in batches of N states (default 65536),\n"
             << "                   capping peak GPU memory independently of BFS level width\n"

@@ -1,31 +1,65 @@
 \section{Conclusion}\label{sec:conclusion}
 
-We have presented a level-synchronous parallel algorithm for timed-automata
-reachability.  The key insight is that UPPAAL's sequential bottleneck is an
-artefact of interleaving pure successor computation with stateful passed-list
-updates.  Separating them into a parallel expand phase and a sequential merge
-phase removes the bottleneck without sacrificing the subsumption-based pruning
-that keeps the zone graph small.
+We set out to make a parallel timed-automata reachability engine faster, assuming
+the obstacle would be work distribution.  It was not.  The engine expands at
+$99.8\%$ parallel efficiency with milliseconds of cumulative load imbalance, and
+the OpenMP chunk size---the knob one reaches for first---moves end-to-end runtime
+by under $3\%$.  What limited it were two costs that parallelism cannot touch
+and, worse, actively conceals.
 
-The design has three practical virtues.  First, it requires no concurrent
-data structures: the only shared state during Phase~1 is the read-only
-frontier array and the read-only automaton.  Second, it is correct by a
-simple purity argument: $\succfn$ neither reads nor writes the passed list,
-so concurrent calls are safe.  Third, the sequential merge is fast in
-practice because LU$^+$ extrapolation bounds the passed-list size to a small
-constant.
+The first was an Amdahl term hiding behind a latched trigger: a reclamation pass
+guarded by a monotone counter, which turned an occasional serial sweep into a
+per-level one whose cost grows with the state space.  The second, and the one we
+think generalises furthest, is the \emph{compression tax}.  Minimal constraint
+systems are the right way to store zones and cut our passed-set memory by roughly
+$12\times$; but the zone algebra consumes dense closed matrices, so every
+subsumption query rebuilt one at $O(|\clocks|^3)$.  With $89.8\%$ of insertions
+being duplicates rejected by the first test, against antichains of mean length
+$1.00$, we spent $22\times$ longer decompressing stored zones than comparing
+against them.
 
-\textbf{Limitations and future work.}
-\begin{itemize}
-  \item \emph{Frontier imbalance.}  If $\Frontier_k$ is small (early levels,
-    or near the end of exploration), Phase~1 cannot saturate $T$ threads.
-    A \emph{work-stealing} strategy that mixes levels could mitigate this.
-  \item \emph{Concurrent merge.}  For very large frontiers the sequential
-    merge can become a bottleneck.  A concurrent passed list---using per-location
-    reader-writer locks or a lock-free zone trie---would allow Phase~2 to
-    scale as well.
-  \item \emph{CTL model checking.}  The $\mathsf{E}\langle\rangle$ (reachability)
-    operator is handled here.  Extending the parallel frontier approach to the
-    full CTL fixed-point computation requires lifting it to the alternating
-    reachability that underlies $\mathsf{A}[\,]$, $\mathsf{E}[\,U\,]$, etc.
-\end{itemize}
+The fix is to stop treating the compressed form as a blob to be restored and
+start treating it as what it is---a generating set.  Inclusion against a minimal
+constraint system is decidable in $O(|G|)$ directly (\cref{lem:minclosure}), and
+because plain inclusion implies the coarser $\preceq_{aLU}$ subsumption the
+engine actually prunes with (\cref{lem:filter}), the cheap exact test composes as
+a pre-filter that provably preserves the explored state set
+(\cref{thm:samestates}).  Forty lines, no new abstraction, no soundness debt.
+
+If there is one transferable lesson, it is that \emph{a compressed representation
+must be chosen with its query pattern in view, not only its size}.  The memory
+win is easy to measure and gets measured; the per-query toll is paid on a hot
+path, shows up in no benchmark, and---on a parallel tool---is masked by the fact
+that the tool still scales beautifully.  It simply scales from a worse constant.
+We suspect this pattern is not unique to us, nor to timed automata.
+
+\paragraph{What we could not fix.}
+We report two negative results, because they cost us more time than the positive
+ones and may save a reader some.
+
+\emph{Host-side bucketing in the GPU backend does not want to be parallel.}  A
+shared lock-free table was measured against the serial loop and lost; we then
+tried thread-private maps with a parallel counting-sort scatter, which avoids
+that failure mode entirely, and gained ${\approx}1\%$ of wall-clock.  The loop is
+bound by streaming the expansion output out of unified memory while the GPU is
+using the same bandwidth, not by hashing.
+
+\emph{The GPU backend cannot be routed by a simple occupancy heuristic.}
+\Cref{sec:eval} shows viking15 and fischer11 differ $2.9\times$ in per-item GPU
+throughput, tracking dispatch size---but arbiter17 has the largest dispatches of
+all and still loses to the CPU, because its host and merge path costs
+\SI{2.97}{\second} on top of a fast expansion.  Any threshold separating viking
+from fischer misroutes arbiter.
+
+\paragraph{Future work.}
+The GPU backend stores zones densely and sizes its unified-memory pools to the
+widest BFS level, costing $5$--$41\times$ the CPU backend's memory
+(\cref{tab:mem}); porting \cref{sec:mingraph}'s representation to it, now that
+\cref{sec:filter} makes such a representation cheap to query, is the obvious next
+step and would attack both the memory and the host path at once.  Backend
+selection deserves a genuine cost model spanning expansion \emph{and} merge
+rather than a single statistic.  Finally, the order-sensitivity of convex-union
+merging makes stored state counts vary run to run on some models
+(\cref{sec:correctness}); a canonical merge order would restore replay
+determinism, which matters more for debugging and artefact evaluation than for
+verdicts.

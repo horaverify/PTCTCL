@@ -9,9 +9,9 @@
 
 \input{preamble}
 
-\title{Parallel Zone-Graph Reachability for Timed Automata:\\
-  A Level-Synchronous Approach via OpenMP}
-\titlerunning{Parallel TA Reachability via Level-Sync BFS}
+\title{Scheduling Is Not the Bottleneck:\\
+  Diagnosing Parallel Zone-Graph Reachability for Timed Automata}
+\titlerunning{Scheduling Is Not the Bottleneck}
 
 \author{PTCTLMC Project}
 \authorrunning{PTCTLMC Project}
@@ -21,31 +21,53 @@
 \maketitle
 
 \begin{abstract}
-We present a shared-memory parallel algorithm for symbolic reachability in
-timed automata, implemented as the OpenMP backend of \tool{}.  The core
-contribution is a single observation: the successor function of the zone
-graph---which applies guards, resets, invariants, time-elapse, and
-LU$^+$~extrapolation---is a \emph{pure function} that neither reads nor writes
-the passed list.  This purity makes all expansion calls within a BFS level
-embarrassingly parallel.  We exploit it through a \emph{level-synchronous}
-design: all states in the current BFS frontier are expanded by $T$ OpenMP
-threads writing to private buffers; a single sequential merge phase then
-performs subsumption filtering and assembles the next frontier.  No lock is
-ever acquired during expansion.  We argue correctness, termination, and why
-the sequential merge phase is not a bottleneck in practice.
+Parallelising symbolic reachability for timed automata is, in outline, a solved
+problem: the zone-graph successor function is pure, so expansions within a BFS
+level are independent.  We built such an engine---level-synchronous BFS over a
+lock-striped shared passed list---and measured it running at $99.8\%$ parallel
+efficiency, with cumulative load imbalance of $4$~ms in a $6.9$~s run.  It still
+beat sequential UPPAAL by only $\approx 1.5\times$ on twelve cores.
+
+This paper reports what was actually limiting it, and we believe both causes
+generalise.  The first is a reclamation trigger latched on a monotone counter,
+which turned an occasional serial mark-and-sweep into a per-level one whose cost
+grows with the state space---a textbook Amdahl term, worth $30\%$ of wall-clock
+time at scale, and invisible on the small models used during development.  The
+second is subtler and is our main contribution.  Passed zones are stored as
+minimal constraint systems, a standard $\approx 12\times$ memory saving; but the
+zone algebra needs dense closed matrices, so every subsumption query first
+rebuilt one, at $O(|\clocks|^3)$.  With $89.8\%$ of insertions being duplicates
+rejected by the first test, against antichains of mean length $1.00$, we spent
+$22\times$ longer decompressing stored zones than comparing against them.  We
+call this the \emph{compression tax}: a representation optimised for bytes
+resident and silently taxed on cost per query---and parallelism hides it, because
+the tool still scales, just from a worse constant.
+
+We remove it by deciding inclusion directly against the minimal constraint
+system in $O(|G|)$, and composing that exact test as a sound pre-filter for the
+coarser $\preceq_{aLU}$ abstraction the engine prunes with.  We prove the
+composite explores exactly the same states, and confirm it empirically state
+count for state count.  On families where passed-list traffic dominates the two
+fixes compose to $2.4\times$ over our own baseline; where it does not, the
+second correctly does nothing, and we report both.  Against UPPAAL~5.0 the
+resulting engine is $2.2$--$5.2\times$ faster across the families we measure.
 \end{abstract}
 
-\keywords{Timed automata \and Zone graph \and Parallel BFS \and
-          Pure function \and OpenMP \and Reachability}
+\keywords{Timed automata \and Zone graph \and Parallel model checking \and
+          Difference bound matrices \and Minimal constraint systems \and
+          Subsumption \and OpenMP}
 
 % figures live in figs/; they are floated by LaTeX to the right place
 \input{figs/tikz_figures}
 
 \input{section/introduction}
 \input{section/background}
-\input{section/approach}
+\input{section/engine}
+\input{section/diagnosis}
+\input{section/optimisations}
 \input{section/correctness}
 \input{section/implementation}
+\input{section/evaluation}
 \input{section/related}
 \input{section/conclusion}
 
@@ -87,6 +109,22 @@ J.~Barnat et al.
 \newblock \textsc{DiVinE}~3.0 -- an explicit-state model checker for
   multithreaded C \& C++ programs.
 \newblock In {\em CAV}, LNCS 7358, pp.~863--868. Springer, 2012.
+
+\bibitem{LarsenLPY97}
+K.~G. Larsen, F.~Larsson, P.~Pettersson, and W.~Yi.
+\newblock Efficient verification of real-time systems: Compact data structure
+  and state-space reduction.
+\newblock In {\em RTSS}, pp.~14--24. IEEE, 1997.
+
+\bibitem{Herbreteau12}
+F.~Herbreteau, B.~Srivathsan, and I.~Walukiewicz.
+\newblock Better abstractions for timed automata.
+\newblock In {\em LICS}, pp.~375--384. IEEE, 2012.
+
+\bibitem{Behrmann03}
+G.~Behrmann.
+\newblock Distributed reachability analysis in timed automata.
+\newblock {\em STTT}, 7(1):19--30, 2005.
 
 \bibitem{Merrill12}
 D.~Merrill, M.~Garland, and A.~Grimshaw.

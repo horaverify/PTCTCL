@@ -1,72 +1,63 @@
-\section{Implementation}\label{sec:impl}
+\section{Implementation Notes}\label{sec:impl}
 
-\subsection{OpenMP integration}
+\tool{} is C++17 with an OpenMP CPU backend and Metal/CUDA GPU backends sharing a
+single driver; the zone algebra lives in a standalone DBM library so the CPU and
+GPU paths compile the same codec and the same predicates.
 
-The parallel expansion (Phase~1 of \cref{alg:par}) is implemented with a
-single OpenMP pragma:
+\paragraph{The expansion loop.}  Phase~1 of \cref{alg:par} is one pragma:
 
-\begin{lstlisting}[language=C++, caption={The parallel expansion loop.}]
-// tls[t] is thread t's private buffer (std::vector<pair<int,Dbm>>)
-std::vector<std::vector<std::pair<int,Dbm>>> tls(nthreads);
-#pragma omp parallel
+\begin{lstlisting}[language=C++]
+#pragma omp parallel num_threads(nthreads)
 {
-    const int tid = omp_get_thread_num();
-    auto& buf = tls[tid];   // private reference -- no sharing
+  const int tid = omp_get_thread_num();
+  SymState cur;                       // reused across frontier states
 #pragma omp for schedule(dynamic, 8)
-    for (long i = 0; i < (long)frontier.size(); ++i)
-        successors(W, frontier[i].first, frontier[i].second, buf, ex);
+  for (long i = 0; i < (long)frontier.size(); ++i) {
+    decode_key(frontier[i].first, cur.locs.data(), cur.ints.data());
+    const size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second),
+                                     L, U, qmask, emode, buf);
+    for (size_t k = 0; k < ns; ++k) {           // insert as generated
+      const uint64_t dk = disc_key(buf[k].locs, buf[k].ints);
+      std::lock_guard<std::mutex> lk(smtx[stripe_of(dk)]);
+      smap[stripe_of(dk)].add(std::move(buf[k]), dk, level, ...);
+    }
+  }
 }
-// Phase 2: sequential merge (single thread, no pragma needed)
-std::vector<std::pair<int,Dbm>> next;
-for (auto& buf : tls)
-    for (auto& s : buf) { /* subsumption check + passed update */ }
-frontier.swap(next);
 \end{lstlisting}
 
-\noindent\textbf{Thread-local buffers.}  The outer \texttt{tls} vector has
-one entry per thread, pre-allocated once at the start of each level.  Inside
-the parallel region each thread holds a reference to its own entry and never
-touches another's.  The reference is resolved before the \texttt{for} loop,
-so even the indirection through \texttt{tls} is private.
+\noindent
+The chunk size 8 is empirical but, as \cref{sec:diagnosis} reports, almost
+irrelevant: anything from 1 to 64 lands within $3\%$.  \code{buf} is deliberately
+\emph{not} cleared between states---\code{gen\_succ\_reuse} rebuilds slots in
+place and returns a count, so the location, integer and zone storage is reused
+across the whole level.
 
-\noindent\textbf{Dynamic scheduling.}  The chunk size~8 in
-\texttt{schedule(dynamic,8)} is chosen empirically.  The cost per state varies
-widely: a state at a location with many enabled edges generates many
-successors, while a state at a deadlock location generates none.  Static
-assignment would create severe load imbalance.  A chunk of 8 amortises the
-scheduling overhead (a few hundred nanoseconds per chunk dispatch) while
-remaining fine enough for good balance.
+\paragraph{Frontier representation.}  A frontier entry is a
+\code{(discrete key, zone index)} pair of 12 bytes.  The discrete part is packed
+losslessly into a 64-bit key (\code{disc\_key}/\code{decode\_key} are exact
+inverses) and the zone is referred to by its index in the shared intern table, so
+neither is copied per state.  Antichain nodes likewise store only a zone index
+and a BFS level; the discrete part is identical for every zone in a bucket and is
+recovered from the key when a survivor re-enters the frontier.
 
-\noindent\textbf{Graceful fallback.}  If the build has no OpenMP support
-(\texttt{PTCTLMC\_HAVE\_OPENMP} not defined), the \texttt{parallel} flag is
-set to \texttt{false} and the exact sequential loop of \cref{alg:seq} runs.
-The two paths share the same passed-list and successor logic; only the outer
-loop structure differs.
+\paragraph{Zone storage.}  Stored zones are packed minimal constraint systems
+(\cref{sec:mingraph}) in a shared intern table: one packed record per distinct
+zone, referenced by index, with records bump-allocated in slabs so their
+addresses are stable under concurrent interning.  \Cref{sec:filter}'s fast path
+queries those records \emph{in place}; only candidates that survive it are
+unpacked into a reusable per-thread array.
 
-\subsection{Passed-list data structures}
+\paragraph{GPU backends.}  The Metal and CUDA drivers share the flat level loop
+and differ only in the device implementation.  Unified memory on Apple silicon
+lets the host fill the buffers the merge kernel reads with no transfer, which is
+also what makes the CPU-expand/GPU-merge hybrid measured in \cref{sec:eval}
+possible at zero copy.  The GPU passed set is stored densely because the merge
+kernels consume dense matrices; \code{--gpu-intern} deduplicates it, which halves
+peak memory on models with few distinct zones (viking15:
+\SIrange{3213}{1708}{\mebi\byte}) and is neutral elsewhere.
 
-The passed list for location $\ell$ is a \emph{pair} of structures:
-
-\begin{itemize}
-  \item A \texttt{std::unordered\_set<std::string>} keyed on the raw
-        byte-string of the canonical DBM.  This answers the
-        \emph{exact-duplicate} query (``has this precise zone been seen
-        before?'') in $O(n^2)$ via hashing---the common case when two paths
-        produce the same zone.
-  \item A \texttt{std::vector<Dbm>} for \emph{subsumption} queries
-        ($Z' \subseteq Z_p$ for some $Z_p$).  A linear scan suffices because
-        LU$^+$ bounds the vector length.
-\end{itemize}
-
-In Phase~2, every candidate $(\ell', Z')$ first hits the hash set (cheap) and
-only falls through to the vector scan if the exact key is absent.  This
-two-tier design avoids the $O(n^2)$ inclusion test for the most frequent case.
-
-\subsection{Zone operations}
-
-All DBM operations (intersection, reset, delay, LU$^+$ extrapolation,
-canonical closure, inclusion) are provided by the \textsc{HDBM} library
-bundled with \tool{}.  Each DBM is stored as a flat
-\texttt{std::vector<raw\_t>} where \texttt{raw\_t} is a 32-bit integer
-encoding both the bound value and its strictness in the MSB.  Canonical form
-is maintained after every mutating operation.
+\paragraph{Reproducibility.}  \code{PTCTLMC\_MTLPROF} and \code{PTCTLMC\_MEMPROF}
+emit the per-phase and per-component breakdowns quoted throughout; the ablation
+of \cref{tab:ablation} is reproduced by toggling the two optimisations.  Verdicts
+are deterministic; stored-state counts are not, on models where convex-union
+merge order is thread-sensitive (\cref{sec:correctness}).

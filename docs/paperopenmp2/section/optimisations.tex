@@ -1,0 +1,151 @@
+\section{Two Optimisations}\label{sec:opt}
+
+\subsection{Amortised zone reclamation}\label{sec:gc}
+
+The fix for \cref{sec:diagnosis}'s Finding~1 is to trigger reclamation on
+\emph{growth} rather than on an absolute threshold over a monotone counter.
+
+Let $A$ denote the number of interned records currently handed out, i.e.\ the
+high-water index count minus the size of the free list.  Unlike the high-water
+counter, $A$ falls back to the live set after a sweep and rises with every fresh
+intern, so it measures what the trigger should watch.  We sweep when
+$A \geq \mathit{next}$, and afterwards set
+$\mathit{next} \leftarrow \max(A_{\text{live}} \cdot 2,\; \tau)$ with
+$\tau = \num{50000}$ a floor below which reclamation is not worth its own scan.
+
+Two properties follow immediately.
+
+\begin{proposition}[Amortised cost]\label{prop:gcamort}
+Reclamation performs $O(1)$ work per interned record, amortised.
+\end{proposition}
+\begin{proof}
+A sweep triggered at allocation level $A$ costs $O(A)$.  After it,
+$\mathit{next} = 2A_{\text{live}} \geq 2 \cdot (\text{records surviving})$, so
+the next sweep cannot occur before at least $A_{\text{live}}$ further records
+have been interned.  Charging each sweep's $O(A)$ cost to the
+$\Omega(A_{\text{live}})$ interns that enabled it, and noting $A \leq
+2A_{\text{live}}$ at the trigger, gives $O(1)$ amortised per intern.  A run
+therefore performs $O(\log)$ sweeps in the size of the live set rather than one
+per BFS level. \qed
+\end{proof}
+
+\begin{proposition}[Bounded overhead]\label{prop:gcmem}
+Between sweeps, unreclaimed garbage never exceeds the live set, so the intern
+table stays within $2\times$ its pinned-to-live size.
+\end{proposition}
+\begin{proof}
+Immediate from the trigger: a sweep fires as soon as $A$ reaches
+$2A_{\text{live}}$, and $A - A_{\text{live}}$ bounds the garbage. \qed
+\end{proof}
+
+\Cref{prop:gcmem} is the reassurance one wants before making a garbage collector
+lazier, and in practice the bound is not even approached: measured peak RSS is
+unchanged to within $1\%$ (\cref{sec:eval}), because the sweep was traversing
+millions of nodes to reclaim very little.  That is itself diagnostic---the pass
+was nearly pure overhead.
+
+\subsection{Compressed-form subsumption}\label{sec:filter}
+
+Finding~2 is removed by never materialising the stored zone in the common case.
+The key is that a minimal constraint system is not merely a compressed blob: it
+is a \emph{generating set}, and inclusion can be decided against generators
+directly.
+
+\begin{lemma}[Inclusion against a minimal constraint system]\label{lem:minclosure}
+Let $G$ be a set of difference constraints with $Z' = \mathrm{close}(G)$
+non-empty, and let $Z$ be closed.  Then
+\[
+  Z \subseteq Z' \iff \forall (i,j,b) \in G:\; Z[i][j] \preceq b .
+\]
+\end{lemma}
+\begin{proof}
+($\Rightarrow$)  Each $(i,j,b) \in G$ satisfies $Z'[i][j] \preceq b$, since
+closure only tightens.  With \cref{eq:denseincl}, $Z[i][j] \preceq Z'[i][j]
+\preceq b$.
+
+($\Leftarrow$)  Fix $i,j$.  As $Z' = \mathrm{close}(G)$, the entry $Z'[i][j]$ is
+the weight of a shortest path $i = v_0 \to v_1 \to \cdots \to v_r = j$ whose
+edges are constraints of $G$, say with bounds $b_1,\ldots,b_r$; thus $Z'[i][j] =
+\sum_{t} b_t$.  Because $Z$ is closed, repeated application of the triangle
+inequality gives $Z[i][j] \preceq \sum_t Z[v_{t-1}][v_t]$.  By hypothesis
+$Z[v_{t-1}][v_t] \preceq b_t$ for every edge, and addition of bounds is monotone,
+so $Z[i][j] \preceq \sum_t b_t = Z'[i][j]$.  As $i,j$ were arbitrary,
+\cref{eq:denseincl} yields $Z \subseteq Z'$. \qed
+\end{proof}
+
+\Cref{lem:minclosure} turns an $O(n^3)$ closure followed by an $O(n^2)$
+comparison into an $O(|G|)$ scan, with $|G| \in O(n)$ in practice, and it needs
+no scratch matrix at all.  The test is exact, not an approximation.
+
+The remaining obstacle is that \tool{} prunes with $\preceq_{aLU}$, not with
+inclusion, and \cref{eq:alu} reads arbitrary entries of the stored zone---which
+\cref{lem:minclosure} does not give us.  We therefore compose the two.
+
+\begin{lemma}[Sound pre-filter]\label{lem:filter}
+For closed $Z, Z'$: if $Z \subseteq Z'$ then $Z \preceq_{aLU} Z'$.
+\end{lemma}
+\begin{proof}
+\Cref{eq:incl-implies-alu}: inclusion gives $Z[y][x] \preceq Z'[y][x]$ for all
+$y,x$, so the conjunct $Z'[y][x] \prec Z[y][x]$ required of an $aLU$ witness in
+\cref{eq:alu} cannot hold. \qed
+\end{proof}
+
+\begin{algorithm}[t]
+\caption{$\mathrm{add}(q,Z,k)$ --- with the compressed-form fast path}
+\label{alg:add2}
+\begin{algorithmic}[1]
+\If{$q$ is new} intern $Z$, create its antichain, \Return \EndIf
+\ForAll{live nodes $m$ of $q$'s antichain}
+  \Comment{fast path: no unpack, no closure}
+  \If{$Z \subseteq \mathrm{minsys}(m)$ \textbf{by \cref{lem:minclosure}}}
+      \Return \textsc{dropped}
+  \EndIf
+\EndFor
+\State unpack the live antichain once into a reusable array
+\State run folds (a), (b), (c) of \cref{alg:add} on that array
+\State intern $Z$ and prepend it
+\end{algorithmic}
+\end{algorithm}
+
+\Cref{alg:add2} runs the cheap exact test first.  A hit ends the call
+immediately; a miss falls through to the unchanged dense folds, so
+$\preceq_{aLU}$ still prunes everything it pruned before.  The composite decision
+is therefore not an approximation of the original---it \emph{is} the original.
+
+\begin{theorem}[State-set preservation]\label{thm:samestates}
+\Cref{alg:add2} drops exactly the candidates \cref{alg:add} drops, and stores
+exactly the zones \cref{alg:add} stores.  Consequently \cref{alg:par} explores
+the same set of symbolic states, and returns the same verdict, with or without
+the fast path.
+\end{theorem}
+\begin{proof}
+Consider a candidate $Z$ and antichain node $m$ with stored zone $Z_m$.  If the
+fast path fires, then $Z \subseteq Z_m$ by \cref{lem:minclosure} (exactness), so
+$Z \preceq_{aLU} Z_m$ by \cref{lem:filter}, and fold~(a) of \cref{alg:add} would
+also have returned \textsc{dropped}.  If the fast path does not fire for any
+node, \cref{alg:add2} executes folds (a)--(c) verbatim.  Hence the two
+procedures agree on every call, and the reachable-state computation built on
+them agrees pointwise. \qed
+\end{proof}
+
+\Cref{thm:samestates} is what makes the optimisation safe to ship: it is not a
+new abstraction with its own soundness burden, but a decision procedure for the
+existing one that skips work in the common case.  It is also empirically
+checkable, and we check it---every model in \cref{sec:eval} reports an identical
+stored-state count with and without the fast path.
+
+\paragraph{Validation.}  \Cref{lem:minclosure} is the kind of statement that is
+easy to get subtly wrong in an encoding with strictness bits and infinity
+sentinels.  Beyond the proof, we differentially tested the implementation
+against unpack-then-compare on \num{280000} randomly generated zone pairs across
+dimensions $2$--$8$, including degenerate and reset-induced zones, with $69.7\%$
+of pairs genuinely included: zero disagreements.
+
+\paragraph{Why this is not just an engineering detail.}  The fast path is
+roughly forty lines.  Its effect is to remove a factor that twelve cores had
+been papering over.  We think the generalisable lesson is a design rule for
+symbolic model checkers: \emph{a compressed representation must be chosen with
+its query pattern, not only its size, in view}.  Storing minimal constraint
+systems while querying through a decompression step keeps the memory win and
+discards the reason the representation is good---that its generators are exactly
+what an inclusion test needs to look at.

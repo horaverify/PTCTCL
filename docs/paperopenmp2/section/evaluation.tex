@@ -1,0 +1,165 @@
+\section{Evaluation}\label{sec:eval}
+
+\paragraph{Setup.}  Apple M4~Pro (8 performance + 4 efficiency cores, 12 hardware
+threads, 24~GB unified memory), macOS~15, Apple~Clang \texttt{-O3}, LLVM~OpenMP.
+Baseline is UPPAAL~5.0.0 \texttt{verifyta} with default options (breadth-first,
+conservative space optimisation, minimal constraint systems), invoked as
+\texttt{verifyta -s -q}.  Timings are wall-clock, measured externally to the
+process so parsing and setup are charged to every tool alike.  Peak memory is the
+kernel's maximum resident set (\texttt{getrusage}, via \texttt{/usr/bin/time -l}),
+the same metric for all three engines.  \tool{} \emph{omp} uses 12 threads;
+\emph{metal} is the GPU backend on the same chip.
+
+\paragraph{Benchmarks.}  We use scalable families from the standard UPPAAL and
+LTSmin benchmark sets, at sizes large enough for the measurement to be
+meaningful.  We report stored-state counts as a correctness check: \tool{} and
+UPPAAL agree exactly on every row of \cref{tab:main}, which is the strongest
+available evidence that the two perform the same exploration.  We exclude
+families whose query is discharged after a handful of states (\emph{csma},
+\emph{hddi}, \emph{single}, \emph{train} all terminate in under
+\SI{50}{\milli\second} for every tool and measure nothing), and \emph{grc} and
+\emph{twolock}, where all three engines exceed our timeout at every size we
+tried---they are hard for UPPAAL and for us alike, and we have no result to
+report.
+
+\input{section/table_main}
+
+\paragraph{CPU versus GPU versus UPPAAL.}
+
+Both \tool{} backends beat UPPAAL on every model in \cref{tab:main}, by
+$2.2$--$6.2\times$ (\emph{omp}) and $2.0$--$5.7\times$ (\emph{metal}).  The two
+backends do \emph{not} dominate one another: the GPU is $2.6\times$ faster than
+twelve CPU threads on \emph{fischer11} and $1.6\times$ on \emph{arbiter15}, but
+roughly \emph{half} the speed on \emph{viking15} and \emph{phil10}.
+
+The discriminating variable is \emph{not} host-side overhead, which is the
+intuitive explanation and the wrong one.  Profiling the GPU backend per phase:
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+model & levels & work items & items/dispatch & GPU expand & host share \\
+\midrule
+fischer11 & 26  & \num{11840631} & \num{455409} & \SI{693}{\milli\second}  & $59\%$ \\
+arbiter17 & 19  & \num{12255232} & \num{645012} & \SI{1723}{\milli\second} & $39\%$ \\
+viking15  & 100 & \num{8355840}  & \num{83558}  & \SI{1407}{\milli\second} & $43\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\emph{fischer11} carries the \emph{largest} host share of the three and still wins
+by $2.6\times$, so per-level host cost cannot be what decides the outcome.  Two
+effects are visible instead, and they are independent.
+
+First, \textbf{dispatch occupancy}.  The same kernel on the same chip retires
+\num{17085} work items per millisecond on fischer11 but only \num{5939} on
+viking15 --- a $2.9\times$ difference in per-item throughput, tracking the $5.4\times$
+difference in items per dispatch.  With frontiers half as wide spread over five
+times as many levels, viking's launches are too small to fill the machine.  The
+decisive figure is that viking's GPU expansion \emph{alone} costs
+\SI{1.41}{\second} against \SI{1.66}{\second} for the entire CPU run: even with
+host and merge time driven to zero the GPU would barely win, so no amount of
+host-side tuning changes the verdict there.
+
+Second, \textbf{total GPU-path overhead}, which is what decides arbiter17.  Its
+expansion is the best-occupied of the three, yet host and merge add
+\SI{2.97}{\second} on top and the CPU backend wins outright.  Occupancy alone
+therefore does not predict the winner either: fischer and arbiter sit at
+comparable items per dispatch and land on opposite sides.
+
+We draw a deliberately negative conclusion from this.  We attempted a static
+routing heuristic (send a model to the GPU when items per dispatch exceeds a
+threshold) and abandoned it: any threshold separating viking from fischer also
+sends arbiter17 to the slower backend.  Choosing a backend per model requires a
+cost model spanning expansion \emph{and} the merge/host path, or an online race
+between them; a single occupancy statistic is not sufficient.  We report the two
+backends separately rather than their envelope for this reason.
+
+We also measured the CPU-expand/GPU-merge hybrid the unified-memory architecture
+permits, in case viking's problem was purely expansion: it improves viking15 from
+\SI{3.12}{\second} to \SI{2.60}{\second} but still trails the \SI{1.66}{\second}
+CPU backend, and it \emph{regresses} fischer11
+($2.61 \to \SI{2.99}{\second}$) and arbiter17 ($4.69 \to \SI{5.35}{\second}$).
+
+\emph{One caveat on state counts.}  On \emph{phil10} the GPU backend stores
+\num{94776} symbolic states where the CPU backend and UPPAAL store
+${\approx}\num{71600}$.  Both verdicts agree.  The cause is the same
+order-sensitivity of convex-union merging discussed in \cref{sec:correctness}:
+the GPU merge visits a bucket's candidates in a different order than the CPU
+antichain fold, so it performs fewer exact-convex merges and retains more zones.
+It is deterministic per backend (three GPU runs gave \num{94776} every time) and
+does not occur on the other seven models, where the two backends agree
+byte-for-byte.
+
+\paragraph{Memory.}  \Cref{tab:mem} is, we think, the more interesting table.
+The CPU backend now sits within $1.4\times$ of UPPAAL's peak RSS on every model
+and \emph{below} it on \emph{viking12} and \emph{viking15}
+(\SI{219}{\mebi\byte} against \SI{423}{\mebi\byte})---this is the minimal
+constraint systems of \cref{sec:mingraph} doing their job, now that
+\cref{sec:filter} has made them cheap to query.  Both optimisations of
+\cref{sec:opt} leave peak RSS unchanged to within $1\%$
+(\SI{249}{\mebi\byte} for arbiter17 before and after), which confirms that
+\cref{prop:gcmem} is far from tight in practice and---more tellingly---that the
+per-level sweep it replaced was reclaiming very little for its cost.
+
+The GPU backend is another matter: $5$--$41\times$ the CPU backend's memory, and
+\SI{7071}{\mebi\byte} on arbiter17 against \SI{251}{\mebi\byte}.  Instrumenting
+it attributes the peak to two sources, neither of which is the compression
+question this paper is about.  Its passed set is stored \emph{dense} on the host
+(\SI{0.27}{\giga\byte} on arbiter15, exactly $n^2$ words per zone), because the
+merge kernels consume dense matrices; and its unified-memory pools are sized to
+the widest BFS level rather than to a bounded working set
+(\SI{1.26}{\giga\byte} on the same model, the single largest component).
+Bounding the frontier batch shrinks those pools by $3\times$ as measured at level
+boundaries, but leaves the kernel-reported maximum RSS unmoved, so a transient
+allocation we have not yet isolated dominates the high-water mark.  We report
+this as an open item rather than a result: the GPU backend trades an order of
+magnitude of memory for a speedup it only sometimes achieves, and porting
+\cref{sec:mingraph}'s representation to it is future work
+(\cref{sec:conclusion}).
+
+\paragraph{The ablation is not uniform, and that is the point.}
+
+\Cref{tab:ablation} deserves a careful reading rather than a headline number.
+
+\emph{Amortised reclamation} (\cref{sec:gc}) helps where a run has many BFS
+levels over a large intern table---arbiter17 ($9.58 \to \SI{6.74}{\second}$) and
+fischer11 ($5.95 \to \SI{5.08}{\second}$)---and does nothing on \emph{viking15}
+($1.81 \to \SI{1.83}{\second}$), whose intern table never grows enough for the
+per-level sweep to dominate.  It fixes an Amdahl term, so its value tracks how
+large that term was.
+
+\emph{Compressed-form subsumption} (\cref{sec:filter}) is dramatic on arbiter17
+($6.74 \to \SI{3.94}{\second}$, a further $1.7\times$), useful on viking and
+phil, and \emph{neutral on fischer} ($5.08 \to \SI{5.10}{\second}$; and
+$1.20 \to \SI{1.26}{\second}$ at fischer10, a slight regression within
+run-to-run noise).  The explanation is the one \cref{tab:addprof} predicts: the
+filter pays in proportion to how many insertions are duplicates rejected by the
+first subsumption test.  Arbiter sits at $89.8\%$; fischer's exploration is
+dominated by successor generation and by candidates that survive the first test
+and must be unpacked anyway, so the extra $O(|G|)$ scan buys little and costs a
+little.  We report this rather than selecting the favourable family: the
+optimisation removes a specific cost, and where that cost is absent it correctly
+does nothing.
+
+\paragraph{An observation on determinism.}  While collecting
+\cref{tab:ablation} we found that \emph{phil10} reports a different stored-state
+count on nearly every run: five consecutive 12-thread runs of one binary gave
+\numlist{71403;71175;71721;71210;71493}, while three single-threaded runs gave
+\num{71470} every time.  This is the order-sensitivity of convex-union merging
+discussed in \cref{sec:correctness}, not an artefact of either optimisation---it
+predates both, and the verdict is invariant.  We record it because a reader
+reproducing \cref{tab:ablation} will otherwise think something is broken, and
+because it is a reminder that ``same number of stored states'' is a check
+available only on models where the merge order happens not to matter.
+
+\paragraph{Threats to validity.}  (i)~Single machine, single microarchitecture;
+the M4~Pro's heterogeneous cores mean the achievable 12-thread ceiling is nearer
+$9\times$ than $12\times$, so parallel efficiency computed against $12$
+understates the engine.  (ii)~We compare against UPPAAL's default configuration
+and have not swept its search-order or state-representation options.  (iii)~Our
+state-count agreement with UPPAAL is evidence of equivalent exploration, not a
+proof of equivalent semantics; the property we prove (\cref{thm:samestates}) is
+internal, relating our engine with and without the fast path.  (iv)~Two families
+are excluded for timing out on all engines, so \cref{tab:main} is not a claim
+about coverage of the benchmark set.
