@@ -1,64 +1,62 @@
-\section{Correctness and Termination}\label{sec:correctness}
+\section{Correctness of the Parallel Engine}\label{sec:correctness}
 
+\Cref{thm:samestates} established that the fast path of \cref{sec:filter} does
+not change what is explored.  It remains to argue that the parallel engine
+itself agrees with \cref{alg:seq}.  We sketch the three obligations; none is
+surprising, and we state them mainly to make the trust boundary explicit.
+
+\paragraph{Data-race freedom.}
+During expansion, threads read the frontier array and the network, both
+immutable for the duration of the level.  The only mutable shared structures are
+the passed-list stripes and the zone-intern table.  Every antichain read or
+write happens under the owning stripe's mutex, and a discrete key maps to exactly
+one stripe, so all operations on a given antichain are totally ordered.  The
+intern table serialises its own structural mutations and hands out stable record
+addresses (records live in bump-allocated slabs and are never moved), so a reader
+holding an index is unaffected by concurrent interning.  Reclamation runs between
+levels, when no worker is active.
+
+\paragraph{Verdict equivalence.}
 \begin{theorem}[Correctness]\label{thm:correct}
-\Cref{alg:par} returns \textbf{true} if and only if the target $(\ell^\star,\phi)$
-is reachable in $\mathcal{A}$.
+\Cref{alg:par} returns \textbf{true} iff the target $\varphi$ is reachable.
 \end{theorem}
-
-\begin{proof}[Proof sketch]
-We show by induction on $k$ that after processing frontier level $k$, the
-set $\Passed$ contains a symbolic state $(\ell, Z)$ for every reachable
-(location, zone) pair at BFS depth $\leq k$, \emph{or} that pair is subsumed
-by one that is already in $\Passed$.
-
-\textit{Base case ($k=0$).}  The initial zone $Z_0$ is placed in $\Passed[\Init]$
-directly.
-
-\textit{Inductive step.}  Assume the invariant holds after level $k{-}1$.
-At level $k$, Phase~1 calls $\succfn$ on every $(\ell_i, Z_i) \in \Frontier_{k-1}$
-and collects all successors.  By the definition of $\succfn$ and the
-inductive hypothesis, every symbolic state reachable at depth $k$ is either
-already in $\Passed$ (from a shorter path) or appears as a candidate in one of
-the buffers.  Phase~2 processes all candidates: any that is not yet subsumed
-is added to $\Passed$ and placed in $\Frontier_k$.
-
-\textit{Soundness.}  If the algorithm returns \textbf{true} at line~7, then
-$(\ell',Z')$ meets the target test, so the target is reachable.
-
-\textit{Completeness.}  If the target is reachable, a witnessing symbolic
-state $(\ell^\star, Z^\star)$ with $Z^\star \cap \phi \neq \emptyset$
-eventually appears as a candidate in Phase~1.  Either it is added to
-$\Frontier$ (and the target check fires) or it is subsumed by a zone $Z_p
-\supseteq Z^\star$.  Since $Z^\star \subseteq Z_p$ and $Z^\star \cap \phi
-\neq \emptyset$, we have $Z_p \cap \phi \neq \emptyset$ as well.  That zone
-was added earlier and will also trigger the target check when it is expanded.
-\qed
+\begin{proof}[Sketch]
+By induction on the level $k$, with the invariant: after level $k$, every
+symbolic state reachable within $k$ steps is either stored in $\Passed$ or
+subsumed by a stored one.  The base case is the initial state.  For the step,
+every $(q,Z) \in \Frontier_{k-1}$ is expanded, and $\succfn$ is pure, so the
+multiset of generated successors is exactly that of \cref{alg:seq} at the same
+depth, independently of thread interleaving; each is offered to $\mathrm{add}$,
+which either stores it or drops it because a subsuming zone is already present.
+Soundness: a \textbf{true} verdict is produced only by $\varphi$ holding at a
+genuinely generated state.  Completeness: if a witness $(q^\star,Z^\star)$ is
+reachable it is generated at its BFS depth; either it is stored and the target
+test fires, or some $Z_p \succeq_{aLU} Z^\star$ was stored earlier, and since
+$\preceq_{aLU}$ is sound for reachability~\cite{Herbreteau12} that zone also
+witnesses $\varphi$. \qed
 \end{proof}
 
 \begin{theorem}[Termination]\label{thm:term}
-For any TA without diagonal constraints (or after diagonal-splitting),
-\cref{alg:par} terminates.
+On diagonal-free networks (or after diagonal splitting), \cref{alg:par}
+terminates.
 \end{theorem}
-
-\begin{proof}[Proof sketch]
-LU$^+$ extrapolation on a diagonal-free TA produces a finite zone
-graph~\cite{Behrmann06}: the number of distinct zones at each location is
-bounded by the finite set of LU$^+$-equivalence classes.  Each state added to
-$\Passed$ is strictly new (not subsumed by any existing entry), so $|\Passed|$
-is bounded.  Each state is added to $\Frontier$ at most once (after that it is
-in $\Passed$ and any future duplicate is subsumed).  Hence the frontiers
-eventually exhaust all new states and $\Frontier = \emptyset$.
-\qed
+\begin{proof}[Sketch]
+LU$^+$ extrapolation yields finitely many distinct zones per discrete
+state~\cite{Behrmann06}, so $\Passed$ is bounded.  A zone enters a frontier only
+when $\mathrm{add}$ stores it, which happens at most once per stored zone.  The
+frontiers therefore exhaust and $\Frontier = \emptyset$. \qed
 \end{proof}
 
-\begin{remark}[Verdict equivalence with \cref{alg:seq}]
-\Cref{alg:par} and \cref{alg:seq} produce the same Boolean verdict on every
-input.  The \emph{exact contents} of $\Passed$ may differ in the rare case
-where two candidates at the same BFS level are in a subsumption relationship:
-the sequential algorithm's verdict depends on which one it dequeues first,
-while the parallel algorithm's verdict depends on the buffer-iteration order.
-Either way, the zone that ``wins'' (the larger one, if one subsumes the other;
-or both, if neither does) is added to $\Passed$, and all further exploration
-proceeds from that zone.  The set of reachable symbolic states and the
-reachability verdict are identical in both cases.
-\end{remark}
+\paragraph{Non-determinism of the stored set.}
+One caveat deserves stating plainly.  Fold~(c) of \cref{alg:add} merges two zones
+when their union is exactly convex, and this operation is order-sensitive: which
+zones end up merged can depend on the order in which candidates arrive at a
+discrete state, and that order depends on thread interleaving.  Consequently the
+\emph{exact set of stored zones} is not guaranteed to be bit-identical across
+runs, even though \cref{thm:correct} guarantees the verdict is.  In our
+experiments the stored-state counts were in fact stable run to run and matched
+UPPAAL exactly, but the guarantee we claim is verdict equivalence, not replay
+determinism.  This is why the fast path of \cref{sec:filter} is deliberately
+placed \emph{before} fold~(c) and phrased as a decision procedure for the
+existing predicate: it cannot perturb merge order, and \cref{thm:samestates} is
+correspondingly an equality, not an approximation.

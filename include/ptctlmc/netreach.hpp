@@ -14,6 +14,15 @@ namespace ptctlmc {
 void set_adaptive_merge(bool on);
 bool adaptive_merge();
 
+// GPU passed-set storage (`--gpu-intern`). The GPU driver stores zones DENSE (its merge kernels
+// consume dense matrices), one copy per (discrete state, zone). On models where few distinct zones
+// are reachable that is hugely redundant -- viking15 holds 2.77M zones drawn from 120 distinct ones
+// -- and deduplicating them halves peak RSS there AND cuts wall-clock ~25%, because the per-level
+// rebuild then writes a 4-byte index per survivor instead of copying a full dense zone. It is
+// neutral on models whose zones are nearly all distinct (fischer, arbiter), so it is opt-in rather
+// than default; see the evaluation in docs/paperopenmp2.
+void set_gpu_intern(bool on);
+
 // GPU frontier chunking (`--chunking`). Off by default: a BFS level is expanded in one shot, so the
 // unified-memory pools are sized to the WIDEST level and peak memory scales with level width. On, the
 // frontier is processed in bounded batches, so the pools are sized to a chunk instead and peak memory
