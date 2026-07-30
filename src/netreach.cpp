@@ -2039,6 +2039,57 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       return 0;
 #endif
     };
+    // Per-level discrete-key -> bucket-id index. This was a std::unordered_map rebuilt every
+    // level, which costs ONE MALLOC PER DISTINCT KEY (227k of them per level on fischer11, over
+    // 26 levels) plus a pointer chase on every probe. An open-addressing table with a generation
+    // stamp reuses one allocation for the whole run and clears in O(1): the level's bucketing
+    // pass measured 267 ms of a 1424 ms fischer11 wall before this.
+    struct DkIndex {
+      std::vector<std::uint64_t> key;
+      std::vector<int> val;
+      std::vector<std::uint32_t> stamp;
+      std::uint32_t gen = 0;
+      std::size_t mask = 0, fill = 0, limit = 0;
+      static std::uint64_t mix(std::uint64_t k) {   // splitmix64 finalizer
+        k ^= k >> 30; k *= 0xbf58476d1ce4e5b9ULL;
+        k ^= k >> 27; k *= 0x94d049bb133111ebULL;
+        return k ^ (k >> 31);
+      }
+      void resize_to(std::size_t cap) {
+        key.assign(cap, 0); val.assign(cap, 0); stamp.assign(cap, 0);
+        mask = cap - 1; gen = 1; fill = 0; limit = cap - cap / 4;   // 75% load factor
+      }
+      // Size for the PREVIOUS level's distinct-key count (BFS level widths change smoothly), and
+      // grow by rehashing if this level turns out wider.
+      void begin_level(std::size_t expect) {
+        std::size_t cap = 1024;
+        while (cap - cap / 4 < expect + 1) cap <<= 1;
+        if (cap > key.size()) { resize_to(cap); return; }
+        mask = key.size() - 1; limit = key.size() - key.size() / 4; fill = 0;
+        if (++gen == 0) { std::fill(stamp.begin(), stamp.end(), 0); gen = 1; }
+      }
+      void grow() {
+        const std::vector<std::uint64_t> ok = key;
+        const std::vector<int> ov = val;
+        const std::vector<std::uint32_t> os = stamp;
+        const std::uint32_t og = gen;
+        resize_to(key.size() * 2);
+        for (std::size_t i = 0; i < ok.size(); ++i)
+          if (os[i] == og) { (void)find_or_add(ok[i], ov[i]); }
+      }
+      // Return the id of `k`, inserting it with id `next` if absent (caller checks == next).
+      int find_or_add(std::uint64_t k, int next) {
+        if (fill >= limit) grow();
+        std::size_t i = mix(k) & mask;
+        for (;;) {
+          if (stamp[i] != gen) { stamp[i] = gen; key[i] = k; val[i] = next; ++fill; return next; }
+          if (key[i] == k) return val[i];
+          i = (i + 1) & mask;
+        }
+      }
+    } bidx;
+    std::size_t prev_nb = 1024;
+
     const auto _wall0 = _now();
     const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
     while (!fl.empty()) {
@@ -2186,7 +2237,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // of wall time, because the loop is bound by streaming the expand output out of unified
       // memory while the GPU is using the same bandwidth -- not by the hashing. Neither variant
       // is worth the complexity here. See docs/GUIDE.md.
-      std::unordered_map<std::uint64_t, int> bidx;
+      bidx.begin_level(prev_nb);
       std::vector<std::uint64_t> bdk;
       std::vector<int> bcnt;                              // per-bucket count of new zones
       std::vector<int> w_bucket(nwork, -1);               // work item -> bucket id (-1 = not a successor)
@@ -2207,13 +2258,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         std::uint64_t dk = 0;
         for (int p = 0; p < np; ++p) dk |= static_cast<std::uint64_t>(static_cast<unsigned>(wl[p])) << dshift[p];
         for (int v = 0; v < ni; ++v) dk |= static_cast<std::uint64_t>(wi[v] - net.intvars[v].lo) << dshift[np + v];
-        auto it = bidx.find(dk);
-        int bi;
-        if (it == bidx.end()) { bi = static_cast<int>(bdk.size()); bidx.emplace(dk, bi); bdk.push_back(dk); bcnt.push_back(0); }
-        else bi = it->second;
+        const int bi = bidx.find_or_add(dk, static_cast<int>(bdk.size()));
+        if (bi == static_cast<int>(bdk.size())) { bdk.push_back(dk); bcnt.push_back(0); }
         w_bucket[w] = bi; ++bcnt[bi];
       }
       const int nb = static_cast<int>(bdk.size());
+      prev_nb = static_cast<std::size_t>(nb);
       const auto _tp = _now();
       std::vector<int> work_off(nb), exist_cnt(nb), new_off(nb), new_cnt(nb);
       std::vector<std::int32_t> Lm(static_cast<std::size_t>(nb) * dim), Um(static_cast<std::size_t>(nb) * dim);
