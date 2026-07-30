@@ -35,7 +35,11 @@
 namespace ptctlmc {
 namespace {
 
-constexpr int kMaxDim = 24;    // <=23 clocks (matches CUDA / single-TA engine)
+// The kernels' private arrays are sized by PT_DIM -- the model's REAL dimension -- so this is
+// only an eligibility bound now, not a per-thread cost. It used to be 24, which turned the GPU
+// off for arbiter24 and up (24 clocks) and silently dropped them onto the CPU path. Matched to
+// HDBM's kDbmMaxDim, which bounds dbm_try_union's host scratch.
+constexpr int kMaxDim = 64;
 constexpr int kMaxGroup = 512;  // the kernel holds no per-|G| state; this is just sanity
 
 #define PTCTLMC_MTL_CHECK(cond, msg) \
@@ -1852,7 +1856,7 @@ std::unique_ptr<NetGpuExpander> make_net_gpu_metal(const Network& net,
   // the CPU exact-zone fallback.
   if (netgpu::network_has_diagonal(net)) return nullptr;
   if (net.nclocks + 1 > kMaxDim) return nullptr;
-  if (net.nprocs() > 64 || static_cast<int>(net.intvars.size()) > 32) return nullptr;
+  if (net.nprocs() > 64 || static_cast<int>(net.intvars.size()) > 32) return nullptr;  // MAXPROC/MAXINT
   if (MTLCreateSystemDefaultDevice() == nil) return nullptr;
   try {
     return std::make_unique<NetGpuMetal>(net, encode(net, qmask));

@@ -1942,14 +1942,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   };
 
 
-  bool parallel = (backend == Backend::Omp);
-#ifndef PTCTLMC_HAVE_OPENMP
-  parallel = false;
-#endif
+  // `parallel` is decided AFTER the GPU factory below, because a GPU backend that falls back to
+  // the CPU path (out-of-scope model, no device) must still use every core. It did not: the test
+  // was `backend == Omp`, so `--backend metal` on a model the GPU declines ran SINGLE-THREADED --
+  // arbiter24 took 93 s that way against `omp`'s 20 s, which reads as "the GPU lost" and is in
+  // fact "the fallback used one core".
+  bool parallel = false;
   int nthreads = 1;
-#ifdef PTCTLMC_HAVE_OPENMP
-  if (parallel) nthreads = omp_get_max_threads();
-#endif
 
   // GPU network backend (Metal or CUDA): the flat GPU-resident driver below runs the whole
   // level loop on the GPU (expand + per-bucket subsumption/convex-union merge). make_net_gpu_*
@@ -1997,6 +1996,11 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   use_gpu = (gpu != nullptr);
   if (use_gpu && std::getenv("PTCTLMC_STATS"))
     std::fprintf(stderr, "[gpu] network expander ACTIVE\n");
+#ifdef PTCTLMC_HAVE_OPENMP
+  // The CPU path runs multi-threaded for --backend omp AND for a GPU backend that fell back.
+  parallel = (backend == Backend::Omp) || (!use_gpu && backend != Backend::Seq);
+  if (parallel) nthreads = omp_get_max_threads();
+#endif
 
   // Passed list SHARDED by discrete-state hash: a given discrete state always lands
   // in the same shard, so each shard is a self-contained antichain owned by exactly
@@ -2276,7 +2280,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     std::vector<std::vector<int>*> pzp;
     std::vector<std::size_t> foff;
     std::vector<int>   cfl; std::vector<long>  cfi; std::vector<raw_t> cfz;
-    // Consume the first `nfr` states of the current level, keeping the rest.
+    // Consume the first `nfr` states of the current level, keeping the rest. erase() from the
+    // front would memmove the remainder once per batch -- O(batches * level) over a wide level.
     auto drop_batch = [](std::vector<int>& l, std::vector<long>& iv, std::vector<raw_t>& z,
                          int nfr, int np_, int niw_, int d2_) {
       l.erase(l.begin(), l.begin() + static_cast<std::size_t>(nfr) * np_);
@@ -2294,7 +2299,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         foff.assign(touched.size() + 1, 0);
         for (std::size_t t = 0; t < touched.size(); ++t) {
           std::size_t c = 0;
-          for (int idx : passed[touched[t]]) if (idx & kNewBit) ++c;
+          for (int idx : passed.find(touched[t])->second) if (idx & kNewBit) ++c;
           foff[t + 1] = foff[t] + c;
         }
         const std::size_t ftot = foff.back();
@@ -2307,7 +2312,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           int dl[64]; long di[32];
           decode_key(touched[t], dl, di);
           std::size_t f = foff[t];
-          auto& pz = passed[touched[t]];
+          auto& pz = passed.find(touched[t])->second;   // present: inserted earlier this level
           for (std::size_t i = 0; i < pz.size(); ++i) {
             if (!(pz[i] & kNewBit)) continue;
             pz[i] &= ~kNewBit;                                   // consumed
@@ -2669,8 +2674,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         int dl[64]; long di[32];
         decode_key(bdk[b], dl, di);
         auto& pz = *pzp[b];
-        int oldv[64]; int nold = 0;                        // this bucket's slots before the merge
-        for (int idx : pz) { if (nold < 64) oldv[nold++] = idx & ~kNewBit; }
+        // This bucket's slots before the merge; the ones the merge drops go back to the arena
+        // free list below. Thread-local, not a fixed array: philosophers' antichains reach ~400
+        // zones, and a fixed 64 would silently leak every slot past it.
+        thread_local std::vector<int> oldv;
+        oldv.clear();
+        for (int idx : pz) oldv.push_back(idx & ~kNewBit);
         pz.resize(static_cast<std::size_t>(out_count[b]));
         const std::size_t poolbase = static_cast<std::size_t>(out_work_off[b]) * d2;
         const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
@@ -2700,10 +2709,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
         // Slots the merge dropped (subsumed, or absorbed into a convex union) are garbage now.
         // Antichains are small, so a linear membership test beats any bookkeeping.
-        for (int t = 0; t < nold; ++t) {
+        for (int o : oldv) {
           bool reused = false;
-          for (int i = 0; i < out_count[b] && !reused; ++i) reused = (pz[i] & ~kNewBit) == oldv[t];
-          if (!reused) zi.release(oldv[t]);
+          for (int i = 0; i < out_count[b] && !reused; ++i) reused = (pz[i] & ~kNewBit) == o;
+          if (!reused) zi.release(o);
         }
         (void)dl; (void)di; (void)fpos;
       }
