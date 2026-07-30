@@ -36,7 +36,7 @@ namespace ptctlmc {
 namespace {
 
 constexpr int kMaxDim = 24;    // <=23 clocks (matches CUDA / single-TA engine)
-constexpr int kMaxGroup = 64;  // must equal PT_MAXG in the shader
+constexpr int kMaxGroup = 512;  // the kernel holds no per-|G| state; this is just sanity
 
 #define PTCTLMC_MTL_CHECK(cond, msg) \
   do { if (!(cond)) throw std::runtime_error(std::string("Metal(net): ") + (msg)); } while (0)
@@ -97,9 +97,6 @@ using namespace metal;
 #define MAXDIM PT_DIM
 #define MAXPROC PT_NP
 #define MAXINT 32
-#ifndef PT_MAXG
-#define PT_MAXG 64          // group elements the canonicaliser can tie-break among
-#endif
 constant int kInf = 1 << 30;
 constant int kZeroLe = 1;
 
@@ -702,8 +699,12 @@ kernel void net_expand(
   for (int v = 0; v < nintvars; ++v) bv[v] = work_ints[w*nintvars + v];
   int bestg = 0;
   if (P.ng > 1) {
-    int wins[PT_MAXG]; int nwin = 1; wins[0] = 0;
     int cl[MAXPROC], cv[MAXINT];
+    // Two passes over the group rather than one pass plus a tie list: a fixed-size tie array
+    // would cap the group the kernel can take (and TRUNCATING it would be unsound -- two states
+    // of one orbit could then pick different representatives and both be explored). Pass 1 finds
+    // the smallest discrete image; pass 2 revisits the elements that achieve it and keeps the one
+    // with the smallest permuted zone. No per-thread storage grows with |G|.
     for (int g = 1; g < P.ng; ++g) {
       for (int q = 0; q < nprocs; ++q) cl[sym_proc[g*nprocs + q]] = nlocs[q];
       for (int v = 0; v < nintvars; ++v) {
@@ -717,26 +718,29 @@ kernel void net_expand(
       if (c < 0) {
         for (int q = 0; q < nprocs; ++q) bl[q] = cl[q];
         for (int v = 0; v < nintvars; ++v) bv[v] = cv[v];
-        nwin = 1; wins[0] = g;
-      } else if (c == 0 && nwin < PT_MAXG) {
-        wins[nwin++] = g;
       }
     }
-    bestg = wins[0];
-    if (nwin > 1) {                       // tie on the discrete part: smallest permuted zone wins
-      int invB[MAXDIM], invC[MAXDIM];
-      for (int i = 0; i < dim; ++i) invB[sym_clk[bestg*dim + i]] = i;
-      for (int t = 1; t < nwin; ++t) {
-        const int g = wins[t];
-        for (int i = 0; i < dim; ++i) invC[sym_clk[g*dim + i]] = i;
-        int c = 0;
-        for (int a = 0; a < dim && c == 0; ++a)
-          for (int b = 0; b < dim; ++b) {
-            const int vg = z[invC[a]*dim + invC[b]], vb = z[invB[a]*dim + invB[b]];
-            if (vg != vb) { c = vg < vb ? -1 : 1; break; }
-          }
-        if (c < 0) { bestg = g; for (int i = 0; i < dim; ++i) invB[i] = invC[i]; }
+    int invB[MAXDIM], invC[MAXDIM];
+    bestg = -1;
+    for (int g = 0; g < P.ng; ++g) {
+      for (int q = 0; q < nprocs; ++q) cl[sym_proc[g*nprocs + q]] = nlocs[q];
+      bool same = true;
+      for (int q = 0; q < nprocs && same; ++q) same = (cl[q] == bl[q]);
+      for (int v = 0; v < nintvars && same; ++v) {
+        const int lo = sym_ivoff[g*nintvars + v], hi = sym_ivoff[g*nintvars + v + 1];
+        const int x = work_ints[w*nintvars + v];
+        same = ((hi > lo) ? sym_ivdata[lo + (x - intlo[v])] : x) == bv[v];
       }
+      if (!same) continue;
+      if (bestg < 0) { bestg = g; for (int i = 0; i < dim; ++i) invB[sym_clk[g*dim + i]] = i; continue; }
+      for (int i = 0; i < dim; ++i) invC[sym_clk[g*dim + i]] = i;
+      int c = 0;                       // compare the two permuted matrices without building them
+      for (int a = 0; a < dim && c == 0; ++a)
+        for (int b = 0; b < dim; ++b) {
+          const int vg = z[invC[a]*dim + invC[b]], vb = z[invB[a]*dim + invB[b]];
+          if (vg != vb) { c = vg < vb ? -1 : 1; break; }
+        }
+      if (c < 0) { bestg = g; for (int i = 0; i < dim; ++i) invB[i] = invC[i]; }
     }
   }
 
@@ -1450,7 +1454,7 @@ class NetGpuMetal : public NetGpuExpander {
 
   bool set_symmetry(int ng, const std::vector<int>& proc, const std::vector<int>& clk,
                     const std::vector<int>& ivoff, const std::vector<int>& ivdata) override {
-    if (ng > kMaxGroup) return false;   // the kernel's tie-break list is fixed-size (PT_MAXG)
+    if (ng > kMaxGroup) return false;
     ng_ = ng;
     b_sym_proc_ = ibuf(proc); b_sym_clk_ = ibuf(clk);
     b_sym_ivoff_ = ibuf(ivoff); b_sym_ivdata_ = ibuf(ivdata);
