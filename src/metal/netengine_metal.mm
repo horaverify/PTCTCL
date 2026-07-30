@@ -13,7 +13,9 @@
 #import <Metal/Metal.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -26,6 +28,10 @@
 #include "ptctlmc/netreach.hpp"   // gen_ok / gen_apply — shared with the CPU path
 #include "ptctlmc/network.hpp"
 
+#ifdef PTCTLMC_HAVE_OPENMP
+#include <omp.h>
+#endif
+
 namespace ptctlmc {
 namespace {
 
@@ -36,6 +42,30 @@ constexpr int kMaxDim = 24;  // <=23 clocks (matches CUDA / single-TA engine)
 
 struct NetParams {
   std::int32_t dim, nprocs, nintvars, nclocks, nwork;
+};
+
+// Engine-internal phase timers (PTCTLMC_MTLPROF). The driver's `t_expand` covers the WHOLE
+// expand() call, which is host recipe enumeration + buffer staging + the kernel; those three
+// have completely different fixes, so they are attributed separately here and dumped once at
+// destruction. Off (and free) unless the env var is set.
+struct EngProf {
+  bool on = false;
+  double enumerate = 0, stage = 0, kernel = 0, mstage = 0, mkernel = 0;
+  long long levels = 0;
+  ~EngProf() {
+    if (!on) return;
+    std::fprintf(stderr,
+        "[engprof] expand: enumerate=%.0fms stage=%.0fms kernel=%.0fms | "
+        "merge: stage=%.0fms kernel=%.0fms  (%lld levels)\n",
+        enumerate, stage, kernel, mstage, mkernel, levels);
+  }
+};
+static EngProf g_eprof;
+struct EngClock {
+  static double now() {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
 };
 
 // ---- MSL: DBM ops (port of dbm_ops.hpp) + network successor kernel -------------------
@@ -978,6 +1008,11 @@ class NetGpuMetal : public NetGpuExpander {
     PTCTLMC_MTL_CHECK(pso_ != nil, "pipeline creation failed");
     // Cooperative (SIMD-group-per-successor) expand: opt-in via PTCTLMC_MTLSG=1 so it can
     // be A/B'd against the per-thread kernel and fall back cleanly.
+    g_eprof.on = std::getenv("PTCTLMC_MTLPROF") != nullptr;
+#ifdef PTCTLMC_HAVE_OPENMP
+    eth_ = omp_get_max_threads();
+#endif
+    scr_.resize(eth_);
     use_sg_ = std::getenv("PTCTLMC_MTLSG") != nullptr;
     use_tg_ = std::getenv("PTCTLMC_MTLTG") != nullptr;
     use_rg_ = std::getenv("PTCTLMC_MTLRG") != nullptr;
@@ -1050,26 +1085,31 @@ class NetGpuMetal : public NetGpuExpander {
     }
   }
 
-  std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
-                     const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
-                     const int*& out_ints, const raw_t*& out_zones) override {
-    const int np = en_.nprocs, ni = en_.nintvars, d2 = en_.dim * en_.dim;
-    out_valid = out_locs = out_ints = nullptr;
-    out_zones = nullptr;
+  // Per-thread scratch for the recipe enumerator. Held by the engine (not the loop) so a level
+  // costs zero allocations after the first: the vectors keep their capacity across levels.
+  struct EnumScratch {
+    std::vector<std::pair<int, int>> parts;
+    std::vector<long> upd, cur_long;
+    std::vector<std::pair<int, std::vector<int>>> pj;
+    std::vector<std::size_t> pick;
+    char pad[64];   // one cache line between threads' scratch objects
+  };
 
-    // source ints as int32 for guard evaluation + the GPU
-    std::vector<int> ints32(static_cast<std::size_t>(nstates) * ni);
-    for (std::size_t i = 0; i < ints32.size(); ++i) ints32[i] = static_cast<int>(ints[i]);
+  // Enumerate every successor recipe of frontier state `s`, calling `sink(parts, upd)` in
+  // EXACTLY the order successors_net produces them (location edges, then binary handshakes,
+  // then broadcasts). Order matters: it fixes the per-bucket arrival order the convex-union
+  // merge is sensitive to. ONE body, used by both the counting pass and the writing pass, so
+  // the two cannot drift out of agreement about how many recipes a state has.
+  template <class Sink>
+  void enum_state(int s, const int* sl, const long* si, EnumScratch& sc, Sink&& sink) const {
+    const int np = en_.nprocs, ni = en_.nintvars;
+    auto& parts = sc.parts;
+    if (en_.has_general) sc.cur_long.assign(si, si + ni);
 
-    // Source ints of the state currently being expanded, as the CPU path's IntVec.
-    // Only materialised for networks that actually carry gen_guard/gen_update, so
-    // Fischer and friends pay nothing for it.
-    std::vector<long> cur_long;
-
-    auto int_ok_ge = [&](int ge, const int* si) {
+    auto int_ok_ge = [&](int ge) {
       for (int g = en_.ig_off[ge]; g < en_.ig_off[ge + 1]; ++g) {
         const int var = en_.ig_data[3*g], op = en_.ig_data[3*g+1], val = en_.ig_data[3*g+2];
-        const int x = si[var];
+        const int x = static_cast<int>(si[var]);
         bool ok;
         switch (op) { case 0: ok = x == val; break; case 1: ok = x != val; break; case 2: ok = x < val; break;
                       case 3: ok = x <= val; break; case 4: ok = x > val; break; default: ok = x >= val; }
@@ -1079,115 +1119,188 @@ class NetGpuMetal : public NetGpuExpander {
       // CPU path uses so the two backends cannot drift.
       if (en_.has_general) {
         const NEdge* e = en_.edge_src[ge];
-        if (e->gen_guard && !gen_ok(*net_, *e, cur_long.data(), cur_long.size())) return false;
+        if (e->gen_guard && !gen_ok(*net_, *e, sc.cur_long.data(), sc.cur_long.size())) return false;
       }
       return true;
     };
-
-    // enumerate successor recipes (participant lists), mirroring successors_net EXACTLY:
-    // per state — location edges, then binary handshakes, then broadcasts.
-    std::vector<int> ws, part_off, part_cnt, part_proc, part_edge;
-    std::vector<int> wints;                  // [nwork*ni] post-update ints, one row per recipe
-    std::vector<std::pair<int, int>> parts;
-    std::vector<long> upd;                              // scratch, reused across recipes
-
-    // Applies the discrete integer update exactly as successors_net does: every
-    // participant's int_updates in participant order (sender then receivers), THEN every
-    // participant's gen_update. A faulting or out-of-range gen_update discards the
-    // transition, so the recipe is never emitted.
-    auto emit = [&](int s) {
-      const long* src = ints.data() + static_cast<std::size_t>(s) * ni;
-      upd.assign(src, src + ni);
+    // Applies the discrete integer update exactly as successors_net does: every participant's
+    // int_updates in participant order (sender then receivers), THEN every participant's
+    // gen_update. A faulting or out-of-range gen_update discards the transition, so the recipe
+    // is never emitted — which is why the counting pass has to run this too.
+    auto emit = [&]() {
+      auto& upd = sc.upd;
+      upd.assign(si, si + ni);
       for (auto& pr : parts)
         for (int u = en_.iu_off[pr.second]; u < en_.iu_off[pr.second + 1]; ++u)
           upd[en_.iu_data[2*u]] = en_.iu_data[2*u + 1];
       if (en_.has_general)
         for (auto& pr : parts)
           if (!gen_apply(*net_, *en_.edge_src[pr.second], upd.data(), upd.size())) return;
-
-      ws.push_back(s);
-      part_off.push_back(static_cast<int>(part_proc.size()));
-      part_cnt.push_back(static_cast<int>(parts.size()));
-      for (auto& pr : parts) { part_proc.push_back(pr.first); part_edge.push_back(pr.second); }
-      for (int v = 0; v < ni; ++v) wints.push_back(static_cast<int>(upd[v]));
+      sink(parts, upd);
     };
-    for (int s = 0; s < nstates; ++s) {
-      const int* sl = &locs[static_cast<std::size_t>(s) * np];
-      const int* si = &ints32[static_cast<std::size_t>(s) * ni];
-      if (en_.has_general) {
-        const long* src = ints.data() + static_cast<std::size_t>(s) * ni;
-        cur_long.assign(src, src + ni);
+
+    bool src_comm = false;
+    for (int q = 0; q < np; ++q) if (en_.frozen[en_.locbase[q] + sl[q]] & 1) { src_comm = true; break; }
+    for (int p = 0; p < np; ++p) {                                  // location edges
+      if (src_comm && !(en_.frozen[en_.locbase[p] + sl[p]] & 1)) continue;
+      for (int ge : en_.loc_edges[p][sl[p]]) {
+        if (en_.edge_chan[ge] >= 0 || !int_ok_ge(ge)) continue;
+        parts.assign({{p, ge}}); emit();
       }
-      bool src_comm = false;
-      for (int q = 0; q < np; ++q) if (en_.frozen[en_.locbase[q] + sl[q]] & 1) { src_comm = true; break; }
-      for (int p = 0; p < np; ++p) {                                  // location edges
-        if (src_comm && !(en_.frozen[en_.locbase[p] + sl[p]] & 1)) continue;
-        for (int ge : en_.loc_edges[p][sl[p]]) {
-          if (en_.edge_chan[ge] >= 0 || !int_ok_ge(ge, si)) continue;
-          parts.assign({{p, ge}}); emit(s);
-        }
-      }
-      for (int i = 0; i < np; ++i) {                                  // binary handshakes
-        for (int ges : en_.loc_edges[i][sl[i]]) {
-          if (en_.edge_chan[ges] < 0 || en_.edge_dir[ges] != 1 || en_.chan_bcast[en_.edge_chan[ges]]) continue;
-          if (!int_ok_ge(ges, si)) continue;
-          const bool i_comm = en_.frozen[en_.locbase[i] + sl[i]] & 1;
-          for (int j = 0; j < np; ++j) {
-            if (j == i) continue;
-            for (int ger : en_.loc_edges[j][sl[j]]) {
-              if (en_.edge_chan[ger] != en_.edge_chan[ges] || en_.edge_dir[ger] != -1) continue;
-              if (src_comm && !(i_comm || (en_.frozen[en_.locbase[j] + sl[j]] & 1))) continue;
-              if (!int_ok_ge(ger, si)) continue;
-              parts.assign({{i, ges}, {j, ger}}); emit(s);
-            }
-          }
-        }
-      }
-      for (int i = 0; i < np; ++i) {                                  // broadcasts
-        for (int ges : en_.loc_edges[i][sl[i]]) {
-          if (en_.edge_chan[ges] < 0 || en_.edge_dir[ges] != 1 || !en_.chan_bcast[en_.edge_chan[ges]]) continue;
-          if (!int_ok_ge(ges, si)) continue;
-          std::vector<std::pair<int, std::vector<int>>> pj;  // (proc, its enabled receivers)
-          for (int j = 0; j < np; ++j) {
-            if (j == i) continue;
-            std::vector<int> es;
-            for (int ger : en_.loc_edges[j][sl[j]])
-              if (en_.edge_chan[ger] == en_.edge_chan[ges] && en_.edge_dir[ger] == -1 && int_ok_ge(ger, si))
-                es.push_back(ger);
-            if (!es.empty()) pj.push_back({j, std::move(es)});
-          }
-          std::vector<std::size_t> pick(pj.size(), 0);
-          for (;;) {
-            bool part_comm = en_.frozen[en_.locbase[i] + sl[i]] & 1;
-            for (auto& pr : pj) if (en_.frozen[en_.locbase[pr.first] + sl[pr.first]] & 1) part_comm = true;
-            if (!src_comm || part_comm) {
-              parts.assign({{i, ges}});
-              for (std::size_t t = 0; t < pj.size(); ++t) parts.push_back({pj[t].first, pj[t].second[pick[t]]});
-              emit(s);
-            }
-            if (pj.empty()) break;
-            std::size_t k = 0;
-            for (; k < pj.size(); ++k) { if (++pick[k] < pj[k].second.size()) break; pick[k] = 0; }
-            if (k == pj.size()) break;
+    }
+    for (int i = 0; i < np; ++i) {                                  // binary handshakes
+      for (int ges : en_.loc_edges[i][sl[i]]) {
+        if (en_.edge_chan[ges] < 0 || en_.edge_dir[ges] != 1 || en_.chan_bcast[en_.edge_chan[ges]]) continue;
+        if (!int_ok_ge(ges)) continue;
+        const bool i_comm = en_.frozen[en_.locbase[i] + sl[i]] & 1;
+        for (int j = 0; j < np; ++j) {
+          if (j == i) continue;
+          for (int ger : en_.loc_edges[j][sl[j]]) {
+            if (en_.edge_chan[ger] != en_.edge_chan[ges] || en_.edge_dir[ger] != -1) continue;
+            if (src_comm && !(i_comm || (en_.frozen[en_.locbase[j] + sl[j]] & 1))) continue;
+            if (!int_ok_ge(ger)) continue;
+            parts.assign({{i, ges}, {j, ger}}); emit();
           }
         }
       }
     }
-    const int nwork = static_cast<int>(ws.size());
-    if (nwork == 0) return 0;
+    for (int i = 0; i < np; ++i) {                                  // broadcasts
+      for (int ges : en_.loc_edges[i][sl[i]]) {
+        if (en_.edge_chan[ges] < 0 || en_.edge_dir[ges] != 1 || !en_.chan_bcast[en_.edge_chan[ges]]) continue;
+        if (!int_ok_ge(ges)) continue;
+        auto& pj = sc.pj; pj.clear();                     // (proc, its enabled receivers)
+        for (int j = 0; j < np; ++j) {
+          if (j == i) continue;
+          std::vector<int> es;
+          for (int ger : en_.loc_edges[j][sl[j]])
+            if (en_.edge_chan[ger] == en_.edge_chan[ges] && en_.edge_dir[ger] == -1 && int_ok_ge(ger))
+              es.push_back(ger);
+          if (!es.empty()) pj.push_back({j, std::move(es)});
+        }
+        auto& pick = sc.pick; pick.assign(pj.size(), 0);
+        for (;;) {
+          bool part_comm = en_.frozen[en_.locbase[i] + sl[i]] & 1;
+          for (auto& pr : pj) if (en_.frozen[en_.locbase[pr.first] + sl[pr.first]] & 1) part_comm = true;
+          if (!src_comm || part_comm) {
+            parts.assign({{i, ges}});
+            for (std::size_t t = 0; t < pj.size(); ++t) parts.push_back({pj[t].first, pj[t].second[pick[t]]});
+            emit();
+          }
+          if (pj.empty()) break;
+          std::size_t k = 0;
+          for (; k < pj.size(); ++k) { if (++pick[k] < pj[k].second.size()) break; pick[k] = 0; }
+          if (k == pj.size()) break;
+        }
+      }
+    }
+  }
+
+  std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
+                     const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
+                     const int*& out_ints, const raw_t*& out_zones) override {
+    const int np = en_.nprocs, ni = en_.nintvars, d2 = en_.dim * en_.dim;
+    out_valid = out_locs = out_ints = nullptr;
+    out_zones = nullptr;
+
+    const double _t0 = g_eprof.on ? EngClock::now() : 0.0;
+    // ---- recipe enumeration: PARALLEL, two-pass, straight into the GPU buffers ------------
+    // This used to be one serial loop that push_back'd into six host vectors and then uploaded
+    // them into six freshly-allocated MTLBuffers per level. Measured at 286 ms of a 1756 ms
+    // fischer11 run (and 719 ms of arbiter17's 3537 ms) it was the largest single serial
+    // section left — an Amdahl ceiling that no kernel work can get under.
+    //
+    // Pass 1 counts each state's recipes and participants; a prefix sum turns those into exact
+    // per-state write offsets; pass 2 re-runs the identical enumeration and writes each recipe
+    // at its own slot. Because every state's slot range is disjoint and assigned by index, the
+    // result is BIT-IDENTICAL to the serial version's ordering — the convex-union merge's
+    // order sensitivity is preserved exactly. The double enumeration costs ~1.6x the scalar
+    // work but spreads it over 12 cores, and it removes the host vectors entirely: the writing
+    // pass targets unified memory the kernel reads, so there is no upload copy and no
+    // per-level allocation.
+    const int NT = eth_;
+    if (static_cast<int>(scr_.size()) < NT) scr_.resize(NT);
+    cnt_rec_.resize(static_cast<std::size_t>(nstates) + 1);
+    cnt_part_.resize(static_cast<std::size_t>(nstates) + 1);
+    const long nst = nstates;
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 64) num_threads(NT)
+#endif
+    for (long s = 0; s < nst; ++s) {
+      int tid = 0;
+#ifdef PTCTLMC_HAVE_OPENMP
+      tid = omp_get_thread_num();
+#endif
+      int nr = 0, npt = 0;
+      enum_state(static_cast<int>(s), &locs[static_cast<std::size_t>(s) * np],
+                 ints.data() + static_cast<std::size_t>(s) * ni, scr_[tid],
+                 [&](const std::vector<std::pair<int, int>>& p, const std::vector<long>&) {
+                   ++nr; npt += static_cast<int>(p.size());
+                 });
+      cnt_rec_[s] = nr; cnt_part_[s] = npt;
+    }
+    // Exclusive prefix sums, in place: cnt_rec_[s] becomes state s's first work-item index and
+    // cnt_rec_[nstates] the total. O(nstates) integer adds over data already in cache.
+    std::size_t acc_r = 0, acc_p = 0;
+    for (long s = 0; s <= nst; ++s) {
+      const int r = (s < nst) ? cnt_rec_[s] : 0, p = (s < nst) ? cnt_part_[s] : 0;
+      cnt_rec_[s] = static_cast<int>(acc_r); cnt_part_[s] = static_cast<int>(acc_p);
+      acc_r += r; acc_p += p;
+    }
+    const int nwork = static_cast<int>(acc_r);
+    if (nwork == 0) { if (g_eprof.on) { g_eprof.enumerate += EngClock::now() - _t0; ++g_eprof.levels; } return 0; }
+
+    // Persistent, grow-on-demand staging buffers. Nothing is carried across levels, so a plain
+    // grow() is safe (the previous level's kernel has already been waited on).
+    int* ws       = iptr(pb_ws_, acc_r);
+    int* part_off = iptr(pb_po_, acc_r);
+    int* part_cnt = iptr(pb_pc_, acc_r);
+    int* part_proc= iptr(pb_pp_, acc_p);
+    int* part_edge= iptr(pb_pe_, acc_p);
+    int* wints    = iptr(pb_wi_in_, acc_r * static_cast<std::size_t>(ni ? ni : 1));
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 64) num_threads(NT)
+#endif
+    for (long s = 0; s < nst; ++s) {
+      if (cnt_rec_[s] == cnt_rec_[s + 1]) continue;    // this state emitted nothing
+      int tid = 0;
+#ifdef PTCTLMC_HAVE_OPENMP
+      tid = omp_get_thread_num();
+#endif
+      int w = cnt_rec_[s], po = cnt_part_[s];
+      enum_state(static_cast<int>(s), &locs[static_cast<std::size_t>(s) * np],
+                 ints.data() + static_cast<std::size_t>(s) * ni, scr_[tid],
+                 [&](const std::vector<std::pair<int, int>>& p, const std::vector<long>& upd) {
+                   ws[w] = static_cast<int>(s);
+                   part_off[w] = po;
+                   part_cnt[w] = static_cast<int>(p.size());
+                   for (auto& pr : p) { part_proc[po] = pr.first; part_edge[po] = pr.second; ++po; }
+                   for (int v = 0; v < ni; ++v)
+                     wints[static_cast<std::size_t>(w) * ni + v] = static_cast<int>(upd[v]);
+                   ++w;
+                 });
+    }
+    if (g_eprof.on) { g_eprof.enumerate += EngClock::now() - _t0; ++g_eprof.levels; }
 
     @autoreleasepool {
+      const double _t1 = g_eprof.on ? EngClock::now() : 0.0;
       id<MTLBuffer> b_fz = grow(pb_fz_, (zones.size() ? zones.size() : 1) * sizeof(raw_t));
       if (!zones.empty()) std::memcpy(b_fz.contents, zones.data(), zones.size() * sizeof(raw_t));
-      id<MTLBuffer> b_fl = ibuf(locs), b_wi = ibuf(wints);
-      id<MTLBuffer> b_ws = ibuf(ws), b_po = ibuf(part_off), b_pc = ibuf(part_cnt),
-                    b_pp = ibuf(part_proc), b_pe = ibuf(part_edge);
+      id<MTLBuffer> b_fl = pb_fl_; {   // frontier locations: persistent, filled in place
+        int* p = iptr(pb_fl_, locs.size() ? locs.size() : 1);
+        if (!locs.empty()) std::memcpy(p, locs.data(), locs.size() * sizeof(int));
+        b_fl = pb_fl_;
+      }
+      id<MTLBuffer> b_wi = pb_wi_in_;
+      id<MTLBuffer> b_ws = pb_ws_, b_po = pb_po_, b_pc = pb_pc_,
+                    b_pp = pb_pp_, b_pe = pb_pe_;
       id<MTLBuffer> b_ov = grow(pb_ov_, static_cast<std::size_t>(nwork) * sizeof(int)),
                     b_ol = grow(pb_ol_, static_cast<std::size_t>(nwork) * np * sizeof(int)),
                     b_oi = grow(pb_oi_, static_cast<std::size_t>(nwork) * (ni ? ni : 1) * sizeof(int)),
                     b_oz = grow(pb_oz_, static_cast<std::size_t>(nwork) * d2 * sizeof(int));
       NetParams P{en_.dim, np, ni, en_.nclocks, nwork};
 
+      if (g_eprof.on) g_eprof.stage += EngClock::now() - _t1;
+      const double _t2 = g_eprof.on ? EngClock::now() : 0.0;
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
       // Threadgroup-memory budget: T threads each need d2 ints on-chip. Apple GPUs expose
@@ -1233,6 +1346,7 @@ class NetGpuMetal : public NetGpuExpander {
       [cb commit];
       [cb waitUntilCompleted];
       PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
+      if (g_eprof.on) g_eprof.kernel += EngClock::now() - _t2;
 
       out_valid = static_cast<const int*>(b_ov.contents);   // read valid rows in place
       out_locs = static_cast<const int*>(b_ol.contents);
@@ -1262,9 +1376,23 @@ class NetGpuMetal : public NetGpuExpander {
     out_isnew = nullptr;
     if (nb == 0) return;
     @autoreleasepool {
+      const double _m0 = g_eprof.on ? EngClock::now() : 0.0;
       id<MTLBuffer> b_work = pb_work_, b_wi = pb_wi_;   // work in place; new zones via interned idx
-      id<MTLBuffer> b_woff = ibuf(work_off), b_ec = ibuf(exist_cnt), b_ni = ibuf(new_idx),
-                    b_noff = ibuf(new_off), b_nc = ibuf(new_cnt), b_L = Lbuf(L), b_U = Lbuf(U), b_oc = newi(nb);
+      // Persistent staging (was: eight fresh MTLBuffers per level — see pb_ws_ &c).
+      auto fill = [&](__strong id<MTLBuffer>& b, const std::vector<int>& v) {
+        int* p = iptr(b, v.size() ? v.size() : 1);
+        if (!v.empty()) std::memcpy(p, v.data(), v.size() * sizeof(int));
+        return b;
+      };
+      auto fill32 = [&](__strong id<MTLBuffer>& b, const std::vector<std::int32_t>& v) {
+        int* p = iptr(b, v.size() ? v.size() : 1);
+        if (!v.empty()) std::memcpy(p, v.data(), v.size() * sizeof(std::int32_t));
+        return b;
+      };
+      id<MTLBuffer> b_woff = fill(pb_moff_, work_off), b_ec = fill(pb_mec_, exist_cnt),
+                    b_ni = fill(pb_mni_, new_idx), b_noff = fill(pb_mnoff_, new_off),
+                    b_nc = fill(pb_mnc_, new_cnt), b_L = fill32(pb_mL_, L), b_U = fill32(pb_mU_, U);
+      id<MTLBuffer> b_oc = pb_moc_; { iptr(pb_moc_, nb); b_oc = pb_moc_; }
       // Convex-union is OFF by default on the GPU merge: it is a compression-only step (like
       // opaal/LTSmin, which omit it) that is expensive on the GPU and reduces zero states on
       // most models, so skipping it is faster everywhere and stays correct. PTCTLMC_UNION=1
@@ -1275,6 +1403,8 @@ class NetGpuMetal : public NetGpuExpander {
       if (const char* c = std::getenv("PTCTLMC_UNIONCAP")) union_cap = std::atoi(c);
       else if (std::getenv("PTCTLMC_UNION")) union_cap = 1 << 20;
       MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0, union_cap, soa_work_pool() ? 1 : 0};
+      if (g_eprof.on) g_eprof.mstage += EngClock::now() - _m0;
+      const double _m1 = g_eprof.on ? EngClock::now() : 0.0;
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
       id<MTLBuffer> bufs[11] = {b_woff, b_ec, b_noff, b_nc, pb_oz_, b_ni, b_L, b_U, b_work, b_wi, b_oc};
@@ -1307,6 +1437,7 @@ class NetGpuMetal : public NetGpuExpander {
       [cb commit];
       [cb waitUntilCompleted];
       PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "merge kernel failed");
+      if (g_eprof.on) g_eprof.mkernel += EngClock::now() - _m1;
       const int* oc = static_cast<const int*>(b_oc.contents);
       out_work_off = work_off;
       for (int b = 0; b < nb; ++b) out_count[b] = oc[b];
@@ -1352,6 +1483,11 @@ class NetGpuMetal : public NetGpuExpander {
     return b;
   }
 
+  // grow() a persistent buffer to hold `count` ints and hand back a host-writable pointer.
+  int* iptr(__strong id<MTLBuffer>& b, std::size_t count) {
+    return static_cast<int*>(grow(b, (count ? count : 1) * sizeof(int)).contents);
+  }
+
   id<MTLBuffer> grow(__strong id<MTLBuffer>& b, std::size_t bytes) {
     if (bytes == 0) bytes = 16;
     if (b == nil || static_cast<std::size_t>(b.length) < bytes) {
@@ -1392,6 +1528,15 @@ class NetGpuMetal : public NetGpuExpander {
       b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_;
   id<MTLBuffer> pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_;   // persistent expand in/out zone+disc pools
   id<MTLBuffer> pb_work_, pb_wi_;                         // persistent merge work pool + isnew
+  // Persistent expand INPUT staging (recipes + frontier locs + post-update ints). These used to
+  // be freshly allocated MTLBuffers every level; on fischer11 the transient generations were
+  // ~1.6 GB of RSS the memory profiler could not account for.
+  id<MTLBuffer> pb_ws_, pb_po_, pb_pc_, pb_pp_, pb_pe_, pb_wi_in_, pb_fl_;
+  // Persistent merge INPUT staging (the same problem on the merge side).
+  id<MTLBuffer> pb_moff_, pb_mec_, pb_mni_, pb_mnoff_, pb_mnc_, pb_mL_, pb_mU_, pb_moc_;
+  std::vector<EnumScratch> scr_;              // per-thread enumerator scratch, reused across levels
+  std::vector<int> cnt_rec_, cnt_part_;       // per-state recipe/participant counts -> offsets
+  int eth_ = 1;                               // enumeration thread count
 
  public:
   // Sum of every persistent unified-memory pool (diagnostics: PTCTLMC_MEMPROF).

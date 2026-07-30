@@ -1,0 +1,51 @@
+% -------------------------------------------------------------------------
+%  fig-intern.tex  --  the sharded zone interner
+% -------------------------------------------------------------------------
+\newcommand{\FigIntern}{%
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[x=1mm,y=1mm]
+
+  \node[bxs, minimum width=18mm] (t) at (0,0) {worker $T_t$};
+  \node[bxs, tone, minimum width=30mm, minimum height=9mm] (c) at (28,0)
+    {per-thread cache\\[-1pt]\scriptsize $2^{15}$ lines, direct-mapped};
+  \node[bxs, minimum width=26mm, minimum height=9mm] (sel) at (68,0)
+    {shard select\\[-1pt]\scriptsize \emph{high} bits of mix$(h)$};
+
+  \draw[fl] (t) -- (c);
+  \draw[fl] (c) -- node[lbl,above]{miss} (sel);
+  \draw[fl] (c.south) .. controls +(0,-7) and +(0,-7) .. (t.south);
+  \node[lbl, anchor=north] at (14,-9) {hit: return $\mathit{zidx}$, no lock};
+
+  \foreach \s/\x in {0/40, 1/62, 2/84, 3/106} {
+    \node[bxs, minimum width=17mm, minimum height=22mm, anchor=north] (S\s) at (\x,-22) {};
+    \node[lbl, anchor=north] at ([yshift=-1mm]S\s.north) {shard \s};
+  }
+  \node[lbl] at (122,-33) {$\cdots$};
+  \node[lbl, anchor=east, text width=20mm] at (34,-33) {$64$ shards,\\own mutex each};
+
+  \node[zn, anchor=north, minimum width=13mm] (h1) at ([yshift=-6mm]S1.north) {flat htab};
+  \node[zn, anchor=north, minimum width=13mm] (h2) at ([yshift=-1.6mm]h1.south) {bump arena};
+  \node[zn, anchor=north, minimum width=13mm] (h3) at ([yshift=-1.6mm]h2.south) {free lists};
+
+  \draw[fl] (sel.south) -- ++(0,-4) -| (S0.north);
+  \draw[fl] (sel.south) -- ++(0,-4) -| (S1.north);
+  \draw[fl] (sel.south) -- ++(0,-4) -| (S2.north);
+  \draw[fl] (sel.south) -- ++(0,-4) -| (S3.north);
+
+  \node[bxs, anchor=north west, minimum width=118mm, minimum height=7mm] (enc) at (8,-50)
+    {$\mathit{zidx} \;=\; (\mathit{local} \ll 6)\;|\;\mathit{shard}$
+     \quad\textit{interleaved, so the index space stays $\approx$ the zone count}};
+
+\end{tikzpicture}
+\caption{The zone interner.  A zone is packed, hashed, looked up in a
+lock-free per-thread cache, and only on a miss routed to one of $64$
+independently locked shards.  Two details are load-bearing.  First, the shard
+selector must take the \emph{high} bits of a re-mixed hash: if it reused the
+low bits that also index a shard's hash table, only $1/64$ of that table's
+slots could ever be a home position and probe chains collapse (measured: $31.2$
+probes per lookup versus $1.68$).  Second, the index is interleaved rather than
+concatenated, so the largest handed-out index stays proportional to the number
+of zones -- which is what the garbage collector's mark array is sized by.}
+\label{fig:intern}
+\end{figure}}

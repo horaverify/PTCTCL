@@ -1,0 +1,155 @@
+% ---------------------------------------------------------------------------
+%  02-background.tex -- the minimum zone theory, stated so both readers can use it
+% ---------------------------------------------------------------------------
+\section{Background: zones, DBMs, and the two ways to stay finite}
+\label{sec:background}
+
+This section fixes notation and states the three standard facts the engine
+depends on.  A reader who knows \uppaal{} internals can skim to
+\cref{sec:bg-finite}; a reader who does not should read the boxes.
+
+\subsection{Zones and DBMs}
+
+Let $\Clocks = \{x_1,\dots,x_n\}$ be the clocks and let $x_0 \equiv 0$ be a
+reference clock.  A \emph{zone} is a set of clock valuations definable by a
+conjunction of constraints $x_i - x_j \prec c$ with ${\prec} \in \{<,\le\}$.
+It is represented by a \emph{difference bound matrix} (DBM): a
+$\dim \times \dim$ array $D$, $\dim = n+1$, where $D[i][j]$ encodes the
+tightest known bound on $x_i - x_j$.  \tool{} packs the bound and its
+strictness into one integer, $\mathit{raw} = (c \ll 1)\,|\,\mathit{weak}$, so a
+comparison of two bounds is one integer comparison
+(\file{HDBM/include/ptctlmc/dbm\_ops.hpp}).
+
+A DBM is \emph{canonical} when every entry is the weight of a shortest path in
+the induced constraint graph; canonicalisation is Floyd--Warshall,
+$O(\dim^3)$.  Canonical form matters because it makes syntax match semantics:
+for canonical $D, D'$,
+\[
+  [D] \subseteq [D'] \quad\iff\quad D[i][j] \le D'[i][j] \text{ for all } i,j ,
+\]
+i.e.\ inclusion of the represented sets is entrywise comparison of the
+matrices.
+
+\begin{intuition}
+A zone is a shape in ``stopwatch space'' cut out by constraints of the form
+``$x$ minus $y$ is at most $3$''.  The matrix is just the table of all such
+bounds.  Canonicalising means tightening every entry to the best value
+implied by the others, so that comparing two shapes becomes comparing two
+tables cell by cell.
+\end{intuition}
+
+The operations the search needs are all standard and all in
+\file{dbm\_ops.hpp}: conjoin a guard (\code{dbm\_constrain}, incremental, $O(\dim^2)$),
+reset a clock (\code{dbm\_reset}, $O(\dim)$), let time pass (\code{dbm\_delay},
+drop upper bounds), emptiness (check the diagonal), and inclusion
+(\code{dbm\_includes}).
+
+\subsection{The two ways to keep the zone graph finite}
+\label{sec:bg-finite}
+
+The exact zone graph of a timed automaton can be infinite, so every tool needs
+a finiteness mechanism.  There are two families, and it is important for this
+document that they are \emph{not} interchangeable.
+
+\paragraph{Widening (extrapolation).}
+Replace each zone $Z$ by a coarser zone $\extraLU(Z) \supseteq Z$ chosen so
+that only finitely many images exist.  $\extraLU$ is \uppaal{}'s default: for
+each clock $x$ it uses $L_x$, the largest constant $x$ is compared against from
+below, and $U_x$, the largest from above, and relaxes any bound that is already
+outside those windows.  Widening \emph{maps many zones onto one}.  It is sound
+for reachability of discrete states, and for clock constraints whose constants
+are within $L,U$~\cite{BBLP06}.  It is implemented in
+\code{dbm\_extrapolate\_lu\_plus}.
+
+\paragraph{Pruning (abstract subsumption).}
+Keep zones exact, but discard a new zone when a stored one already
+\emph{simulates} it.  The relevant simulation is the $LU$-preorder
+$\preceq_{LU}$ on valuations, and its induced closure
+\[
+  \aLU(W) \;=\; \{\, v \;:\; \exists w \in W.\; v \preceq_{LU} w \,\}.
+\]
+The test used is
+\[
+  Z \subs Z' \quad:\iff\quad [Z] \subseteq \aLU([Z']),
+\]
+decided syntactically in $O(\dim^2)$ by \code{dbm\_is\_alu\_le}, a port of
+\tchecker{}'s \code{is\_alu\_le}, itself the test of
+Herbreteau--Srivathsan--Walukiewicz~\cite{HSW12}.  Pruning \emph{never
+enlarges a zone}; it only decides that exploring one is pointless.
+
+\begin{intuition}
+Two different ways to make an infinite search finite.  \emph{Widening}: round
+every shape outward to one of finitely many ``standard'' shapes -- fast, but
+you lose precision and can end up exploring configurations the system cannot
+actually reach (still giving correct \emph{answers}, just more work and bigger
+state counts).  \emph{Pruning}: keep shapes exact, but throw away a new shape
+if an old one already dominates it.  \uppaal{} widens by default.  \tool{}
+prunes by default and only widens when it detects that pruning is not paying.
+\end{intuition}
+
+The two standard facts we rely on, and do \emph{not} reprove:
+
+\begin{proposition}[standard, \cite{HSW12}]\label{prop:alu-finite}
+$\preceq_{LU}$ is a preorder on valuations, $\aLU$ is the induced downward
+closure, $\subs$ is a simulation for the symbolic successor operator, and
+$\subs$-antichains of zones are finite.  Consequently a search that stores
+exact zones and prunes with $\subs$ terminates.
+\end{proposition}
+
+\begin{proposition}[standard, \cite{BBLP06}]\label{prop:extra-sound}
+$\extraLU$ has finite image, $Z \subseteq \extraLU(Z) \subseteq \aLU(Z)$, and
+$\extraLU$ preserves satisfaction of every clock constraint whose constants are
+bounded by $L$ and $U$.
+\end{proposition}
+
+\cref{prop:alu-finite}'s ``$\aLU$ is a downward closure of a preorder'' is
+exactly what \cref{sec:theory} will use, so it is worth spelling out the
+consequence we need.
+
+\begin{lemma}[$\subs$ is a preorder]\label{lem:preorder}
+For a fixed $(L,U)$, $\subs$ is reflexive and transitive.
+\end{lemma}
+
+\begin{proof}
+Downward closure under a preorder is a closure operator: it is \emph{extensive}
+($W \subseteq \aLU(W)$, by reflexivity of $\preceq_{LU}$), \emph{monotone}
+($W \subseteq W' \Rightarrow \aLU(W) \subseteq \aLU(W')$, immediate), and
+\emph{idempotent} ($\aLU(\aLU(W)) = \aLU(W)$, by transitivity of
+$\preceq_{LU}$).  Reflexivity of $\subs$ is extensivity.  For transitivity,
+suppose $Z \subs Z'$ and $Z' \subs Z''$.  Then
+$[Z] \subseteq \aLU([Z'])$ and $[Z'] \subseteq \aLU([Z''])$, so by monotonicity
+and idempotence
+$\aLU([Z']) \subseteq \aLU(\aLU([Z''])) = \aLU([Z''])$, whence
+$[Z] \subseteq \aLU([Z''])$.
+\end{proof}
+
+\begin{remark}
+$(L,U)$ is fixed \emph{per discrete state}: the bounds are computed from the
+location vector, and every zone in one antichain belongs to the same discrete
+state by construction (the antichain is indexed by $\dk$, which encodes the
+location vector and the integer variables losslessly).  So \cref{lem:preorder}
+applies within an antichain, which is where every use of transitivity in
+\cref{sec:theory} occurs.  This is not a technicality one may skip: if the
+bounds varied inside a chain, transitivity would fail and the concurrency
+argument with it.
+\end{remark}
+
+Finally, one cheap implication we will fire constantly:
+
+\begin{lemma}[inclusion implies subsumption]\label{lem:incl-implies-alu}
+If $Z$ and $Z'$ are canonical and $[Z] \subseteq [Z']$, then $Z \subs Z'$.
+\end{lemma}
+
+\begin{proof}
+Semantically this is extensivity of $\aLU$.  Syntactically -- which is what the
+code relies on -- \code{dbm\_is\_alu\_le}$(Z,Z')$ returns false only if it finds
+a witness pair $(x,y)$ with $Z'[y][x] < Z[y][x]$.  Canonical inclusion gives
+$Z[i][j] \le Z'[i][j]$ for all $i,j$, so no such witness exists.
+\end{proof}
+
+\begin{remark}[why \cref{lem:incl-implies-alu} matters here]
+It licenses the engine to run a cheap plain-inclusion test \emph{first} and, on
+a hit, skip the $\aLU$ test entirely.  Since the cheap test can be evaluated
+directly on the compressed zone (\cref{lem:mingraph}), this is what removes
+decompression from the hot path -- and therefore from inside the lock.
+\end{remark}

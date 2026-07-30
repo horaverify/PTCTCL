@@ -1,0 +1,312 @@
+% ---------------------------------------------------------------------------
+%  08-evaluation.tex -- what was measured, and what it does and does not show
+%
+%  PROVENANCE.  Every number in this section comes from
+%  benchmarks/clean_results/ -- the cleaned grid, in which the 600 s runs have
+%  had the 2 h re-runs substituted in where those exist (see CLEANING_REPORT).
+%  The raw benchmarks/results/ tree is NOT used.  All PTCTLMC rows are the
+%  chunk-8 configuration (--omp-chunk 8), best of two repetitions.
+% ---------------------------------------------------------------------------
+\section{What was measured}
+\label{sec:eval}
+
+All numbers below are from \file{benchmarks/clean\_results/}, the cleaned grid
+in which the $600$\,s runs have had the $2$\,h re-runs substituted in where
+those exist.  The grid is five families (\code{phil}, \code{fischer},
+\code{twolock}, \code{viking}, \code{single}) $\times$ $\{16,24,32\}$ worker
+threads $\times$ chunk sizes $\{2,4,8,16\}$, two repetitions each, against
+\code{verifyta} (\uppaal{}~$5.0.0$) run single-threaded as the oracle.  Unless
+stated otherwise the PTCTLMC column is the \emph{chunk-8} configuration, best
+of the two repetitions.
+
+\subsection{Speedup against \code{verifyta}, at all three thread counts}
+
+The ratio columns mix two effects -- parallelism and a different search -- and
+must be read together with the state counts in \cref{sec:eval-states}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+& \code{verifyta} & \multicolumn{3}{c}{\tool{} wall-clock (s)}
+& \multicolumn{3}{c}{speedup} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+model & (s) & $16$ thr & $24$ thr & $32$ thr & $\times16$ & $\times24$ & $\times32$ \\
+\midrule
+\code{phil11}    & $4.42$    & $0.61$   & $0.45$   & $0.40$   & $7.2$ & $9.9$  & $\mathbf{11.1}$ \\
+\code{phil12}    & $19.66$   & $2.66$   & $1.97$   & $1.58$   & $7.4$ & $10.0$ & $\mathbf{12.4}$ \\
+\code{phil13}    & $96.60$   & $16.97$  & $11.84$  & $9.42$   & $5.7$ & $8.2$  & $\mathbf{10.3}$ \\
+\code{phil14}    & $533.16$  & $117.91$ & $86.00$  & $68.13$  & $4.5$ & $6.2$  & $\mathbf{7.8}$  \\
+\addlinespace[2pt]
+\code{viking15}  & $18.26$   & $2.67$   & $1.98$   & $1.70$   & $6.9$ & $9.2$  & $\mathbf{10.8}$ \\
+\code{viking17}  & $97.86$   & $13.21$  & $9.77$   & $8.26$   & $7.4$ & $10.0$ & $\mathbf{11.8}$ \\
+\code{viking20}  & $1253.98$ & $159.21$ & $114.36$ & $90.98$  & $7.9$ & $11.0$ & $\mathbf{13.8}$ \\
+\addlinespace[2pt]
+\code{fischer12} & $91.39$   & $23.62$  & $17.49$  & $14.52$  & $3.9$ & $5.2$  & $\mathbf{6.3}$  \\
+\code{fischer14} & $1289.10$ & $371.74$ & $275.75$ & $230.10$ & $3.5$ & $4.7$  & $\mathbf{5.6}$  \\
+\addlinespace[2pt]
+\code{twolock13} & $358.18$  & $90.96$  & $66.65$  & $54.36$  & $3.9$ & $5.4$  & $\mathbf{6.6}$  \\
+\code{twolock14} & $1310.24$ & $361.59$ & $268.67$ & $217.79$ & $3.6$ & $4.9$  & $\mathbf{6.0}$  \\
+\addlinespace[2pt]
+\code{single6}   & $4.79$    & $3.07$   & $3.61$   & $3.31$   & $1.6$ & $1.3$  & $1.4$ \\
+\code{viking4}   & $0.06$    & $0.34$   & $0.07$   & $0.08$   & $0.2$ & $0.9$  & $0.8$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+At $32$ threads the engine is $5.6$--$13.8\times$ \code{verifyta} on the four
+large families.  The two rows at the bottom are the ones that do not fit the
+story and are reported for that reason: \code{single6} barely gains because its
+entire passed set is one discrete state (see below), and \code{viking4}
+finishes in $60$\,ms, where thread-team creation and the interner's initial
+allocations dominate everything else.
+
+\subsection{Scaling within the grid}
+
+\FigScaling
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+model & $16$ thr & $24$ thr & $32$ thr & $16{\to}24$ & $16{\to}32$ \\
+\midrule
+\code{viking20}  & $159.21$\,s & $114.36$\,s & $90.98$\,s  & $1.39\times$ & $1.75\times$ \\
+\code{phil14}    & $117.91$\,s & $86.00$\,s  & $68.13$\,s  & $1.37\times$ & $1.73\times$ \\
+\code{twolock14} & $361.59$\,s & $268.67$\,s & $217.79$\,s & $1.35\times$ & $1.66\times$ \\
+\code{fischer14} & $371.74$\,s & $275.75$\,s & $230.10$\,s & $1.35\times$ & $1.62\times$ \\
+\code{single6}   & $3.07$\,s   & $3.61$\,s   & $3.31$\,s   & $0.85\times$ & $0.93\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Doubling the workers from $16$ to $32$ buys $1.62$--$1.75\times$, i.e.\
+$81$--$87\%$ parallel efficiency \emph{in that range}.  \code{single6} is the
+designed counterexample and is reported deliberately: one automaton, one
+location, $N$ independent clocks, therefore \emph{one} discrete state,
+therefore one stripe and one antichain.  Every worker contends for the same
+lock and the search runs single-file.  The hot-chain dense mirror and the
+shared-lock probe were both built for this shape and both help the constant
+factor -- before the probe covered mirrored chains, \code{single6} ran at
+$733\%$ CPU with \emph{zero} speedup -- but they cannot manufacture parallelism
+that the model does not contain.  Any honest evaluation must include a family
+like this.
+
+\subsection{Stored state counts}
+\label{sec:eval-states}
+
+State counts separate the algorithmic effect from the parallel one, so they
+carry more weight than the ratio table.  Where they vary run-to-run
+(\cref{sec:eval-nondet}) the observed range is given.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+model & \tool{} stored & \code{verifyta} stored & reading \\
+\midrule
+\code{phil12}    & $802\,871$--$805\,452$      & $1\,140\,361$   & $\approx 30\%$ fewer \\
+\code{phil14}    & $10\,613\,715$--$10\,652\,721$ & $14\,833\,412$ & $\approx 28\%$ fewer \\
+\code{fischer12} & $4\,758\,404$               & $4\,758\,404$   & identical \\
+\code{fischer14} & $49\,309\,338$              & $49\,309\,338$  & identical \\
+\code{twolock13} & $15\,465\,049$              & $15\,465\,049$  & identical \\
+\code{twolock14} & $49\,538\,714$              & $49\,538\,714$  & identical \\
+\code{viking17}  & $13\,631\,486$              & $13\,631\,486$  & identical \\
+\code{viking20}  & $143\,654\,910$             & $143\,654\,910$ & identical \\
+\code{single6}   & $5\,994$--$6\,660$          & $3\,673$        & \tool{} stores \emph{more} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three readings, all of which belong in a paper:
+
+\begin{enumerate}[leftmargin=1.5em, itemsep=3pt]
+\item \textbf{Where the state counts are identical} (\code{viking},
+      \code{fischer}, \code{twolock}), the two tools are exploring the same
+      symbolic object, so the $5.6$--$13.8\times$ at $32$ threads is
+      attributable to parallelism and to the storage engineering of
+      \cref{sec:storage} -- not to a different search.  This is the cleanest
+      comparison available and is the one to lead with.
+
+\item \textbf{Where they differ in \tool{}'s favour} (\code{phil}), part of the
+      gain is algorithmic: $\approx 30\%$ fewer stored states from the
+      convex-union merge.
+
+\item \textbf{Where \tool{} loses} (\code{single6}, $63$--$81\%$ \emph{more}
+      states), the model is the one whose antichain is a single long chain of
+      mutually incomparable zones, where widening is the right mechanism and
+      pruning is not.  This is exactly the case the adaptive switch
+      (\cref{thm:adapt}) exists for; with it on, the stored count falls to
+      $3676$ against \uppaal{}'s $3673$.
+\end{enumerate}
+
+\subsection{State-count nondeterminism, measured}
+\label{sec:eval-nondet}
+
+\cref{thm:determinism} predicts that the verdict is schedule-independent but
+the stored antichain is not.  The grid confirms it, and does so in a way that
+is more informative than the theorem alone:
+
+\begin{center}
+\small
+\begin{tabular}{@{}llr@{}}
+\toprule
+family & stored count across the $6$ (threads $\times$ rep) chunk-8 runs & spread \\
+\midrule
+\code{phil8}--\code{phil14} & $6$ distinct values each & $0.26$--$1.74\%$ \\
+\code{single4}--\code{single6} & $4$--$6$ distinct values each & $11.1$--$19.9\%$ \\
+\code{fischer}, \code{twolock}, \code{viking} (all sizes) & one value & $0\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$10$ of the $43$ completing models vary; $33$ are bit-stable.  The split is not
+arbitrary: the families that vary are exactly the families where the
+convex-union merge fires, and the families that are stable are exactly those
+whose counts match \code{verifyta} to the digit.  This is the predicted
+signature -- step~(4) of \code{add} is order-sensitive, so where it never fires
+the result is deterministic, and where it fires often the antichain depends on
+which worker reached the stripe first.  The verdicts agree in every run.
+
+\subsection{Chunk size is not a neutral knob on every model}
+
+The scaling and comparison tables above fix the chunk at $8$.  That choice is
+not neutral, and the grid says so.  At $32$ threads:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+model & \code{-c 2} & \code{-c 4} & \code{-c 8} & \code{-c 16} \\
+\midrule
+\code{phil14}    & $117.55$\,s & $91.34$\,s  & $68.13$\,s  & $\mathbf{52.62}$\,s \\
+\code{viking20}  & $93.61$\,s  & $92.04$\,s  & $90.98$\,s  & $92.77$\,s \\
+\code{twolock14} & $217.40$\,s & $217.09$\,s & $217.79$\,s & $217.08$\,s \\
+\code{fischer14} & $229.32$\,s & $228.71$\,s & $230.10$\,s & $230.95$\,s \\
+\code{single6}   & $3.36$\,s   & $3.37$\,s   & $3.31$\,s   & $3.04$\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three of the five families are flat to within noise, so chunk $8$ costs them
+nothing.  \code{phil14} is not: it runs $2.23\times$ faster at chunk $16$ than
+at chunk $2$, and $1.29\times$ faster at chunk $16$ than at the chunk $8$ used
+in every table above.  \emph{The reported \code{phil} numbers are therefore
+conservative} -- at chunk $16$, \code{phil14} is $10.1\times$ \code{verifyta}
+rather than $7.8\times$.  The mechanism is per-item overhead: \code{phil}'s
+successors are cheap and numerous, so a small chunk pays the dynamic-schedule
+bookkeeping too often, while models with expensive successors are insensitive.
+A paper should either report the best chunk per model (stating that it does so)
+or report chunk $8$ throughout and note this, but must not mix the two.
+
+\subsection{Failures in the grid, disclosed}
+
+Not every cell completed, and an artifact reviewer will read the CSVs:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+model & outcome & note \\
+\midrule
+\code{phil15}, \code{single7} & timeout at $600$\,s & complete in the $2$\,h re-runs at chunk $2$ \\
+\code{fischer15}              & timeout at $600$\,s & no $2$\,h re-run yet \\
+\code{twolock15}              & timeout at $16$ thr & completes for \code{verifyta} in $4926$\,s \\
+\code{twolock15/16}           & \textbf{ERR} at $24$ and $32$ thr & aborts at $16.5$ / $21.0$\,GB \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The \code{ERR} rows deserve a sentence rather than a footnote.  They abort at a
+\emph{repeatable} resident size ($16.51$--$16.54$\,GB for \code{twolock15},
+$20.93$--$21.10$\,GB for \code{twolock16}), identical at $24$ and $32$ threads,
+which is the signature of a capacity limit reached at a fixed zone
+\emph{count} rather than of a race or of the machine running out of memory.
+The trigger is the zone interner's chunk-table ceiling; because the overflow is
+raised as an exception from inside an \code{omp parallel} region -- where an
+exception may not leave the structured block -- every worker calls
+\code{std::terminate} and the process takes \code{SIGABRT}, so the harness
+records \code{ERR} at a nonzero exit rather than a clean out-of-memory message.
+The constants have since been resized so that RAM is the binding constraint and
+the harness reports an honest \code{MEMOUT}; \textbf{these grid cells predate
+that change and should be re-run before submission}, both to confirm the fix
+and because leaving unexplained \code{ERR} cells in a published artifact is
+worse than reporting a limit.
+
+\subsection{Where the time goes}
+
+The engine has a built-in phase profiler (\code{PTCTLMC\_PHPROF}) reporting the
+split between \textsc{expand} and the three post-barrier phases, plus
+per-thread busy time (hence tail idle).  Each design decision in
+\cref{sec:parallel} was taken in response to a specific number from it:
+
+\begin{center}
+\begin{tabular}{@{}p{0.40\linewidth}p{0.53\linewidth}@{}}
+\toprule
+\textbf{Symptom measured} & \textbf{Change it forced} \\
+\midrule
+$374\%$ CPU of a possible $800\%$, $615$k voluntary context switches
+  & shared-lock probe (\cref{fig:protocol}) \\
+$378$ of $759$ CPU-s blocked on \code{std::shared\_mutex}
+  & spin-then-yield \code{SpinRW} \\
+$36.3$\,s unpacking to feed $1.6$\,s of comparisons
+  & minimal-graph inclusion filter (\cref{lem:mingraph}) \\
+Threads waiting $20\times$ longer than the interner lock was held
+  & $64$-way interner sharding \\
+$31.2$ probes per lookup after sharding (was $1.68$)
+  & high-bit shard selector (\cref{prop:shard}) \\
+$2.8$\,s of a $9.3$\,s run in GC ($30\%$)
+  & growth-triggered sweep (\cref{prop:gc}) \\
+$0.149$\,s serial union per level, growing with level width
+  & bucketed collection (\cref{lem:bucket}) \\
+$54\%$ of the arena dead, walked on every probe
+  & per-stripe compaction floor \\
+$4.6$k convex-union tests per insertion on \code{single6}
+  & bounded merge window \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Correctness evidence}
+
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+\item \textbf{Differential testing against \code{verifyta}} on every model and
+      query in the suite; verdicts agree, and on three of five families the
+      stored state counts agree exactly.
+\item \textbf{\code{seq} $\equiv$ \code{omp}} is unit-tested; at one thread the
+      OpenMP engine takes the \code{single} path and reproduces the sequential
+      insertion order bit-for-bit.
+\item \textbf{Compiled-in invariant checkers} (built with
+      \code{PTCTLMC\_DEBUG\_KNOBS}) that a paper can cite as machine-checked
+      evidence for specific lemmas:
+      \code{CHECKINTERN} (minimal-graph round-trip is exact),
+      \code{CHECKMERGE} (every accepted merge verified by exact federation
+      subtraction --- i.e.\ \cref{thm:hull} checked at runtime),
+      \code{CHECKINV} (every stored zone satisfies the invariant of every
+      process's current location),
+      \code{CHECKGC} (a frontier entry's interned record is byte-identical when
+      the level expands it --- i.e.\ \cref{prop:gc-cache} checked at runtime).
+\end{itemize}
+
+\subsection{What is not measured, and should be before submission}
+
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+\item \textbf{No low-thread baseline anywhere in the grid.}  The cleaned
+      results contain $16$, $24$ and $32$ threads only -- there is no $1$, $2$,
+      $4$ or $8$ thread data in \file{clean\_results/} (nor in the raw tree).
+      So absolute speedup versus the sequential engine is \emph{not derivable};
+      only the $16 \to 32$ slope is.  A $1/2/4/8$ sweep on the same machine is
+      the single most valuable missing measurement, and without it the paper
+      cannot state a parallel speedup at all -- only a ratio against
+      \code{verifyta}, which conflates parallelism with the algorithm.
+\item \textbf{The \code{ERR} cells have not been re-run} since the interner
+      ceiling was raised (see above).
+\item \textbf{No ablation series.}  The mechanisms have env-var switches
+      (\code{PTCTLMC\_NOMERGE}, \code{NOGC}, \code{EXACTSUB}, \code{HOTLEN},
+      \code{MERGESCAN}, \code{ADAPT}), so a one-mechanism-at-a-time table is
+      cheap to produce and would carry far more weight than the anecdotal
+      before/after numbers in the table above.
+\item \textbf{RSS is recorded but unused.}  \file{clean\_results/} carries an
+      \code{rss\_gb} column for both tools; a memory comparison against
+      \code{verifyta} is available at no extra experimental cost.
+\end{itemize}

@@ -1,0 +1,111 @@
+% ---------------------------------------------------------------------------
+%  10-limits.tex -- boundaries, negative results, and threats to validity
+% ---------------------------------------------------------------------------
+\section{Limits, negative results, and threats to validity}
+\label{sec:limits}
+
+\subsection{Where the design does not scale, by construction}
+
+\begin{itemize}[leftmargin=1.2em, itemsep=3pt]
+\item \textbf{One discrete state, many zones.}  A model whose reachable states
+      all share one discrete state has one stripe, hence one lock and one
+      antichain, and does not parallelise (\code{single}, \cref{fig:scaling}).
+      This is inherent to sharding by discrete key.  A design that also sharded
+      \emph{within} an antichain would need a different concurrency argument
+      than \cref{thm:coverage}, because the merge in step (4) is global to the
+      chain.
+
+\item \textbf{Narrow levels.}  Level-synchronous BFS cannot use more workers
+      than the current level has states.  Models with long, thin search graphs
+      pay the barrier on every level and gain nothing.
+
+\item \textbf{Diagonal constraints.}  These disable $\aLU$ entirely
+      \cite{Bouyer04}; the engine falls back to exact inclusion with a
+      diagonal-preserving widening, and imposes a state cap because zones can
+      otherwise grow without bound.  The parallel machinery is unaffected, but
+      the algorithmic advantage over \uppaal{} disappears.
+
+\item \textbf{Liveness is still sequential.}  \code{E[] phi} and \code{p --> q}
+      build a zone graph and then run a cycle detection over it; only the
+      \code{E<>} family (including \code{E<> deadlock}) runs on the parallel
+      engine.  This is a real gap and should be stated as such rather than
+      glossed over.
+
+\item \textbf{The discrete key is $63$ bits.}  Locations and integer variables
+      are bit-packed into one word; wide networks are rejected with an explicit
+      breakdown of which fields overflowed.  This is a deliberate trade --- the
+      packed key is what makes hashing and comparison single-instruction --- but
+      it is a limit on model size in a dimension unrelated to state count.
+\end{itemize}
+
+\subsection{Things that were tried and removed}
+
+These are worth a paragraph in the paper.  They are evidence that the design
+space was actually explored, and each one closes off an obvious reviewer
+suggestion.
+
+\begin{itemize}[leftmargin=1.2em, itemsep=3pt]
+\item \textbf{Per-thread local antichains with a drain at the barrier.}  Each
+      worker inserts into a private table during the level and an owner drains
+      them into the shared one at the boundary, so expansion takes no lock at
+      all.  Correct, and consistently \emph{slower}: at $8$ threads,
+      \code{phil11} $1.48\times$, \code{viking12} $1.29\times$,
+      \code{twolock10} $1.90\times$, \code{fischer10} $1.92\times$ worse.  The
+      reason is precise and instructive: removing the lock saves the $\approx
+      15\%$ of thread time that was spin, but a private antichain cannot see the
+      shared coverage probe that answers $83\%$ of successors, so the drain
+      pays back more than the lock cost.  On \code{phil12} the drain handled
+      $3.2$\,M gathered pairs, $1.5$\,M of them exact duplicates, spending
+      $19.4$\,s of thread time against a $3.8$\,s wall.  \emph{A local-buffer
+      design is only viable with a shared coverage probe.}
+
+\item \textbf{Expansion ordering by generality.}  A zone that a later, more
+      general zone subsumes was expanded for nothing ($45\%$ of arena nodes on
+      \code{phil12} end up retired), so expanding the most general zones of a
+      level first ought to let them kill their narrower siblings a level
+      earlier.  The generality proxy was free (a minimal constraint system
+      stores a more general zone in a \emph{shorter} record) and ordering a
+      worklist cannot affect a fixpoint, so it was sound.  It does not pay:
+      \code{phil12} $0.95\times$ and \emph{more} states ($841\,637$ vs
+      $803\,845$), \code{fischer11} $0.98\times$, \code{twolock11}
+      $1.00\times$, \code{viking15} $0.98\times$.  The retirement is driven by
+      zones arriving levels apart, which no intra-level ordering can reach.
+
+\item \textbf{Test-and-test-and-set with exponential back-off}, and
+      \textbf{writer preference}, in the stripe lock.  Neither helped; back-off
+      was slightly worse (a waiter that probes less often misses the release
+      window) and writer preference merely moved wait from writers to readers,
+      because the stripes are genuinely serialised rather than unfairly
+      scheduled.
+\end{itemize}
+
+\subsection{Threats to validity}
+
+\begin{itemize}[leftmargin=1.2em, itemsep=3pt]
+\item \textbf{The headline ratio compares a $16$-thread tool to a $1$-thread
+      tool.}  It is a fair engineering comparison (it is what a user gets) but
+      it is not an algorithmic one.  The state-count columns are what separate
+      the two effects, and they should be given equal prominence.
+
+\item \textbf{Missing sequential baseline.}  Without $1$--$8$ thread data the
+      absolute parallel speedup is not established, only the $16 \to 32$ slope.
+      This is the most important gap to close before submission.
+
+\item \textbf{Benchmark selection.}  Five families, all classical, all
+      process-replicated.  Replicated networks are exactly the shape this design
+      is best at (many discrete states, short antichains).  \code{single} is
+      included as the adversarial case, but one adversarial family is thin
+      evidence; a second, e.g.\ a model with wide integer state and few
+      locations, would strengthen the claim.
+
+\item \textbf{Merge order affects reported state counts.}  Two runs at $32$
+      threads can report different counts (\cref{thm:determinism}).  Any table
+      of state counts must therefore either be produced at one thread or state
+      the variation.
+
+\item \textbf{The oracle is \code{verifyta} itself.}  Differential testing
+      against the reference tool establishes agreement, not absolute
+      correctness.  The compiled-in invariant checkers (\cref{sec:eval}) are
+      the independent evidence, and they check the specific lemmas of
+      \cref{sec:theory} rather than the end-to-end verdict.
+\end{itemize}

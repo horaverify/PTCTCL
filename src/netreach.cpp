@@ -1284,6 +1284,10 @@ bool network_has_diagonal(const Network& net) {
   return false;
 }
 
+// The GPU engines (netengine_metal.mm / netengine_cuda.cu) ask the same question through the
+// `netgpu` declaration in net_gpu_encode.hpp. One body, two names.
+namespace netgpu { bool network_has_diagonal(const Network& net) { return ptctlmc::network_has_diagonal(net); } }
+
 namespace {
 
 std::string disc_key(const LocVec& locs, const IntVec& ints) {

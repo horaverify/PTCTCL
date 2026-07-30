@@ -1,0 +1,52 @@
+% ===========================================================================
+%  doc_1/main.tex
+%
+%  "How the OpenMP engine works, and what in it is new."
+%
+%  This is NOT a paper.  It is the internal explanation a paper is written
+%  FROM: every claim is traced to the source file that implements it, every
+%  theoretical claim that is genuinely ours is stated and proved, and every
+%  claim that is standard or ported is credited as such.
+%
+%  Build:  make            (latexmk -pdf main.tex)
+%  Layout: one file per section, one file per figure.
+% ===========================================================================
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=27mm]{geometry}
+\input{preamble}
+
+% ---- figures: one file each, loaded up front, emitted where wanted --------
+\input{figs/fig-layers}
+\input{figs/fig-level}
+\input{figs/fig-stripes}
+\input{figs/fig-protocol}
+\input{figs/fig-add}
+\input{figs/fig-hull}
+\input{figs/fig-mingraph}
+\input{figs/fig-intern}
+\input{figs/fig-coverage}
+\input{figs/fig-scaling}
+
+\title{\Large The \tool{} OpenMP Engine\\[2pt]
+       \large Algorithm, Architecture, and What Is Actually New}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-10mm}
+
+\input{sections/00-how-to-read}
+\input{sections/01-problem}
+\input{sections/02-background}
+\input{sections/03-antichain}
+\input{sections/04-parallel}
+\input{sections/05-storage}
+\input{sections/06-theory}
+\input{sections/07-uppaal}
+\input{sections/08-evaluation}
+\input{sections/09-novelty}
+\input{sections/10-limits}
+\input{sections/11-refs}
+
+\end{document}

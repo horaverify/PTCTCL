@@ -1,0 +1,71 @@
+% -------------------------------------------------------------------------
+%  fig-level.tex  --  one BFS level: phases, barrier, ragged tail
+%
+%  Layout budget (mm, x=1mm y=1mm).  Keep boxes at FIXED text width so a long
+%  label cannot silently widen a node and collide with its neighbour.
+%     x  -8 .. 74   expand phase + thread lanes        x 74  barrier
+%     x  78 .. 140  the three post-barrier phases
+%     y  20         phase row      y 13..7  sub-captions
+%     y   0 .. -15  thread lanes   y -20    tail-idle brace
+%     y -30         feedback edge
+% -------------------------------------------------------------------------
+\newcommand{\FigLevel}{%
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[x=1mm,y=1mm]
+
+  % ---- phase row --------------------------------------------------------
+  \node[bxs, tone, anchor=south west, text width=64mm, align=center,
+        minimum height=7mm] (ph) at (0,17)
+    {\textsc{expand} \;--\; parallel, \code{dynamic(8)},\\
+     expansion fused with insertion};
+
+  \node[bxs, anchor=south west, text width=15mm, align=center, minimum height=7mm]
+    (c1) at (78,17) {\textsc{collect}};
+  \node[bxs, anchor=south west, text width=15mm, align=center, minimum height=7mm]
+    (c2) at (99,17) {\textsc{compact}};
+  \node[bxs, anchor=south west, text width=13mm, align=center, minimum height=7mm]
+    (c3) at (120,17) {\textsc{gc}};
+
+  \node[lbl, anchor=north, text width=20mm] at (86.5,15) {bucketed,\\parallel};
+  \node[lbl, anchor=north, text width=20mm] at (107.5,15){one thread\\per stripe};
+  \node[lbl, anchor=north, text width=18mm] at (127,15)  {amortised,\\rarely fires};
+
+  % ---- thread lanes -----------------------------------------------------
+  % \len marks where a worker runs out of chunks; the spread is the tail.
+  \node[lbl, anchor=west] at (0,3) {\itshape per-thread busy time; ticks $=$ dynamic chunks};
+  \foreach \t/\len in {0/66, 1/61, 2/70, 3/52} {
+    \pgfmathsetmacro\yy{-2-\t*4.5}
+    \node[lbl, anchor=east] at (-1.5,\yy) {$T_\t$};
+    \draw[draw=black!22, line width=0.4pt] (0,\yy) -- (74,\yy);
+    \draw[line width=2.4pt, draw=black!30] (0,\yy) -- (\len,\yy);
+    \foreach \c in {1,...,6} {
+      \pgfmathsetmacro\xx{\c*(\len/6)}
+      \draw[draw=black!60, line width=0.35pt] (\xx,\yy-1.2) -- (\xx,\yy+1.2);
+    }
+  }
+
+  % ---- barrier ----------------------------------------------------------
+  \draw[barrier] (74,1) -- (74,-24);
+  \node[lbl, anchor=west] at (75.5,-23) {implicit barrier};
+
+  % ---- tail idle --------------------------------------------------------
+  \draw[brace] (52,-17.5) -- (74,-17.5);
+  \node[lblit, anchor=north] at (63,-20) {tail idle};
+
+  % ---- feedback edge ----------------------------------------------------
+  \draw[fl] (133,20.5) -- (140,20.5) -- (140,-30) -- (-8,-30) -- (-8,20.5)
+            -- node[lbl, above, pos=0.8] {next level} (-0.4,20.5);
+
+\end{tikzpicture}
+\caption{Anatomy of one BFS level.  \textsc{expand} is the only phase that
+touches the transition relation and the only one that runs for a long time; the
+three phases after the barrier exist purely to keep memory bounded.  The tick
+marks are dynamic-schedule chunks: because a chunk is only $8$ frontier states,
+the lanes finish close together and the leftover \emph{tail idle} is small --
+it is the price of level-synchronous BFS, paid deliberately in exchange for a
+smaller state space.  Every phase after the barrier was itself parallelised or
+given an amortised trigger, because by Amdahl's law each one caps the
+achievable speedup independently of the others.}
+\label{fig:level}
+\end{figure}}

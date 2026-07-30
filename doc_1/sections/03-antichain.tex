@@ -1,0 +1,123 @@
+% ---------------------------------------------------------------------------
+%  03-antichain.tex -- the sequential insertion procedure everything preserves
+% ---------------------------------------------------------------------------
+\section{The antichain update: what one insertion does}
+\label{sec:antichain}
+
+Before any parallelism, we need the operation that is being parallelised.  The
+passed set is a map
+\[
+  \dk \;\longmapsto\; A(\dk) \subseteq \text{Zones},
+\]
+where $A(\dk)$ is a set of pairwise non-subsumed zones -- an \emph{antichain}
+-- all belonging to the same discrete state $\dk$.  Inserting a freshly
+generated zone $z$ at $\dk$ is \code{NetPassed::add}, and it does five things
+(\cref{fig:add}).
+
+\FigAdd
+
+\begin{enumerate}[leftmargin=1.9em, itemsep=3pt]
+\item[\textbf{(1)}] \textbf{Compressed fast path.}  For each stored $Z_i$, test
+      $[z] \subseteq [Z_i]$ \emph{directly on the packed minimal graph}, in
+      $O(|G_i|)$.  On a hit, drop $z$.  By \cref{lem:incl-implies-alu} this is
+      a conclusion step~(2) would also have reached, so firing it early changes
+      no state count.  It is a pure optimisation of (2) --- but the one that
+      matters most, because it decides $89.8\%$ of insertions on
+      \code{arbiter17} without ever decompressing a stored zone.
+
+\item[\textbf{(2)}] \textbf{Subsumption, incoming direction.}  If
+      $z \subs Z_i$ for some stored $Z_i$, drop $z$.
+
+\item[\textbf{(3)}] \textbf{Subsumption, stored direction.}  Retire every
+      stored $Z_i$ with $Z_i \subs z$.
+
+\item[\textbf{(4)}] \textbf{Exact convex-union merge.}  Repeatedly: if some
+      live $Z_i$ satisfies $[z \sqcup Z_i] = [z] \cup [Z_i]$ (the convex hull
+      adds no new points), set $z := z \sqcup Z_i$ and retire $Z_i$.  Iterate
+      until no more merges are possible.
+
+\item[\textbf{(5)}] \textbf{Insert.}  Intern $z$, prepend the new node to the
+      chain, stamp it with the current BFS level.
+\end{enumerate}
+
+\begin{intuition}
+Adding a new shape to the collection stored for one board position.  First:
+is the new shape already inside one of the old ones?  Then forget it.  Second:
+does the new shape swallow some old ones?  Then delete those.  Third -- and
+this is the unusual step -- if the new shape and an old one happen to fit
+together into a single shape with no gap, glue them into one.  Finally, store
+what is left.
+\end{intuition}
+
+\subsection{Why step (4) is the load-bearing one}
+
+Steps (1)--(3) are what every zone-based checker does.  Step (4) is what makes
+this design work in parallel, for a reason that is not obvious: it controls the
+\emph{length} of the chains, and chain length is exactly the size of the
+critical section.
+
+Without step (4), a discrete state accumulates every mutually incomparable zone
+it ever sees.  With it, the reachable zone at a discrete state usually
+collapses to a single zone: measured mean chain length is $1.11$ on
+\code{phil}, $1.00$ on \code{viking}, $1.00$ on \code{arbiter17}.  Since
+\code{add} folds over the chain, that is the difference between an $O(1)$ and
+an $O(k)$ critical section, and it is what lets \cref{sec:parallel} put a real
+zone computation behind a lock without serialising the tool.
+
+It also has a direct effect on state counts, which is where \tool{} beats
+\uppaal{} algorithmically rather than by throwing cores at it: on
+\code{phil12}, \tool{} stores $802\,871$ symbolic states where \uppaal{} stores
+$1\,140\,361$ (\cref{sec:eval}).
+
+The correctness of the test is \cref{thm:hull} in \cref{sec:theory}, and its
+geometry is \cref{fig:hull}.  It is worth stressing there that the test is
+\emph{exact}: it accepts a merge if and only if the union really is convex.  It
+never approximates, so it can never introduce a valuation the system cannot
+reach.
+
+\FigHull
+
+\subsection{Two bounds that make step (4) affordable}
+
+Step (4) restarts its scan after every successful merge, so on a long chain it
+is quadratic.  Two caps keep it in hand, and both are sound because
+\emph{merging is an optimisation, never an obligation}: skipping a merge only
+leaves two zones where one would have done.
+
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+\item \textbf{Merge window} (\code{PTCTLMC\_MERGESCAN}, default $32$): only the
+      $32$ newest live zones are candidates.  Zones that merge are almost
+      always recent neighbours -- a merge happens when a successor extends a
+      zone stored moments earlier -- so a small window keeps effectively all of
+      the reduction.  On the pathological \code{single6} model (one location,
+      thousands of incomparable zones) the unbounded scan ran $4.6$k
+      convex-union tests \emph{per insertion}.
+
+\item \textbf{Dense mirror for long chains} (\code{PTCTLMC\_HOTLEN}, default
+      $64$): once a chain exceeds $64$ live zones it additionally keeps its
+      zones in dense canonical form, so the folds read them in place instead of
+      decompressing each one.  Chains that long occur only on zone-heavy
+      models, so this is a cache that exists exactly where it pays for itself.
+\end{itemize}
+
+\subsection{When exact subsumption is forced}
+
+Two situations make the $\aLU$ test unusable and force plain inclusion:
+
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+\item \textbf{Diagonal constraints.}  If the network compares two clocks
+      directly ($x - y \prec c$), the $LU$ abstraction is unsound
+      \cite{Bouyer04}.  \code{network\_has\_diagonal} detects this once, and the
+      engine falls back to exact inclusion plus a diagonal-preserving
+      extrapolation (\code{dbm\_extrapolate\_lu\_plus\_nodiag}, which widens only
+      the entries touching the reference clock and leaves every true diagonal
+      exact).
+
+\item \textbf{Per-valuation properties.}  \code{E<> deadlock} asks about
+      individual valuations, not about reaching a location.  $\aLU$ may drop
+      valuations, so it is not sound for such a query; the engine sets
+      \code{force\_exact} and obtains finiteness from widening instead.  This is
+      a genuine parameterisation of one engine, not a second engine: deadlock
+      checking used to be a separate sequential search and now shares the
+      parallel machinery.
+\end{itemize}

@@ -1,0 +1,118 @@
+% ---------------------------------------------------------------------------
+%  preamble.tex -- doc_1 : the OpenMP engine explained
+%
+%  DELIBERATELY MONOCHROME.  Every figure in this document must survive being
+%  printed on a black-and-white laser printer and photocopied twice, which is
+%  what actually happens to a TACAS submission.  The only "colours" used are
+%  greys (black!N) and hatch patterns; nothing carries meaning by hue alone.
+% ---------------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{%
+  arrows.meta, positioning, calc, fit, backgrounds,
+  shapes.geometric, shapes.misc, decorations.pathreplacing,
+  decorations.markings, matrix, patterns, patterns.meta}
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink,capitalise]{cleveref}
+
+% ---- theorem environments --------------------------------------------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% "Intuition" boxes: the same content restated for a reader who does not know
+% what a DBM is.  Set apart typographically, never in colour.
+\newenvironment{intuition}
+  {\par\vspace{2pt}\noindent\begin{list}{}{%
+     \setlength{\leftmargin}{1.2em}\setlength{\rightmargin}{0.6em}%
+     \setlength{\labelwidth}{0pt}\setlength{\labelsep}{0pt}%
+     \setlength{\itemindent}{0pt}\setlength{\listparindent}{0pt}}%
+   \item\relax
+   \rule{\linewidth}{0.4pt}\par\vspace{2pt}%
+   \small\textit{In plain words.}\enspace}
+  {\par\vspace{2pt}\rule{\linewidth}{0.4pt}\end{list}\vspace{2pt}}
+
+% ---- monochrome TikZ house style -------------------------------------------
+\tikzset{
+  >=Stealth,
+  node distance=6mm and 8mm,
+  bx/.style       = {draw=black, line width=0.5pt, rounded corners=1.5pt,
+                     align=center, font=\small, inner sep=4pt,
+                     minimum height=7.5mm, fill=white},
+  bxs/.style      = {bx, font=\scriptsize, minimum height=6mm, inner sep=3pt},
+  tone/.style     = {fill=black!8},
+  tonedk/.style    = {fill=black!18},
+  hatch/.style    = {pattern=north east lines, pattern color=black!45},
+  lane/.style     = {draw=black!45, line width=0.4pt, rounded corners=2pt,
+                     dash pattern=on 2pt off 1.5pt, inner sep=5pt},
+  fl/.style       = {->, line width=0.55pt, draw=black},
+  flt/.style      = {->, line width=0.4pt, draw=black!60},
+  fld/.style      = {->, line width=0.5pt, draw=black!70, dashed},
+  lbl/.style      = {font=\scriptsize, text=black!75, align=center},
+  lblit/.style    = {font=\scriptsize\itshape, text=black!70, align=center},
+  tag/.style      = {font=\scriptsize\bfseries, inner sep=1.5pt},
+  st/.style       = {circle, draw=black, line width=0.5pt, fill=white,
+                     font=\scriptsize, inner sep=1pt, minimum size=5.5mm},
+  zn/.style       = {draw=black!70, line width=0.4pt, rounded corners=1pt,
+                     fill=white, font=\scriptsize\ttfamily, inner sep=2.5pt,
+                     minimum height=4.5mm},
+  dead/.style     = {zn, draw=black!35, text=black!45,
+                     dash pattern=on 1.5pt off 1.5pt},
+  barrier/.style  = {draw=black, line width=1.1pt},
+  brace/.style    = {decorate, decoration={brace, amplitude=4pt}, draw=black!60,
+                     line width=0.4pt},
+}
+
+% ---- listings --------------------------------------------------------------
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true, columns=fullflexible, keepspaces=true,
+  frame=single, rulecolor=\color{black!35}, framesep=4pt,
+  xleftmargin=2pt, showstringspaces=false,
+  language=C++,
+  commentstyle=\color{black!55}\itshape,
+  keywordstyle=\bfseries,
+  morekeywords={pragma,omp,parallel,for,schedule,dynamic,nowait,num_threads}
+}
+
+% ---- macros ----------------------------------------------------------------
+\newcommand{\tool}{\textsc{Ptctlmc}}
+\newcommand{\uppaal}{\textsc{Uppaal}}
+\newcommand{\ltsmin}{\textsc{LTSmin}}
+\newcommand{\opaal}{\textsc{opaal}}
+\newcommand{\tchecker}{\textsc{TChecker}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\file}[1]{\texttt{\small #1}}
+
+\newcommand{\Clocks}{\mathcal{C}}
+\newcommand{\Val}{\mathbb{V}}
+\newcommand{\Zn}{Z}
+\newcommand{\dk}{\mathit{dk}}
+\newcommand{\Cov}{\mathrm{Cov}}
+\newcommand{\Post}{\mathit{Post}}
+\newcommand{\aLU}{\mathfrak{a}_{LU}}
+\newcommand{\subs}{\sqsubseteq}
+\newcommand{\extraLU}{\mathit{Extra}^{+}_{LU}}
+\newcommand{\hull}{\mathrel{\sqcup}}
+\newcommand{\NB}{\mathit{NB}}
