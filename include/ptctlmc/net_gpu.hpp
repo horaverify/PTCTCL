@@ -33,12 +33,20 @@ class NetGpuExpander {
   // (valid until the next expand/merge call): work item w is a successor iff out_valid[w],
   // with discrete state out_locs[w*nprocs..], out_ints[w*nintvars..] (int32) and zone
   // out_zones[w*(dim*dim)..] — read in place, no compaction copy.
+  // `out_dk` is the successor's packed discrete key, computed on the device from the same
+  // `dshift`/`intlo` layout the host uses (set_key_layout). A backend that does not compute it
+  // leaves it null and the caller falls back to out_locs/out_ints.
   virtual std::size_t expand(int nstates,
                              const std::vector<int>& locs,
                              const std::vector<long>& ints,
                              const std::vector<raw_t>& zones,
                              const int*& out_valid, const int*& out_locs,
-                             const int*& out_ints, const raw_t*& out_zones) = 0;
+                             const int*& out_ints, const raw_t*& out_zones,
+                             const std::uint64_t*& out_dk) = 0;
+
+  // Tell the backend how the driver packs a discrete state into 64 bits, so the expand kernel can
+  // emit the key itself. `dshift` is nprocs+nintvars bit offsets; `intlo` is per-int-var low bound.
+  virtual void set_key_layout(const std::vector<int>& dshift, const std::vector<int>& intlo) {}
 
   // Merge this level's `nb` discrete-state buckets on the GPU (aLU-subsumption + convex-union,
   // exactly as the CPU add_to), one GPU thread per bucket. For bucket b:

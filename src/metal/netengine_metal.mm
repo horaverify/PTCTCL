@@ -618,11 +618,13 @@ kernel void net_expand(
     device const int* active     [[buffer(17)]],
     device const int* qmask      [[buffer(18)]],
     device int*       out_valid  [[buffer(19)]],
-    device int*       out_locs   [[buffer(20)]],
+    device ulong*     out_dk     [[buffer(20)]],   // packed discrete key (was out_locs)
     device int*       out_ints   [[buffer(21)]],
     device int*       out_zone   [[buffer(22)]],
     constant Params&  P          [[buffer(23)]],
     device const uint* act_mask  [[buffer(24)]],   // per-location active-clock bitmask
+    device const int* dshift     [[buffer(25)]],   // bit offset of each discrete field in the key
+    device const int* intlo      [[buffer(26)]],   // low bound of each int var (key is offset by it)
     uint w [[thread_position_in_grid]])
 {
   if (w >= uint(P.nwork)) return;
@@ -673,9 +675,16 @@ kernel void net_expand(
   if (d_empty(z, dim)) return;
 
   out_valid[w] = 1;
-  for (int q = 0; q < nprocs; ++q) out_locs[w*nprocs + q] = nlocs[q];
-  // integers: already updated host-side for this recipe (see the header comment)
-  for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
+  // PACK THE DISCRETE KEY HERE. The host's bucketing pass is the level's serial section, and it
+  // used to read this successor's nprocs locations plus nintvars integers back out of unified
+  // memory (48 bytes on fischer12) purely to recompute this 8-byte key. Emitting the key means
+  // the host reads 8 bytes per successor and the per-successor location array is not written at
+  // all -- 41.6M x 13 words of kernel stores saved over a fischer12 run.
+  ulong dk = 0;
+  for (int q = 0; q < nprocs; ++q) dk |= ulong(uint(nlocs[q])) << dshift[q];
+  for (int v = 0; v < nintvars; ++v)
+    dk |= ulong(uint(work_ints[w*nintvars + v] - intlo[v])) << dshift[nprocs + v];
+  out_dk[w] = dk;
   for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = z[k];
 }
 
@@ -995,7 +1004,7 @@ kernel void net_merge(
     }
 
     for (int k = 0; k < d2; ++k) W[cur*d2 + k] = zn[k];      // append
-    WI[cur] = 1; ++cur;
+    WI[cur] = -1; ++cur;   // -1 = 'this merge created it' (see net_gpu.hpp)
   }
   out_count[b] = cur;
 }
@@ -1124,7 +1133,7 @@ kernel void net_merge_sg(
     }
 
     for (int k = int(lane); k < d2; k += 32) W[P.soa ? (k*cap + cur) : (cur*d2 + k)] = zn[k];   // append
-    if (lane == 0) WI[cur] = 1;
+    if (lane == 0) WI[cur] = -1;   // -1 = 'this merge created it' (see net_gpu.hpp)
     ++cur;
     simdgroup_barrier(mem_flags::mem_threadgroup);
   }
@@ -1243,7 +1252,7 @@ class NetGpuMetal : public NetGpuExpander {
     @autoreleasepool {
       const std::size_t n = nwork ? nwork : 1;
       id<MTLBuffer> b_ov = grow_keep(pb_ov_, n * sizeof(int), preserve),
-                    b_ol = grow_keep(pb_ol_, n * np * sizeof(int), preserve),
+                    b_ol = grow_keep(pb_ol_, n * std::max<std::size_t>(np * sizeof(int), sizeof(std::uint64_t)), preserve),
                     b_oi = grow_keep(pb_oi_, n * (ni ? ni : 1) * sizeof(int), preserve),
                     b_oz = grow_keep(pb_oz_, n * d2 * sizeof(raw_t), preserve);
       valid = static_cast<int*>(b_ov.contents);
@@ -1363,12 +1372,18 @@ class NetGpuMetal : public NetGpuExpander {
     }
   }
 
+  void set_key_layout(const std::vector<int>& dshift, const std::vector<int>& intlo) override {
+    b_dshift_ = ibuf(dshift);
+    b_intlo_ = ibuf(intlo);
+  }
+
   std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
                      const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
-                     const int*& out_ints, const raw_t*& out_zones) override {
+                     const int*& out_ints, const raw_t*& out_zones,
+                     const std::uint64_t*& out_dk) override {
     const int np = en_.nprocs, ni = en_.nintvars, d2 = en_.dim * en_.dim;
     out_valid = out_locs = out_ints = nullptr;
-    out_zones = nullptr;
+    out_zones = nullptr; out_dk = nullptr;
 
     const double _t0 = g_eprof.on ? EngClock::now() : 0.0;
     // ---- recipe enumeration: PARALLEL, two-pass, straight into the GPU buffers ------------
@@ -1462,7 +1477,7 @@ class NetGpuMetal : public NetGpuExpander {
       id<MTLBuffer> b_ws = pb_ws_, b_po = pb_po_, b_pc = pb_pc_,
                     b_pp = pb_pp_, b_pe = pb_pe_;
       id<MTLBuffer> b_ov = grow(pb_ov_, static_cast<std::size_t>(nwork) * sizeof(int)),
-                    b_ol = grow(pb_ol_, static_cast<std::size_t>(nwork) * np * sizeof(int)),
+                    b_ol = grow(pb_ol_, static_cast<std::size_t>(nwork) * sizeof(std::uint64_t)),
                     b_oi = grow(pb_oi_, static_cast<std::size_t>(nwork) * (ni ? ni : 1) * sizeof(int)),
                     b_oz = grow(pb_oz_, static_cast<std::size_t>(nwork) * d2 * sizeof(int));
       NetParams P{en_.dim, np, ni, en_.nclocks, nwork, static_cast<std::int32_t>(en_.qmask_bits)};
@@ -1491,6 +1506,8 @@ class NetGpuMetal : public NetGpuExpander {
       for (int i = 0; i < 23; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
       [enc setBytes:&P length:sizeof(P) atIndex:23];
       [enc setBuffer:b_actmask_ offset:0 atIndex:24];
+      [enc setBuffer:b_dshift_ offset:0 atIndex:25];
+      [enc setBuffer:b_intlo_ offset:0 atIndex:26];
       if (use_rg) {
         const NSUInteger kRg = 8, kTg = kRg * 32;   // one SIMD group per zone
         const NSUInteger groups = (static_cast<NSUInteger>(nwork) + kRg - 1) / kRg;
@@ -1518,7 +1535,7 @@ class NetGpuMetal : public NetGpuExpander {
       if (g_eprof.on) g_eprof.kernel += EngClock::now() - _t2;
 
       out_valid = static_cast<const int*>(b_ov.contents);   // read valid rows in place
-      out_locs = static_cast<const int*>(b_ol.contents);
+      out_dk = static_cast<const std::uint64_t*>(b_ol.contents);
       out_ints = static_cast<const int*>(b_oi.contents);
       out_zones = static_cast<const raw_t*>(b_oz.contents);
       return static_cast<std::size_t>(nwork);
@@ -1528,7 +1545,7 @@ class NetGpuMetal : public NetGpuExpander {
   void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) override {
     id<MTLBuffer> bw = grow(pb_work_, (work_zones ? work_zones : 1) * d2 * sizeof(raw_t));
     id<MTLBuffer> bi = grow(pb_wi_, (work_zones ? work_zones : 1) * sizeof(int));
-    std::memset(bi.contents, 0, (work_zones ? work_zones : 1) * sizeof(int));
+    std::memset(bi.contents, 0xff, (work_zones ? work_zones : 1) * sizeof(int));  // -1 = created here
     work_buf = static_cast<raw_t*>(bw.contents);   // caller fills existing directly (unified memory)
     isnew = static_cast<int*>(bi.contents);        // ...and seeds their level-new flags
   }
@@ -1701,7 +1718,8 @@ class NetGpuMetal : public NetGpuExpander {
   // No b_iu_* here: the integer update is applied host-side (gen_update is an
   // expression, so the kernel cannot replay it from a flat table).
   id<MTLBuffer> b_edge_tgt_, b_cg_off_, b_cg_data_, b_rs_off_, b_rs_clk_,
-      b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_, b_actmask_;
+      b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_, b_actmask_,
+      b_dshift_, b_intlo_;
   id<MTLBuffer> pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_;   // persistent expand in/out zone+disc pools
   id<MTLBuffer> pb_work_, pb_wi_;                         // persistent merge work pool + isnew
   // Persistent expand INPUT staging (recipes + frontier locs + post-update ints). These used to

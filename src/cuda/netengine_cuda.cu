@@ -191,7 +191,7 @@ __global__ void net_merge_k(const int* work_off, const int* exist_cnt, const raw
       }
     }
     for (int k = 0; k < d2; ++k) W[cur * d2 + k] = zn[k];
-    WI[cur] = 1; ++cur;
+    WI[cur] = -1;   // -1 = 'this merge created it' (see net_gpu.hpp) ++cur;
   }
   out_count[b] = cur;
 }
@@ -218,9 +218,14 @@ class NetGpuCuda : public NetGpuExpander {
     for (void* p : owned_) cudaFree(p);
   }
 
+  // The CUDA kernel still emits per-successor locs/ints; out_dk stays null and the driver packs
+  // the key host-side (see net_gpu.hpp). Mirroring the Metal kernel's device-side packing is a
+  // straight port of the four lines at the end of net_expand when this backend is next touched.
   std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
                      const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
-                     const int*& out_ints, const raw_t*& out_zones) override {
+                     const int*& out_ints, const raw_t*& out_zones,
+                     const std::uint64_t*& out_dk) override {
+    out_dk = nullptr;
     const int np = en_.nprocs, ni = en_.nintvars, d2 = en_.dim * en_.dim;
     out_valid = out_locs = out_ints = nullptr;
     out_zones = nullptr;
@@ -336,7 +341,7 @@ class NetGpuCuda : public NetGpuExpander {
   void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) override {
     work_buf = grow_r(mwork_, (work_zones ? work_zones : 1) * d2);
     int* wi = grow_i(mwi_, work_zones ? work_zones : 1);
-    std::memset(wi, 0, (work_zones ? work_zones : 1) * sizeof(int));
+    std::memset(wi, 0xff, (work_zones ? work_zones : 1) * sizeof(int));  // -1 = created here
     isnew = wi;   // caller seeds the existing zones' level-new flags (see net_gpu.hpp)
   }
 
