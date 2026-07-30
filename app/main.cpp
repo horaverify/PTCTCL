@@ -1,4 +1,5 @@
 // main.cpp — PTCTLMC entry point (timed-automata / TCTL model checker).
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -69,17 +70,35 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
       bool sat = false;
       ReachStats st;
       std::cout << "Verifying formula: " << q.raw << "\n";
-      if (check_query(ta, q, &sat, backend, &st)) {
-        std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
-                  << "  [explored " << st.explored << " symbolic states]\n";
-        continue;
-      }
-      // Fall back to the network engine (E[] / A<> / A[] / leads-to on a single automaton).
+      // A single automaton is verified by the NETWORK engine (as a 1-process network), not by
+      // the single-TA one. The two are not equally developed: reach.cpp's passed list only ever
+      // APPENDS -- it tests whether a new zone is already covered, but never retires a stored
+      // zone that a more general one subsumes, and never runs the convex-union merge -- so on a
+      // clock-heavy automaton it is not an antichain at all. The network engine has the interned
+      // packed zones, aLU subsumption with per-location bounds, the merge and the sharded passed
+      // list. Measured on single6 (one location, 6 independent clocks): 20278 stored zones and
+      // 8.46s the old way, 3676 and 1.47s this way -- UPPAAL stores 3673 and takes 4.79s.
+      //
+      // EXCEPT with DIAGONAL constraints, where the single-TA engine is the better one: it
+      // SPLITS locations on the truth of each diagonal atom and stays exact, while the network
+      // engine can only keep diagonals exact and relax clock-vs-zero, behind a state cap. So
+      // diagonal models keep the old route. PTCTLMC_SINGLETA forces it for A/B measurement.
       if (!net_loaded) {
         net_loaded = true;
         try { net_fb = load_uppaal_network(model); net_ok = true; } catch (...) { net_ok = false; }
       }
-      if (net_ok && check_net_query(net_fb, q, &sat, backend, &st)) {
+      static const bool force_single_ta = std::getenv("PTCTLMC_SINGLETA") != nullptr;
+      const bool prefer_net = net_ok && !force_single_ta && !network_has_diagonal(net_fb);
+      bool net_tried = false, done = false;
+      if (prefer_net) {
+        net_tried = true;
+        done = check_net_query(net_fb, q, &sat, backend, &st);
+      }
+      if (!done && check_query(ta, q, &sat, backend, &st)) done = true;
+      // E[] / A<> / A[] / leads-to on a single automaton land here when the route above declined.
+      else if (!done && net_ok && !net_tried)
+        done = check_net_query(net_fb, q, &sat, backend, &st);
+      if (done) {
         std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
                   << "  [explored " << st.explored << " symbolic states]\n";
       } else {
@@ -213,6 +232,8 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(false);
     } else if (a == "--gpu-intern") {   // GPU passed set: deduplicate zones (memory over speed)
       ptctlmc::set_gpu_intern(true);
+    } else if (a == "--symmetry") {     // explore one representative per automorphism orbit
+      ptctlmc::set_symmetry(true);
     } else if (a == "--omp-chunk") {  // OpenMP dynamic-schedule chunk size (default 8)
       if (i + 1 < argc) {
         const int v = std::atoi(argv[++i]);

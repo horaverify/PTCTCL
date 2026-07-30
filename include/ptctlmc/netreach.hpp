@@ -32,6 +32,17 @@ void set_gpu_intern(bool on);
 void set_chunking(bool on, int states = 65536);
 bool chunking();
 
+// Does the network compare two clocks anywhere (a diagonal constraint x_i - x_j ~ c)? If so the
+// LU/aLU abstraction is unsound (Bouyer 2004) and the engine keeps diagonals exact instead.
+// Defined once in netreach.cpp; callers that only need the predicate declare it through here.
+bool network_has_diagonal(const Network& net);
+
+// Process-symmetry reduction: explore one representative per orbit of the network's automorphism
+// group (see symmetry.hpp). Off by default -- it is exact for the query but changes which states
+// are stored, so it is opted into per run.
+void set_symmetry(bool on);
+bool symmetry_on();
+
 // ---- general modelling-language guard/update -------------------------------
 // The `var OP const` / `var := const` fast paths live in NEdge::int_guard and
 // NEdge::int_updates; anything richer (arithmetic, arrays, calls) is compiled

@@ -31,7 +31,14 @@ FAMILIES = {
     "arbiter": ((4, 25), ("A[] not (P1.cs && P2.cs)", "A[] not (C1.cs && C2.cs)")),  # Linux uses C0-C3
     "csma":    ((4, 22), ("A[] not (P1.cs && P2.cs)", "A[] not (S1.cs && S2.cs)")),  # Linux uses S0-S3
     "grc":     ((4, 20), ("A[] not deadlock", "A[] not deadlock")),  # OK for both
-    "single":  ((4, 20), ("A[] not (P1.cs && P2.cs)", "A[] not (P.cs)")),  # Linux uses single P
+    # singleN is ONE process with ONE location and N independent clocks (self-loop per clock).
+    # It has no critical section, so the mutex query copied from the fischer/arbiter families
+    # referenced a location that does not exist: verifyta rejected it with "has no member named
+    # cs" and PTCTLMC reported UNSUPPORTED, so every single* row was an error for both tools.
+    # The clocks are global, so constrain one directly. x0<=6 is the location invariant, so the
+    # property HOLDS and the whole state space is explored (x0<=2 is refuted by both tools, so
+    # it is not vacuous).
+    "single":  ((4, 20), ("A[] x0 <= 6", "A[] x0 <= 6")),
     "viking":  ((4, 26), ("A[] not (Viking1.safe && Viking1.unsafe)", "A[] not (Viking1.safe && Viking1.unsafe)")),
     "train":   ((0,1), ("A[] not deadlock", "A[] not deadlock")),
     "hddi":    ((0, 20), ("A[] !((ST1==station_y_sync || ST1==station_y_async || ST1==station_z_async || ST1==station_z_sync) && (ST2==station_y_sync || ST2==station_y_async || ST2==station_z_async || ST2==station_z_sync))", "A[] !((ST1==station_y_sync || ST1==station_y_async || ST1==station_z_async || ST1==station_z_sync) && (ST2==station_y_sync || ST2==station_y_async || ST2==station_z_async || ST2==station_z_sync))")),

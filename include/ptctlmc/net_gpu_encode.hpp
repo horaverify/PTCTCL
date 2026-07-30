@@ -40,17 +40,10 @@ struct NetEncoding {
   std::vector<std::vector<std::vector<int>>> loc_edges;
 };
 
-inline bool network_has_diagonal(const Network& net) {
-  auto diag = [](const std::vector<Constraint>& cs) {
-    for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
-    return false;
-  };
-  for (const auto& p : net.procs) {
-    for (const auto& l : p.locations) if (diag(l.invariant)) return true;
-    for (const auto& e : p.edges) if (diag(e.clock_guard)) return true;
-  }
-  return false;
-}
+// Declared, not defined: netreach.cpp owns the one definition. This header used to carry an
+// `inline` copy of the same body, which was an ODR violation the moment a GPU translation unit
+// and netreach.o were linked together (the strong symbol silently won).
+bool network_has_diagonal(const Network& net);
 
 inline NetEncoding encode(const Network& net, const std::vector<char>& qmask) {
   NetEncoding en;
