@@ -48,6 +48,18 @@ class NetGpuExpander {
   // emit the key itself. `dshift` is nprocs+nintvars bit offsets; `intlo` is per-int-var low bound.
   virtual void set_key_layout(const std::vector<int>& dshift, const std::vector<int>& intlo) {}
 
+  // Hand the backend the network's automorphism group so the expand kernel can rewrite each
+  // successor to its orbit's canonical representative (see symmetry.hpp). Flattened:
+  //   proc[g*nprocs + p], clk[g*dim + c], and a CSR value permutation
+  //   ivdata[ivoff[g*nintvars + v] .. ivoff[g*nintvars + v + 1]) indexed by (value - lo);
+  //   an empty range means that variable is fixed pointwise by g.
+  // Element 0 must be the identity. Returns false if the backend cannot take this group (too
+  // many elements), in which case the caller must fall back to the CPU path.
+  virtual bool set_symmetry(int ng, const std::vector<int>& proc, const std::vector<int>& clk,
+                            const std::vector<int>& ivoff, const std::vector<int>& ivdata) {
+    return ng <= 1;
+  }
+
   // Merge this level's `nb` discrete-state buckets on the GPU (aLU-subsumption + convex-union,
   // exactly as the CPU add_to), one GPU thread per bucket. For bucket b:
   //   existing antichain: exist_zones[exist_off[b]*d2 .. +exist_cnt[b]*d2)  (d2 = dim*dim)

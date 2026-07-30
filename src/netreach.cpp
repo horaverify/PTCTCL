@@ -1811,7 +1811,8 @@ static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
 template <class TargetFn>
 static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&& is_target,
                          bool force_exact, Backend backend, ReachStats* stats,
-                         const std::vector<Automorphism>* sym = nullptr) {
+                         const std::vector<Automorphism>* sym = nullptr,
+                         const std::vector<NetTarget>* orbit = nullptr) {
   const bool use_sym = sym && sym->size() > 1;
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   extend_bounds(L, U, target.clock_cond);
@@ -1911,7 +1912,32 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // Symmetry reduction rewrites each successor to its orbit representative on the host; the GPU
   // drivers have no such step, so the two are mutually exclusive for now.
 #ifdef PTCTLMC_HAVE_METAL
-  if (!force_exact && !use_sym && backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
+  if (!force_exact && backend == Backend::Metal) {
+    gpu = make_net_gpu_metal(net, qmask);
+    // Symmetry: the expand kernel canonicalises each successor itself (see net_gpu.hpp). Flatten
+    // the group; if the backend cannot take it, drop to the CPU path, which canonicalises on the
+    // host -- the reduction is worth more than the device.
+    if (gpu && use_sym) {
+      const int ng = static_cast<int>(sym->size());
+      const int np_ = net.nprocs(), ni_ = static_cast<int>(net.intvars.size()), dim_ = net.nclocks + 1;
+      std::vector<int> sp(static_cast<std::size_t>(ng) * np_), sc(static_cast<std::size_t>(ng) * dim_);
+      std::vector<int> ivoff(static_cast<std::size_t>(ng) * ni_ + 1, 0), ivdata;
+      for (int g = 0; g < ng; ++g) {
+        const auto& a = (*sym)[g];
+        for (int p = 0; p < np_; ++p) sp[static_cast<std::size_t>(g) * np_ + p] = a.proc[p];
+        for (int c = 0; c < dim_; ++c) sc[static_cast<std::size_t>(g) * dim_ + c] = a.clk[c];
+        for (int v = 0; v < ni_; ++v) {
+          const std::size_t f = static_cast<std::size_t>(g) * ni_ + v;
+          ivoff[f] = static_cast<int>(ivdata.size());
+          if (v < static_cast<int>(a.ival.size()) && !a.ival[v].empty())
+            for (long x : a.ival[v]) ivdata.push_back(static_cast<int>(x));
+          ivoff[f + 1] = static_cast<int>(ivdata.size());
+        }
+      }
+      if (ivdata.empty()) ivdata.push_back(0);
+      if (!gpu->set_symmetry(ng, sp, sc, ivoff, ivdata)) gpu.reset();
+    }
+  }
 #endif
 #ifdef PTCTLMC_HAVE_CUDA
   if (!force_exact && !use_sym && backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
@@ -2131,12 +2157,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     } bidx;
     std::size_t prev_nb = 1024;
     double fanout = 8.0;   // measured successors per frontier state, for the batch-size estimate
-    // The target's required LOCATIONS are a fixed bit pattern inside the packed discrete key.
-    std::uint64_t tgt_mask = 0, tgt_val = 0;
-    for (const auto& lr : target.loc_req) {
-      tgt_mask |= dmask[lr.first] << dshift[lr.first];
-      tgt_val  |= static_cast<std::uint64_t>(static_cast<unsigned>(lr.second)) << dshift[lr.first];
-    }
 
     {   // let the expand kernel pack the discrete key itself (see net_gpu.hpp)
       std::vector<int> ilo(net.intvars.size());
@@ -2144,6 +2164,25 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       gpu->set_key_layout(dshift, ilo);
     }
     const auto _wall0 = _now();
+    // Orbit of the target: with symmetry every state is stored as its orbit representative, so a
+    // target that is not itself symmetric has to be tested against every image of the property.
+    // Each image's required LOCATIONS are a fixed bit pattern in the packed key, so the test stays
+    // |G| integer compares against the key (and only a key that matches pays for decoding ints).
+    struct OrbitTest { std::uint64_t mask, val; const NetTarget* t; };
+    std::vector<OrbitTest> tgt_tests;
+    {
+      const std::vector<NetTarget>* src = orbit && !orbit->empty() ? orbit : nullptr;
+      const std::size_t n = src ? src->size() : 1;
+      for (std::size_t i = 0; i < n; ++i) {
+        const NetTarget& t = src ? (*src)[i] : target;
+        OrbitTest ot{0, 0, &t};
+        for (const auto& lr : t.loc_req) {
+          ot.mask |= dmask[lr.first] << dshift[lr.first];
+          ot.val  |= static_cast<std::uint64_t>(static_cast<unsigned>(lr.second)) << dshift[lr.first];
+        }
+        tgt_tests.push_back(ot);
+      }
+    }
     const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
     // --chunking: expand the level in bounded BATCHES so the GPU pools are sized to a batch
     // rather than to the widest BFS level (which is what makes peak memory blow up: the expand
@@ -2386,22 +2425,22 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         // Target test straight off the key: the required locations are a fixed bit pattern in it,
         // so the common (non-target) case is two integer ops instead of a walk over nprocs
         // locations. Only a key that already matches pays for decoding the integers.
-        if ((dk & tgt_mask) == tgt_val) {
+        for (const auto& ot : tgt_tests) {
+          if ((dk & ot.mask) != ot.val) continue;
           int dl2[64]; long di2[32];
           decode_key(dk, dl2, di2);
           bool tgt = true;
-          for (const auto& a : target.int_cond) {
+          for (const auto& a : ot.t->int_cond) {
             const long x = di2[a.var]; bool r;
             switch (a.op) { case IntOp::Eq: r = x==a.val; break; case IntOp::Ne: r = x!=a.val; break;
               case IntOp::Lt: r = x<a.val; break; case IntOp::Le: r = x<=a.val; break;
               case IntOp::Gt: r = x>a.val; break; default: r = x>=a.val; }
             if (!r) { tgt = false; break; }
           }
-          if (tgt) {
-            Dbm td(net.nclocks);
-            std::copy(oz + w * d2, oz + w * d2 + d2, td.data().begin());
-            if (apply_all(td, target.clock_cond)) return true;
-          }
+          if (!tgt) continue;
+          Dbm td(net.nclocks);
+          std::copy(oz + w * d2, oz + w * d2 + d2, td.data().begin());
+          if (apply_all(td, ot.t->clock_cond)) return true;
         }
         const int bi = bidx.find_or_add(dk, static_cast<int>(bdk.size()));
         if (bi == static_cast<int>(bdk.size())) { bdk.push_back(dk); bcnt.push_back(0); }
@@ -3322,7 +3361,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     return false;
   };
   return reach_engine(net, bounds_target, is_target, /*force_exact=*/false, backend, stats,
-                      use_sym ? &G : nullptr);
+                      use_sym ? &G : nullptr, use_sym ? &orbit : nullptr);
 }
 
 bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backend,
