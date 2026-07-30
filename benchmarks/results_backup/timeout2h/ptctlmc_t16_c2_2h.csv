@@ -1,0 +1,10 @@
+family,model,tool,threads,rep,states,seconds,rss_gb,status
+phil,phil15,ptctlmc-omp,16,1,43779360,1561.736,10.897,OK
+phil,phil15,ptctlmc-omp,16,2,43788243,1577.871,10.807,OK
+phil,phil16,ptctlmc-omp,16,1,-,7200.039,57.818,TIMEOUT
+single,single7,ptctlmc-omp,16,1,114028,1947.042,0.151,OK
+single,single7,ptctlmc-omp,16,2,111779,1851.303,0.139,OK
+single,single8,ptctlmc-omp,16,1,-,7200.003,0.183,TIMEOUT
+twolock,twolock15,ptctlmc-omp,16,1,158083751,1370.823,18.819,OK
+twolock,twolock15,ptctlmc-omp,16,2,158083751,1373.371,18.823,OK
+twolock,twolock16,ptctlmc-omp,16,1,502736048,5874.393,87.401,OK

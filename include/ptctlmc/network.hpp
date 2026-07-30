@@ -85,6 +85,11 @@ struct Network {
   // active[p][l][c] = 1 if clock c may be read by process p from location l before
   // being reset (active-clock reduction: inactive clocks are reset to collapse zones).
   std::vector<std::vector<std::vector<char>>> active;
+  // Same information as one bit per clock: active_mask[p][l] has bit c set iff active[p][l][c].
+  // The active set of a LOCATION VECTOR is then nprocs OR-s instead of an nprocs x nclocks
+  // scan, which reset_inactive runs once per generated successor (8.6% of phil10). Empty when
+  // nclocks > 63; the caller falls back to the byte form there.
+  std::vector<std::vector<std::uint64_t>> active_mask;
 
   void compute_bounds();
   void compute_loc_bounds();

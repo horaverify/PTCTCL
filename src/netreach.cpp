@@ -1,4 +1,5 @@
 #include "ptctlmc/netreach.hpp"
+#include "ptctlmc/symmetry.hpp"
 #include <cstdio>
 #include <chrono>
 #ifdef __APPLE__
@@ -19,6 +20,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -127,11 +130,28 @@ struct ZoneIntern {
   //
   // Chunk-pointer arrays are preallocated and never resized, so lock-free readers in record()
   // cannot race a reallocation. Both constants are therefore sized so the fixed cost summed
-  // over ALL shards stays small (~1 MB), not per table as before.
-  static constexpr int kChunkBits = 10;
-  static constexpr int kChunk = 1 << kChunkBits;        // 1024 zones/chunk (8 KB of pointers)
+  // over ALL shards stays small (~2 MB), not per table as before.
+  //
+  // CAPACITY. These used to be 1<<10 / 1<<11 -> 2.1M zones/shard, ~134M total, and that cap was
+  // REACHABLE: twolock15 and twolock16 hit it and died. The throw below is raised inside an
+  // `omp parallel` region, where an exception may not leave the structured block, so it did not
+  // surface as main()'s "error:" line -- every worker called std::terminate and the process took
+  // SIGABRT. The benchmark harness saw only a nonzero exit and recorded ERR at a suspiciously
+  // repeatable 16.5 GB (twolock15) / 21.0 GB (twolock16), identical at 24 and 32 threads because
+  // the trigger is a zone COUNT, not a time. At 16 threads the same runs merely timed out first,
+  // which is why the crash looked thread-count-dependent and was not.
+  //
+  // Sized now so RAM is always the binding constraint and the harness's memory guard reports an
+  // honest MEMOUT instead of a crash: 16.8M zones/shard x 64 = ~1.07G zones, which at the ~127 B
+  // per zone these models cost would need ~136 GB. The hard ceiling is the ENCODING, not this
+  // choice -- zidx is a signed 32-bit int (see enc() and NetPassed::Node::zidx), so
+  // kChunkBits + log2(kChunks) + kShardBits must stay < 31. 12 + 12 + 6 = 30 leaves one bit of
+  // margin; widening past 2.1G zones would mean a 64-bit zidx in every passed-set node, which
+  // costs more resident memory than it buys.
+  static constexpr int kChunkBits = 12;
+  static constexpr int kChunk = 1 << kChunkBits;        // 4096 zones/chunk (32 KB of pointers)
   static constexpr int kChunkMask = kChunk - 1;
-  static constexpr int kChunks = 1 << 11;               // -> 2.1M zones/shard, ~134M total
+  static constexpr int kChunks = 1 << 12;               // -> 16.8M zones/shard, ~1.07G total
   // Slabs start small and double, so 64 shards do not each commit a big slab up front. The CAP
   // matters as much as the floor: whatever a shard's final slab is, the unused tail of it is
   // wasted, and that waste is paid 64 times. Doubling all the way to 4 MB cost ~40 MB on
@@ -223,6 +243,7 @@ struct ZoneIntern {
     if (out.dim() != dim) out = Dbm(dim - 1);
     mindbm_unpack(record(idx), out.data().data());
   }
+  void get_into_raw(int idx, raw_t* out) const { mindbm_unpack(record(idx), out); }
   int zdim() const { return dim; }
 
   // Probe one shard's table for the packed bytes [q,q+qlen). Returns the shard-LOCAL index or
@@ -272,6 +293,28 @@ struct ZoneIntern {
     const std::size_t qlen =
         mindbm_pack(z.data().data(), dim, qbuf.data(), bits.data(), first.data(), next.data());
     const std::uint64_t h = hash_bytes(qbuf.data(), qlen);
+#ifdef PTCTLMC_DEBUG_KNOBS
+    // PTCTLMC_CHECKINTERN: the packed min-graph record must round-trip EXACTLY. If unpack ever
+    // returns a different (in particular a wider) matrix, every stored zone is suspect and the
+    // engine can reach states the model cannot.
+    {
+      static const bool chk = std::getenv("PTCTLMC_CHECKINTERN") != nullptr;
+      if (chk) {
+        std::vector<raw_t> back(static_cast<std::size_t>(dim) * dim);
+        mindbm_unpack(qbuf.data(), back.data());
+        for (std::size_t t = 0; t < back.size(); ++t)
+          if (back[t] != z.data()[t]) {
+            std::fprintf(stderr, "[BAD ROUND-TRIP] entry %zu: packed %d -> unpacked %d\n  in :",
+                         t, z.data()[t], back[t]);
+            for (std::size_t u = 0; u < back.size(); ++u) std::fprintf(stderr, " %d", z.data()[u]);
+            std::fprintf(stderr, "\n  out:");
+            for (std::size_t u = 0; u < back.size(); ++u) std::fprintf(stderr, " %d", back[u]);
+            std::fprintf(stderr, "\n");
+            std::abort();
+          }
+      }
+    }
+#endif
 
     // Lock-free fast path: per-thread direct-mapped cache. Verify bytes (a 64-bit-hash clash
     // returning the wrong index would be UNSOUND), so a hit is always correct.
@@ -364,6 +407,22 @@ struct ZoneIntern {
       sh.hmask = nmask;
       sh.hcount = live;
     }
+    // INVALIDATE THE PER-THREAD CACHES. Mandatory for soundness, not an optimisation.
+    //
+    // A cache line is (record hash -> index), and intern()'s fast path validates a hit by
+    // comparing the RECORD BYTES. Sweeping does not erase a freed record -- it pushes the
+    // memory onto freeRecs and the index onto freeIdx -- so a freed entry still compares
+    // equal to the zone it used to hold, and the fast path would hand back an index that is
+    // on the free list. The caller stores that index in a passed-list node; the next intern()
+    // that pops the same index writes a different record into chunks[loc], and the node now
+    // denotes a DIFFERENT zone. That is not a lost optimisation, it is a wrong answer: the
+    // state keeps its discrete key and acquires someone else's zone, so the search explores
+    // states the model cannot reach (found on fischer6+, where it turned a satisfied mutual-
+    // exclusion property into a spurious counterexample).
+    //
+    // Byte equality cannot distinguish the two cases, so the cache has to be dropped. It costs
+    // nthreads * 2^kCacheBits stores on a sweep, and sweeps are O(log) in the run.
+    for (auto& tc : tcache) std::fill(tc.begin(), tc.end(), CacheLine{0, -1});
   }
 
   // Records currently handed out: live zones PLUS garbage not yet reclaimed. `n` is a
@@ -540,6 +599,79 @@ struct GpuZoneIntern {
 // The per-bucket merge is byte-for-byte the same aLU + convex-union logic as the
 // legacy add_to; only the container changed. The brand-new-dk path (the whole of
 // viking) allocates nothing per state and skips state_bounds.
+
+// A stripe lock that SPINS before it blocks.
+//
+// Contention on the stripe locks is only 2-3%, but with std::shared_mutex each collision cost
+// 0.3-1.8 MILLISECONDS: the loser blocks, the kernel deschedules it, and it waits for a whole
+// scheduling quantum to service a critical section that runs in microseconds. On phil13 that
+// convoy consumed ~378 of 759 CPU-seconds -- literally half the machine sat blocked, which is
+// why utilisation pinned at ~400% of 800%.
+//
+// Spinning turns a collision into a few hundred nanoseconds. The bounded spin then falls back to
+// yield() so the design degrades gracefully when threads > cores, instead of burning a full
+// quantum spinning against a descheduled holder. 8 bytes per stripe instead of ~56 also matters
+// at 16k stripes.
+//
+// Two variants were measured and REMOVED, so don't reintroduce them: test-and-test-and-set with
+// exponential back-off (no gain, slightly worse -- a waiter that probes less often misses the
+// release window), and writer preference (it moved wait from writers to readers and total wait
+// did not change, because the stripes are genuinely serialized rather than unfairly scheduled).
+// The cycle-accurate spin accounting that established this is gone with them.
+class SpinRW {
+  std::atomic<int> st{0};                       // -1 = writer, >=0 = reader count
+  static void pause_() {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield" ::: "memory");
+#endif
+  }
+  // Pauses before falling back to yield(). yield() is a SYSCALL, and it is only the right move
+  // when the lock holder has been descheduled -- i.e. when threads outnumber cores. At threads <=
+  // cores the holder is running and will release in microseconds, so yielding costs more than the
+  // wait it avoids: phil13 measured 14.5M yields, tens of CPU-seconds of pure syscall on a 239
+  // CPU-second run. PTCTLMC_SPIN overrides the threshold.
+  static int spin_limit() {
+    static const int v = [] {
+      if (const char* e = std::getenv("PTCTLMC_SPIN")) return std::max(1, std::atoi(e));
+      const unsigned hw = std::thread::hardware_concurrency();
+      int nt = 1;
+#ifdef PTCTLMC_HAVE_OPENMP
+      nt = omp_get_max_threads();
+#endif
+      return (hw && static_cast<unsigned>(nt) <= hw) ? 4096 : 64;
+    }();
+    return v;
+  }
+  template <class F> static void spin_until(F&& try_once) {
+    if (try_once()) return;                       // fast path: one CAS, nothing else
+    const int lim = spin_limit();
+    for (int n = 0;; ++n) {
+      if (try_once()) return;
+      if (n < lim) pause_();
+      else { std::this_thread::yield(); n = 0; }
+    }
+  }
+ public:
+  void lock_shared() {
+    spin_until([this] {
+      int v = st.load(std::memory_order_relaxed);
+      return v >= 0 && st.compare_exchange_weak(v, v + 1, std::memory_order_acquire,
+                                                std::memory_order_relaxed);
+    });
+  }
+  void unlock_shared() { st.fetch_sub(1, std::memory_order_release); }
+  void lock() {
+    spin_until([this] {
+      int v = 0;
+      return st.compare_exchange_weak(v, -1, std::memory_order_acquire,
+                                      std::memory_order_relaxed);
+    });
+  }
+  void unlock() { st.store(0, std::memory_order_release); }
+};
+
 struct NetPassed {
   // A node stores ONLY the zone + BFS level. The discrete part (locs/ints) is
   // NOT kept: it is losslessly packed in the bucket's dk (disc_key/decode_key are
@@ -558,9 +690,66 @@ struct NetPassed {
   std::uint64_t mask;
   std::size_t used = 0;   // distinct discrete states (occupied slots)
   std::size_t lastCompact = 0;  // arena.size() at last compaction (geometric trigger)
+  // Live tombstone count, maintained by the two sites that retire a node. Counting dead nodes
+  // by scanning the arena is O(arena) and had to be rate-limited behind a doubling guard, which
+  // meant compaction almost never fired at the moment waste actually peaked. Tracking it
+  // incrementally makes the trigger O(1), so it can be evaluated every level.
+  std::size_t deadCount = 0;
+  std::size_t deadBySubsume = 0, deadByMerge = 0;   // PTCTLMC_STATS attribution
   ZoneIntern* zi = nullptr;   // shared distinct-zone table (set before first add)
 
-  NetPassed() : tab(1024, Slot{0, -1}), mask(1023) {}
+  // DENSE MIRROR of a long chain.
+  //
+  // add() folds three predicates over the whole antichain of a discrete state, and the stored
+  // zones are packed min-graph records, so each visit costs a mindbm_unpack (a full O(dim^3)
+  // closure). That is the right trade while chains are ~1 zone long -- which they are on every
+  // process-network benchmark here (phil 1.11 zones/state, viking 1.00) -- but it is QUADRATIC
+  // in the chain length, and zone-heavy models do exist: the `single` family is one automaton
+  // with one location and N independent clocks, so its ENTIRE passed list is one chain of ~4.6k
+  // incomparable zones. That made 4.6k inserts x 4.6k unpacks = 21.6M closures, i.e. 22 of its
+  // 22.6 seconds.
+  //
+  // Past kHotLen live zones a chain therefore also keeps its zones DENSE and canonical, in
+  // append order (iterate backwards for the newest-first order the convex-union merge needs).
+  // The fold then reads them in place -- no unpack, no copy -- and the mirror is maintained
+  // incrementally: push_back on insert, `node[i] = -1` on retire, compacted when half-dead. The
+  // packed records stay the storage of record; this is a cache, and it exists only for chains
+  // that are long enough to pay for it.
+  struct HotChain {
+    std::vector<raw_t> z;      // dense zones, zdim^2 each, append order
+    std::vector<int> node;     // parallel arena indices; -1 once retired
+    std::size_t ndead = 0;
+  };
+  std::unordered_map<std::uint64_t, HotChain> hot;   // dk -> mirror
+
+  // Live zones a chain must reach before it is mirrored densely. The mirror trades memory (a
+  // dense copy of the chain, vs. the packed record the interner shares between identical zones)
+  // for dropping an O(chain) unpack from every insert, so the threshold decides which chains are
+  // long enough to be worth it. PTCTLMC_HOTLEN overrides it; 0 disables mirroring entirely.
+  static std::size_t hot_len() {
+    static const std::size_t v = [] {
+      const char* e = std::getenv("PTCTLMC_HOTLEN");
+      if (!e) return std::size_t(64);
+      const long n = std::atol(e);
+      return n <= 0 ? std::size_t(-1) : static_cast<std::size_t>(n);
+    }();
+    return v;
+  }
+
+  // Newest live zones a new zone tries to merge with (see step (4) of add()). Chains are ~1 long
+  // on every process-network model, so the cap only ever binds on zone-heavy ones.
+  // PTCTLMC_MERGESCAN overrides it; 0 restores the unbounded whole-chain scan.
+  static std::size_t merge_scan() {
+    static const std::size_t v = [] {
+      const char* e = std::getenv("PTCTLMC_MERGESCAN");
+      if (!e) return std::size_t(32);
+      const long n = std::atol(e);
+      return n <= 0 ? std::size_t(-1) : static_cast<std::size_t>(n);
+    }();
+    return v;
+  }
+
+  NetPassed() : tab(64, Slot{0, -1}), mask(63) {}   // grows on demand; 16k stripes x 64 slots
 
   static std::uint64_t mix(std::uint64_t dk) { return dk * 0x9e3779b97f4a7c15ULL; }
 
@@ -588,8 +777,59 @@ struct NetPassed {
   // stored node (a new survivor) or -1 if subsumed and dropped. `bounds(locs, ..)`
   // fills the per-location aLU bounds from the INCOMING state; it is only invoked
   // when the discrete state already exists, so a brand-new dk pays nothing for it.
+  // READ-ONLY duplicate test: is `z` already covered by a stored zone for `dk`?
+  //
+  // This is add()'s fast path, verbatim, with nothing that writes. On phil13 it answers 83% of
+  // all 23M add() calls, and running it under a SHARED lock lets those answer concurrently
+  // instead of serializing on the stripe's mutex. Measured before this: 374% CPU of a possible
+  // 800%, with 615k voluntary context switches -- threads were blocking, not computing, because
+  // phil's symmetry sends ~14.5 successors to the SAME discrete state (hence the same stripe).
+  //
+  // A `true` here is only a FILTER: it means "add() would have returned -1", so the caller skips
+  // the state. Anything else falls through to the exclusive-locked add(), which redoes this test
+  // and the full merge, so a false negative costs one wasted lock and never changes the result.
+  // Plain inclusion is sound in both subsumption modes for the same reason add() documents.
+  //
+  // For a chain with a DENSE MIRROR the probe runs add()'s real test (2) -- aLU subsumption, or
+  // plain inclusion in exact mode -- instead of only the packed plain-inclusion filter. Those
+  // chains are exactly the zone-heavy ones, where nearly every successor is aLU-subsumed but
+  // NOT plainly included, so the weak filter passed them all through to the exclusive lock and
+  // the search ran single-file however many cores it had (`single6`: 733% CPU, zero speedup).
+  // Under the shared lock the same work runs on every core. Sound for the same reason: a stored
+  // zone is only ever retired by one that subsumes it, so a `true` here stays true.
   template <class BoundsFn>
-  int add(SymState&& s, std::uint64_t dk, int level, bool has_diag, BoundsFn&& bounds, int tid) {
+  bool probe_kill(std::uint64_t dk, const SymState& s, bool exact_sub, BoundsFn&& bounds) const {
+    const std::size_t si = slot_of(dk);
+    if (tab[si].head == -1 || tab[si].dk != dk) return false;   // absent, or a probe-chain miss
+    const raw_t* sz = s.zone.data().data();
+    const int dim = s.zone.dim();
+    auto hit = hot.find(dk);
+    if (hit != hot.end()) {
+      const HotChain& hc = hit->second;
+      const std::size_t d2 = static_cast<std::size_t>(dim) * dim;
+      thread_local std::vector<std::int32_t> Ls, Us;
+      if (!exact_sub) bounds(s.locs.data(), Ls, Us);
+      for (std::size_t i = hc.node.size(); i-- > 0;) {
+        if (hc.node[i] < 0) continue;
+        const raw_t* ez = hc.z.data() + i * d2;
+        if (exact_sub ? dbm_includes(ez, sz, dim)
+                      : dbm_is_alu_le(sz, ez, dim, Ls.data(), Us.data()))
+          return true;
+      }
+      return false;
+    }
+    for (int i = tab[si].head; i != -1; i = arena[i].next) {
+      if (arena[i].dead) continue;
+      if (mindbm_includes_dense(zi->record(arena[i].zidx), sz, dim)) return true;
+    }
+    return false;
+  }
+
+  template <class BoundsFn>
+  // `exact_sub`: compare zones with plain inclusion instead of the aLU test. Required whenever
+  // the property is per-VALUATION rather than per-location (deadlock), because aLU may drop
+  // concrete valuations; also forced by diagonal constraints, which make aLU unsound outright.
+  int add(SymState&& s, std::uint64_t dk, int level, bool exact_sub, BoundsFn&& bounds, int tid) {
     if (used * 10 >= (mask + 1) * 7) grow();
     const std::size_t si = slot_of(dk);
     if (tab[si].head == -1) {                       // brand-new discrete state (fast path)
@@ -600,7 +840,7 @@ struct NetPassed {
       return idx;
     }
     thread_local std::vector<std::int32_t> Ls, Us;
-    if (!has_diag) bounds(s.locs.data(), Ls, Us);
+    if (!exact_sub) bounds(s.locs.data(), Ls, Us);   // aLU bounds only needed by the aLU test
     const int head = tab[si].head;
     // Unpack the live chain ONCE into a reused thread-local array, then fold over the array
     // rather than re-walking the chain. zi->get() decodes a packed min-graph record into a
@@ -623,7 +863,7 @@ struct NetPassed {
     //
     // mindbm_includes_dense answers "s.zone subseteq stored" directly from the minimal
     // constraint system in O(|G|) (|G| ~ dim). Firing it early is sound in both modes:
-    //   * has_diag: test (2) IS plain inclusion, so this is that test, verbatim.
+    //   * exact_sub: test (2) IS plain inclusion, so this is that test, verbatim.
     //   * aLU: plain inclusion implies aLU subsumption -- a witness needs
     //     Zp[y][x] < Z[y][x], which cannot happen when Z subseteq Z'. So an early hit is a
     //     conclusion the aLU test would also have reached.
@@ -634,47 +874,119 @@ struct NetPassed {
       if (mindbm_includes_dense(zi->record(arena[i].zidx), s.zone.data().data(), s.zone.dim()))
         return -1;
     }
-    // `chain` holds the unpacked zones by fixed position; `live` indexes the ones still in
-    // play. Removals go through `live` with an ORDERED erase (never swap-with-last): the
-    // convex union in (4) is order-sensitive, so the survivors must keep their newest-first
-    // relative order for the merge to reproduce the chain-walking result exactly. This is
-    // the same discipline merge_level uses on its own `live` array.
-    thread_local std::vector<Dbm> chain;
+    // `zp` points at each live zone's DENSE canonical matrix, newest-first; `live` indexes the
+    // ones still in play. Removals go through `live` with an ORDERED erase (never
+    // swap-with-last): the convex union in (4) is order-sensitive, so the survivors must keep
+    // their newest-first relative order for the merge to reproduce the chain-walking result
+    // exactly. This is the same discipline merge_level uses on its own `live` array.
+    //
+    // The zones come either from this chain's dense mirror (no unpack at all) or, for a chain
+    // still below kHotLen, from a reused thread-local scratch that is filled once per call.
+    const int dim = zi->zdim();
+    const std::size_t d2 = static_cast<std::size_t>(dim) * dim;
+    thread_local std::vector<const raw_t*> zp;
     thread_local std::vector<int> cidx;
-    thread_local std::vector<std::size_t> live;
-    cidx.clear();
-    live.clear();
-    std::size_t nc = 0;
-    for (int i = head; i != -1; i = arena[i].next) {
-      if (arena[i].dead) continue;
-      if (nc == chain.size()) chain.emplace_back(zi->zdim() - 1);
-      zi->get_into(arena[i].zidx, chain[nc]);
-      cidx.push_back(i);
-      live.push_back(nc);
-      ++nc;
+    thread_local std::vector<std::size_t> live, hpos;   // hpos: slot in the mirror, or npos
+    thread_local std::vector<raw_t> scratch;
+    zp.clear(); cidx.clear(); live.clear(); hpos.clear();
+    constexpr std::size_t kCold = static_cast<std::size_t>(-1);
+    auto hit = hot.find(dk);
+    HotChain* hc = (hit == hot.end()) ? nullptr : &hit->second;
+    if (hc) {
+      for (std::size_t i = hc->node.size(); i-- > 0;) {          // backwards = newest first
+        if (hc->node[i] < 0) continue;
+        live.push_back(zp.size());
+        zp.push_back(hc->z.data() + i * d2);
+        cidx.push_back(hc->node[i]);
+        hpos.push_back(i);
+      }
+    } else {
+      std::size_t nc = 0;
+      for (int i = head; i != -1; i = arena[i].next) if (!arena[i].dead) ++nc;
+      scratch.resize(nc * d2);            // sized before any pointer into it is taken
+      std::size_t k = 0;
+      for (int i = head; i != -1; i = arena[i].next) {
+        if (arena[i].dead) continue;
+        zi->get_into_raw(arena[i].zidx, scratch.data() + k * d2);
+        live.push_back(k);
+        zp.push_back(scratch.data() + k * d2);
+        cidx.push_back(i);
+        hpos.push_back(kCold);
+        ++k;
+      }
     }
+    const raw_t* sz = s.zone.data().data();
+    auto retire = [&](std::size_t k) {
+      arena[cidx[live[k]]].dead = true; ++deadCount;
+      if (hc && hpos[live[k]] != kCold) { hc->node[hpos[live[k]]] = -1; ++hc->ndead; }
+    };
     // (2) s subsumed by a stored zone? -> drop
-    for (std::size_t k = 0; k < nc; ++k) {
-      const Dbm& ez = chain[k];
-      if (has_diag ? ez.includes(s.zone) : s.zone.alu_subsumed_by(ez, Ls, Us))
+    for (std::size_t k = 0; k < zp.size(); ++k)
+      if (exact_sub ? dbm_includes(zp[k], sz, dim)
+                    : dbm_is_alu_le(sz, zp[k], dim, Ls.data(), Us.data()))
         return -1;
-    }
     // (3) drop stored zones now subsumed by s
     for (std::size_t k = 0; k < live.size();) {
-      const Dbm& ez = chain[live[k]];
-      if (has_diag ? s.zone.includes(ez) : ez.alu_subsumed_by(s.zone, Ls, Us)) {
-        arena[cidx[live[k]]].dead = true;
+      const raw_t* ez = zp[live[k]];
+      if (exact_sub ? dbm_includes(sz, ez, dim)
+                    : dbm_is_alu_le(ez, sz, dim, Ls.data(), Us.data())) {
+        ++deadBySubsume;
+        retire(k);
         live.erase(live.begin() + k);
       } else ++k;
     }
     // (4) convex-union merge: absorb stored zones whose union with s is exact.
     // try_union mutates only s.zone (the incoming fresh zone); the interned zone
     // is read-only, so this never disturbs another state's stored zone.
+    //
+    // Bounded to the kMergeScan NEWEST live zones. Merging is an optimization, never a
+    // requirement -- skipping one only leaves two zones where one would do -- so a cap is sound,
+    // and the whole-chain scan is quadratic exactly where chains are long: on `single6` it ran
+    // 4.6k try_unions per insert, which was most of the run. Zones that merge are nearly always
+    // recent neighbours (a merge happens when a successor extends a zone stored moments before),
+    // so a small window keeps effectively all of the reduction.
+#ifdef PTCTLMC_DEBUG_KNOBS
+    static const bool no_merge = std::getenv("PTCTLMC_NOMERGE") != nullptr;   // ablation
+#else
+    constexpr bool no_merge = false;
+#endif
+    const std::size_t mscan = no_merge ? 0 : merge_scan();
     for (bool merged = true; merged;) {
       merged = false;
-      for (std::size_t k = 0; k < live.size(); ++k) {
-        if (s.zone.try_union(chain[live[k]])) {
-          arena[cidx[live[k]]].dead = true;
+      for (std::size_t k = 0; k < std::min(live.size(), mscan); ++k) {
+#ifdef PTCTLMC_DEBUG_KNOBS
+        // PTCTLMC_CHECKMERGE: verify every accepted merge against the EXACT set semantics --
+        // hull \ (pre u stored) must be empty. Federation subtraction is exact, so this is a
+        // decision, not a heuristic. Debug-only: it costs a federation subtract per merge.
+        static const bool chk = std::getenv("PTCTLMC_CHECKMERGE") != nullptr;
+        Dbm pre(dim - 1), sto(dim - 1);
+        if (chk) {
+          std::copy(s.zone.data().begin(), s.zone.data().end(), pre.data().begin());
+          std::copy(zp[live[k]], zp[live[k]] + d2, sto.data().begin());
+        }
+#endif
+        if (dbm_try_union(s.zone.data().data(), zp[live[k]], dim)) {
+#ifdef PTCTLMC_DEBUG_KNOBS
+          if (chk) {
+            static std::atomic<long> nchk{0};
+            if (++nchk % 100000 == 1)
+              std::fprintf(stderr, "[checkmerge] verified %ld merges\n", nchk.load());
+            Federation rem = zone_subtract(s.zone, pre);
+            rem = fed_difference(rem, Federation{sto});
+            if (!rem.empty()) {
+              std::fprintf(stderr, "[UNSOUND MERGE] hull has points in neither operand\n  a:");
+              for (std::size_t t = 0; t < d2; ++t) std::fprintf(stderr, " %d", pre.data()[t]);
+              std::fprintf(stderr, "\n  b:");
+              for (std::size_t t = 0; t < d2; ++t) std::fprintf(stderr, " %d", sto.data()[t]);
+              std::fprintf(stderr, "\n  hull:");
+              for (std::size_t t = 0; t < d2; ++t) std::fprintf(stderr, " %d", s.zone.data()[t]);
+              std::fprintf(stderr, "\n");
+              std::abort();
+            }
+          }
+#endif
+          ++deadByMerge;
+          retire(k);
           live.erase(live.begin() + k);
           merged = true;
           break;
@@ -685,7 +997,40 @@ struct NetPassed {
     const int idx = static_cast<int>(arena.size());
     arena.push_back(Node{zi->intern(s.zone, tid), level, tab[si].head, false});
     tab[si].head = idx;
+    // Keep the mirror in step; promote a chain that has just crossed kHotLen. `s.zone` is
+    // canonical and, after (4), is the zone actually stored, so it is what the mirror holds.
+    if (hc) {
+      hc->z.insert(hc->z.end(), s.zone.data().begin(), s.zone.data().end());
+      hc->node.push_back(idx);
+      if (hc->ndead * 2 > hc->node.size()) compact_hot(*hc, d2);
+    } else if (live.size() + 1 >= hot_len()) {
+      HotChain& nh = hot[dk];
+      nh.z.reserve((live.size() + 1) * d2);
+      for (std::size_t k = live.size(); k-- > 0;) {              // oldest-first append order
+        nh.z.insert(nh.z.end(), zp[live[k]], zp[live[k]] + d2);
+        nh.node.push_back(cidx[live[k]]);
+      }
+      nh.z.insert(nh.z.end(), s.zone.data().begin(), s.zone.data().end());
+      nh.node.push_back(idx);
+    }
     return idx;
+  }
+
+  // Drop retired slots from a mirror, preserving append order. Amortized O(1) per retirement:
+  // it only runs once half the slots are dead, and a rebuild costs O(live).
+  static void compact_hot(HotChain& hc, std::size_t d2) {
+    std::vector<raw_t> nz;
+    std::vector<int> nn;
+    nz.reserve(hc.z.size());
+    nn.reserve(hc.node.size());
+    for (std::size_t i = 0; i < hc.node.size(); ++i) {
+      if (hc.node[i] < 0) continue;
+      nz.insert(nz.end(), hc.z.begin() + i * d2, hc.z.begin() + (i + 1) * d2);
+      nn.push_back(hc.node[i]);
+    }
+    hc.z.swap(nz);
+    hc.node.swap(nn);
+    hc.ndead = 0;
   }
 
   // Reclaim dead arena tombstones by rebuilding every chain live-only. Subsumption/merge mark
@@ -698,12 +1043,26 @@ struct NetPassed {
   // compaction, and a rebuild resets that baseline. Every occupied slot keeps >=1 live node
   // (both add() and merge_level revive `s`), so a chain never becomes empty and the
   // open-addressing probe chain is preserved.
+  // Floor is PER STRIPE. The passed list is split over NB (>=1024) stripes, so a stripe holds
+  // roughly total_nodes/NB: on phil13 that is 3.86M/1024 ~= 3.8k, and the old 8192 floor meant
+  // compaction never ran on ANY stripe (a stripe would need an 8.4M-node total to reach it).
+  // Tombstones then accumulated unbounded -- 54% of the arena on phil13 -- and add()'s chain
+  // scan walks dead nodes before skipping them, so 37% of the 120M nodes it visited were
+  // garbage. The dead*2 < sz test below is the real guard (compact only past ~50% waste); this
+  // floor only exists to skip trivially small stripes, so it belongs at stripe scale.
+  static constexpr std::size_t kCompactFloor = 512;
   void maybe_compact() {
     const std::size_t sz = arena.size();
-    if (sz < 8192 || sz < lastCompact * 2) return;
-    std::size_t dead = 0;
-    for (const auto& n : arena) if (n.dead) ++dead;
-    if (dead * 2 < sz) { lastCompact = sz; return; }   // not enough waste yet
+    // Compact once a THIRD of the stripe is tombstones. Rebuilding costs O(live) and drops every
+    // dead node, so the work is amortized O(1) per tombstone however often this fires -- no
+    // doubling guard needed, and the trigger is now a comparison rather than an arena scan.
+    // add() walks dead nodes before skipping them, so waste here is paid on every later probe.
+    if (sz < kCompactFloor || deadCount * 3 < sz) return;
+    // Arena indices are renumbered here, and the dense mirrors hold them, so record old -> new
+    // and rewrite the mirrors below rather than dropping them (dropping would force the next
+    // add() to re-unpack the whole chain -- the very cost the mirror exists to remove).
+    std::vector<int> remap;
+    if (!hot.empty()) remap.assign(sz, -1);
     std::deque<Node> na;
     for (auto& s : tab) {
       if (s.head == -1) continue;
@@ -712,13 +1071,24 @@ struct NetPassed {
         if (arena[i].dead) continue;
         const int ni = static_cast<int>(na.size());
         na.push_back(Node{arena[i].zidx, arena[i].level, -1, false});
+        if (!remap.empty()) remap[i] = ni;
         if (newhead == -1) newhead = ni; else na[tail].next = ni;
         tail = ni;
       }
       s.head = newhead;   // invariant: >=1 live per occupied slot, so never -1
     }
+    if (!remap.empty()) {
+      const std::size_t d2 = static_cast<std::size_t>(zi->zdim()) * zi->zdim();
+      for (auto& hp : hot) {
+        // A live mirror slot always names a live arena node (retire() nulls the slot in the
+        // same breath as the tombstone), so remap[] never hands back -1 for one.
+        for (int& n : hp.second.node) if (n >= 0) n = remap[n];
+        compact_hot(hp.second, d2);        // drops the nulled slots and resets ndead
+      }
+    }
     arena.swap(na);
     lastCompact = arena.size();
+    deadCount = 0;                 // every tombstone was dropped by the rebuild above
   }
 
   // Visit the live zones stamped `level` for discrete state dk. The callback
@@ -730,6 +1100,19 @@ struct NetPassed {
     if (tab[i].head == -1) return;
     for (int n = tab[i].head; n != -1; n = arena[n].next)
       if (!arena[n].dead && arena[n].level == level) f(arena[n].zidx);
+  }
+
+  // Live zones and distinct discrete states, in O(1). The ratio between them is the signal the
+  // adaptive abstraction switch reads at each level (see reach_engine): it says whether this
+  // model's zones are collapsing into one antichain entry per discrete state or piling up as
+  // mutually incomparable alternatives.
+  void retire_causes(std::size_t& sub, std::size_t& mrg) const {
+    sub += deadBySubsume; mrg += deadByMerge;
+  }
+
+  void counts(std::size_t& live, std::size_t& disc) const {
+    live += arena.size() - deadCount;
+    disc += used;
   }
 
   void stats(std::size_t& disc, std::size_t& zones) const {
@@ -855,6 +1238,22 @@ void reset_inactive(const Network& net, const LocVec& locs, Dbm& z,
   if (off) return;
 #endif
   if (net.active.empty()) return;
+  // BITMASK path: the active set of a location vector is the OR of the per-location masks, so
+  // this is nprocs OR-s plus one word of arithmetic instead of an nprocs x nclocks byte scan
+  // AND a heap allocation -- both of which ran once per GENERATED successor (23M times on
+  // phil13). Only the clocks actually reset are then visited, via a popcount loop.
+  if (!net.active_mask.empty()) {
+    std::uint64_t a = 0;
+    for (int p = 0; p < net.nprocs(); ++p) a |= net.active_mask[p][locs[p]];
+    for (int c = 1; c <= net.nclocks; ++c) if (qmask[c]) a |= std::uint64_t(1) << c;
+    std::uint64_t dead = ~a & (((std::uint64_t(1) << net.nclocks) - 1) << 1);
+    while (dead) {
+      const int c = __builtin_ctzll(dead);
+      dead &= dead - 1;
+      z.reset(c);
+    }
+    return;
+  }
   std::vector<char> a(net.nclocks + 1, 0);
   for (int p = 0; p < net.nprocs(); ++p) {
     const auto& ap = net.active[p][locs[p]];
@@ -869,6 +1268,10 @@ enum ExtrapMode { ExNone = 0, ExLuPlus = 1, ExNoDiag = 2 };
 
 // Does the network compare two clocks anywhere (a diagonal constraint)? If so, the
 // LU/aLU abstraction is unsound and we fall back to exact zones (diagonals kept exact).
+// EXTERNAL linkage on purpose -- declared in netreach.hpp, so the query router in main.cpp
+// can ask the same question before choosing an engine.
+}  // namespace
+
 bool network_has_diagonal(const Network& net) {
   auto diag = [](const std::vector<Constraint>& cs) {
     for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
@@ -880,6 +1283,8 @@ bool network_has_diagonal(const Network& net) {
   }
   return false;
 }
+
+namespace {
 
 std::string disc_key(const LocVec& locs, const IntVec& ints) {
   std::string k;
@@ -1222,6 +1627,71 @@ static int g_chunk_states = 65536;
 void set_chunking(bool on, int states) { g_chunking = on; if (states > 0) g_chunk_states = states; }
 bool chunking() { return g_chunking; }
 
+#ifdef PTCTLMC_DEBUG_KNOBS
+// FNV-1a over a packed record, for the PTCTLMC_CHECKGC frontier-root snapshot.
+static std::uint64_t dbg_rec_hash(const std::uint8_t* p, std::size_t n) {
+  std::uint64_t h = 1469598103934665603ULL;
+  for (std::size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
+  return h;
+}
+#endif
+
+// Process-symmetry reduction (see symmetry.hpp). Off by default: it changes WHICH states are
+// stored (one representative per orbit), so it is opt-in until a model has been checked with it.
+static bool g_symmetry = false;
+void set_symmetry(bool on) { g_symmetry = on; }
+bool symmetry_on() { return g_symmetry; }
+
+// Rewrite (locs, zone) to its orbit's canonical representative: the group element giving the
+// lexicographically smallest location vector and, among those, the smallest zone matrix.
+//
+// The location pass alone decides it in almost every case (the zone is only permuted for the
+// winners), so the cost is |G| x nprocs integer compares per successor -- against a state space
+// |G| times smaller. Permuting a canonical DBM by a clock permutation leaves it canonical: the
+// triangle inequality is preserved under relabelling, so no re-closure is needed.
+static void canonicalize(const std::vector<Automorphism>& G, const Network& net, SymState& s) {
+  const int np = static_cast<int>(s.locs.size());
+  const int ni = static_cast<int>(s.ints.size());
+  const int dim = s.zone.dim();
+  // The DISCRETE key is (locations, integer values) and BOTH move. Permuting only the locations
+  // is not a partial canonicalisation, it is a wrong one: Fischer's `id` holds a process index,
+  // so a state whose location vector has been rotated while `id` still names the old process is
+  // not in the orbit at all. It denotes a configuration where the lock is held by a process that
+  // is not in `req` -- reachable in the reduced graph, unreachable in the real one, and it
+  // reports mutual exclusion VIOLATED on a model that satisfies it.
+  thread_local std::vector<int> cur, best, win;
+  cur.resize(np + ni); best.resize(np + ni);
+  auto image = [&](const Automorphism& a, std::vector<int>& out) {
+    permute_locs(a, s.locs.data(), np, out.data());
+    for (int v = 0; v < ni; ++v)
+      out[np + v] = static_cast<int>(a.map_val(v, s.ints[v], net.intvars[v].lo));
+  };
+  image(G[0], best);
+  win.assign(1, 0);
+  for (std::size_t g = 1; g < G.size(); ++g) {
+    image(G[g], cur);
+    const int c = std::memcmp(cur.data(), best.data(), (np + ni) * sizeof(int));
+    if (c < 0) { best.swap(cur); win.assign(1, static_cast<int>(g)); }
+    else if (c == 0) win.push_back(static_cast<int>(g));
+  }
+  thread_local std::vector<raw_t> bz, cz;
+  if (win.size() > 1 || win[0] != 0) {
+    const std::size_t d2 = static_cast<std::size_t>(dim) * dim;
+    bz.resize(d2); cz.resize(d2);
+    bool first = true;
+    for (const int g : win) {
+      const auto& clk = G[g].clk;
+      const raw_t* z = s.zone.data().data();
+      for (int i = 0; i < dim; ++i)
+        for (int j = 0; j < dim; ++j) cz[clk[i] * dim + clk[j]] = z[i * dim + j];
+      if (first || std::memcmp(cz.data(), bz.data(), d2 * sizeof(raw_t)) < 0) { bz.swap(cz); first = false; }
+    }
+    std::copy(bz.begin(), bz.end(), s.zone.data().begin());
+    for (int p = 0; p < np; ++p) s.locs[p] = best[p];
+    for (int v = 0; v < ni; ++v) s.ints[v] = best[np + v];
+  }
+}
+
 #if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
 // Host port of the net_merge GPU kernel body (dbm_ops.hpp host functions), for ONE discrete-state
 // bucket. The GPU runs one thread per bucket, so a level with few/fat buckets stalls on a handful of
@@ -1274,14 +1744,75 @@ static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
 }
 #endif
 
-bool reachable_net(const Network& net, const NetTarget& target, Backend backend, ReachStats* stats) {
+// ---- the shared symbolic-reachability engine ------------------------------------------------
+// ONE engine behind every "is a state satisfying X reachable?" query. It owns the sharded passed
+// list, the zone interner, the parallel level expansion and the interner GC; callers supply only
+// what actually differs between queries:
+//
+//   is_target     what makes a symbolic state a witness. A predicate, not a NetTarget, so a
+//                 target can inspect the ZONE (deadlock) and not just locations/int vars.
+//   force_exact   compare stored zones by plain inclusion instead of the aLU test. MUST be set
+//                 when the property is per-VALUATION: aLU is a location-reachability abstraction
+//                 and may drop concrete valuations, so `E<> deadlock` would go unsound with it.
+//                 It also changes how finiteness is obtained -- see `emode` below.
+//   target        still needed for the query's clock constants (aLU bound flooring, qmask) and
+//                 by the GPU driver's flat target test. Pass a default-constructed one when the
+//                 target is a predicate; then it contributes no constraints. A predicate target
+//                 must therefore keep the GPU path off (an empty NetTarget matches everything).
+//
+// `deadlock_reachable` was a second, independent copy of this search: serial, storing dense Dbm
+// copies in an unordered_map keyed by a std::string. Folding it in here is what gives deadlock
+// queries the parallel expansion and the packed interned zones.
+template <class TargetFn>
+static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&& is_target,
+                         bool force_exact, Backend backend, ReachStats* stats,
+                         const std::vector<Automorphism>* sym = nullptr) {
+  const bool use_sym = sym && sym->size() > 1;
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   extend_bounds(L, U, target.clock_cond);
   L[0] = U[0] = 0;  // reference clock: mandatory for the aLU subsumption test
   // With diagonal constraints the aLU abstraction is unsound: fall back to exact zones
   // (diagonals kept exact) + plain inclusion subsumption.
   const bool has_diag = network_has_diagonal(net);
-  const int emode = has_diag ? ExNoDiag : ExNone;
+  // PTCTLMC_EXACTSUB forces plain-inclusion subsumption for A/B-testing the aLU test itself.
+#ifdef PTCTLMC_DEBUG_KNOBS
+  static const bool force_exact_env = std::getenv("PTCTLMC_EXACTSUB") != nullptr;
+#else
+  constexpr bool force_exact_env = false;
+#endif
+  const bool exact_sub = has_diag || force_exact || force_exact_env;
+  // Finiteness comes from EITHER aLU subsumption on exact zones (the default) OR, when zones must
+  // be compared exactly, from LU-extrapolation.
+  //
+  // The two are NOT interchangeable, and the comment that used to sit here ("extrapolating too
+  // would only coarsen what aLU already covers") was wrong in a way worth stating: aLU only ever
+  // PRUNES -- it drops a zone when a stored one simulates it -- whereas Extra_LU+ WIDENS, mapping
+  // many exact zones onto one representative. On a model whose reachable zones are mutually
+  // aLU-incomparable, pruning does nothing and widening collapses them. PTCTLMC_EXTRAP=1 runs
+  // both (widen, then subsume with aLU), which is sound: Extra_LU+(Z) is contained in the aLU
+  // abstraction of Z, and the query's own constants already floor L and U above.
+  static const bool force_extrap = std::getenv("PTCTLMC_EXTRAP") != nullptr;
+  int emode = has_diag ? ExNoDiag : ((force_exact || force_extrap) ? ExLuPlus : ExNone);
+  // ADAPTIVE: which of the two wins is a property of the model, not a constant, and the engine
+  // already measures the distinguishing signal. Zones per discrete state near 1 means aLU is
+  // collapsing them and widening would only cost time (phil 1.11, viking 1.00: extrapolation
+  // there changes no state count and costs 20-35%). A ratio that climbs means the antichains are
+  // filling with mutually incomparable zones, which aLU cannot prune and widening can (single:
+  // one location, thousands of zones -- widening takes it from 3873 stored to 3676, which is
+  // UPPAAL's 3673). So start exact and switch on once the ratio crosses the threshold.
+  //
+  // Switching mid-run is sound in both directions of the mixed passed list it leaves behind: a
+  // stored EXACT zone that fails to subsume a new widened one only costs an extra stored state,
+  // and a stored WIDENED zone that subsumes a new exact one genuinely contains it. Finiteness is
+  // guaranteed from the switch onwards. PTCTLMC_ADAPT=0 disables the switch.
+  static const bool adapt = [] {
+    const char* e = std::getenv("PTCTLMC_ADAPT");
+    return !e || std::atol(e) != 0;
+  }();
+  static const double kAdaptRatio = [] {
+    const char* e = std::getenv("PTCTLMC_ADAPTRATIO");
+    return e ? std::atof(e) : 4.0;
+  }();
   std::vector<char> qmask(net.nclocks + 1, 0);  // clocks the query reads -> keep active
   for (const auto& c : target.clock_cond) { if (c.i > 0) qmask[c.i] = 1; if (c.j > 0) qmask[c.j] = 1; }
 
@@ -1312,13 +1843,6 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     L2[0] = U2[0] = 0;
   };
 
-  auto is_target = [&](const SymState& s) {
-    for (auto& lr : target.loc_req)
-      if (s.locs[lr.first] != lr.second) return false;
-    if (!int_ok(target.int_cond, s.ints)) return false;
-    Dbm t = s.zone;
-    return apply_all(t, target.clock_cond);
-  };
 
   bool parallel = (backend == Backend::Omp);
 #ifndef PTCTLMC_HAVE_OPENMP
@@ -1335,11 +1859,17 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   // to the CPU path transparently.
   std::unique_ptr<NetGpuExpander> gpu;
   bool use_gpu = false;
+  // force_exact callers pass a default NetTarget, which the GPU's flat target test would treat
+  // as "matches everything"; and the GPU merge selects its subsumption by has_diag alone, so it
+  // cannot honour force_exact. Keep such queries on the CPU engine. (Tested per backend rather
+  // than around the block: the two #ifdefs are independent, so a wrapping brace would not pair.)
+  // Symmetry reduction rewrites each successor to its orbit representative on the host; the GPU
+  // drivers have no such step, so the two are mutually exclusive for now.
 #ifdef PTCTLMC_HAVE_METAL
-  if (backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
+  if (!force_exact && !use_sym && backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
 #endif
 #ifdef PTCTLMC_HAVE_CUDA
-  if (backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
+  if (!force_exact && !use_sym && backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
 #endif
   use_gpu = (gpu != nullptr);
   if (use_gpu && std::getenv("PTCTLMC_STATS"))
@@ -1417,9 +1947,14 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     frozen_flags(net, s0.locs, &c, &u);
     if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
     reset_inactive(net, s0.locs, s0.zone, qmask);
-    // no extrapolation: exact zones + aLU subsumption keep the passed list finite & minimal
+    // Extrapolate only when finiteness depends on it (emode != ExNone). In the default aLU mode
+    // the passed list stays finite and minimal on exact zones, so extrapolating would only lose
+    // precision; gen_succ_reuse applies the same emode to every successor.
+    if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
+    else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U);
   }
   if (is_target(s0)) return true;
+  if (use_sym) canonicalize(*sym, net, s0);
 
 #if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
   // ---- FLAT GPU-resident driver (Metal / CUDA) -------------------------------------------
@@ -1938,14 +2473,25 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
   // synchronisation is kept (it minimises the state count). At 1 thread this is
   // bit-identical to the legacy path (same per-bucket merge, same order).
     int nbbits = 10;                                   // >= 1024 stripes, and >> nthreads
-    while ((1 << nbbits) < std::max(1024, nthreads * 64)) ++nbbits;
+    while ((1 << nbbits) < std::max(16384, nthreads * 64)) ++nbbits;
     const std::size_t NB = static_cast<std::size_t>(1) << nbbits;
     const int shift = 64 - nbbits;
     const int dim2 = (net.nclocks + 1) * (net.nclocks + 1);
     ZoneIntern zi(dim2, nthreads);                     // ONE shared distinct-zone table
     std::vector<NetPassed> smap(NB);                   // flat per-stripe passed tables
     for (auto& mp : smap) mp.zi = &zi;
-    std::vector<std::mutex> smtx(NB);                  // one lock per stripe (value-init in place)
+    // shared_mutex: the read-only kill probe below runs concurrently per stripe; only a real
+    // insert/merge needs exclusivity.
+    std::vector<SpinRW> smtx(NB);                      // one lock per stripe (value-init in place)
+    // PER-THREAD LOCAL ANTICHAINS were tried here and REMOVED (see git history). Each thread
+    // inserted into its own table during a level and a bucket owner drained them into the shared
+    // one at the boundary, so the expand phase took no lock at all. It is correct and it is
+    // consistently SLOWER -- 8 threads: phil11 1.48x, viking12 1.29x, twolock10 1.90x,
+    // fischer10 1.92x. Removing the lock saves the ~15% of busy thread-time that was spin, but a
+    // private antichain cannot see the read-only kill probe that answers 83% of successors, so
+    // the drain pays more back than it saves (phil12: 3.2M gathered pairs, 1.5M of them exact
+    // duplicates, 19.4s of drain thread-time against a 3.8s wall). Don't retry it without a
+    // design that keeps a shared kill probe.
     auto stripe_of = [&](std::uint64_t dk) -> std::size_t {
       return static_cast<std::size_t>((dk * 0x9e3779b97f4a7c15ULL) >> shift);
     };
@@ -1976,19 +2522,47 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     {
       const std::uint64_t dk = disc_key(s0.locs, s0.ints);
       const int z0 = zi.intern(s0.zone, 0);
-      smap[stripe_of(dk)].add(std::move(s0), dk, 0, has_diag, state_bounds, 0);
+      smap[stripe_of(dk)].add(std::move(s0), dk, 0, exact_sub, state_bounds, 0);
       frontier.push_back({dk, z0});
     }
 
     int level = 0;
     std::size_t nexpanded = 0;
+#ifdef PTCTLMC_DEBUG_KNOBS
+    std::vector<std::uint64_t> fr_snap;   // PTCTLMC_CHECKGC: per-frontier-entry record hash
+#endif
     // Peak-RSS composition sampler (PTCTLMC_MEMPROF): sample at each level boundary and
     // remember the composition at the moment RSS was highest.
     const bool memprof = std::getenv("PTCTLMC_MEMPROF") != nullptr;
     std::size_t pk_rss = 0, pk_lvl = 0, pk_front = 0, pk_pack = 0, pk_map = 0, pk_cache = 0,
                 pk_arena = 0, pk_tab = 0, pk_heap = 0;
     std::atomic<bool> found{false};
+    const bool phprof = std::getenv("PTCTLMC_PHPROF") != nullptr;
+    double ph_expand = 0, ph_collect = 0, ph_compact = 0, ph_gc = 0;
+    std::vector<double> ph_busy(static_cast<std::size_t>(nthreads) * 8, 0.0);   // padded
+    auto ph_now = [] { return std::chrono::steady_clock::now(); };
+    auto ph_ms = [](std::chrono::steady_clock::time_point a) {
+      return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
+    };
     const bool single = (nthreads == 1);   // seq / omp -p1: skip locks + the touched union
+    // Debug hooks for the local-antichain drain, compiled out unless PTCTLMC_DEBUG_KNOBS is
+    // defined: they sit in the per-successor loop, where even a function-local static costs a
+    // guarded acquire-load on every generated state. Same convention as reset_inactive's ablation.
+#ifdef PTCTLMC_DEBUG_KNOBS
+    static const bool dbg_front = std::getenv("PTCTLMC_DUMPFRONT") != nullptr;
+    static const int dbg_lvl = [] {
+      const char* e = std::getenv("PTCTLMC_TRACELVL");
+      return e ? std::atoi(e) : -1;
+    }();
+    static const std::uint64_t dbg_dk = [] {
+      const char* e = std::getenv("PTCTLMC_DUMPDK");
+      return e ? std::strtoull(e, nullptr, 10) : ~std::uint64_t(0);
+    }();
+#else
+    constexpr bool dbg_front = false;
+    constexpr int dbg_lvl = -1;
+    constexpr std::uint64_t dbg_dk = ~std::uint64_t(0);
+#endif
     // Fused batched merge: O(1) critical section + one lock-free settle pass per level.
     // Zone-interner GC trigger: sweep once the allocation level reaches `sweep_at`, then set
     // the next target to double the surviving live set (see the sweep site below).
@@ -2004,6 +2578,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // shared table, locking only the touched stripe (expansion and insertion
       // → no serial routing barrier). Inserting during expansion is what keeps the
       // convex-union merge order stable enough to match the legacy state counts.
+      auto _t_exp = ph_now();
       std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
       std::vector<std::size_t> tls_gen(nthreads, 0);
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -2015,27 +2590,182 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         SymState cur;                    // reused per thread: reconstructed frontier state
         cur.locs.resize(np_);
         cur.ints.resize(ni_);
-#pragma omp for schedule(dynamic, expand_chunk)
+        // Count generated successors in a REGISTER, not in tls_gen[tid]: the counters are
+        // 8 bytes apart, so all `nthreads` of them share one cache line and the per-successor
+        // increment bounced that line between every core on every successor (23M times on
+        // phil13). Published once per thread at the end of the region.
+        std::size_t gen = 0;
+        const auto _t_busy = std::chrono::steady_clock::now();
+#pragma omp for schedule(dynamic, expand_chunk) nowait
         for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
           if (found.load(std::memory_order_relaxed)) continue;
           decode_key(frontier[i].first, cur.locs.data(), cur.ints.data());
+#ifdef PTCTLMC_DEBUG_KNOBS
+          // PTCTLMC_SRCSTATS: how many DISTINCT source zones do we expand? The successor zone is a
+          // function of (source zone, edge), so a small distinct count means the same O(dim^3)
+          // delay/constrain/close is being recomputed many times over.
+          {
+            static const bool sst = std::getenv("PTCTLMC_SRCSTATS") != nullptr;
+            if (sst) {
+              static std::mutex m; static std::unordered_set<int> zs; static long tot = 0;
+              std::lock_guard<std::mutex> lk(m);
+              zs.insert(frontier[i].second); ++tot;
+              if (tot % 200000 == 0)
+                std::fprintf(stderr, "[srcstats] expansions=%ld distinct-source-zones=%zu (reuse %.1fx)\n",
+                             tot, zs.size(), double(tot) / double(zs.size()));
+            }
+          }
+#endif
+#ifdef PTCTLMC_DEBUG_KNOBS
+          if (!fr_snap.empty()) {
+            const std::uint8_t* r = zi.record(frontier[i].second);
+            if (dbg_rec_hash(r, mindbm_size(r)) != fr_snap[i]) {
+              std::fprintf(stderr,
+                           "[GC CLOBBERED A FRONTIER ROOT] level=%d entry=%ld dk=%llu zidx=%d\n",
+                           level, i, (unsigned long long)frontier[i].first, frontier[i].second);
+              std::abort();
+            }
+          }
+          // Same invariant check, but on the state as it comes BACK OUT of the passed list.
+          // A successor that was clean when generated and dirty when re-read means storage
+          // (intern / merge / collect), not the successor relation, broke it.
+          {
+            static const bool chk = std::getenv("PTCTLMC_CHECKINV") != nullptr;
+            if (chk) {
+              const int zd = net.nclocks + 1;
+              const raw_t* fz = zi.get(frontier[i].second).data().data();
+              for (int p = 0; p < np_; ++p) {
+                for (const auto& c : net.procs[p].locations[cur.locs[p]].invariant) {
+                  std::vector<raw_t> t(fz, fz + zd * zd);
+                  dbm_constrain(t.data(), zd, c.i, c.j, c.bound);
+                  if (!std::equal(t.begin(), t.end(), fz)) {
+                    std::fprintf(stderr,
+                                 "[FRONTIER INVARIANT BROKEN] level=%d dk=%llu proc=%d loc=%d "
+                                 "x%d-x%d bound=%d locs=",
+                                 level, (unsigned long long)frontier[i].first, p, static_cast<int>(cur.locs[p]),
+                                 c.i, c.j, raw_bound(c.bound));
+                    for (int q = 0; q < np_; ++q) std::fprintf(stderr, "%d,", static_cast<int>(cur.locs[q]));
+                    std::fprintf(stderr, " zone:");
+                    for (int a = 0; a < zd * zd; ++a) std::fprintf(stderr, " %d", fz[a]);
+                    std::fprintf(stderr, "\n");
+                    std::abort();
+                  }
+                }
+              }
+            }
+          }
+#endif
+          if (dbg_dk == frontier[i].first) {
+              const raw_t* pz = zi.get(frontier[i].second).data().data();
+              const int pd = net.nclocks + 1;
+              std::fprintf(stderr, "[zone] level=%d dk=%llu :", level,
+                           (unsigned long long)frontier[i].first);
+              for (int a = 0; a < pd * pd; ++a) std::fprintf(stderr, " %d", pz[a]);
+              std::fprintf(stderr, "\n");
+            }
           // buf is NOT cleared: gen_succ_reuse rebuilds slots in place and returns
           // the count, so the loc/int/zone storage is reused across frontier states.
           const std::size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second), L, U, qmask, emode, buf);
           for (std::size_t sk = 0; sk < ns; ++sk) {
             SymState& s = buf[sk];
-            ++tls_gen[tid];
-            if (is_target(s)) { found.store(true, std::memory_order_relaxed); break; }
+            ++gen;
+            if (is_target(s)) {
+              if (dbg_front) {
+                std::fprintf(stderr, "[hit] level=%d parent_dk=%llu parent_zidx=%d locs=", level,
+                             (unsigned long long)frontier[i].first, frontier[i].second);
+                for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(cur.locs[p]));
+                std::fprintf(stderr, " ints=");
+                for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(cur.ints[v]));
+                std::fprintf(stderr, "\n[hit] child locs=");
+                for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(s.locs[p]));
+                std::fprintf(stderr, " ints=");
+                for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(s.ints[v]));
+                std::fprintf(stderr, "\n[hit] child zone=");
+                {
+                  const int cd = net.nclocks + 1;
+                  for (int a = 0; a < cd * cd; ++a)
+                    std::fprintf(stderr, "%d ", s.zone.data()[a]);
+                }
+                std::fprintf(stderr, "\n[hit] parent zone=");
+                const raw_t* pz = zi.get(frontier[i].second).data().data();
+                const int pd = net.nclocks + 1;
+                for (int a = 0; a < pd * pd; ++a) std::fprintf(stderr, "%d ", pz[a]);
+                std::fprintf(stderr, "\n");
+              }
+              found.store(true, std::memory_order_relaxed);
+              break;
+            }
+#ifdef PTCTLMC_DEBUG_KNOBS
+            // PTCTLMC_CHECKINV: a symbolic state's zone must satisfy the invariant of EVERY
+            // process's current location, not just the one that moved. If tightening by an
+            // invariant changes the zone, that invariant was not enforced on this successor.
+            {
+              static const bool chk = std::getenv("PTCTLMC_CHECKINV") != nullptr;
+              if (chk) {
+                const int zd = net.nclocks + 1;
+                for (int p = 0; p < np_; ++p) {
+                  const auto& inv = net.procs[p].locations[s.locs[p]].invariant;
+                  for (const auto& c : inv) {
+                    std::vector<raw_t> t(s.zone.data().begin(), s.zone.data().end());
+                    dbm_constrain(t.data(), zd, c.i, c.j, c.bound);
+                    if (!std::equal(t.begin(), t.end(), s.zone.data().begin())) {
+                      std::fprintf(stderr,
+                                   "[INVARIANT NOT ENFORCED] level=%d proc=%d loc=%d "
+                                   "constraint x%d-x%d bound=%d locs=",
+                                   level, p, static_cast<int>(s.locs[p]), c.i, c.j, raw_bound(c.bound));
+                      for (int q = 0; q < np_; ++q) std::fprintf(stderr, "%d,", static_cast<int>(s.locs[q]));
+                      std::fprintf(stderr, " zone:");
+                      for (int a = 0; a < zd * zd; ++a)
+                        std::fprintf(stderr, " %d", s.zone.data()[a]);
+                      std::fprintf(stderr, "\n");
+                      std::abort();
+                    }
+                  }
+                }
+              }
+            }
+#endif
+            if (use_sym) canonicalize(*sym, net, s);
             const std::uint64_t dk = disc_key(s.locs, s.ints);
+            if (dbg_lvl == level)
+              std::fprintf(stderr, "[edge] %llu -> %llu\n",
+                           (unsigned long long)frontier[i].first, (unsigned long long)dk);
             const std::size_t si = stripe_of(dk);
+            if (dbg_dk == dk) {
+              std::fprintf(stderr, "[succ] level=%d from=%llu plocs=", level,
+                           (unsigned long long)frontier[i].first);
+              for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(cur.locs[p]));
+              std::fprintf(stderr, " pints=");
+              for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(cur.ints[v]));
+              std::fprintf(stderr, " clocs=");
+              for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(s.locs[p]));
+              std::fprintf(stderr, " cints=");
+              for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(s.ints[v]));
+              std::fprintf(stderr, " czone:");
+              const int _pd = net.nclocks + 1;
+              for (int a = 0; a < _pd * _pd; ++a) std::fprintf(stderr, " %d", s.zone.data()[a]);
+              std::fprintf(stderr, "\n");
+            }
             if (single) {
-              if (smap[si].add(std::move(s), dk, level, has_diag, state_bounds, tid) >= 0) touched.insert(dk);
+              if (smap[si].add(std::move(s), dk, level, exact_sub, state_bounds, tid) >= 0) touched.insert(dk);
             } else {
-              std::lock_guard<std::mutex> lk(smtx[si]);
-              if (smap[si].add(std::move(s), dk, level, has_diag, state_bounds, tid) >= 0) touched.insert(dk);
+              {   // shared: concurrent readers, no serialization on the common "already covered" case
+                smtx[si].lock_shared();
+                const bool covered = smap[si].probe_kill(dk, s, exact_sub, state_bounds);
+                smtx[si].unlock_shared();
+                if (covered) continue;
+              }
+              smtx[si].lock();
+              if (smap[si].add(std::move(s), dk, level, exact_sub, state_bounds, tid) >= 0) touched.insert(dk);
+              smtx[si].unlock();
             }
           }
         }
+        tls_gen[tid] = gen;
+        if (phprof)
+          ph_busy[static_cast<std::size_t>(tid) * 8] +=
+              std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - _t_busy).count();
       }
 #else
       {
@@ -2051,13 +2781,16 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
             SymState& s = buf[sk];
             ++tls_gen[0];
             if (is_target(s)) return true;
+            if (use_sym) canonicalize(*sym, net, s);
             const std::uint64_t dk = disc_key(s.locs, s.ints);
-            if (smap[stripe_of(dk)].add(std::move(s), dk, level, has_diag, state_bounds, 0) >= 0)
+            if (smap[stripe_of(dk)].add(std::move(s), dk, level, exact_sub, state_bounds, 0) >= 0)
               touched.insert(dk);
           }
         }
       }
 #endif
+      if (phprof) ph_expand += ph_ms(_t_exp);
+      auto _t_col = ph_now();
       if (stats) for (std::size_t g : tls_gen) stats->generated += g;
       if (found.load()) return true;
 
@@ -2121,7 +2854,68 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       next.reserve(ntot);                    // one allocation instead of a realloc chain
       for (auto& v : nf)
         next.insert(next.end(), v.begin(), v.end());
+      // EXPANSION ORDER was tried here and REMOVED. The idea: a stored zone that a later, more
+      // general zone subsumes was expanded for nothing (phil12: 469805 of 1047142 arena nodes,
+      // 45%, end up retired), so expanding the most general zones of a level FIRST should let
+      // them kill their narrower siblings on insertion instead of a level later. The generality
+      // proxy was free -- a minimal constraint system stores a more general zone in a SHORTER
+      // packed record -- and ordering a worklist cannot affect the fixpoint, so it was sound.
+      // It simply does not pay: 8 threads, most-general-first vs insertion order gave phil12
+      // 0.95x (and MORE states, 841637 vs 803845), fischer11 0.98x, twolock11 1.00x, viking15
+      // 0.98x. The retirement is driven by zones that arrive levels apart, which no intra-level
+      // ordering can reach.
       frontier.swap(next);
+#ifdef PTCTLMC_DEBUG_KNOBS
+      // PTCTLMC_CHECKGC: a frontier entry is a GC root, so its interned record must be byte-
+      // identical when the level expands it. Snapshot here (before the sweep) and re-check at
+      // expansion; a mismatch means the sweep freed and reused an index that was still named.
+      static const bool chk_gc = std::getenv("PTCTLMC_CHECKGC") != nullptr;
+      if (chk_gc) {
+        fr_snap.clear();
+        fr_snap.reserve(frontier.size());
+        for (const auto& f : frontier) {
+          const std::uint8_t* r = zi.record(f.second);
+          fr_snap.push_back(dbg_rec_hash(r, mindbm_size(r)));
+        }
+      }
+#endif
+      if (dbg_front) {
+        // (dk, zone) of every frontier entry, hashed so the two engines' whole levels can be
+        // diffed cheaply. Sorted, so the comparison is order-insensitive: the drain builds the
+        // frontier in a different order than the shared collect, and order is not a difference.
+        const int pd = net.nclocks + 1;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> fz;
+        fz.reserve(frontier.size());
+        for (const auto& f : frontier) {
+          const raw_t* z = zi.get(f.second).data().data();
+          std::uint64_t h = 1469598103934665603ULL;
+          for (int a = 0; a < pd * pd; ++a) {
+            h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(z[a]));
+            h *= 1099511628211ULL;
+          }
+          fz.push_back({f.first, h});
+        }
+        std::sort(fz.begin(), fz.end());
+        fz.erase(std::unique(fz.begin(), fz.end()), fz.end());
+        for (const auto& e : fz)
+          std::fprintf(stderr, "[fz] %d %llu %llu\n", level, (unsigned long long)e.first,
+                       (unsigned long long)e.second);
+      }
+      // Adaptive abstraction: re-read the zones-per-discrete-state signal now that the level is
+      // complete and every thread has joined, and switch widening on if the antichains are
+      // filling up. Once on it stays on -- the ratio only ever justifies more abstraction.
+      if (adapt && emode == ExNone) {
+        std::size_t nlive = 0, ndisc = 0;
+        for (const auto& mp : smap) mp.counts(nlive, ndisc);
+        if (ndisc && static_cast<double>(nlive) >= kAdaptRatio * static_cast<double>(ndisc)) {
+          emode = ExLuPlus;
+          if (std::getenv("PTCTLMC_STATS"))
+            std::fprintf(stderr, "[adapt] level %d: %zu zones / %zu discrete states -> Extra_LU+ on\n",
+                         level, nlive, ndisc);
+        }
+      }
+      if (phprof) ph_collect += ph_ms(_t_col);
+      auto _t_cmp = ph_now();
       // Reclaim dead arena tombstones: one thread per stripe (exclusive), between levels.
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
@@ -2144,7 +2938,14 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       // interns that triggered it), so a run does O(log) sweeps instead of one per level. The
       // memory it trades away is bounded: garbage never exceeds the live set, i.e. the
       // interner stays within 2x of its pinned-to-live size.
-      if (zi.allocated() >= sweep_at) {
+      if (phprof) ph_compact += ph_ms(_t_cmp);
+      auto _t_gc = ph_now();
+#ifdef PTCTLMC_DEBUG_KNOBS
+      static const bool no_gc = std::getenv("PTCTLMC_NOGC") != nullptr;   // ablation
+#else
+      constexpr bool no_gc = false;
+#endif
+      if (!no_gc && zi.allocated() >= sweep_at) {
         std::vector<std::uint8_t> alive(zi.index_bound(), 0);
         // MARK IN PARALLEL over stripes. Every writer stores the same value (1) and nothing
         // reads `alive` until the sweep below, so two threads marking the same zidx cannot
@@ -2167,6 +2968,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
         zi.sweep(alive);
         sweep_at = std::max<std::size_t>(kSweepFloor, zi.allocated() * 2);
       }
+      if (phprof) ph_gc += ph_ms(_t_gc);
 
       if (memprof) {
 #ifdef __APPLE__
@@ -2208,6 +3010,23 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                    zi.distinct(), zi.htab_slots(),
                    zi.htab_slots() ? double(zi.distinct()) / zi.htab_slots() : 0.0);
     }
+    if (phprof) {
+      const double tot = ph_expand + ph_collect + ph_compact + ph_gc;
+      std::fprintf(stderr,
+                   "[phase] levels=%d expand=%.0fms(%.1f%%) collect=%.0fms(%.1f%%) "
+                   "compact=%.0fms(%.1f%%) gc=%.0fms(%.1f%%)  post-barrier=%.1f%%\n",
+                   level, ph_expand, 100*ph_expand/tot, ph_collect, 100*ph_collect/tot,
+                   ph_compact, 100*ph_compact/tot, ph_gc, 100*ph_gc/tot,
+                   100*(ph_collect+ph_compact+ph_gc)/tot);
+      double busy = 0;
+      for (int t = 0; t < nthreads; ++t) busy += ph_busy[static_cast<std::size_t>(t) * 8];
+      const double cap = ph_expand * nthreads;
+      std::fprintf(stderr,
+                   "[phase] expand busy=%.0fms of %.0fms thread-time (%.1f%% occupancy) "
+                   "-> tail idle = %.1f%% of the run\n",
+                   busy, cap, cap > 0 ? 100 * busy / cap : 0.0,
+                   cap > 0 ? 100 * (cap - busy) / cap * (ph_expand / tot) : 0.0);
+    }
     if (std::getenv("PTCTLMC_STATS")) {
       std::size_t zones = 0, disc = 0;
       for (const auto& mp : smap) mp.stats(disc, zones);
@@ -2226,6 +3045,10 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       std::size_t arenaNodes = 0, deadNodes = 0, arenaB = 0, tabB = 0;
       for (const auto& mp : smap) mp.account(arenaNodes, deadNodes, arenaB, tabB);
       auto MB = [](std::size_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
+      std::size_t rsub = 0, rmrg = 0;
+      for (const auto& mp : smap) mp.retire_causes(rsub, rmrg);
+      std::fprintf(stderr, "[retire] subsumed-by-newer=%zu absorbed-into-convex-union=%zu\n",
+                   rsub, rmrg);
       std::fprintf(stderr,
                    "[bytes] packed-zones=%.0fMB intern-map=%.0fMB tcaches=%.0fMB | arena=%.0fMB "
                    "(%zu nodes, %zu dead=%.0f%%) tab=%.0fMB\n",
@@ -2233,6 +3056,54 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                    arenaNodes ? 100.0 * deadNodes / arenaNodes : 0.0, MB(tabB));
     }
     return false;
+}
+
+// E<> target, where the target is a location/integer/clock-constraint conjunction. aLU
+// subsumption applies: the property is evaluated per symbolic state, so the abstraction is sound.
+bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
+                   ReachStats* stats) {
+  // Symmetry reduction explores one representative per orbit, so a target that is NOT itself
+  // symmetric has to be tested over the whole ORBIT of the property: `E<> P0.Eat && P1.Eat` on a
+  // ring of philosophers becomes "some adjacent pair eats", which is the same question because
+  // the network is rotation-symmetric. That is done by mapping the target through every group
+  // element ONCE, up front, and testing the state against each image -- no state is permuted.
+  std::vector<Automorphism> G;
+  if (symmetry_on()) G = symmetry_group(net);
+  const bool use_sym = G.size() > 1;
+  std::vector<NetTarget> orbit;
+  NetTarget bounds_target = target;   // clock constants seen by the LU bounds and qmask
+  if (use_sym) {
+    orbit.reserve(G.size());
+    for (const auto& g : G) {
+      NetTarget t;
+      for (const auto& ic : target.int_cond)
+        t.int_cond.push_back(IntAtom{ic.var, ic.op,
+                                     g.map_val(ic.var, ic.val, net.intvars[ic.var].lo)});
+      for (const auto& lr : target.loc_req) t.loc_req.push_back({g.proc[lr.first], lr.second});
+      for (const auto& c : target.clock_cond)
+        t.clock_cond.push_back(Constraint{g.clk[c.i], g.clk[c.j], c.bound});
+      // Every image's clock constants must reach the abstraction, or the LU bounds would be
+      // asymmetric and two states of one orbit could be abstracted differently -- which is
+      // exactly what the reduction may not do.
+      bounds_target.clock_cond.insert(bounds_target.clock_cond.end(), t.clock_cond.begin(),
+                                      t.clock_cond.end());
+      orbit.push_back(std::move(t));
+    }
+  }
+  auto match = [](const NetTarget& t, const SymState& s) {
+    for (auto& lr : t.loc_req)
+      if (s.locs[lr.first] != lr.second) return false;
+    if (!int_ok(t.int_cond, s.ints)) return false;
+    Dbm z = s.zone;
+    return apply_all(z, t.clock_cond);
+  };
+  auto is_target = [&](const SymState& s) {
+    if (!use_sym) return match(target, s);
+    for (const auto& t : orbit) if (match(t, s)) return true;
+    return false;
+  };
+  return reach_engine(net, bounds_target, is_target, /*force_exact=*/false, backend, stats,
+                      use_sym ? &G : nullptr);
 }
 
 bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backend,
@@ -2619,63 +3490,27 @@ static bool state_has_deadlock(const Network& net, const SymState& s) {
   return !fed_subtract(Z, live).empty();
 }
 
+// E<> deadlock. Same search as reachable_net -- reachability with subsumption -- so it runs on
+// the SAME engine; only two things differ, and both are engine parameters:
+//
+//   * the target inspects the ZONE (a state may be only PARTIALLY deadlocked), so it is a
+//     predicate rather than a NetTarget;
+//   * subsumption must be exact inclusion. Deadlock is a per-valuation property: a valuation
+//     dropped by the aLU abstraction could be the deadlocked one. Exact inclusion IS sound here,
+//     because the deadlocked valuations of a subsumed zone lie inside the subsuming zone and are
+//     found when that one is checked.
+//
+// This used to be a second search of its own: single-threaded, with the passed list as an
+// unordered_map<std::string, vector<Dbm>> holding DENSE zone copies keyed by a freshly built
+// string. On the engine it gets the parallel level expansion, the sharded stripe-locked passed
+// list and packed min-graph zone records instead.
 bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats) {
-  (void)backend;  // zone-graph search with subsumption is sequential, like leads_to_net
-  std::vector<std::int32_t> L = net.lbound, U = net.ubound;
-  const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;  // diagonals: keep exact
-  // Active-clock reduction stays ON here (small state space); state_has_deadlock rebuilds the
-  // delay-closure it perturbs, so the exploration keeps the same zones reachable_net would.
-  const std::vector<char> qmask(net.nclocks + 1, 0);
-  auto extrap = [&](Dbm& z) {
-    if (emode == ExLuPlus) z.extrapolate_lu_plus(L, U);
-    else if (emode == ExNoDiag) z.extrapolate_lu_plus_nodiag(L, U);
-  };
-
-  // Initial symbolic state -- same construction as reachable_net / leads_to_net.
-  SymState s0;
-  s0.locs.resize(net.nprocs());
-  for (int p = 0; p < net.nprocs(); ++p) s0.locs[p] = net.procs[p].initial;
-  s0.ints.resize(net.intvars.size());
-  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
-  s0.zone = Dbm(net.nclocks);
-  {
-    std::vector<Constraint> inv;
-    all_invariants(net, s0.locs, inv);
-    if (!apply_all(s0.zone, inv)) return false;  // empty init => no reachable state, no deadlock
-    bool c, u;
-    frozen_flags(net, s0.locs, &c, &u);
-    if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
-    reset_inactive(net, s0.locs, s0.zone, qmask);
-    extrap(s0.zone);
-  }
-
-  // Passed list keyed by discrete state, storing an antichain of extrapolated zones under
-  // inclusion subsumption. Subsumption is SOUND for deadlock because deadlock is a
-  // per-valuation property: the deadlock valuations of a subsumed zone lie inside the
-  // subsuming zone and are found when that one is checked. (aLU subsumption would NOT be
-  // sound here -- it can drop concrete valuations -- so we use exact inclusion.)
-  std::unordered_map<std::string, std::vector<Dbm>> passed;
-  std::vector<SymState> work;
-  auto try_insert = [&](SymState&& s) {
-    auto& bucket = passed[disc_key(s.locs, s.ints)];
-    for (const auto& z : bucket) if (z.includes(s.zone)) return;  // subsumed => skip
-    bucket.erase(std::remove_if(bucket.begin(), bucket.end(),
-                 [&](const Dbm& z) { return s.zone.includes(z); }), bucket.end());
-    bucket.push_back(s.zone);
-    work.push_back(std::move(s));
-  };
-
-  try_insert(std::move(s0));
-  while (!work.empty()) {
-    SymState s = std::move(work.back());
-    work.pop_back();
-    if (stats) ++stats->explored;
-    if (state_has_deadlock(net, s)) return true;
-    std::vector<SymState> succ;
-    successors_net(net, s, s.zone, L, U, qmask, emode, succ);
-    for (auto& ns : succ) { if (stats) ++stats->generated; try_insert(std::move(ns)); }
-  }
-  return false;
+  // The GPU drivers cannot express this target, and reach_engine keeps force_exact queries on
+  // the CPU regardless; ask for the parallel CPU backend rather than silently running serially.
+  const Backend b = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
+  return reach_engine(net, NetTarget{},
+                      [&](const SymState& s) { return state_has_deadlock(net, s); },
+                      /*force_exact=*/true, b, stats);
 }
 
 }  // namespace ptctlmc

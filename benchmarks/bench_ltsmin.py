@@ -27,6 +27,20 @@ else:
 TABLE_BITS = 26
 
 QDIR = os.path.join(HERE, f"queries_{PLAT}"); os.makedirs(QDIR, exist_ok=True)
+
+def model_file(*cands):
+    """First candidate that exists, else the first (so the caller reports a clear SKIP).
+
+    The opaal+LTSmin tree (ROOT/models, ROOT/.../vikingtests) and benchmarks/models hold
+    overlapping but DIFFERENT size ranges -- e.g. fischer goes to 11 in the LTSmin tree but to 20
+    in benchmarks/models. Prefer the LTSmin tree so a model paired with an .so module keeps using
+    that exact file, and fall back to the local generated one for the sizes it lacks.
+    """
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return cands[0]
+
 def q(name, text=None):
     p = os.path.join(QDIR, name)
     if text:
@@ -131,9 +145,14 @@ def main():
     ap.add_argument("--hddi", nargs="*", type=int, default=[])
     ap.add_argument("--fischer", nargs="*", type=int, default=[6, 7, 8, 9, 10, 11])
     ap.add_argument("--train", action="store_true", default=True)
+    # --train defaults on and is a store_true, so there was no way to turn it off from the CLI.
+    ap.add_argument("--no-train", action="store_false", dest="train",
+                    help="skip the train-gate model")
     ap.add_argument("--threads", nargs="+", type=int, default=[4, 8, 12])
     ap.add_argument("--only-ptctl-omp", action="store_true",
                     help="run only PTCTLMC OpenMP backend (skip verifyta and ltsmin)")
+    ap.add_argument("--only-verifyta", action="store_true",
+                    help="run only UPPAAL verifyta (skip ltsmin and PTCTLMC)")
     ap.add_argument("--omp-chunk", type=int, default=None,
                     help="pass --omp-chunk N to PTCTLMC when using backend omp")
     ap.add_argument("--reps", type=int, default=2)
@@ -226,6 +245,15 @@ def main():
 
     def bench(fam, model, xml, so, pq, vq):
         N = size_of(model)
+        # A MISSING model must not be measured. The dedicated --viking/--hddi/--fischer loops read
+        # from the opaal+LTSmin tree, which does not carry every size the generated families do
+        # (fischer stops at 11 there), and they never checked existence -- so each missing size was
+        # handed to the tool as a bogus path and recorded as a genuine ERR row indistinguishable
+        # from a real tool failure. fischer12-20 were "failing" for exactly this reason while
+        # verifying fine by hand.
+        if not os.path.exists(xml):
+            print("  %-11s SKIP  (no model file: %s)" % (model, xml), flush=True)
+            return
 
         # Run `tool` (unless the family already struck it out at smaller sizes), then fold
         # its outcome into the streak. `runs` returns the list of per-run statuses.
@@ -282,12 +310,14 @@ def main():
 
         if not args.only_ptctl_omp:
             run_tool("verifyta", verifyta_runs)
-        if (not args.only_ptctl_omp) and os.path.exists(so):
+        if (not args.only_ptctl_omp) and (not args.only_verifyta) and os.path.exists(so):
             run_tool("ltsmin", lambda: threaded_runs(
                 "ltsmin",
                 lambda th: [OPAAL, "--threads=%d" % th, "--strategy=sbfs", "-s", str(TABLE_BITS), so],
                 lambda th: lts_env,
                 r"Explored ([0-9]+) states"))
+        if args.only_verifyta:
+            return
         run_tool("ptctlmc-omp", lambda: threaded_runs(
             "ptctlmc-omp",
             lambda th: ([PTCTLMC, "--backend", "omp"] +
@@ -309,13 +339,19 @@ def main():
             bench(fam, "%s%d" % (fam, n), xml, so, q, q)
 
     for n in args.viking:
-        bench("viking", "viking%d" % n, os.path.join(VIK, "viking%d.xml" % n),
+        bench("viking", "viking%d" % n,
+              model_file(os.path.join(VIK, "viking%d.xml" % n),
+                         os.path.join(HERE, "models", "viking%d.xml" % n)),
               os.path.join(SO, "viking%d.so" % n), VIK_Q, VIK_Q)
     for n in args.hddi:
-        bench("hddi", "hddi%d" % n, os.path.join(HERE, "models", "hddi%d.xml" % n),
+        bench("hddi", "hddi%d" % n,
+              model_file(os.path.join(HERE, "models", "hddi%d.xml" % n),
+                         os.path.join(MOD, "hddi%d.xml" % n)),
               os.path.join(SO, "hddi%d.so" % n), os.path.join(QDIR, "hddi.q"), os.path.join(QDIR, "hddi.q"))
     for n in args.fischer:
-        bench("fischer", "fischer%d" % n, os.path.join(MOD, "fischer%d.xml" % n),
+        bench("fischer", "fischer%d" % n,
+              model_file(os.path.join(MOD, "fischer%d.xml" % n),
+                         os.path.join(HERE, "models", "fischer%d.xml" % n)),
               os.path.join(SO, "fischer%d.so" % n), FIS_Q, FIS_Q)
     if args.train:
         bench("train", "train-gate", os.path.join(MOD, "train-gate.xml"),

@@ -77,14 +77,14 @@ Federation fed_minus(const Federation& F, const Federation& G) {  // F \ G
   for (const auto& z : F) { Federation d = fed_subtract(z, G); for (auto& p : d) out.push_back(std::move(p)); }
   return out;
 }
-Federation fed_union(Federation a, const Federation& b) {  // concat (+ light subsumption reduce)
-  for (const auto& z : b) {
-    bool sub = false;
-    for (const auto& w : a) if (w.includes(z)) { sub = true; break; }
-    if (!sub) a.push_back(z);
-  }
-  return a;
-}
+// fed_union comes from HDBM's fed.hpp. This file used to carry its own copy ("concat + light
+// subsumption reduce"), which became an ambiguous overload once HDBM published the federation
+// set algebra. They compute the same POINT SET; HDBM's is the better representation, because its
+// fed_add also drops members that the incoming zone subsumes (the local one only skipped the
+// incoming zone when an existing member already covered it, so subsumed members accumulated) and
+// it screens empty zones explicitly. Nothing here depends on the representation: the fixpoint
+// tests below go through shrank()/fed_minus, which compare point sets, so a tighter antichain
+// changes only the amount of work.
 bool shrank(const Federation& oldF, const Federation& newF) {  // did new lose points?
   return !fed_minus(oldF, newF).empty();
 }
