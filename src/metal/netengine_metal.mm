@@ -35,13 +35,14 @@
 namespace ptctlmc {
 namespace {
 
-constexpr int kMaxDim = 24;  // <=23 clocks (matches CUDA / single-TA engine)
+constexpr int kMaxDim = 24;    // <=23 clocks (matches CUDA / single-TA engine)
+constexpr int kMaxGroup = 64;  // must equal PT_MAXG in the shader
 
 #define PTCTLMC_MTL_CHECK(cond, msg) \
   do { if (!(cond)) throw std::runtime_error(std::string("Metal(net): ") + (msg)); } while (0)
 
 struct NetParams {
-  std::int32_t dim, nprocs, nintvars, nclocks, nwork, qbits;
+  std::int32_t dim, nprocs, nintvars, nclocks, nwork, qbits, ng;
 };
 
 // Engine-internal phase timers (PTCTLMC_MTLPROF). The driver's `t_expand` covers the WHOLE
@@ -96,6 +97,9 @@ using namespace metal;
 #define MAXDIM PT_DIM
 #define MAXPROC PT_NP
 #define MAXINT 32
+#ifndef PT_MAXG
+#define PT_MAXG 64          // group elements the canonicaliser can tie-break among
+#endif
 constant int kInf = 1 << 30;
 constant int kZeroLe = 1;
 
@@ -580,7 +584,7 @@ inline bool sg_apply_inv(threadgroup int* d, threadgroup int* rowb, int dim, int
   return true;
 }
 
-struct Params { int dim, nprocs, nintvars, nclocks, nwork, qbits; };
+struct Params { int dim, nprocs, nintvars, nclocks, nwork, qbits, ng; };
 struct MergeParams { int dim, nb, has_diag, union_on, soa; };
 
 // One thread per successor "recipe": a participant list of (proc, global-edge) — 1 for a
@@ -625,6 +629,10 @@ kernel void net_expand(
     device const uint* act_mask  [[buffer(24)]],   // per-location active-clock bitmask
     device const int* dshift     [[buffer(25)]],   // bit offset of each discrete field in the key
     device const int* intlo      [[buffer(26)]],   // low bound of each int var (key is offset by it)
+    device const int* sym_proc   [[buffer(27)]],   // [ng*nprocs] process permutation of each g
+    device const int* sym_clk    [[buffer(28)]],   // [ng*dim]    induced clock permutation
+    device const int* sym_ivoff  [[buffer(29)]],   // [ng*nintvars+1] CSR into sym_ivdata
+    device const int* sym_ivdata [[buffer(30)]],   // value permutation of each (g, int var)
     uint w [[thread_position_in_grid]])
 {
   if (w >= uint(P.nwork)) return;
@@ -675,17 +683,79 @@ kernel void net_expand(
   if (d_empty(z, dim)) return;
 
   out_valid[w] = 1;
+
+  // ---- SYMMETRY: rewrite the successor to its orbit's canonical representative --------------
+  // The network's automorphism group permutes processes, and with it the clocks and any
+  // process-INDEX-valued integer (Fischer's `id`). Exploring one representative per orbit is a
+  // sound reduction that no amount of parallelism can give you -- 10x fewer states on fischer10
+  // and phil10 -- and it belongs here rather than on the host: it is |G| integer comparisons per
+  // successor over data the thread already holds, which is exactly what a GPU lane is for. The
+  // representative is the one with the lexicographically smallest (locations, integer values)
+  // and, among ties, the smallest zone matrix -- identical to the host `canonicalize`.
+  //
+  // The zone is never materialised twice: ties are broken by comparing the two permuted matrices
+  // through their inverse clock permutations (a permuted entry (a,b) is z[inv[a]][inv[b]]), and
+  // only the winner is written, permuted directly into the output. So symmetry costs this kernel
+  // no extra private memory -- which matters, because the private zone is what it is bound on.
+  int bl[MAXPROC], bv[MAXINT];
+  for (int q = 0; q < nprocs; ++q) bl[q] = nlocs[q];
+  for (int v = 0; v < nintvars; ++v) bv[v] = work_ints[w*nintvars + v];
+  int bestg = 0;
+  if (P.ng > 1) {
+    int wins[PT_MAXG]; int nwin = 1; wins[0] = 0;
+    int cl[MAXPROC], cv[MAXINT];
+    for (int g = 1; g < P.ng; ++g) {
+      for (int q = 0; q < nprocs; ++q) cl[sym_proc[g*nprocs + q]] = nlocs[q];
+      for (int v = 0; v < nintvars; ++v) {
+        const int lo = sym_ivoff[g*nintvars + v], hi = sym_ivoff[g*nintvars + v + 1];
+        const int x = work_ints[w*nintvars + v];
+        cv[v] = (hi > lo) ? sym_ivdata[lo + (x - intlo[v])] : x;   // empty range = identity
+      }
+      int c = 0;
+      for (int q = 0; q < nprocs && c == 0; ++q) if (cl[q] != bl[q]) c = cl[q] < bl[q] ? -1 : 1;
+      for (int v = 0; v < nintvars && c == 0; ++v) if (cv[v] != bv[v]) c = cv[v] < bv[v] ? -1 : 1;
+      if (c < 0) {
+        for (int q = 0; q < nprocs; ++q) bl[q] = cl[q];
+        for (int v = 0; v < nintvars; ++v) bv[v] = cv[v];
+        nwin = 1; wins[0] = g;
+      } else if (c == 0 && nwin < PT_MAXG) {
+        wins[nwin++] = g;
+      }
+    }
+    bestg = wins[0];
+    if (nwin > 1) {                       // tie on the discrete part: smallest permuted zone wins
+      int invB[MAXDIM], invC[MAXDIM];
+      for (int i = 0; i < dim; ++i) invB[sym_clk[bestg*dim + i]] = i;
+      for (int t = 1; t < nwin; ++t) {
+        const int g = wins[t];
+        for (int i = 0; i < dim; ++i) invC[sym_clk[g*dim + i]] = i;
+        int c = 0;
+        for (int a = 0; a < dim && c == 0; ++a)
+          for (int b = 0; b < dim; ++b) {
+            const int vg = z[invC[a]*dim + invC[b]], vb = z[invB[a]*dim + invB[b]];
+            if (vg != vb) { c = vg < vb ? -1 : 1; break; }
+          }
+        if (c < 0) { bestg = g; for (int i = 0; i < dim; ++i) invB[i] = invC[i]; }
+      }
+    }
+  }
+
   // PACK THE DISCRETE KEY HERE. The host's bucketing pass is the level's serial section, and it
   // used to read this successor's nprocs locations plus nintvars integers back out of unified
   // memory (48 bytes on fischer12) purely to recompute this 8-byte key. Emitting the key means
   // the host reads 8 bytes per successor and the per-successor location array is not written at
   // all -- 41.6M x 13 words of kernel stores saved over a fischer12 run.
   ulong dk = 0;
-  for (int q = 0; q < nprocs; ++q) dk |= ulong(uint(nlocs[q])) << dshift[q];
-  for (int v = 0; v < nintvars; ++v)
-    dk |= ulong(uint(work_ints[w*nintvars + v] - intlo[v])) << dshift[nprocs + v];
+  for (int q = 0; q < nprocs; ++q) dk |= ulong(uint(bl[q])) << dshift[q];
+  for (int v = 0; v < nintvars; ++v) dk |= ulong(uint(bv[v] - intlo[v])) << dshift[nprocs + v];
   out_dk[w] = dk;
-  for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = z[k];
+  if (bestg == 0) {
+    for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = z[k];
+  } else {   // permuting a canonical DBM by a clock permutation leaves it canonical
+    device const int* clk = sym_clk + bestg*dim;
+    for (int i = 0; i < dim; ++i)
+      for (int j = 0; j < dim; ++j) out_zone[w*d2 + clk[i]*dim + clk[j]] = z[i*dim + j];
+  }
 }
 
 kernel void net_expand_tg(
@@ -1185,6 +1255,7 @@ class NetGpuMetal : public NetGpuExpander {
     eth_ = omp_get_max_threads();
 #endif
     scr_.resize(eth_);
+    b_sym_proc_ = b_sym_clk_ = b_sym_ivoff_ = b_sym_ivdata_ = ibuf(std::vector<int>{0});
     use_sg_ = std::getenv("PTCTLMC_MTLSG") != nullptr;
     use_tg_ = std::getenv("PTCTLMC_MTLTG") != nullptr;
     use_rg_ = std::getenv("PTCTLMC_MTLRG") != nullptr;
@@ -1377,6 +1448,15 @@ class NetGpuMetal : public NetGpuExpander {
     b_intlo_ = ibuf(intlo);
   }
 
+  bool set_symmetry(int ng, const std::vector<int>& proc, const std::vector<int>& clk,
+                    const std::vector<int>& ivoff, const std::vector<int>& ivdata) override {
+    if (ng > kMaxGroup) return false;   // the kernel's tie-break list is fixed-size (PT_MAXG)
+    ng_ = ng;
+    b_sym_proc_ = ibuf(proc); b_sym_clk_ = ibuf(clk);
+    b_sym_ivoff_ = ibuf(ivoff); b_sym_ivdata_ = ibuf(ivdata);
+    return true;
+  }
+
   std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
                      const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
                      const int*& out_ints, const raw_t*& out_zones,
@@ -1480,7 +1560,7 @@ class NetGpuMetal : public NetGpuExpander {
                     b_ol = grow(pb_ol_, static_cast<std::size_t>(nwork) * sizeof(std::uint64_t)),
                     b_oi = grow(pb_oi_, static_cast<std::size_t>(nwork) * (ni ? ni : 1) * sizeof(int)),
                     b_oz = grow(pb_oz_, static_cast<std::size_t>(nwork) * d2 * sizeof(int));
-      NetParams P{en_.dim, np, ni, en_.nclocks, nwork, static_cast<std::int32_t>(en_.qmask_bits)};
+      NetParams P{en_.dim, np, ni, en_.nclocks, nwork, static_cast<std::int32_t>(en_.qmask_bits), ng_};
 
       if (g_eprof.on) g_eprof.stage += EngClock::now() - _t1;
       const double _t2 = g_eprof.on ? EngClock::now() : 0.0;
@@ -1508,6 +1588,10 @@ class NetGpuMetal : public NetGpuExpander {
       [enc setBuffer:b_actmask_ offset:0 atIndex:24];
       [enc setBuffer:b_dshift_ offset:0 atIndex:25];
       [enc setBuffer:b_intlo_ offset:0 atIndex:26];
+      [enc setBuffer:b_sym_proc_ offset:0 atIndex:27];
+      [enc setBuffer:b_sym_clk_ offset:0 atIndex:28];
+      [enc setBuffer:b_sym_ivoff_ offset:0 atIndex:29];
+      [enc setBuffer:b_sym_ivdata_ offset:0 atIndex:30];
       if (use_rg) {
         const NSUInteger kRg = 8, kTg = kRg * 32;   // one SIMD group per zone
         const NSUInteger groups = (static_cast<NSUInteger>(nwork) + kRg - 1) / kRg;
@@ -1719,7 +1803,8 @@ class NetGpuMetal : public NetGpuExpander {
   // expression, so the kernel cannot replay it from a flat table).
   id<MTLBuffer> b_edge_tgt_, b_cg_off_, b_cg_data_, b_rs_off_, b_rs_clk_,
       b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_, b_actmask_,
-      b_dshift_, b_intlo_;
+      b_dshift_, b_intlo_, b_sym_proc_, b_sym_clk_, b_sym_ivoff_, b_sym_ivdata_;
+  int ng_ = 1;
   id<MTLBuffer> pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_;   // persistent expand in/out zone+disc pools
   id<MTLBuffer> pb_work_, pb_wi_;                         // persistent merge work pool + isnew
   // Persistent expand INPUT staging (recipes + frontier locs + post-update ints). These used to
