@@ -333,10 +333,11 @@ class NetGpuCuda : public NetGpuExpander {
     return static_cast<std::size_t>(nwork);
   }
 
-  void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf) override {
+  void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) override {
     work_buf = grow_r(mwork_, (work_zones ? work_zones : 1) * d2);
     int* wi = grow_i(mwi_, work_zones ? work_zones : 1);
-    std::memset(wi, 0, (work_zones ? work_zones : 1) * sizeof(int));  // existing isnew = 0
+    std::memset(wi, 0, (work_zones ? work_zones : 1) * sizeof(int));
+    isnew = wi;   // caller seeds the existing zones' level-new flags (see net_gpu.hpp)
   }
 
   void merge(int nb, int dim, bool has_diag,

@@ -1143,7 +1143,13 @@ class NetGpuMetal : public NetGpuExpander {
   NetGpuMetal(const Network& net, NetEncoding&& en) : net_(&net), en_(std::move(en)) {
     device_ = MTLCreateSystemDefaultDevice();
     PTCTLMC_MTL_CHECK(device_ != nil, "no system default Metal device");
-    queue_ = [device_ newCommandQueue];
+    // BOUNDED command-buffer pool. Each compute encoder makes the driver allocate a scratch
+    // region sized by the kernel's per-thread stack times the threads it will keep in flight
+    // (measured: ~5.4 MB apiece, and ~1950 of them live = 10.3 GB on fischer12 -- the real
+    // occupant of the process's MALLOC_LARGE, dwarfing our own pools). The default queue keeps
+    // up to 64 of those alive; we submit strictly one command buffer at a time and wait on it,
+    // so a small pool is all we can ever use.
+    queue_ = [device_ newCommandQueueWithMaxCommandBufferCount:2];
     NSError* err = nil;
     // Specialize the shader for THIS network: the kernels' private arrays and loop bounds are
     // then the model's real sizes, not the 24-clock / 64-process worst case (see the PT_DIM
@@ -1519,11 +1525,12 @@ class NetGpuMetal : public NetGpuExpander {
     }
   }
 
-  void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf) override {
+  void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) override {
     id<MTLBuffer> bw = grow(pb_work_, (work_zones ? work_zones : 1) * d2 * sizeof(raw_t));
     id<MTLBuffer> bi = grow(pb_wi_, (work_zones ? work_zones : 1) * sizeof(int));
-    std::memset(bi.contents, 0, (work_zones ? work_zones : 1) * sizeof(int));  // existing isnew = 0
+    std::memset(bi.contents, 0, (work_zones ? work_zones : 1) * sizeof(int));
     work_buf = static_cast<raw_t*>(bw.contents);   // caller fills existing directly (unified memory)
+    isnew = static_cast<int*>(bi.contents);        // ...and seeds their level-new flags
   }
 
   void merge(int nb, int dim, bool has_diag,
@@ -1665,7 +1672,12 @@ class NetGpuMetal : public NetGpuExpander {
       // lazily, so ~1 GB of stale pools stays resident. Over-allocating ~0.5 GB to make growth rare is
       // a net ~0.5 GB win (5.00 -> 4.50 GB on Fischer N11) at no cost in run time.
       const std::size_t want = std::max(bytes, static_cast<std::size_t>(b ? b.length * 3 / 2 : 0));
-      b = nil;
+      // Releasing the old buffer is not enough: measured on fischer12, our live pools summed to
+      // 6.35 GB while Metal had 11.26 GB MAPPED — ~5 GB of pages belonging to dropped pool
+      // generations that the driver reclaims only lazily. Marking the buffer EMPTY declares its
+      // contents dead so the pages come back now. Safe here because grow() does not preserve
+      // contents (grow_keep copies first, then calls through to this).
+      if (b != nil) { [b setPurgeableState:MTLPurgeableStateEmpty]; b = nil; }
       b = [device_ newBufferWithLength:want options:MTLResourceStorageModeShared];
     }
     return b;
@@ -1705,8 +1717,16 @@ class NetGpuMetal : public NetGpuExpander {
  public:
   // Sum of every persistent unified-memory pool (diagnostics: PTCTLMC_MEMPROF).
   std::size_t device_bytes() const override {
+    // What the DRIVER actually has mapped, not just what our live buffers add up to: a grown
+    // pool's predecessor stays resident until the driver reclaims it, and that gap was several
+    // GB of "unaccounted" RSS in the memory profile.
+    return static_cast<std::size_t>(device_.currentAllocatedSize);
+  }
+  std::size_t live_buffer_bytes() const override {
     std::size_t t = 0;
-    for (id<MTLBuffer> b : {pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_, pb_work_, pb_wi_})
+    for (id<MTLBuffer> b : {pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_, pb_work_, pb_wi_,
+                            pb_ws_, pb_po_, pb_pc_, pb_pp_, pb_pe_, pb_wi_in_, pb_fl_,
+                            pb_moff_, pb_mec_, pb_mni_, pb_mnoff_, pb_mnc_, pb_mL_, pb_mU_, pb_moc_})
       if (b != nil) t += static_cast<std::size_t>(b.length);
     return t;
   }

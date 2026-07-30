@@ -29,7 +29,8 @@ void set_gpu_intern(bool on);
 // becomes independent of level width (raising the model size that fits in RAM). Sound: the frontier is
 // a worklist, so processing it in batches only changes the schedule — it may shift the order-sensitive
 // convex-union counts slightly, never the verdict. `states` = frontier states per chunk.
-void set_chunking(bool on, int states = 65536);
+void set_chunking(bool on, int states = 0);   // states = 0 -> size batches from the budget
+void set_chunk_budget(std::size_t bytes);    // GPU pool bytes per batch (0 = auto)
 bool chunking();
 
 // Does the network compare two clocks anywhere (a diagonal constraint x_i - x_j ~ c)? If so the
