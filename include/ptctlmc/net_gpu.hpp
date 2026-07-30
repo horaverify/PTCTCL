@@ -52,7 +52,10 @@ class NetGpuExpander {
   // to work_buf[work_off[b]*d2 ..] (exist_cnt[b] zones). `work_zones` = total (exist+new)
   // work-pool capacity. New zones are NOT staged — the merge reads them in place from the expand
   // output by work-item index (see `new_idx` below), so successor zones are never copied.
-  virtual void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf) = 0;
+  // `isnew` is the per-work-pool-slot "added during the current level" flag array; the caller
+  // seeds it for the EXISTING zones (a zone an earlier batch of this level added is still new)
+  // and the merge preserves it through compaction, flagging appended zones with 1.
+  virtual void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) = 0;
 
   // Per-bucket subsumption + convex-union merge. Existing zones come from the staged work buffer;
   // NEW zones are read in place from the previous expand's output at the given work-item indices:
@@ -88,6 +91,10 @@ class NetGpuExpander {
   // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
   // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
   virtual std::size_t device_bytes() const { return 0; }
+
+  // Sum of the expander's own live buffers. Together with device_bytes() (what the driver has
+  // mapped) this separates "our pools" from "pages a grown pool left behind".
+  virtual std::size_t live_buffer_bytes() const { return 0; }
 
   // If true, the merge work pool is laid out STRUCTURE-OF-ARRAYS (zone i entry e at
   // [work_off[b]*d2 + e*cap_b + i], cap_b = exist_cnt[b]+new_cnt[b]) so the GPU merge coalesces

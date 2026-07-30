@@ -5,6 +5,7 @@
 #ifdef __APPLE__
 #include <malloc/malloc.h>
 #include <mach/mach.h>
+#include <sys/sysctl.h>
 #endif
 #ifdef __linux__
 #include <malloc.h>
@@ -521,6 +522,19 @@ struct GpuZoneIntern {
     return idx;
   }
 
+  // Return a slot to the pool. In Append mode the arena would otherwise grow with the CUMULATIVE
+  // number of interned zones rather than the LIVE one -- and the rebuild re-interns a bucket's
+  // WHOLE antichain every time the bucket is touched, so a bucket touched k times over the search
+  // costs k*|antichain| slots. Measured on fischer12: ~2000 chunks x 5.4 MB = 10.9 GB of arena
+  // for 2.7M live zones (1.8 GB of actual data). With the free list the arena is bounded by the
+  // peak live set. Striped by index so the 12 rebuild threads do not share one lock.
+  void release(int idx) {
+    if (mode_ != Mode::Append) return;   // Dedup shares slots between buckets: not ours to free
+    Stripe& s = stripes_[static_cast<unsigned>(idx) & (kStripes - 1)];
+    std::lock_guard<std::mutex> lk(s.m);
+    s.freeIdx.push_back(idx);
+  }
+
   int count() const { return n_.load(std::memory_order_acquire); }
   std::size_t bytes() const {
     return static_cast<std::size_t>(chunks_.size()) * kChunk * d2_ * sizeof(raw_t);
@@ -561,6 +575,11 @@ struct GpuZoneIntern {
   // segfaulted on fischer11). Slots are published with release / read with acquire, so a reader
   // that sees the pointer also sees the storage it points to.
   int alloc() {
+    if (mode_ == Mode::Append) {   // reuse a released slot before growing the arena
+      Stripe& s = stripes_[next_free_.fetch_add(1, std::memory_order_relaxed) & (kStripes - 1)];
+      std::lock_guard<std::mutex> lk(s.m);
+      if (!s.freeIdx.empty()) { const int idx = s.freeIdx.back(); s.freeIdx.pop_back(); return idx; }
+    }
     const int idx = n_.fetch_add(1, std::memory_order_relaxed);
     const int c = idx >> kChunkBits;
     if (c >= kMaxChunks) throw std::runtime_error("GPU zone interner overflow");
@@ -575,6 +594,7 @@ struct GpuZoneIntern {
 
   struct Stripe {
     std::unordered_map<std::uint64_t, std::vector<int>> tab;
+    std::vector<int> freeIdx;      // Append mode: slots returned by release()
     std::mutex m;
   };
   int d2_;
@@ -583,6 +603,7 @@ struct GpuZoneIntern {
   std::deque<Stripe> stripes_;
   std::mutex growMtx_;
   std::atomic<int> n_{0};
+  std::atomic<unsigned> next_free_{0};   // round-robins release()/alloc() over the stripes
 };
 
 // Flat open-addressing passed/waiting table for one shared-passed stripe.
@@ -1625,11 +1646,31 @@ static bool g_gpu_intern = false;
 void set_gpu_intern(bool on) { g_gpu_intern = on; }
 bool adaptive_merge() { return g_adaptive_merge; }
 
-// Frontier chunking (see netreach.hpp). Off by default = expand a whole BFS level at once.
-static bool g_chunking = false;
-static int g_chunk_states = 65536;
-void set_chunking(bool on, int states) { g_chunking = on; if (states > 0) g_chunk_states = states; }
+// Frontier batching (see netreach.hpp). A BFS level is expanded in batches sized so the GPU's
+// per-batch pools stay inside a byte budget; a level that already fits is expanded whole, so on
+// small models this is exactly the old behaviour. AUTO by default -- the pools are nwork*dim^2
+// words and nwork is ~12x the frontier, so an unbatched wide level is what made peak RSS an
+// order of magnitude worse than the OpenMP backend's.
+static bool g_chunking = true;
+static int g_chunk_states = 0;          // 0 = auto (derive from the budget), else a fixed count
+static std::size_t g_chunk_budget = 0;  // 0 = auto (a fraction of physical RAM)
+void set_chunking(bool on, int states) { g_chunking = on; g_chunk_states = states > 0 ? states : 0; }
+void set_chunk_budget(std::size_t bytes) { g_chunk_budget = bytes; }
 bool chunking() { return g_chunking; }
+
+// Bytes the GPU pools may hold for one batch. Default: a sixth of physical RAM, capped at 4 GB --
+// enough that a level of a mid-size model is never split (so nothing is paid for the common
+// case), small enough that the largest models stop scaling with the widest level.
+static std::size_t chunk_budget_bytes() {
+  if (g_chunk_budget) return g_chunk_budget;
+  std::size_t ram = 0;
+#ifdef __APPLE__
+  std::size_t len = sizeof(ram);
+  if (sysctlbyname("hw.memsize", &ram, &len, nullptr, 0) != 0) ram = 0;
+#endif
+  if (!ram) ram = std::size_t(16) << 30;
+  return std::min<std::size_t>(ram / 6, std::size_t(4) << 30);
+}
 
 #ifdef PTCTLMC_DEBUG_KNOBS
 // FNV-1a over a packed record, for the PTCTLMC_CHECKGC frontier-root snapshot.
@@ -2014,7 +2055,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     hyb_threads = omp_get_max_threads();
 #endif
     std::size_t peak_nwork = 0, peak_wtot = 0, peak_front = 0;
-    std::size_t peak_rss_ = 0, peak_rss_heap_ = 0, peak_rss_gpu_ = 0;
+    std::size_t peak_rss_ = 0, peak_rss_heap_ = 0, peak_rss_gpu_ = 0, peak_rss_gpulive_ = 0;
     double t_expand = 0, t_merge = 0, t_bucket = 0, t_gather = 0, t_rebuild = 0, t_binit = 0, t_bmain = 0, t_bcnt = 0, t_bpfx = 0, t_bscat = 0;
     int lvl_cpu = 0, lvl_gpu = 0;   // merge routing actually taken, per level
     std::size_t tot_work = 0, tot_valid = 0;   // GPU lane utilisation: survivors / work items
@@ -2089,16 +2130,94 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
     } bidx;
     std::size_t prev_nb = 1024;
+    double fanout = 8.0;   // measured successors per frontier state, for the batch-size estimate
 
     const auto _wall0 = _now();
     const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
-    while (!fl.empty()) {
+    // --chunking: expand the level in bounded BATCHES so the GPU pools are sized to a batch
+    // rather than to the widest BFS level (which is what makes peak memory blow up: the expand
+    // output pool is nwork * dim^2 words, and nwork is ~12x the frontier on fischer).
+    //
+    // The batch boundary must NOT move states between BFS levels. `fl` holds what is left of the
+    // CURRENT level and `nf*` accumulates the NEXT one; a batch is taken from the front of `fl`
+    // and its survivors go to `nf*`, which only becomes the frontier once `fl` is exhausted.
+    // (This is the correction to the previous design, which appended the un-expanded tail to the
+    // survivors and swapped: that mixes level k and level k+1 states into one frontier, loses
+    // strict BFS, and cost 2.5x the explored states on fischer12 -- 4.76M -> 12.0M.)
+    // A stored zone is a 31-bit index into the zone interner plus one flag bit: "this zone was
+    // added during the level currently being expanded". The flag is what the next frontier is
+    // read off at level end, and packing it into the index costs no extra memory.
+    static constexpr int kNewBit = 1 << 30;
+    std::vector<std::uint64_t> touched;   // buckets changed during the current level
+    // Per-BATCH scratch, hoisted: every one of these is sized by the batch and was previously
+    // allocated and freed inside the loop. With --chunking a level is many batches, so the churn
+    // (hundreds of MB per allocation) left GBs sitting in the allocator -- it turned a 9.5x cut in
+    // GPU pool bytes into a net LOSS in peak RSS. Reused buffers keep their capacity instead.
+    std::vector<std::uint64_t> bdk;
+    std::vector<int> bcnt, w_bucket, work_off, exist_cnt, new_off, new_cnt, new_idx, cursor;
+    std::vector<int> fr_off, fr_cnt, host_isnew_v, host_count, out_work_off, out_count;
+    std::vector<std::int32_t> Lm, Um;
+    std::vector<std::vector<int>*> pzp;
+    std::vector<std::size_t> foff;
+    std::vector<int>   cfl; std::vector<long>  cfi; std::vector<raw_t> cfz;
+    // Consume the first `nfr` states of the current level, keeping the rest.
+    auto drop_batch = [](std::vector<int>& l, std::vector<long>& iv, std::vector<raw_t>& z,
+                         int nfr, int np_, int niw_, int d2_) {
+      l.erase(l.begin(), l.begin() + static_cast<std::size_t>(nfr) * np_);
+      iv.erase(iv.begin(), iv.begin() + static_cast<std::size_t>(nfr) * niw_);
+      z.erase(z.begin(), z.begin() + static_cast<std::size_t>(nfr) * d2_);
+    };
+    for (;;) {
+      if (fl.empty()) {                       // current level exhausted: advance
+        // Collect the next frontier: every zone still flagged "added during this level" in a
+        // bucket the level touched. Doing it here rather than per batch is what keeps batching
+        // exact -- a zone a later batch absorbed has had its flag cleared with it.
+        std::sort(touched.begin(), touched.end());
+        touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+        std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<raw_t>().swap(fz);
+        foff.assign(touched.size() + 1, 0);
+        for (std::size_t t = 0; t < touched.size(); ++t) {
+          std::size_t c = 0;
+          for (int idx : passed[touched[t]]) if (idx & kNewBit) ++c;
+          foff[t + 1] = foff[t] + c;
+        }
+        const std::size_t ftot = foff.back();
+        if (ftot == 0) break;
+        fl.resize(ftot * np); fi.resize(ftot * niw); fz.resize(ftot * d2);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 64)
+#endif
+        for (long t = 0; t < static_cast<long>(touched.size()); ++t) {
+          int dl[64]; long di[32];
+          decode_key(touched[t], dl, di);
+          std::size_t f = foff[t];
+          auto& pz = passed[touched[t]];
+          for (std::size_t i = 0; i < pz.size(); ++i) {
+            if (!(pz[i] & kNewBit)) continue;
+            pz[i] &= ~kNewBit;                                   // consumed
+            for (int p = 0; p < np; ++p) fl[f * np + p] = dl[p];
+            for (int v = 0; v < ni; ++v) fi[f * niw + v] = di[v];
+            std::memcpy(fz.data() + f * d2, zi.get(pz[i]), static_cast<std::size_t>(d2) * sizeof(raw_t));
+            ++f;
+          }
+        }
+        touched.clear();
+      }
       const int total = static_cast<int>(fl.size() / np);
-      // --chunking: expand only a bounded PREFIX of the frontier this iteration and carry the tail
-      // forward. The frontier is a worklist, so batching it only changes the schedule; the GPU pools
-      // are then sized to a chunk instead of the widest level, making peak memory independent of
-      // level width. Default (off) expands the whole level, exactly as before.
-      const int nfr = g_chunking ? std::min(total, g_chunk_states) : total;
+      // Batch size: either the fixed --chunking N, or the largest batch whose GPU pools fit the
+      // budget. `fanout` is the measured successors-per-frontier-state of the previous batch;
+      // the pools cost about 2.2 words per successor per matrix entry (expand output zones +
+      // merge work pool + the discrete arrays).
+      int nfr = total;
+      if (g_chunking) {
+        if (g_chunk_states > 0) {
+          nfr = std::min(total, g_chunk_states);
+        } else {
+          const double per_state = fanout * static_cast<double>(d2) * sizeof(raw_t) * 2.2;
+          const double cap = static_cast<double>(chunk_budget_bytes()) / std::max(1.0, per_state);
+          nfr = static_cast<int>(std::min<double>(total, std::max(4096.0, cap)));
+        }
+      }
       const bool whole = (nfr == total);
       if (stats) stats->explored += nfr;
       const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const raw_t* oz = nullptr;
@@ -2192,9 +2311,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       } else if (whole) {
         nwork = gpu->expand(nfr, fl, fi, fz, ev, ol, oi, oz);   // no copy in the default path
       } else {
-        std::vector<int>   cfl(fl.begin(), fl.begin() + static_cast<std::size_t>(nfr) * np);
-        std::vector<long>  cfi(fi.begin(), fi.begin() + static_cast<std::size_t>(nfr) * niw);
-        std::vector<raw_t> cfz(fz.begin(), fz.begin() + static_cast<std::size_t>(nfr) * d2);
+        cfl.assign(fl.begin(), fl.begin() + static_cast<std::size_t>(nfr) * np);
+        cfi.assign(fi.begin(), fi.begin() + static_cast<std::size_t>(nfr) * niw);
+        cfz.assign(fz.begin(), fz.begin() + static_cast<std::size_t>(nfr) * d2);
         nwork = gpu->expand(nfr, cfl, cfi, cfz, ev, ol, oi, oz);
       }
       if (mtlprof) {
@@ -2207,22 +2326,20 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (std::getenv("PTCTLMC_LVLPROF"))
           std::fprintf(stderr, "[lvl] frontier=%d nwork=%zu expand_ms=%.3f\n", nfr, nwork, _dte);
       }
+      if (nfr > 0) fanout = 0.5 * fanout + 0.5 * (static_cast<double>(nwork) / nfr);
       if (memprof && nwork > peak_nwork) peak_nwork = nwork;
       if (nwork == 0) {
-        if (whole) break;
-        // this chunk produced nothing: drop it and continue with the remaining frontier
-        std::vector<int>   tl(fl.begin() + static_cast<std::size_t>(nfr) * np,  fl.end());
-        std::vector<long>  ti(fi.begin() + static_cast<std::size_t>(nfr) * niw, fi.end());
-        std::vector<raw_t> tz(fz.begin() + static_cast<std::size_t>(nfr) * d2,  fz.end());
-        fl.swap(tl); fi.swap(ti); fz.swap(tz);
+        // this batch produced nothing: drop it and continue with what is left of the level
+        drop_batch(fl, fi, fz, nfr, np, niw, d2);
         continue;
       }
       // The GPU now holds its own copy of the frontier (persistent device buffer) and the host
       // copies are dead until the end-of-level swap. Release them NOW: otherwise they sit alongside
       // the next frontier being built during the rebuild, i.e. a full extra copy of the frontier at
       // exactly the moment memory peaks.
-      // Only safe when the whole frontier was expanded; when chunking, the tail is still needed.
+      // Only safe when the whole level was expanded; when batching, the tail is still needed.
       if (whole) { std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<raw_t>().swap(fz); }
+      else drop_batch(fl, fi, fz, nfr, np, niw, d2);   // batch consumed; keep the rest of the level
       // group VALID successors by dk (reading straight from GPU buffers); target check on the fly
       // Bucket the valid successors with a FLAT (CSR) layout: a per-work-item bucket id plus a
       // per-bucket count, then a prefix sum. The obvious `vector<vector<int>>` heap-allocates one
@@ -2238,9 +2355,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // memory while the GPU is using the same bandwidth -- not by the hashing. Neither variant
       // is worth the complexity here. See docs/GUIDE.md.
       bidx.begin_level(prev_nb);
-      std::vector<std::uint64_t> bdk;
-      std::vector<int> bcnt;                              // per-bucket count of new zones
-      std::vector<int> w_bucket(nwork, -1);               // work item -> bucket id (-1 = not a successor)
+      bdk.clear(); bcnt.clear();
+      w_bucket.assign(nwork, -1);                         // work item -> bucket id (-1 = not a successor)
       for (std::size_t w = 0; w < nwork; ++w) {
         if (!ev[w]) continue;
         if (mtlprof) ++tot_valid;
@@ -2265,8 +2381,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       const int nb = static_cast<int>(bdk.size());
       prev_nb = static_cast<std::size_t>(nb);
       const auto _tp = _now();
-      std::vector<int> work_off(nb), exist_cnt(nb), new_off(nb), new_cnt(nb);
-      std::vector<std::int32_t> Lm(static_cast<std::size_t>(nb) * dim), Um(static_cast<std::size_t>(nb) * dim);
+      work_off.resize(nb); exist_cnt.resize(nb); new_off.resize(nb); new_cnt.resize(nb);
+      Lm.resize(static_cast<std::size_t>(nb) * dim); Um.resize(static_cast<std::size_t>(nb) * dim);
       // counts + prefix sums. The NEW zones are never copied: the merge reads them in place from
       // the expand output by work-item index, so we only flatten the index list (integers, cheap).
       std::size_t ntot = 0, wtot = 0;  // total new zones; total work-pool zones (exist+new)
@@ -2281,20 +2397,19 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // per-bucket ordering the merge relies on (the convex union is order-sensitive), so this is
       // bit-for-bit equivalent to the old vector-of-vectors.
       if (mtlprof) t_bpfx += _ms(_tp, _now());
-      std::vector<int> new_idx(ntot);
+      new_idx.resize(ntot);
       {
-        std::vector<int> cursor(new_off);
+        cursor = new_off;
         for (std::size_t w = 0; w < nwork; ++w) {
           const int bi = w_bucket[w];
           if (bi >= 0) new_idx[cursor[bi]++] = static_cast<int>(w);
         }
       }
       if (mtlprof) t_bucket += _ms(_tb, _now());
-      { std::vector<int>().swap(w_bucket); }   // dead once scattered — release before the merge peak
       if (memprof && wtot > peak_wtot) peak_wtot = wtot;
       const auto _tg = _now();
-      raw_t* work_buf = nullptr;
-      gpu->stage_merge(wtot, d2, work_buf);
+      raw_t* work_buf = nullptr; int* work_isnew = nullptr;
+      gpu->stage_merge(wtot, d2, work_buf, work_isnew);
       // PARALLEL: gather only the EXISTING antichains into the work buffer (unified memory);
       // successor zones stay in the expand output and are read in place by the merge kernel.
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -2307,14 +2422,19 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           if (soa) {   // transpose AoS antichain -> SoA pool: zone i entry k at dst[k*cap + i]
             const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
             for (int i = 0; i < exist_cnt[b]; ++i) {
-              const raw_t* src = zi.get(pit->second[i]);
+              const raw_t* src = zi.get(pit->second[i] & ~kNewBit);
               for (int k = 0; k < d2; ++k) dst[static_cast<std::size_t>(k) * cap + i] = src[k];
             }
           } else {
             for (int i = 0; i < exist_cnt[b]; ++i)
-              std::memcpy(dst + static_cast<std::size_t>(i) * d2, zi.get(pit->second[i]),
+              std::memcpy(dst + static_cast<std::size_t>(i) * d2, zi.get(pit->second[i] & ~kNewBit),
                           static_cast<std::size_t>(d2) * sizeof(raw_t));
           }
+          // Carry the "added during THIS level" flag of each already-stored zone into the merge's
+          // isnew array, so a zone that an earlier batch of this level added and this batch keeps
+          // is still reported as a survivor. Without it, batching would lose frontier states.
+          int* wi = work_isnew + work_off[b];
+          for (int i = 0; i < exist_cnt[b]; ++i) wi[i] = (pit->second[i] & kNewBit) ? 1 : 0;
         }
         int dl[64]; long di[32];
         std::vector<std::int32_t> L2, U2;
@@ -2323,7 +2443,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         for (int c = 0; c < dim; ++c) { Lm[static_cast<std::size_t>(b) * dim + c] = L2[c]; Um[static_cast<std::size_t>(b) * dim + c] = U2[c]; }
       }
       if (mtlprof) t_gather += _ms(_tg, _now());
-      std::vector<int> out_work_off, out_count;
+      out_work_off.clear(); out_count.clear();
       const raw_t* out_zones = nullptr;
       const int* out_isnew = nullptr;
       // Merge routing. NAIVE (default): always the GPU one-thread-per-bucket merge (original
@@ -2340,10 +2460,17 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         else if (gpu_rate < 0) cpu_merge = false;   // then calibrate the GPU path
         else cpu_merge = (cpu_rate >= gpu_rate);    // route to the higher-throughput path
       }
-      std::vector<int> host_isnew_v, host_count;
       const auto _tm = _now();
       if (cpu_merge) {
-        host_isnew_v.assign(wtot, 0);          // existing zones start not-new; appended new zones -> 1
+        host_count.clear();
+        host_isnew_v.assign(wtot, 0);          // appended new zones -> 1
+        // ...but an existing zone THIS LEVEL added (earlier batch) is still new: see the gather.
+        for (int b = 0; b < nb; ++b) {
+          auto pit = passed.find(bdk[b]);
+          if (pit == passed.end()) continue;
+          for (int i = 0; i < exist_cnt[b]; ++i)
+            host_isnew_v[static_cast<std::size_t>(work_off[b]) + i] = (pit->second[i] & kNewBit) ? 1 : 0;
+        }
         host_count.assign(nb, 0);
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 8)
@@ -2381,7 +2508,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // arbiter17/Metal and is not faster (rebuild 563ms vs 545ms) -- buckets average ~10 zones,
       // so the scan is memory-bound and the per-bucket parallel overhead plus false sharing on
       // fr_cnt costs more than the scan itself.
-      std::vector<int> fr_off(nb), fr_cnt(nb);
+      fr_off.resize(nb); fr_cnt.resize(nb);
       std::size_t frtot = 0;
       for (int b = 0; b < nb; ++b) {
         int c = 0;
@@ -2389,14 +2516,11 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         fr_cnt[b] = c; fr_off[b] = static_cast<int>(frtot); frtot += c;
       }
       if (memprof && frtot > peak_front) peak_front = frtot;
-      std::vector<int> nl(frtot * np);
-      std::vector<long> nin(frtot * (ni ? ni : 1));
-      std::vector<raw_t> nz(frtot * d2);
       // A bucket with NO survivor had all its new zones subsumed — its antichain is unchanged, so
-      // `passed[dk]` is already correct. Skip its rebuild copy AND frontier gather entirely; only
-      // changed buckets are cleared + refilled (their element ptrs stay stable across later inserts).
-      std::vector<std::vector<int>*> pzp(nb, nullptr);
-      for (int b = 0; b < nb; ++b) if (fr_cnt[b] > 0) { pzp[b] = &passed[bdk[b]]; }
+      // `passed[dk]` is already correct. Skip its rebuild copy entirely; only changed buckets are
+      // cleared + refilled (their element ptrs stay stable across later inserts).
+      pzp.assign(nb, nullptr);
+      for (int b = 0; b < nb; ++b) if (fr_cnt[b] > 0) { pzp[b] = &passed[bdk[b]]; touched.push_back(bdk[b]); }
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 32)
 #endif
@@ -2405,10 +2529,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         int dl[64]; long di[32];
         decode_key(bdk[b], dl, di);
         auto& pz = *pzp[b];
+        // The whole antichain is about to be re-interned, so this bucket's current slots become
+        // garbage: hand them back before allocating the replacements (see GpuZoneIntern::release).
+        for (int old : pz) zi.release(old & ~kNewBit);
         pz.resize(static_cast<std::size_t>(out_count[b]));
         const std::size_t poolbase = static_cast<std::size_t>(out_work_off[b]) * d2;
         const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
-        int fpos = fr_off[b];
+        int fpos = 0;
         std::vector<raw_t> tmp(d2);        // one merged zone, reused across this bucket
         const int _tid = ompt();
         for (int i = 0; i < out_count[b]; ++i) {
@@ -2420,17 +2547,17 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           else
             std::memcpy(pzi, out_zones + slot * d2, static_cast<std::size_t>(d2) * sizeof(raw_t));
           const auto _r1 = rbnow(rbprof);
-          pz[i] = zi.intern(pzi);
+          // The high bit of the stored index records "added during the CURRENT level". The
+          // frontier is read off these flags once the level is finished (see the level-advance
+          // step), NOT here -- because a later batch of the same level can still absorb this zone
+          // into a convex union, and emitting it now would put a state in the frontier that the
+          // level's own merge went on to delete. That is what made batching cost fischer12 2.5x
+          // its state count.
+          pz[i] = zi.intern(pzi) | (out_isnew[slot] ? kNewBit : 0);
           const auto _r2 = rbnow(rbprof);
           if (rbprof) { rb_copy[_tid] += _r1 - _r0; rb_intern[_tid] += _r2 - _r1; }
-          if (out_isnew[slot]) {
-            for (int p = 0; p < np; ++p) nl[static_cast<std::size_t>(fpos) * np + p] = dl[p];
-            for (int v = 0; v < ni; ++v) nin[static_cast<std::size_t>(fpos) * ni + v] = di[v];
-            std::memcpy(nz.data() + static_cast<std::size_t>(fpos) * d2, pzi, static_cast<std::size_t>(d2) * sizeof(raw_t));
-            ++fpos;
-            if (rbprof) rb_front[_tid] += rbnow(true) - _r2;
-          }
         }
+        (void)dl; (void)di; (void)fpos;
       }
       if (mtlprof) t_rebuild += _ms(_tr, _now());
 #ifdef __APPLE__
@@ -2443,16 +2570,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           peak_rss_ = info.resident_size;
           peak_rss_heap_ = ms.size_in_use;
           peak_rss_gpu_ = gpu->device_bytes();
+          peak_rss_gpulive_ = gpu->live_buffer_bytes();
         }
       }
 #endif
-      // When chunking, the unexpanded tail of this frontier carries over to the next iteration.
-      if (!whole) {
-        nl.insert(nl.end(),  fl.begin() + static_cast<std::size_t>(nfr) * np,  fl.end());
-        nin.insert(nin.end(), fi.begin() + static_cast<std::size_t>(nfr) * niw, fi.end());
-        nz.insert(nz.end(),  fz.begin() + static_cast<std::size_t>(nfr) * d2,  fz.end());
-      }
-      fl.swap(nl); fi.swap(nin); fz.swap(nz);
     }
     if (memprof) {
       std::size_t live = 0, cap = 0;
@@ -2468,7 +2589,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         "          frontier copy  = %6.2f GB   (peak %zu zones — DUPLICATES passed)\n"
         "          gpu expand pool= %6.2f GB   (peak %zu work items, persistent)\n"
         "          gpu merge pool = %6.2f GB   (peak %zu work zones, persistent)\n"
-        "          GPU buffers ACTUAL = %6.2f GB  (all 7 persistent pools, measured)\n"
+        "          gpu pools LIVE = %6.2f GB  (sum of our own buffers)\n"
+        "          gpu DRIVER map = %6.2f GB  (what Metal actually has mapped)\n"
         "          ---- accounted = %6.2f GB\n",
         passed.size(), live / (std::size_t)d2,
         live * B / GB, cap * B / GB, live ? 100.0 * (double)(cap - live) / (double)live : 0.0,
@@ -2476,7 +2598,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         peak_front * (double)d2 * B / GB, peak_front,
         peak_nwork * (double)d2 * B / GB, peak_nwork,
         peak_wtot * (double)d2 * B / GB, peak_wtot,
-        gpu->device_bytes() / GB,
+        gpu->live_buffer_bytes() / GB, gpu->device_bytes() / GB,
         (cap * B + node_ov + peak_front * (double)d2 * B + gpu->device_bytes()) / GB);
 #ifdef __APPLE__
       // Separate "bytes the program is using" from "bytes malloc is holding but not returning to
@@ -2488,9 +2610,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         std::fprintf(stderr,
           "          malloc in-use  = %6.2f GB   (live heap)\n"
           "          malloc reserved= %6.2f GB   (held by allocator, not returned to OS)\n"
-          "          >>> PEAK RSS   = %6.2f GB   at peak: heap %.2f GB + gpu %.2f GB = %.2f GB\n",
+          "          >>> PEAK RSS   = %6.2f GB   at peak: heap %.2f GB + gpu-mapped %.2f GB "
+          "(of which our pools %.2f GB) = %.2f GB\n",
           st.size_in_use / GB, st.size_allocated / GB,
-          peak_rss_ / GB, peak_rss_heap_ / GB, peak_rss_gpu_ / GB,
+          peak_rss_ / GB, peak_rss_heap_ / GB, peak_rss_gpu_ / GB, peak_rss_gpulive_ / GB,
           (peak_rss_heap_ + peak_rss_gpu_) / GB);
       }
 #endif
