@@ -1,0 +1,136 @@
+% ---------------------------------------------------------------------------
+%  09-novelty.tex -- the blunt separation of new / ported / engineering
+% ---------------------------------------------------------------------------
+\section{What is new, what is ported, what is engineering}
+\label{sec:novelty}
+
+This section exists so that the paper never has to be vague about provenance.
+A TACAS reviewer's first question is ``which part of this is a contribution?'',
+and a submission that answers it before being asked is in a much stronger
+position than one that lets the reviewer draw the line.
+
+\subsection{New, and proved here}
+
+\begin{enumerate}[label=\textbf{N\arabic*.}, leftmargin=2.2em, itemsep=4pt]
+
+\item \textbf{Concurrent antichains via coverage monotonicity.}
+      \cref{thm:coverage} and \cref{cor:probe}.  A subsumption-based passed set
+      is mutable --- entries are deleted and replaced --- which normally forbids
+      reading it concurrently with writers.  We identify the structural
+      property that makes it safe (\emph{a stored zone is retired only into
+      something that contains it}), prove that the covered region is therefore
+      monotone, and use it to run the dominant $83\%$ of insertion attempts
+      under a shared lock.  This is the load-bearing contribution: it is what
+      lets \ltsmin{}'s shared-table shape carry an antichain instead of a
+      visited set.
+
+\item \textbf{Exactness of the convex-union merge, and its role as a
+      concurrency mechanism.}  \cref{thm:hull} shows the facet test decides
+      convexity of the union exactly.  The new observation is what that buys in
+      a parallel setting: it holds antichains at $\approx 1$ zone per discrete
+      state, which is what makes the critical section $O(1)$.  Merging is
+      usually presented as a state-count optimisation; here it is a
+      \emph{scalability} mechanism, and the state-count win against \uppaal{}
+      on \code{phil} is a side effect.
+
+\item \textbf{Adaptive choice between the two finiteness mechanisms.}
+      \cref{thm:adapt}.  Pruning (exact zones $+$ $\aLU$) and widening
+      ($\extraLU$) are not interchangeable, and which one wins is a property of
+      the model.  The engine measures the distinguishing signal --- zones per
+      discrete state --- for free and switches once, one-way, at a level
+      boundary.  We prove that the resulting \emph{mixed} passed set is sound
+      and that the search still terminates, which is not immediate: the
+      termination argument has to combine a finite prefix with a finite image.
+
+\item \textbf{Verdict determinism under a nondeterministic merge order.}
+      \cref{thm:determinism}.  The stored antichain depends on the thread
+      schedule; the answer does not.  Stating this explicitly matters because
+      the tool visibly reports different state counts on repeated runs.
+
+\item \textbf{Recycling reclamation for an interned zone store, with its
+      soundness condition.}  \cref{prop:gc,prop:gc-cache}.  Recycling record
+      slots and indices in place (no renumbering) keeps the passed set's
+      $4$-byte references valid across a GC, but it interacts with a
+      byte-validated per-thread cache in a way that is a \emph{soundness} bug,
+      not a performance bug.  We prove cache invalidation is both necessary and
+      sufficient.
+
+\item \textbf{Removing the last serial phase by bucketed collection.}
+      \cref{lem:bucket}.  Small, but it is the difference between a level loop
+      that scales and one whose serial fraction grows with level width.
+
+\item \textbf{Minimal-graph inclusion as the enabler of a cheap critical
+      section.}  The test itself is UDBM's and we claim no novelty for it
+      (\cref{lem:mingraph} is stated and proved for self-containedness).  What
+      is new is the observation that being able to decide inclusion
+      \emph{without decompressing} is precisely what allows the read-side probe
+      of \textbf{N1} to be cheap enough to be worth doing --- otherwise the
+      shared lock would be held across an $O(\dim^3)$ closure and the two-phase
+      protocol would lose to a plain mutex.
+\end{enumerate}
+
+\subsection{Ported or standard, and credited}
+
+\begin{itemize}[leftmargin=1.2em, itemsep=3pt]
+\item DBM zone algebra and canonicalisation --- classical \cite{Dill89}.
+\item $\extraLU$ widening and LU bounds ---
+      \cite{BBLP06}; \uppaal{}'s default.
+\item The $\aLU$ subsumption test --- \cite{HSW12}; the implementation is a
+      port of \tchecker{}'s \code{is\_alu\_le}, brute-force validated against the
+      point-wise definition.
+\item Unsoundness of $LU$ abstraction under diagonal constraints, and the
+      diagonal-preserving fallback --- \cite{Bouyer04}.
+\item Minimal-graph zone storage and the $O(|G|)$ inclusion test --- \uppaal{}'s
+      UDBM \code{mingraph}; \file{mindbm.hpp} is a re-expression of it in
+      \tool{}'s bound encoding, not a link against UDBM.
+\item Active-clock reduction --- \cite{DawsYovine96}.
+\item Shared passed table with fine-grained locking and no static partition ---
+      \ltsmin{} \cite{LTSmin,OpaalLTSmin}.
+\item Level-synchronous parallel BFS --- standard; the choice to keep it rather
+      than move to work-stealing DFS is ours and is justified by state counts,
+      not by novelty.
+\end{itemize}
+
+\subsection{Engineering: real, necessary, not a theoretical claim}
+
+These carry no theorem and should be presented as implementation work.  They
+are nonetheless where most of the measured speedup lives, and a paper that
+omits them cannot explain its own numbers.
+
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+\item $64$-way interner sharding with a high-bit shard selector
+      (\cref{prop:shard} is elementary but was learned the hard way).
+\item \code{SpinRW}: an $8$-byte spin-then-yield reader--writer lock, sized so
+      $16$k of them cost less than $16$k \code{std::shared\_mutex}es.
+\item Per-thread pooled allocator for zones and discrete vectors, removing the
+      process-global \code{malloc} lock from the successor path.
+\item Slot-reusing successor generation (zero allocations per successor after
+      warm-up).
+\item Frontier as $(\dk,\mathit{zidx})$ pairs; discrete state decoded from a
+      packed $63$-bit key.
+\item Dense mirror for chains past $64$ live zones.
+\item Per-stripe compaction with an amortised trigger.
+\item Register-local counters instead of per-thread array slots, to avoid false
+      sharing on a per-successor increment.
+\end{itemize}
+
+\subsection{One-paragraph version, for the abstract}
+
+\begin{quote}\itshape
+Zone-based reachability is usually parallelised by sharing a visited set, but a
+competitive timed model checker does not store a visited set: it stores an
+antichain of zones under subsumption, which is mutable, and whose entries are
+deleted and replaced as the search proceeds.  We show that the antichain update
+rule of a subsumption-and-merge passed set has a monotonicity property --- the
+covered region never shrinks --- that makes the read side of insertion safe to
+run concurrently with writers.  Building on it, we present an OpenMP engine in
+which $83\%$ of insertions are resolved under a shared lock, in which the
+exclusive critical section is $O(1)$ because an exact convex-union merge keeps
+antichains at one zone per discrete state, and in which the choice between the
+two standard finiteness mechanisms is made adaptively at run time with a proved
+soundness and termination guarantee.  Against \uppaal{} the engine explores the
+same symbolic state space on three benchmark families --- exactly the same
+stored state counts --- and $\approx 30\%$ fewer states on a fourth, while
+running $5.6$--$13.8\times$ faster on $32$ cores and scaling at $81$--$87\%$
+efficiency from $16$ to $32$.
+\end{quote}

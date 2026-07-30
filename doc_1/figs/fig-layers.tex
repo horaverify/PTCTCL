@@ -1,0 +1,52 @@
+% -------------------------------------------------------------------------
+%  fig-layers.tex  --  the three storage layers
+% -------------------------------------------------------------------------
+\newcommand{\FigLayers}{%
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}
+
+  % ---- frontier -----------------------------------------------------------
+  \node[bx, tone, minimum width=104mm, minimum height=9mm] (fr)
+    {\textsc{frontier} \;--\; array of $(\dk,\,\mathit{zidx})$ pairs, $12$\,B each};
+  \node[lbl, right=2mm of fr.east, anchor=west, text width=22mm]
+    {rebuilt once\\per level};
+
+  % ---- passed -------------------------------------------------------------
+  \node[bx, below=9mm of fr, minimum width=104mm, minimum height=15mm] (pa) {};
+  \node[anchor=north west, font=\small] at ([shift={(2mm,-1.5mm)}]pa.north west)
+    {\textsc{passed set} \;--\; $\NB \ge 16\,384$ independently locked stripes};
+  \foreach \i in {0,...,9} {
+    \node[bxs, tone, minimum width=8.2mm, minimum height=5mm]
+      at ([shift={(6.5mm+\i*10.2mm, -9mm)}]pa.north west) {};
+  }
+  \node[lbl, right=2mm of pa.east, anchor=west, text width=22mm]
+    {one antichain\\per discrete\\state};
+
+  % ---- interner -----------------------------------------------------------
+  \node[bx, below=9mm of pa, minimum width=104mm, minimum height=15mm] (zi) {};
+  \node[anchor=north west, font=\small] at ([shift={(2mm,-1.5mm)}]zi.north west)
+    {\textsc{zone interner} \;--\; $64$ shards, one packed record per \emph{distinct} zone};
+  \foreach \i in {0,...,9} {
+    \node[bxs, tonedk, minimum width=8.2mm, minimum height=5mm]
+      at ([shift={(6.5mm+\i*10.2mm, -9mm)}]zi.north west) {};
+  }
+  \node[lbl, right=2mm of zi.east, anchor=west, text width=22mm]
+    {minimal graphs,\\$\sim$\,$12\times$ smaller\\than dense};
+
+  % ---- arrows -------------------------------------------------------------
+  \draw[fl] ([xshift=-30mm]fr.south) -- node[lbl,left=1mm]{expand} ([xshift=-30mm]pa.north);
+  \draw[fl] ([xshift=30mm]pa.north)  -- node[lbl,right=1mm]{collect} ([xshift=30mm]fr.south);
+  \draw[fl] ([xshift=-30mm]pa.south) -- node[lbl,left=1mm]{\code{intern}} ([xshift=-30mm]zi.north);
+  \draw[fl] ([xshift=30mm]zi.north)  -- node[lbl,right=1mm]{\code{record}} ([xshift=30mm]pa.south);
+
+\end{tikzpicture}
+\caption{The three storage layers of the OpenMP engine and the traffic between
+them.  Nothing in the engine holds a symbolic state as an object: the frontier
+holds a packed discrete key plus a $4$-byte zone index, the passed set holds
+antichains of zone indices, and only the interner holds zone \emph{bytes} --
+once per distinct zone, in minimal-graph form.  The layering is what makes the
+resident working set small enough to stay in cache while $32$ threads hammer
+it.}
+\label{fig:layers}
+\end{figure}}

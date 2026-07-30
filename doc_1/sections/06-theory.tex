@@ -1,0 +1,483 @@
+% ---------------------------------------------------------------------------
+%  06-theory.tex -- the statements and proofs that are genuinely ours
+% ---------------------------------------------------------------------------
+\section{Theory: what has to be proved, and the proofs}
+\label{sec:theory}
+
+This section states and proves the properties the design relies on.  Results
+imported from the literature were stated in \cref{sec:background}
+(\cref{prop:alu-finite,prop:extra-sound}) and are used, not reproved.
+Everything below is proved here.
+
+Throughout, fix a discrete state $\dk$ with its bounds $(L,U)$, and write
+$A$ for the antichain stored at $\dk$.  Recall (\cref{lem:preorder}) that
+$\subs$ is a preorder for a fixed $(L,U)$, and that $(L,U)$ is constant within
+an antichain.  Define the \emph{covered region}
+\[
+  \Cov(A) \;=\;
+  \begin{cases}
+    \bigcup_{Z \in A} \aLU([Z]) & \text{in subsumption mode,}\\[2pt]
+    \bigcup_{Z \in A} [Z]       & \text{in exact mode.}
+  \end{cases}
+\]
+Both cases are of the form $\bigcup_{Z\in A} \kappa([Z])$ for a closure
+operator $\kappa$ ($\aLU$, or the identity), which is all the proofs use.
+
+\subsection{The concurrency argument}
+
+\begin{lemma}[Replacement]\label{lem:replacement}
+Every execution of \code{add} that retires a stored zone $Z$ also inserts, at
+the same discrete state and stamped with the current BFS level, a zone $z^\star$
+with $Z \subs z^\star$.
+\end{lemma}
+
+\begin{proof}
+Retirement happens only in steps (3) and (4) of \cref{sec:antichain}, and both
+are on the path that reaches step (5): step (2) is the last point at which
+\code{add} can return early, and once it is passed, step (5) executes
+unconditionally.
+
+Let $z_0$ be the incoming zone and $z^\star$ the zone actually stored in step
+(5).  Step (4) only ever \emph{grows} the pending zone --- it replaces $z$ by the
+convex hull $z \sqcup Z_i$, and $[z] \subseteq [z \sqcup Z_i]$ --- so
+$[z_0] \subseteq [z^\star]$ and, for every $Z_i$ absorbed in step (4),
+$[Z_i] \subseteq [z^\star]$.  By \cref{lem:incl-implies-alu}, in both cases
+$Z_i \subs z^\star$.
+
+For a zone $Z$ retired in step (3) we have $Z \subs z_0$ by the test itself,
+and $z_0 \subs z^\star$ by $[z_0] \subseteq [z^\star]$ and
+\cref{lem:incl-implies-alu}; transitivity (\cref{lem:preorder}) gives
+$Z \subs z^\star$.
+\end{proof}
+
+\begin{theorem}[Coverage monotonicity]\label{thm:coverage}
+Let $A$ be the antichain at $\dk$ before an execution of \code{add} and $A'$
+the antichain after.  Then $\Cov(A) \subseteq \Cov(A')$.  Consequently, for any
+interleaving of workers, the covered region at each discrete state is
+non-decreasing over time.
+\end{theorem}
+
+\FigCoverage
+
+\begin{proof}
+If \code{add} returns early at step (1) or (2), $A' = A$ and there is nothing to
+show.  Otherwise write $R$ for the set of zones retired (in steps (3) and (4))
+and $z^\star$ for the zone stored in step (5), so $A' = (A \setminus R) \cup
+\{z^\star\}$.
+
+By \cref{lem:replacement}, every $Z \in R$ satisfies $Z \subs z^\star$, i.e.\
+$[Z] \subseteq \kappa([z^\star])$.  Applying $\kappa$ and using monotonicity and
+idempotence,
+\[
+  \kappa([Z]) \;\subseteq\; \kappa\big(\kappa([z^\star])\big) \;=\;
+  \kappa([z^\star]).
+\]
+Hence
+\[
+  \Cov(A) \;=\; \Cov(A\setminus R) \cup \bigcup_{Z \in R}\kappa([Z])
+          \;\subseteq\; \Cov(A\setminus R) \cup \kappa([z^\star])
+          \;=\; \Cov(A').
+\]
+Since stripe updates at a given $\dk$ are serialised by that stripe's exclusive
+lock, the sequence of antichains at $\dk$ is totally ordered in time, and the
+statement extends from one update to the whole execution by induction.
+\end{proof}
+
+\begin{corollary}[The shared-lock probe is sound]\label{cor:probe}
+Suppose \code{probe\_kill} evaluates to true for a successor $z$ at $\dk$ at
+time $t$, under a shared lock which is then released.  Then for every later time
+$t' \ge t$ --- in particular, at the moment the worker decides to discard $z$
+--- we still have $[z] \subseteq \Cov(A_{t'})$.  Discarding $z$ therefore never
+discards a zone that the passed set does not cover.
+\end{corollary}
+
+\begin{proof}
+\code{probe\_kill} returns true only after exhibiting a live $Z \in A_t$ with
+$[z] \subseteq \kappa([Z])$, hence $[z] \subseteq \Cov(A_t)$.  Apply
+\cref{thm:coverage} repeatedly to get $\Cov(A_t) \subseteq \Cov(A_{t'})$.
+\end{proof}
+
+\begin{remark}[what this does and does not license]
+\cref{cor:probe} licenses reading the antichain without excluding writers.  It
+does \emph{not} license reading it without any synchronisation: the probe still
+takes the shared lock, because an exclusive writer may be halfway through
+rewriting the chain's pointers and the reader must not observe a torn
+structure.  The theorem is about the \emph{semantics} of the answer being
+stable; the lock is about the \emph{representation} being intact.  Both are
+needed, and conflating them is the classic way to get this wrong.
+\end{remark}
+
+\begin{remark}[why this is not free]
+The property is a consequence of the specific update rule, not of antichains in
+general.  An antichain algorithm that discarded a stored zone for \emph{any}
+other reason --- a capacity bound, a heuristic eviction, a re-widening pass that
+replaced a zone with a non-comparable one --- would break
+\cref{lem:replacement} and with it the whole protocol.  This is worth stating in
+the paper, because it identifies precisely what a competing design must
+preserve.
+\end{remark}
+
+\subsection{The convex-union test is exact}
+
+\begin{theorem}[Exactness of the convex-union merge]\label{thm:hull}
+Let $A, B$ be canonical non-empty DBMs of dimension $\dim$ and let $H$ be their
+entrywise maximum (the convex hull).  For $Z \in \{A,B\}$ call $(i,j)$, $i \ne
+j$, a \emph{strict facet} of $Z$ if $Z[i][j] < H[i][j]$, and put
+\[
+  R_{Z,i,j} \;=\; [H] \,\cap\, \neg\big(x_i - x_j \prec_{Z} Z[i][j]\big).
+\]
+The procedure \code{dbm\_try\_union} accepts the merge iff
+$R_{A,i,j} \subseteq [B]$ for every strict facet of $A$ and
+$R_{B,i,j} \subseteq [A]$ for every strict facet of $B$.  Then:
+\[
+  \text{the procedure accepts}
+  \quad\Longleftrightarrow\quad
+  [H] \;=\; [A] \cup [B].
+\]
+In particular the merge never adds a valuation belonging to neither operand.
+\end{theorem}
+
+\begin{proof}
+$[A]\cup[B] \subseteq [H]$ always, since $H$ is entrywise looser than both.
+
+\emph{($\Rightarrow$) Accepting implies exactness.}
+Let $u \in [H]$ and suppose $u \notin [A]$.  Because $A$ is canonical, $[A]$ is
+exactly the set of valuations satisfying all constraints
+$x_i - x_j \prec_A A[i][j]$, so there is a pair $(i,j)$ whose constraint $u$
+violates; $i \ne j$, since a non-empty canonical DBM has $A[i][i] = (\le 0)$,
+which every valuation satisfies.  If $A[i][j] = H[i][j]$ then $u \in [H]$ would
+satisfy that very constraint, a contradiction; and $A[i][j] \le H[i][j]$ by
+construction.  Hence $A[i][j] < H[i][j]$: it is a \emph{strict} facet.  Since
+$u \in [H]$ and $u$ violates the constraint, $u \in R_{A,i,j}$, and acceptance
+gives $R_{A,i,j} \subseteq [B]$, so $u \in [B]$.  Symmetrically for
+$u \notin [B]$.  Therefore $[H] \subseteq [A]\cup[B]$.
+
+\emph{($\Leftarrow$) Exactness implies accepting.}
+Assume $[H] = [A]\cup[B]$ and let $(i,j)$ be a strict facet of $A$.  Every
+$u \in R_{A,i,j}$ lies in $[H] = [A]\cup[B]$ and violates a constraint of $A$,
+so $u \notin [A]$, hence $u \in [B]$.  Thus $R_{A,i,j} \subseteq [B]$, and the
+same holds for $B$; the procedure accepts.
+\end{proof}
+
+\begin{remark}[faithfulness to the implementation]
+The implementation constructs $R_{Z,i,j}$ by copying $H$, tightening the
+\emph{reverse} entry $[j][i]$ with the negated bound --- $\neg(x_i - x_j < v)$
+is $x_j - x_i \le -v$, and $\neg(x_i - x_j \le v)$ is $x_j - x_i < -v$ --- and
+re-closing.  When that entry is not tighter than $H[j][i]$, the negation is
+already implied by $H$ and $R = [H]$, which is the correct region.  When
+$R = \emptyset$ the containment holds vacuously and the check is skipped.  So
+the implemented test is exactly the one in \cref{thm:hull}.  A debug mode
+(\code{PTCTLMC\_CHECKMERGE}) independently verifies every accepted merge with
+exact federation subtraction --- $[H] \setminus ([A]\cup[B]) = \emptyset$ ---
+which is a decision procedure, not a sanity check.
+\end{remark}
+
+\subsection{Deciding inclusion on the compressed representation}
+
+\begin{lemma}[Minimal-graph inclusion]\label{lem:mingraph}
+Let $G$ be a finite set of constraints $(i,j,b)$ whose closure is the canonical
+DBM $Z'$, and let $z$ be canonical.  Then
+\[
+  [z] \subseteq [Z'] \quad\iff\quad z[i][j] \le b \ \text{ for every } (i,j,b) \in G .
+\]
+\end{lemma}
+
+\begin{proof}
+($\Rightarrow$) For canonical DBMs, $[z] \subseteq [Z']$ is equivalent to
+$z[i][j] \le Z'[i][j]$ entrywise.  Since $Z'$ is the closure of $G$, we have
+$Z'[i][j] \le b$ for each $(i,j,b) \in G$, so $z[i][j] \le b$.
+
+($\Leftarrow$) Fix $i,j$.  $Z'[i][j]$ is the weight of a shortest path
+$i = k_0 \to k_1 \to \cdots \to k_m = j$ using edges of $G$, say with bounds
+$b_1,\dots,b_m$, so $Z'[i][j] = b_1 + \cdots + b_m$ in bound arithmetic.  Since
+$z$ is canonical it satisfies the triangle inequality along that same path:
+$z[i][j] \le z[k_0][k_1] + \cdots + z[k_{m-1}][k_m]$.  By hypothesis each
+$z[k_{t-1}][k_t] \le b_t$, and bound addition is monotone in each argument, so
+$z[i][j] \le b_1 + \cdots + b_m = Z'[i][j]$.  As $i,j$ were arbitrary,
+$z \le Z'$ entrywise, i.e.\ $[z] \subseteq [Z']$.
+\end{proof}
+
+\begin{remark}
+\cref{lem:mingraph} is the correctness statement of UDBM's
+\code{dbm\_isSubsetEqMinDBM}, and we claim no novelty for the test itself; we
+state and prove it because our use of it is what is new.  The test costs
+$O(|G|)$, with $|G| \approx \dim$ in practice, against $O(\dim^3)$ for the
+decompression a dense comparison would need.  It is what allows the entire
+common case of insertion --- including the shared-lock probe of
+\cref{fig:protocol} --- to run without ever materialising a stored zone.
+\end{remark}
+
+\subsection{Correctness of the parallel search}
+
+\begin{theorem}[Soundness, completeness, termination]\label{thm:correct}
+For every interleaving of the workers, \code{reach\_engine} terminates and
+returns \emph{true} iff a state satisfying the target predicate is reachable.
+\end{theorem}
+
+\begin{proof}
+\emph{Soundness.}  Every zone tested against the target is produced by the exact
+zone algebra from a stored zone, starting at the exact initial zone: guard
+conjunction, resets, delay and invariant conjunction are exact operations.  The
+abstraction $\subs$ is used only to \emph{discard} candidates, never to enlarge
+a zone, so no valuation is invented.  When widening is active (either forced,
+or switched on adaptively) it can enlarge zones; \cref{prop:extra-sound} makes
+that harmless provided the query's own clock constants are within $L,U$, which
+the engine enforces by flooring $L$ and $U$ with them before the search starts
+(\code{extend\_bounds}, and the per-state floors $L^q, U^q$).  Hence a returned
+\emph{true} exhibits a genuinely reachable target state.
+
+\emph{Completeness.}  We show by induction on $k$ the invariant
+
+\begin{quote}
+$(\mathrm{I}_k)$: at the barrier ending level $k$, for every symbolic state
+$(\dk, Z)$ reachable in at most $k$ symbolic steps, there is a \emph{live}
+stored node $(\dk, Z^\star)$ with $Z \subs Z^\star$; and every live node has
+either been expanded already or belongs to the frontier of level $k$.
+\end{quote}
+
+$(\mathrm{I}_0)$ holds: the initial state is inserted and is the frontier.
+
+Assume $(\mathrm{I}_k)$ and let $(\dk', W)$ be reachable in $k{+}1$ steps, via a
+predecessor $(\dk, Z)$ reachable in $k$ steps.  By $(\mathrm{I}_k)$ there is a
+live $Z^\star$ with $Z \subs Z^\star$, expanded at some level $\le k{+}1$.
+Because $\subs$ is a simulation for the symbolic successor operator
+(\cref{prop:alu-finite}), expanding $Z^\star$ produces some $(\dk', W^\star)$
+with $W \subs W^\star$, and that successor is offered to \code{add}.  Three
+outcomes:
+\begin{enumerate}[leftmargin=1.6em, itemsep=1pt]
+\item it is dropped by the probe or by step (1)/(2).  Then some live $Y$ has
+      $W^\star \subs Y$ at the moment of the test; by \cref{cor:probe} and
+      \cref{thm:coverage} the covered region only grows, so at the barrier there
+      is still a live $Y'$ with $W^\star \subs Y'$, and transitivity gives
+      $W \subs Y'$.
+\item it is stored and survives to the barrier.  Take $Y' = W^\star$.
+\item it is stored and later retired within the same level.  By
+      \cref{lem:replacement} the retiring insertion stored, at the same $\dk'$
+      and at the same level, a zone subsuming it; iterating (the level performs
+      finitely many insertions) yields a live $Y'$ at the barrier with
+      $W^\star \subs Y'$.
+\end{enumerate}
+In all three cases $W \subs Y'$ for a live $Y'$, which is the first conjunct of
+$(\mathrm{I}_{k+1})$.
+
+For the second conjunct: a node stamped level $k{+}1$ that is live at the
+barrier is visited by \code{for\_level} for its $\dk'$, and $\dk'$ is in some
+worker's \emph{touched} set because an insertion at $\dk'$ succeeded during the
+level; by \cref{lem:bucket} the bucketed union sees every such key.  So it
+enters the frontier of level $k{+}1$ and will be expanded.  A node stamped an
+earlier level was, by $(\mathrm{I}_k)$, already expanded.  Tombstones are never
+revived, so no live node can have skipped its collection.
+
+Finally, if a reachable target state exists, it is reachable in some finite
+number of steps $k$, and $(\mathrm{I}_{k-1})$ guarantees a stored zone
+subsuming its predecessor is expanded; the successor generated from it
+satisfies the target because the target predicate is monotone with respect to
+$\subs$ on the fragment the engine accepts (location and integer conditions are
+determined by $\dk$; clock conditions are floored into $L,U$).  Hence the
+target test fires and \code{found} is set.
+
+\emph{Termination.}  In subsumption mode, \cref{prop:alu-finite} bounds the
+number of pairwise non-subsumed zones per discrete state, and there are finitely
+many discrete states (the packed key is a bijection onto a finite product of
+finite ranges); so the passed set is finite and BFS stops.  In widening mode the
+image of $\extraLU$ is finite (\cref{prop:extra-sound}), giving the same
+conclusion.  The mixed case is \cref{thm:adapt}.
+\end{proof}
+
+\begin{lemma}[Bucketed union]\label{lem:bucket}
+Let $S_1,\dots,S_p$ be the per-worker touched sets and $h$ a function into
+$\{0,\dots,\NB_{\mathrm{buk}}-1\}$.  Deduplicating each bucket
+$\{\, x \in \bigcup_t S_t : h(x) = b \,\}$ independently and concatenating
+yields exactly the set $\bigcup_t S_t$, up to order.
+\end{lemma}
+
+\begin{proof}
+$h$ is a function, so each $x$ lands in exactly one bucket, and that bucket
+receives every copy of $x$ contributed by any worker.  Deduplication within the
+bucket therefore emits $x$ exactly once, and no bucket emits an $x$ it did not
+receive.  The concatenation is a partition of the union into $h$-classes.
+\end{proof}
+
+\begin{remark}
+Order is not part of the specification: the previous serial union already
+produced a schedule-dependent order (a dynamic-schedule loop appending into
+per-thread buffers), and the search's result does not depend on frontier order.
+What the merge \emph{is} sensitive to is order, which is why the verdict, not
+the stored set, is the invariant --- see \cref{thm:determinism}.
+\end{remark}
+
+\begin{theorem}[Verdict determinism, state-count nondeterminism]
+\label{thm:determinism}
+The verdict is independent of the thread schedule.  The set of stored symbolic
+states, and hence the reported state count, is not.
+\end{theorem}
+
+\begin{proof}
+The first claim is immediate from \cref{thm:correct}: for every interleaving the
+returned value equals ``a target state is reachable'', a property of the model
+and query alone.
+
+For the second, it suffices to observe that step (4) of \code{add} is
+order-sensitive: whether $Z_1$ and $Z_2$ can be absorbed into the running hull
+depends on the order in which they are offered, and that order depends on which
+worker reached the stripe first.  Two schedules can therefore terminate with
+different --- both valid --- antichains.  At one thread the engine takes the
+\code{single} path, which skips the locks and the bucketed union entirely and
+reproduces the sequential insertion order exactly, so single-threaded runs are
+reproducible bit-for-bit.
+\end{proof}
+
+\begin{remark}[why this must be said out loud]
+Reviewers and users will run the tool twice at $32$ threads and see two
+different ``states explored'' numbers.  That is expected and benign, and the
+tool should say so.  What must \emph{not} vary is the verdict, and
+\cref{thm:correct} is exactly the statement that it does not.
+\end{remark}
+
+\subsection{The adaptive abstraction switch}
+
+The engine starts in subsumption mode (exact zones, $\subs$ pruning) and
+monitors the ratio of live zones to distinct discrete states at each level
+boundary.  A ratio near $1$ means subsumption plus merging is collapsing the
+antichains and widening would only cost precision; a ratio that climbs means the
+antichains are filling with mutually incomparable zones, which pruning cannot
+remove and widening can.  Above a threshold (default $4$) the engine switches to
+$\extraLU$ for all \emph{subsequently generated} zones and never switches back.
+The passed set is then mixed: exact zones stored before the switch, widened
+zones after.
+
+\begin{theorem}[Soundness and termination of the mixed mode]\label{thm:adapt}
+Switching on $\extraLU$ at a level boundary, one-way, preserves
+\cref{thm:correct}.
+\end{theorem}
+
+\begin{proof}
+\emph{Soundness.}  After the switch, target tests are applied to widened zones.
+Since $L$ and $U$ are floored by the query's clock constants before the search
+begins, \cref{prop:extra-sound} gives that $\extraLU(Z)$ satisfies the target's
+clock condition iff $Z$ does; the location and integer parts of the target are
+functions of $\dk$, which widening does not touch.  So no false positive is
+introduced.
+
+\emph{Completeness.}  Two mixed situations arise.  (a) A stored \emph{exact}
+zone fails to subsume an incoming \emph{widened} zone.  Then the widened zone is
+stored as well: the only consequence is an extra stored state, and the
+invariant $(\mathrm{I}_k)$ of \cref{thm:correct} is preserved a fortiori.  (b) A
+stored \emph{widened} zone $W$ subsumes an incoming zone $Z$, so $Z$ is dropped.
+This is sound because $\subs$ is a simulation as a relation between \emph{sets
+of valuations} (\cref{prop:alu-finite}); the property does not refer to how $W$
+was obtained.  Also $Z \subseteq \extraLU(Z)$, so widening a successor can only
+help it be subsumed, never cause a needed state to be missed.
+
+\emph{Termination.}  The switch occurs at a level boundary, hence after finitely
+many levels.  Each level stores finitely many nodes (level $0$ is a singleton
+and every symbolic state has finitely many successors), so the set $S_0$ of
+zones stored before the switch is finite.  After the switch, every newly stored
+zone lies in the image of $\extraLU$, which is finite
+(\cref{prop:extra-sound}), and there are finitely many discrete states; so at
+most finitely many further zones can be stored.  The total stored set is
+therefore contained in $S_0 \cup (\text{finite})$, and BFS terminates.  The
+one-way nature of the switch is essential: a mode that could switch back
+arbitrarily often would not admit this argument.
+\end{proof}
+
+\begin{remark}
+The adaptive switch is not a tuning heuristic bolted onto a fixed algorithm; it
+is a decision between the two \emph{different} finiteness mechanisms of
+\cref{sec:bg-finite}, taken from a signal the engine already computes for free.
+Measured effect: on \code{single}, widening takes the stored count from $3873$
+to $3676$ (\uppaal{} stores $3673$); on \code{phil} and \code{viking}, where the
+ratio stays at $1.11$ and $1.00$, it changes no state count and would have cost
+$20$--$35\%$ in time, so it correctly never fires.
+\end{remark}
+
+\subsection{Reclamation: amortisation and a soundness obligation}
+
+\begin{proposition}[Amortised GC]\label{prop:gc}
+Let the interner sweep whenever its allocated-record count reaches
+$\mathit{target}$, and afterwards set $\mathit{target} := 2 \cdot
+\mathit{live}$, where $\mathit{live}$ is the surviving count.  Then the total
+sweep work over a run is $O(1)$ amortised per interned zone, and the allocated
+count never exceeds twice the live count measured at the previous sweep.
+\end{proposition}
+
+\begin{proof}
+A sweep costs $\Theta(a)$ where $a$ is the allocated count at the trigger, since
+it walks the arena nodes and the hash slots once.  Between the sweep that set
+the target to $2\ell$ and the next trigger at $a = 2\ell$, at least $\ell$ fresh
+records were allocated (the count was $\ell$ immediately after the sweep).  So
+the $\Theta(2\ell)$ cost is charged against $\ell$ allocations, i.e.\ $O(1)$
+each.  The memory bound is the trigger condition itself.
+\end{proof}
+
+\begin{remark}
+The predecessor of this trigger was $\mathit{allocated} > 50\,000$.  Because
+the allocation counter is a high-water mark that never shrinks, that predicate
+latched true at the first large level and then ran a full mark-and-sweep on
+\emph{every} subsequent level.  Both halves of the sweep are serial and grow
+with the state space while the expansion phase does not, so on
+\code{arbiter17} it was $2.8$\,s of a $9.3$\,s run ($30\%$) and was what capped
+the $12$-thread speedup at $\approx 5\times$.  The lesson generalises: in a
+level-synchronous parallel search, any maintenance task whose cost grows with
+the state space must be given an amortised trigger, or Amdahl's law will find
+it.
+\end{remark}
+
+\begin{proposition}[Cache invalidation is a soundness obligation]
+\label{prop:gc-cache}
+Suppose the interner recycles freed record slots and freed indices in place
+(rather than renumbering), and suppose each worker keeps a
+$\mathit{hash} \mapsto \mathit{index}$ cache whose hits are validated by
+comparing record bytes.  Then clearing every worker cache during the sweep is
+\emph{necessary and sufficient} for the interner to remain sound.
+\end{proposition}
+
+\begin{proof}
+\emph{Necessity.}  Sweeping does not erase a freed record; it pushes the memory
+onto a free list.  A freed record therefore still compares byte-equal to the
+zone it used to hold, so a stale cache line for that zone passes validation and
+returns an index that is on the free list.  The caller stores that index in a
+passed-set node.  The next interning that pops the same index writes a different
+record into it, and the node now denotes a \emph{different} zone: the state
+keeps its discrete key and acquires an unrelated zone, so the search explores
+states the model cannot reach.  (This is not hypothetical; it was observed on
+\code{fischer6} and larger, where it turned a satisfied mutual-exclusion
+property into a spurious counterexample.)  Byte equality cannot distinguish the
+two cases, so no cheaper validation suffices.
+
+\emph{Sufficiency.}  After clearing, no cache line can return a pre-sweep index,
+so every interning goes to its shard under the shard lock and consults the
+rebuilt hash table, which by construction contains exactly the survivors.
+Indices already held by passed-set nodes and by the frontier remain valid,
+because the mark phase marks every index reachable from a live arena node or
+from the next frontier, and only unmarked indices are freed.  The sweep runs
+between levels with all workers joined, so there is no other holder of an index
+at that moment.
+\end{proof}
+
+\begin{proposition}[Shard and slot indices must be independent]\label{prop:shard}
+Let a hash table of $m$ slots be split into $2^b$ shards, let the shard be
+selected by the low $b$ bits of the hash, and let each shard's slot index also
+be taken from the low bits.  Then every key routed to shard $s$ has the same
+residue modulo $2^b$, so at most $m/2^b$ of the shard's slots can be a home
+position, and the expected probe length at load factor $\alpha$ degrades from
+$\Theta\big(1/(1-\alpha)\big)$ to $\Theta(2^b \alpha)$.
+\end{proposition}
+
+\begin{proof}
+Write $h$ for the hash.  The shard is $h \bmod 2^b$ and the home slot is
+$h \bmod m$ with $2^b \mid m$.  Then
+$(h \bmod m) \bmod 2^b = h \bmod 2^b = s$ is constant across the shard, so home
+slots are confined to the arithmetic progression $\{\,s, s+2^b, s+2\cdot 2^b,
+\dots\,\}$, of size $m/2^b$.  With $\alpha m$ entries in the shard, the expected
+number occupying a given home slot's probe run is $\Theta(\alpha m / (m/2^b)) =
+\Theta(2^b\alpha)$.
+\end{proof}
+
+\begin{remark}
+This is elementary once stated, and it cost a full sharding rewrite to
+discover: on \code{arbiter16} the sharded table did $31.2$ probes per locked
+lookup where the unsharded one did $1.68$, and each probe chases a chunk pointer
+and byte-compares a record.  The fix is to mix the hash and take the \emph{high}
+bits for the shard, making the two indices independent.
+\end{remark}

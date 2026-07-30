@@ -1,0 +1,100 @@
+% ---------------------------------------------------------------------------
+%  05-storage.tex -- the storage layer: why it is a parallelism story
+% ---------------------------------------------------------------------------
+\section{Storage: memory bandwidth is a shared resource}
+\label{sec:storage}
+
+It is tempting to treat compression as an orthogonal memory optimisation.  It
+is not, and this is one of the framing points worth making explicitly in a
+paper: on a many-core machine the last-level cache and the memory controller
+are \emph{shared}, so the resident size of the passed set is a parallelism
+parameter.  A search whose working set spills to DRAM does not scale, however
+perfect its locking is, because every worker is then queued behind the same
+memory bus.
+
+Three mechanisms shrink the resident set.
+
+\subsection{Zones stored as minimal graphs}
+
+\FigMingraph
+
+A canonical DBM is a shortest-path closure, so most of its entries are implied
+by the others.  The \emph{minimal graph} keeps only the non-redundant
+constraints, with $16$-bit bounds when they fit: for a $21$-clock zone that is
+$\approx 144$ bytes instead of $1764$, roughly $12\times$.  The codec
+(\file{HDBM/include/ptctlmc/mindbm.hpp}) is a port of \uppaal{}'s UDBM
+\code{mingraph}, re-expressed in \tool{}'s raw bound encoding and written as
+\code{\_\_host\_\_ \_\_device\_\_} functions so the GPU backends compile the same
+codec the CPU unit tests validate.
+
+The contract is exact round-tripping:
+$\text{dense (closed)} \to \text{packed} \to \text{dense (closed)}$ reproduces
+the canonical matrix bit-for-bit, because unpacking plants the saved
+constraints into an all-infinity matrix and re-runs the closure.  A debug mode
+(\code{PTCTLMC\_CHECKINTERN}) asserts this on every intern.
+
+The parallel-relevant part is not the byte count but \cref{lem:mingraph}: the
+inclusion test can be decided \emph{on the compressed form} in $O(|G|)$.
+Without it, answering ``is this successor already covered?'' requires an
+$O(\dim^3)$ decompression of the stored zone --- which, in the two-phase
+protocol, would be done while holding a lock.  On \code{arbiter17},
+decompression was $36.3$\,s of work feeding $1.6$\,s of comparisons.
+
+\subsection{Zone interning}
+
+\FigIntern
+
+Distinct zones are stored once and referenced by a $4$-byte index.  On
+discrete-heavy symmetric models the sharing is extreme: \code{viking15} reaches
+$2.77$\,M states drawn from about $120$ distinct zones, so the resident zone set
+collapses from $\sim1.5$\,GB to a few kilobytes --- L2-resident.  On models
+where nearly every zone differs (\code{fischer}, \code{arbiter}) interning costs
+one hash per successor and loses nothing, because the copy had to be written
+anyway.
+
+The interner is sharded into $64$ independently locked partitions, and the
+history of \emph{why} is instructive.  Interning sits on the per-successor hot
+path, and the per-thread cache cannot absorb it: a symbolic run interns each
+distinct zone exactly \emph{once}, so on \code{arbiter16} there were $589\,824$
+distinct zones and a single cache hit in $589\,825$ calls --- essentially $100\%$
+of calls reached the lock.  Hold time was tiny ($\sim0.2$ CPU-s) but the
+\emph{acquisition rate} was not: threads waited about $20\times$ longer than the
+lock was ever held, and the wait grew with thread count ($0.5 / 2.5 / 4.5$
+CPU-s at $4/8/12$ threads), capping speedup at $\approx 5.5\times$.
+
+Sharding fixed it, but only after one subtlety was resolved, which
+\cref{prop:shard} formalises: the shard selector must not reuse the low hash
+bits that also index a shard's hash table.  If it does, every key routed to
+shard $s$ has the same low bits, so only $1/64$ of that shard's slots can ever
+be a home position and the rest are reachable only by linear probing.  Measured
+on \code{arbiter16}: $31.2$ probes per locked lookup versus $1.68$ unsharded ---
+the sharding win, entirely eaten by probe chains.  Mixing and taking the
+\emph{high} bits makes the two indices independent.
+
+Above the shards sits a small per-thread direct-mapped cache
+($2^{15}$ lines, $\approx 0.5$\,MB), which turns repeated interns into
+lock-free hits.  A hit is verified by comparing the record \emph{bytes}, so a
+$64$-bit hash collision cannot return a wrong index.  That verification is also
+exactly why the cache must be dropped on GC ---
+see \cref{prop:gc-cache}, which is a soundness obligation, not an optimisation.
+
+\subsection{The frontier is not a list of states}
+
+The frontier holds $(\dk, \mathit{zidx})$ pairs: $12$ bytes.  The location
+vector and integer variables are decoded from $\dk$ on demand (the packing is a
+lossless bijection), and the zone is decompressed from the interner into a
+reused per-thread scratch at expansion time.  Storing full symbolic states
+instead cost $\sim1.6$\,GB of zone copies on large \code{viking} and made the
+frontier itself cache-hostile during the phase where all workers stream through
+it.
+
+\subsection{Active-clock reset}
+
+Clocks that no process will read before resetting, and that the query does not
+mention, are reset (\code{reset\_inactive}).  This collapses zones that differ
+only in dead clocks, soundly --- it is the classical active-clock reduction of
+Daws and Yovine \cite{DawsYovine96}.  The implementation is a bitmask fold: the
+active set of a location vector is the OR of the per-location masks, so it costs
+a handful of OR instructions plus a popcount loop instead of an
+$\text{procs} \times \text{clocks}$ byte scan and a heap allocation --- on
+\code{phil13} that ran $23$\,M times.

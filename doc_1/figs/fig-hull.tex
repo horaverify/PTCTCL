@@ -1,0 +1,55 @@
+% -------------------------------------------------------------------------
+%  fig-hull.tex  --  geometry of the convex-union test
+% -------------------------------------------------------------------------
+\newcommand{\FigHull}{%
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[x=6.2mm,y=6.2mm]
+
+% ---------- panel (a): union is convex ----------
+\begin{scope}
+  \draw[->, black!55, line width=0.4pt] (-0.3,0) -- (5.6,0) node[lbl, below]{$x$};
+  \draw[->, black!55, line width=0.4pt] (0,-0.3) -- (0,4.2) node[lbl, left]{$y$};
+  \fill[black!14] (0.5,0.5) rectangle (2.5,3.0);
+  \fill[black!14] (2.5,0.5) rectangle (4.5,3.0);
+  \draw[black, line width=0.6pt] (0.5,0.5) rectangle (2.5,3.0);
+  \draw[black, line width=0.6pt] (2.5,0.5) rectangle (4.5,3.0);
+  \draw[black, line width=1.0pt] (0.5,0.5) rectangle (4.5,3.0);
+  \node[lbl] at (1.5,1.75) {$A$};
+  \node[lbl] at (3.5,1.75) {$B$};
+  \node[lblit, anchor=north, text width=40mm] at (2.5,-0.9)
+    {(a) every crossing slab lands inside the\\other zone: merge \textbf{accepted}};
+\end{scope}
+
+% ---------- panel (b): union is not convex ----------
+\begin{scope}[xshift=48mm]
+  \draw[->, black!55, line width=0.4pt] (-0.3,0) -- (5.6,0) node[lbl, below]{$x$};
+  \draw[->, black!55, line width=0.4pt] (0,-0.3) -- (0,4.2) node[lbl, left]{$y$};
+  \fill[black!14] (0.5,0.5) rectangle (2.3,3.0);
+  \fill[black!14] (2.3,1.6) rectangle (4.5,3.0);
+  \draw[black, line width=0.6pt] (0.5,0.5) rectangle (2.3,3.0);
+  \draw[black, line width=0.6pt] (2.3,1.6) rectangle (4.5,3.0);
+  \draw[black, line width=1.0pt, dash pattern=on 2pt off 1.5pt]
+    (0.5,0.5) rectangle (4.5,3.0);
+  % the escaping crossing region
+  \fill[hatch] (2.3,0.5) rectangle (4.5,1.6);
+  \draw[black!70, line width=0.4pt] (2.3,0.5) rectangle (4.5,1.6);
+  \node[lbl] at (1.4,1.75) {$A$};
+  \node[lbl] at (3.4,2.3) {$B$};
+  \node[lbl, anchor=west] at (5.0,1.05) {$R$};
+  \node[lblit, anchor=north, text width=40mm] at (2.5,-0.9)
+    {(b) the slab $R$ escapes both zones:\\merge \textbf{rejected}, both kept};
+\end{scope}
+
+\end{tikzpicture}
+\caption{The convex-union test, in two clocks.  The hull $A \sqcup B$ is the
+entrywise-loosest DBM.  For every facet of $A$ that is \emph{strictly} inside
+the hull, the algorithm computes the slab $R$ of the hull lying on the far side
+of that facet, and demands $R \subseteq B$ (and symmetrically).  In (a) every
+such slab is inside the other zone and the hull is exactly the union, so the
+two zones collapse into one with no loss.  In (b) the slab $R$ contains points
+in neither $A$ nor $B$, so the hull would add unreachable valuations and the
+merge is refused.  \cref{thm:hull} shows the test is not a heuristic: it
+accepts \emph{exactly} the pairs whose union is convex.}
+\label{fig:hull}
+\end{figure}}
