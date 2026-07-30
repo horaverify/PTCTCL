@@ -1783,7 +1783,7 @@ static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
           --cur; merged = true; break;
         }
     }
-    std::memcpy(W + static_cast<std::size_t>(cur)*d2, zn, d2*sizeof(raw_t)); WI[cur] = 1; ++cur;
+    std::memcpy(W + static_cast<std::size_t>(cur)*d2, zn, d2*sizeof(raw_t)); WI[cur] = -1; ++cur;
   }
   return cur;
 }
@@ -2131,7 +2131,18 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     } bidx;
     std::size_t prev_nb = 1024;
     double fanout = 8.0;   // measured successors per frontier state, for the batch-size estimate
+    // The target's required LOCATIONS are a fixed bit pattern inside the packed discrete key.
+    std::uint64_t tgt_mask = 0, tgt_val = 0;
+    for (const auto& lr : target.loc_req) {
+      tgt_mask |= dmask[lr.first] << dshift[lr.first];
+      tgt_val  |= static_cast<std::uint64_t>(static_cast<unsigned>(lr.second)) << dshift[lr.first];
+    }
 
+    {   // let the expand kernel pack the discrete key itself (see net_gpu.hpp)
+      std::vector<int> ilo(net.intvars.size());
+      for (std::size_t v = 0; v < net.intvars.size(); ++v) ilo[v] = static_cast<int>(net.intvars[v].lo);
+      gpu->set_key_layout(dshift, ilo);
+    }
     const auto _wall0 = _now();
     const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
     // --chunking: expand the level in bounded BATCHES so the GPU pools are sized to a batch
@@ -2221,6 +2232,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       const bool whole = (nfr == total);
       if (stats) stats->explored += nfr;
       const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const raw_t* oz = nullptr;
+      const std::uint64_t* odk = nullptr;   // device-packed discrete keys (null => pack host-side)
       const auto _te = _now();
       std::size_t nwork;
       if (hybrid) {
@@ -2309,12 +2321,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (nfr) hyb_ratio = std::max<std::size_t>(4, 2 * (nwork / nfr + 1));
         ev = sv; ol = sl; oi = si2; oz = sz;
       } else if (whole) {
-        nwork = gpu->expand(nfr, fl, fi, fz, ev, ol, oi, oz);   // no copy in the default path
+        nwork = gpu->expand(nfr, fl, fi, fz, ev, ol, oi, oz, odk);   // no copy in the default path
       } else {
         cfl.assign(fl.begin(), fl.begin() + static_cast<std::size_t>(nfr) * np);
         cfi.assign(fi.begin(), fi.begin() + static_cast<std::size_t>(nfr) * niw);
         cfz.assign(fz.begin(), fz.begin() + static_cast<std::size_t>(nfr) * d2);
-        nwork = gpu->expand(nfr, cfl, cfi, cfz, ev, ol, oi, oz);
+        nwork = gpu->expand(nfr, cfl, cfi, cfz, ev, ol, oi, oz, odk);
       }
       if (mtlprof) {
         const double _dte = _ms(_te, _now());
@@ -2361,19 +2373,36 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (!ev[w]) continue;
         if (mtlprof) ++tot_valid;
         if (stats) ++stats->generated;
-        const int* wl = ol + w * np;
-        const int* wi = oi + w * ni;
-        bool tgt = true;
-        for (const auto& lr : target.loc_req) if (wl[lr.first] != lr.second) { tgt = false; break; }
-        if (tgt && !int_ok_flat(target.int_cond, wi)) tgt = false;
-        if (tgt) {
-          Dbm td(net.nclocks);
-          std::copy(oz + w * d2, oz + w * d2 + d2, td.data().begin());
-          if (apply_all(td, target.clock_cond)) return true;
+        std::uint64_t dk;
+        if (odk) {
+          dk = odk[w];
+        } else {                                          // backend without device-side packing
+          const int* wl = ol + w * np;
+          const int* wi = oi + w * ni;
+          dk = 0;
+          for (int p = 0; p < np; ++p) dk |= static_cast<std::uint64_t>(static_cast<unsigned>(wl[p])) << dshift[p];
+          for (int v = 0; v < ni; ++v) dk |= static_cast<std::uint64_t>(wi[v] - net.intvars[v].lo) << dshift[np + v];
         }
-        std::uint64_t dk = 0;
-        for (int p = 0; p < np; ++p) dk |= static_cast<std::uint64_t>(static_cast<unsigned>(wl[p])) << dshift[p];
-        for (int v = 0; v < ni; ++v) dk |= static_cast<std::uint64_t>(wi[v] - net.intvars[v].lo) << dshift[np + v];
+        // Target test straight off the key: the required locations are a fixed bit pattern in it,
+        // so the common (non-target) case is two integer ops instead of a walk over nprocs
+        // locations. Only a key that already matches pays for decoding the integers.
+        if ((dk & tgt_mask) == tgt_val) {
+          int dl2[64]; long di2[32];
+          decode_key(dk, dl2, di2);
+          bool tgt = true;
+          for (const auto& a : target.int_cond) {
+            const long x = di2[a.var]; bool r;
+            switch (a.op) { case IntOp::Eq: r = x==a.val; break; case IntOp::Ne: r = x!=a.val; break;
+              case IntOp::Lt: r = x<a.val; break; case IntOp::Le: r = x<=a.val; break;
+              case IntOp::Gt: r = x>a.val; break; default: r = x>=a.val; }
+            if (!r) { tgt = false; break; }
+          }
+          if (tgt) {
+            Dbm td(net.nclocks);
+            std::copy(oz + w * d2, oz + w * d2 + d2, td.data().begin());
+            if (apply_all(td, target.clock_cond)) return true;
+          }
+        }
         const int bi = bidx.find_or_add(dk, static_cast<int>(bdk.size()));
         if (bi == static_cast<int>(bdk.size())) { bdk.push_back(dk); bcnt.push_back(0); }
         w_bucket[w] = bi; ++bcnt[bi];
@@ -2430,11 +2459,14 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
               std::memcpy(dst + static_cast<std::size_t>(i) * d2, zi.get(pit->second[i] & ~kNewBit),
                           static_cast<std::size_t>(d2) * sizeof(raw_t));
           }
-          // Carry the "added during THIS level" flag of each already-stored zone into the merge's
-          // isnew array, so a zone that an earlier batch of this level added and this batch keeps
-          // is still reported as a survivor. Without it, batching would lose frontier states.
+          // Seed each already-stored zone's TAG with its passed-set index (kNewBit included). The
+          // merge carries a kept zone's tag through its compaction and writes -1 for the zones it
+          // creates, so the rebuild can tell "this output slot IS stored zone j" from "this output
+          // slot is new" -- and a kept zone then needs no copy and no re-intern at all. The flag
+          // also has to survive because a zone an EARLIER batch of this level added is still a
+          // frontier state; without carrying it, batching would silently lose frontier states.
           int* wi = work_isnew + work_off[b];
-          for (int i = 0; i < exist_cnt[b]; ++i) wi[i] = (pit->second[i] & kNewBit) ? 1 : 0;
+          for (int i = 0; i < exist_cnt[b]; ++i) wi[i] = pit->second[i];
         }
         int dl[64]; long di[32];
         std::vector<std::int32_t> L2, U2;
@@ -2463,13 +2495,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       const auto _tm = _now();
       if (cpu_merge) {
         host_count.clear();
-        host_isnew_v.assign(wtot, 0);          // appended new zones -> 1
-        // ...but an existing zone THIS LEVEL added (earlier batch) is still new: see the gather.
-        for (int b = 0; b < nb; ++b) {
+        host_isnew_v.assign(wtot, -1);         // zones this merge creates keep the -1 sentinel
+        for (int b = 0; b < nb; ++b) {         // existing zones carry their passed index (see gather)
           auto pit = passed.find(bdk[b]);
           if (pit == passed.end()) continue;
           for (int i = 0; i < exist_cnt[b]; ++i)
-            host_isnew_v[static_cast<std::size_t>(work_off[b]) + i] = (pit->second[i] & kNewBit) ? 1 : 0;
+            host_isnew_v[static_cast<std::size_t>(work_off[b]) + i] = pit->second[i];
         }
         host_count.assign(nb, 0);
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -2512,7 +2543,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       std::size_t frtot = 0;
       for (int b = 0; b < nb; ++b) {
         int c = 0;
-        for (int i = 0; i < out_count[b]; ++i) if (out_isnew[static_cast<std::size_t>(out_work_off[b]) + i]) ++c;
+        for (int i = 0; i < out_count[b]; ++i) {
+          const int tag = out_isnew[static_cast<std::size_t>(out_work_off[b]) + i];
+          if (tag < 0 || (tag & kNewBit)) ++c;
+        }
         fr_cnt[b] = c; fr_off[b] = static_cast<int>(frtot); frtot += c;
       }
       if (memprof && frtot > peak_front) peak_front = frtot;
@@ -2529,9 +2563,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         int dl[64]; long di[32];
         decode_key(bdk[b], dl, di);
         auto& pz = *pzp[b];
-        // The whole antichain is about to be re-interned, so this bucket's current slots become
-        // garbage: hand them back before allocating the replacements (see GpuZoneIntern::release).
-        for (int old : pz) zi.release(old & ~kNewBit);
+        int oldv[64]; int nold = 0;                        // this bucket's slots before the merge
+        for (int idx : pz) { if (nold < 64) oldv[nold++] = idx & ~kNewBit; }
         pz.resize(static_cast<std::size_t>(out_count[b]));
         const std::size_t poolbase = static_cast<std::size_t>(out_work_off[b]) * d2;
         const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
@@ -2540,6 +2573,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         const int _tid = ompt();
         for (int i = 0; i < out_count[b]; ++i) {
           const std::size_t slot = static_cast<std::size_t>(out_work_off[b]) + i;
+          const int tag = out_isnew[slot];
+          if (tag >= 0) { pz[i] = tag; continue; }   // kept: already stored, already interned
           raw_t* pzi = tmp.data();
           const auto _r0 = rbnow(rbprof);
           if (soa)   // transpose SoA pool -> AoS zone: entry k at poolbase + k*cap + i
@@ -2553,9 +2588,16 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           // into a convex union, and emitting it now would put a state in the frontier that the
           // level's own merge went on to delete. That is what made batching cost fischer12 2.5x
           // its state count.
-          pz[i] = zi.intern(pzi) | (out_isnew[slot] ? kNewBit : 0);
+          pz[i] = zi.intern(pzi) | kNewBit;
           const auto _r2 = rbnow(rbprof);
           if (rbprof) { rb_copy[_tid] += _r1 - _r0; rb_intern[_tid] += _r2 - _r1; }
+        }
+        // Slots the merge dropped (subsumed, or absorbed into a convex union) are garbage now.
+        // Antichains are small, so a linear membership test beats any bookkeeping.
+        for (int t = 0; t < nold; ++t) {
+          bool reused = false;
+          for (int i = 0; i < out_count[b] && !reused; ++i) reused = (pz[i] & ~kNewBit) == oldv[t];
+          if (!reused) zi.release(oldv[t]);
         }
         (void)dl; (void)di; (void)fpos;
       }
