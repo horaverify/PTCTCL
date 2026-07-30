@@ -12,20 +12,37 @@ memory. `verifyta` is UPPAAL 5.0.0, single-threaded. `omp` is the 12-thread CPU 
 
 ## The headline
 
-| model | `verifyta` | `omp` | `metal` before | `metal` after | `metal --symmetry` |
-|---|---:|---:|---:|---:|---:|
-| fischer12 | 48.92 | 18.71 | 8.80 | 5.86 | **0.29** |
-| twolock12 | 50.14 | 19.00 | 8.53 | 5.73 | **0.28** |
-| arbiter17 | 13.15 | 6.50 | 3.85 | 2.28 | **0.16** |
-| csma14 | 9.62 | 3.63 | 2.03 | 1.36 | **0.14** |
-| phil12 | 10.73 | 1.88 | 2.63 | 1.38 | **0.17** |
+Wall-clock seconds, min of 3, and peak RSS in GB. `metal-before` is the starting point of
+this pass; every other column is the current tree.
 
-Wall-clock seconds, min of 2. Peak RSS on fischer12 went 11.1 GB → 8.7 GB → **0.39 GB**.
+| model | `verifyta` | `omp` | `metal` before | `metal` | `omp --sym` | `metal --sym` |
+|---|---:|---:|---:|---:|---:|---:|
+| fischer12 | 46.76 | 20.23 | 8.80 | **6.53** / 4.6 | 0.70 | **0.33** / 0.36 |
+| twolock12 | 50.62 | 20.03 | 8.53 | **6.67** / 4.9 | 0.68 | **0.33** / 0.36 |
+| arbiter17 | 12.13 | 6.65 | 3.85 | **2.40** / 3.5 | 0.12 | 0.16 / 0.15 |
+| csma14 | 9.30 | 3.81 | 2.03 | **1.30** / 1.8 | 0.11 | 0.14 / 0.08 |
+| phil12 | 10.34 | 1.98 | 2.63 | **1.46** / 1.6 | 0.22 | **0.20** / 0.15 |
 
-Two independent things are happening. The middle columns are engineering: the same state
-space explored 1.5–1.7× faster. The last column is an *algorithmic* reduction — symmetry
-reduction explores one representative per automorphism orbit, and it now composes with the
-GPU instead of disabling it.
+Without symmetry, `metal` now beats *both* `verifyta` and the 12-core `omp` backend on
+every model, and peak RSS on fischer12 went 11.1 GB → 4.6 GB. With symmetry the standard
+sizes become trivial (13 k–170 k states), so GPU dispatch overhead shows on the two
+smallest; at sizes where there is work to do the GPU wins there too:
+
+| model | `omp --sym` | `metal --sym` |
+|---|---:|---:|
+| arbiter24 | 18.97 | **9.38** |
+| csma20 | 8.46 | **4.39** |
+| fischer16 | 79.03 | **28.32** |
+| phil14 | 3.91 | **3.05** |
+| phil15 | **27.65** | 57.54 |
+
+`verifyta` does not finish fischer16 inside 400 s. **phil15 is the one place the GPU
+still loses** — see "What is still open".
+
+Two independent things are happening. The `metal` column is engineering: the same state
+space explored 1.5–1.7× faster and in a third of the memory. The symmetry columns are an
+*algorithmic* reduction — explore one representative per automorphism orbit — which now
+composes with the GPU instead of disabling it.
 
 ---
 
@@ -250,7 +267,42 @@ change that was not deliberately a node-count reduction.
 
 ---
 
+## Part 5 — two bugs the measurements exposed
+
+Neither is a tuning question; both made the GPU look worse than it is.
+
+**The CPU fallback ran single-threaded.** `parallel` was `backend == Backend::Omp`, decided
+before the GPU factory ran, so a GPU backend that fell back to the CPU path — out-of-scope
+model, no device — used one core. arbiter24 took **93 s** that way against `omp`'s 20 s. It
+reads as "the GPU lost"; it was "the fallback used one core". With the decision moved after
+the factory (and the next item fixed) arbiter24 is **9.4 s**.
+
+**The GPU refused any network with more than 23 clocks.** That bound dates from when every
+private array in the shader was sized to the 24-clock worst case. Since the shader is now
+compiled per network with `-DPT_DIM`, it is only an eligibility test — and it was silently
+dropping arbiter24 and up onto the (then single-threaded) CPU path.
+
+---
+
 ## What is still open
+
+- **Philosophers at N ≥ 15: one bucket is the whole critical path.** At phil15 a level of
+  24 910 discrete states contains one holding an antichain of **5361 zones**. The merge is
+  parallel *across* buckets, so that bucket's O(k²) subsumption runs on a single thread while
+  eleven cores idle: 175 s of CPU time inside a 55 s wall, 3.2× of a possible 12. The merge is
+  92% of the run.
+
+  Two things were tried and are recorded as negative results. Routing it to the GPU's
+  SIMD-group-per-bucket merge (`--naive`) is *worse* — it did not finish in 9 minutes. And a
+  CPU merge that parallelises *within* a big bucket regressed badly at every granularity tried:
+  a parallel region per new zone spent 595 s of **system** time inside a 273 s wall on team
+  setup and barriers, and hoisting to one team per bucket (`omp single` for the serial
+  compaction and convex-union steps, `omp for` for the two scans) did not converge either. The
+  scans are only O(dim²) per element, so they are too fine-grained for a barrier per new zone.
+
+  The shape that should work is a *persistent* team with its own lightweight synchronisation,
+  or restructuring the merge so a whole batch of new zones is tested against the antichain at
+  once — one barrier per batch instead of per zone. Not attempted.
 
 - **16-bit bounds.** Every zone is `dim²` int32. At fischer16 the passed set alone is
   4.95 M zones × 289 entries × 4 B = 5.7 GB, against the CPU backend's ~0.63 GB — the CPU
