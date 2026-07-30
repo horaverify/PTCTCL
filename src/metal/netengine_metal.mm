@@ -41,7 +41,7 @@ constexpr int kMaxDim = 24;  // <=23 clocks (matches CUDA / single-TA engine)
   do { if (!(cond)) throw std::runtime_error(std::string("Metal(net): ") + (msg)); } while (0)
 
 struct NetParams {
-  std::int32_t dim, nprocs, nintvars, nclocks, nwork;
+  std::int32_t dim, nprocs, nintvars, nclocks, nwork, qbits;
 };
 
 // Engine-internal phase timers (PTCTLMC_MTLPROF). The driver's `t_expand` covers the WHOLE
@@ -73,8 +73,28 @@ static NSString* const kNetSource = @R"MSL(
 #include <metal_stdlib>
 using namespace metal;
 
-#define MAXDIM 24
-#define MAXPROC 64
+// SPECIALIZED AT PIPELINE BUILD. The host compiles this source once per network with
+// -DPT_DIM/-DPT_NP/-DPT_NI/-DPT_NC set to that network's real sizes, so every private array is
+// exactly as big as the model needs instead of the 24-clock worst case. It matters a lot: a
+// thread's zone was `int z[24*24]` = 2304 B whatever the model, and net_merge held FOUR such
+// arrays (zn, zw, plus try_union's H and R) = 9 KB of thread-local DEVICE memory per lane.
+// fischer11 (dim 12) needs 576 B, a 4x cut in the spill footprint, and every loop bound becomes
+// a compile-time constant so the index arithmetic strength-reduces and the small loops unroll.
+// The fallbacks keep the source standalone-compilable (e.g. for a Metal debugger session).
+#ifndef PT_DIM
+#define PT_DIM 24
+#endif
+#ifndef PT_NP
+#define PT_NP 64
+#endif
+#ifndef PT_NI
+#define PT_NI 32
+#endif
+#ifndef PT_NC
+#define PT_NC (PT_DIM - 1)
+#endif
+#define MAXDIM PT_DIM
+#define MAXPROC PT_NP
 #define MAXINT 32
 constant int kInf = 1 << 30;
 constant int kZeroLe = 1;
@@ -99,7 +119,12 @@ inline void d_reset(thread int* d, int dim, int k) {
   d[k*dim+k] = kZeroLe;
 }
 inline bool d_constrain(thread int* d, int dim, int a, int b, int bound) {
-  if (bound >= d[a*dim+b]) return !d_empty(d, dim);
+  // NO-OP FAST PATH. If the bound does not tighten anything the zone is bit-for-bit unchanged,
+  // so it is still non-empty -- every caller in the successor pipeline holds a non-empty zone
+  // (the frontier zone is non-empty, and every step that could empty it returns false and
+  // aborts). Scanning the diagonal here cost O(dim) device-memory reads for nothing, on the
+  // MOST COMMON outcome: most guards and invariants are already implied by the incoming zone.
+  if (bound >= d[a*dim+b]) return true;
   d[a*dim+b] = bound;
   for (int i = 0; i < dim; ++i) { int via = r_add(d[i*dim+a], bound); if (via < d[i*dim+b]) d[i*dim+b] = via; }
   for (int i = 0; i < dim; ++i) {
@@ -211,7 +236,9 @@ inline bool rg_apply_inv(thread int* row, int dim, int nprocs, thread const int*
 // ---- merge ops: port of dbm_close / dbm_includes / dbm_is_alu_le / dbm_try_union -------
 constant int kAluNegInf = -(1 << 29);
 inline void d_close(thread int* d, int dim) {
+#pragma clang loop unroll(disable)
   for (int k = 0; k < dim; ++k)
+#pragma clang loop unroll(disable)
     for (int i = 0; i < dim; ++i) {
       int ik = d[i*dim+k]; if (ik >= kInf) continue;
       for (int j = 0; j < dim; ++j) { int s = r_add(ik, d[k*dim+j]); if (s < d[i*dim+j]) d[i*dim+j] = s; }
@@ -236,26 +263,87 @@ inline bool d_alu_le(thread const int* Z, thread const int* Zp, int dim,
   }
   return true;
 }
+// ---- minimal-graph analysis (device port of mindbm_analyze, dbm_ops.hpp) ----------------
+// Marks exactly the NON-REDUNDANT off-diagonal constraints of a closed, non-empty DBM. The
+// convex-union test only needs a crossing region per constraint of a generating set, and the
+// minimal graph is one: it defines the same zone, so the redundant entries add nothing. That
+// turns O(dim^2) facet tests into O(dim).
+#define MG_WORDS ((MAXDIM*MAXDIM + 31) / 32)
+inline int mg_set(thread uint* bits, int idx) {
+  const uint m = 1u << (idx & 31);
+  const int newly = (bits[idx >> 5] & m) ? 0 : 1;
+  bits[idx >> 5] |= m;
+  return newly;
+}
+inline void mg_analyze(thread const int* d, int dim, thread uint* bits) {
+  for (int w = 0; w < MG_WORDS; ++w) bits[w] = 0u;
+  if (dim <= 1) return;
+  int first[MAXDIM], nxt[MAXDIM];
+  for (int i = 0; i < dim; ++i) nxt[i] = 0;
+  int nCl = 0;
+  for (int i = 0; i < dim; ++i) {                    // (1) zero-cycle equivalence classes
+    if (nxt[i] != 0) continue;
+    first[nCl++] = i;
+    int k = i;
+    for (int j = i + 1; j < dim; ++j)
+      if (r_bound(d[i*dim+j]) == -r_bound(d[j*dim+i])) { nxt[k] = j; k = j; }
+    nxt[k] = -1;
+  }
+#pragma clang loop unroll(disable)
+  for (int pi = 0; pi < nCl; ++pi) {                 // (2) drop edges achieved by a 2-hop path
+    const int p = first[pi];
+#pragma clang loop unroll(disable)
+    for (int qi = 0; qi < nCl; ++qi) {
+      const int q = first[qi];
+      if (p == q) continue;
+      const int bpq = d[p*dim+q];
+      if (bpq >= kInf) continue;
+      bool red = false;
+      for (int ri = 0; ri < nCl; ++ri) {
+        const int r = first[ri];
+        if (r == p || r == q) continue;
+        const int bpr = d[p*dim+r], brq = d[r*dim+q];
+        if (bpr < kInf && brq < kInf && bpq >= r_add(bpr, brq)) { red = true; break; }
+      }
+      if (!red) mg_set(bits, p*dim + q);
+    }
+  }
+  for (int pi = 0; pi < nCl; ++pi) {                 // (3) one concise cycle inside each class
+    const int head = first[pi];
+    if (nxt[head] == -1) continue;
+    int a = head;
+    while (nxt[a] != -1) { mg_set(bits, a*dim + nxt[a]); a = nxt[a]; }
+    mg_set(bits, a*dim + head);
+  }
+}
+
 // if a ∪ b is exactly convex, set a := hull and return true; else leave a and return false.
+// Device mirror of dbm_try_union (dbm_ops.hpp): minimal-graph facets + incremental close, and
+// no final close because the entrywise-max hull of two canonical DBMs is already canonical.
 inline bool d_try_union(thread int* a, thread const int* b, int dim) {
   int H[MAXDIM*MAXDIM], R[MAXDIM*MAXDIM];
   for (int k = 0; k < dim*dim; ++k) H[k] = a[k] > b[k] ? a[k] : b[k];
+  uint bits[MG_WORDS];
   for (int pass = 0; pass < 2; ++pass) {
     thread const int* z = (pass == 0) ? a : b;
     thread const int* other = (pass == 0) ? b : a;
+    mg_analyze(z, dim, bits);
+#pragma clang loop unroll(disable)
     for (int i = 0; i < dim; ++i)
+#pragma clang loop unroll(disable)
       for (int j = 0; j < dim; ++j) {
         if (i == j || z[i*dim+j] >= H[i*dim+j]) continue;
+        const int idx = i*dim + j;
+        if (!(bits[idx >> 5] & (1u << (idx & 31)))) continue;
+#pragma clang loop unroll(disable)
         for (int k = 0; k < dim*dim; ++k) R[k] = H[k];
-        int v = r_bound(z[i*dim+j]);
-        int neg = r_strict(z[i*dim+j]) ? r_le(-v) : r_lt(-v);
-        if (neg < R[j*dim+i]) { R[j*dim+i] = neg; d_close(R, dim); }
-        if (d_empty(R, dim)) continue;
+        int v = r_bound(z[idx]);
+        int neg = r_strict(z[idx]) ? r_le(-v) : r_lt(-v);
+        if (!d_constrain(R, dim, j, i, neg)) continue;   // crossing region empty -> fine
         if (!d_includes(other, R, dim)) return false;
       }
   }
-  for (int k = 0; k < dim*dim; ++k) a[k] = H[k];
-  d_close(a, dim);
+  for (int k = 0; k < dim*dim; ++k) a[k] = H[k];   // already canonical: max of two canonical DBMs
   return true;
 }
 
@@ -309,17 +397,65 @@ inline bool g_includes(PA a, PB b, int dim) {
 // Facet test of the convex-union check for one operand `z` (its facets) against `other`.
 // `H` (elementwise max hull) and scratch `R` are private. Returns false if crossing a strict
 // facet of z escapes `other` (=> union not convex).
+// Address-space-generic minimal-graph analysis (see mg_analyze above for the method).
+template <typename PZ>
+inline void g_mg_analyze(PZ d, int dim, thread uint* bits) {
+  for (int w = 0; w < MG_WORDS; ++w) bits[w] = 0u;
+  if (dim <= 1) return;
+  int first[MAXDIM], nxt[MAXDIM];
+  for (int i = 0; i < dim; ++i) nxt[i] = 0;
+  int nCl = 0;
+  for (int i = 0; i < dim; ++i) {
+    if (nxt[i] != 0) continue;
+    first[nCl++] = i;
+    int k = i;
+    for (int j = i + 1; j < dim; ++j)
+      if (r_bound(d[i*dim+j]) == -r_bound(d[j*dim+i])) { nxt[k] = j; k = j; }
+    nxt[k] = -1;
+  }
+  for (int pi = 0; pi < nCl; ++pi) {
+    const int p = first[pi];
+    for (int qi = 0; qi < nCl; ++qi) {
+      const int q = first[qi];
+      if (p == q) continue;
+      const int bpq = d[p*dim+q];
+      if (bpq >= kInf) continue;
+      bool red = false;
+      for (int ri = 0; ri < nCl; ++ri) {
+        const int r = first[ri];
+        if (r == p || r == q) continue;
+        const int bpr = d[p*dim+r], brq = d[r*dim+q];
+        if (bpr < kInf && brq < kInf && bpq >= r_add(bpr, brq)) { red = true; break; }
+      }
+      if (!red) mg_set(bits, p*dim + q);
+    }
+  }
+  for (int pi = 0; pi < nCl; ++pi) {
+    const int head = first[pi];
+    if (nxt[head] == -1) continue;
+    int a = head;
+    while (nxt[a] != -1) { mg_set(bits, a*dim + nxt[a]); a = nxt[a]; }
+    mg_set(bits, a*dim + head);
+  }
+}
+
 template <typename PZ, typename POTHER>
 inline bool g_facets_ok(PZ z, POTHER other, thread const int* H, int dim) {
   int R[MAXDIM*MAXDIM];
+  uint bits[MG_WORDS];
+  g_mg_analyze(z, dim, bits);
+#pragma clang loop unroll(disable)
   for (int i = 0; i < dim; ++i)
+#pragma clang loop unroll(disable)
     for (int j = 0; j < dim; ++j) {
       if (i == j || z[i*dim+j] >= H[i*dim+j]) continue;
+      const int idx = i*dim + j;
+      if (!(bits[idx >> 5] & (1u << (idx & 31)))) continue;   // redundant: covered by its path
+#pragma clang loop unroll(disable)
       for (int k = 0; k < dim*dim; ++k) R[k] = H[k];
-      int v = r_bound(z[i*dim+j]);
-      int neg = r_strict(z[i*dim+j]) ? r_le(-v) : r_lt(-v);
-      if (neg < R[j*dim+i]) { R[j*dim+i] = neg; d_close(R, dim); }
-      if (d_empty(R, dim)) continue;
+      int v = r_bound(z[idx]);
+      int neg = r_strict(z[idx]) ? r_le(-v) : r_lt(-v);
+      if (!d_constrain(R, dim, j, i, neg)) continue;          // crossing region empty -> fine
       if (!g_includes(other, R, dim)) return false;
     }
   return true;
@@ -444,7 +580,7 @@ inline bool sg_apply_inv(threadgroup int* d, threadgroup int* rowb, int dim, int
   return true;
 }
 
-struct Params { int dim, nprocs, nintvars, nclocks, nwork; };
+struct Params { int dim, nprocs, nintvars, nclocks, nwork, qbits; };
 struct MergeParams { int dim, nb, has_diag, union_on, soa; };
 
 // One thread per successor "recipe": a participant list of (proc, global-edge) — 1 for a
@@ -486,10 +622,15 @@ kernel void net_expand(
     device int*       out_ints   [[buffer(21)]],
     device int*       out_zone   [[buffer(22)]],
     constant Params&  P          [[buffer(23)]],
+    device const uint* act_mask  [[buffer(24)]],   // per-location active-clock bitmask
     uint w [[thread_position_in_grid]])
 {
   if (w >= uint(P.nwork)) return;
-  const int dim = P.dim, d2 = dim * dim, nprocs = P.nprocs, nintvars = P.nintvars, nclocks = P.nclocks;
+  // Compile-time dim here ONLY: this kernel is a straight-line zone pipeline, so constant loop
+  // bounds strength-reduce the index arithmetic with no compile-time blowup. The merge kernels
+  // deliberately keep P.dim -- see the note on shader build time in the class comment.
+  constexpr int dim = PT_DIM, d2 = dim * dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
+  const uint qbits = uint(P.qbits);
   out_valid[w] = 0;
   const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
 
@@ -520,12 +661,14 @@ kernel void net_expand(
     if (!apply_inv(z, dim, nprocs, nlocs, locbase, inv_off, inv_data)) return;
   }
 
-  // reset clocks inactive at every process's target location and not read by the query
-  for (int cc = 1; cc <= nclocks; ++cc) {
-    bool any = false;
-    for (int q = 0; q < nprocs; ++q)
-      if (active[(locbase[q] + nlocs[q]) * (nclocks + 1) + cc]) { any = true; break; }
-    if (!any && !qmask[cc]) d_reset(z, dim, cc);
+  // Reset clocks inactive at EVERY process's target location and not read by the query.
+  // One bitmask load per process, OR'd together — was nprocs*nclocks separate loads out of the
+  // [loc][clock] table (289 of them on arbiter17, on par with the whole rest of the pipeline).
+  {
+    uint amask = qbits;
+    for (int q = 0; q < nprocs; ++q) amask |= act_mask[locbase[q] + nlocs[q]];
+    amask = (~amask) & (((nclocks >= 31) ? 0xffffffffu : ((1u << (nclocks + 1)) - 1u)) & ~1u);
+    while (amask) { const int cc = ctz(amask); amask &= amask - 1; d_reset(z, dim, cc); }
   }
   if (d_empty(z, dim)) return;
 
@@ -566,7 +709,7 @@ kernel void net_expand_tg(
     uint lid [[thread_index_in_threadgroup]])
 {
   if (w >= uint(P.nwork)) return;
-  const int dim = P.dim, d2 = dim * dim, nprocs = P.nprocs, nintvars = P.nintvars, nclocks = P.nclocks;
+  const int dim = P.dim, d2 = dim * dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
   out_valid[w] = 0;
   const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
 
@@ -650,7 +793,7 @@ kernel void net_expand_rg(
 {
   const uint w = tgpos * RG_PER_TG + sgid;
   if (w >= uint(P.nwork)) return;          // whole SIMD group leaves together - uniform
-  const int dim = P.dim, d2 = dim * dim, nprocs = P.nprocs, nintvars = P.nintvars, nclocks = P.nclocks;
+  const int dim = P.dim, d2 = dim * dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
   if (lane == 0) out_valid[w] = 0;
   const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
 
@@ -742,7 +885,7 @@ kernel void net_expand_sg(
 
   const uint w = tgid * SG_PER_TG + sgid;
   if (w >= uint(P.nwork)) return;                 // whole group exits together
-  const int dim = P.dim, d2 = dim*dim, nprocs = P.nprocs, nintvars = P.nintvars, nclocks = P.nclocks;
+  const int dim = P.dim, d2 = dim*dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
   if (lane == 0) out_valid[w] = 0;
   const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
 
@@ -809,7 +952,8 @@ kernel void net_merge(
     uint b [[thread_position_in_grid]])
 {
   if (b >= uint(P.nb)) return;
-  const int dim = P.dim, d2 = dim * dim, has_diag = P.has_diag;
+  const int dim = P.dim, d2 = dim * dim;
+  const int has_diag = P.has_diag;
   // ulong indexing: work_off[b]*d2 overflows 32 bits once the pool exceeds ~3.7M zones at d2=576
   // (kept in step with the same fix in netengine_cuda.cu, where a datacentre GPU reaches it).
   device int* W = work + (ulong)work_off[b] * d2;
@@ -882,7 +1026,8 @@ kernel void net_merge_sg(
     uint sgid  [[simdgroup_index_in_threadgroup]],
     uint lane  [[thread_index_in_simdgroup]])
 {
-  const int dim = P.dim, d2 = dim * dim, has_diag = P.has_diag;
+  const int dim = P.dim, d2 = dim * dim;
+  const int has_diag = P.has_diag;
   threadgroup int* zn = znbuf + int(sgid) * d2;   // this SIMD-group's zn scratch
 
   // Persistent-thread WORK-STEALING: rather than a static tgpos->bucket map (which idles a
@@ -967,7 +1112,8 @@ kernel void net_merge_sg(
         if (wv > zn[k]) zn[k] = wv;
       }
       simdgroup_barrier(mem_flags::mem_threadgroup);
-      sg_close(zn, dim, lane);                          // re-canonicalise the hull cooperatively
+      // No re-close: the entrywise max of two canonical DBMs is canonical
+      // (h_ij = max(a_ij,b_ij) <= max(a_ik+a_kj, b_ik+b_kj) <= h_ik + h_kj).
       for (int i = winner; i < cur - 1; ++i) {          // shift the absorbed zone out
         for (int k = int(lane); k < d2; k += 32)
           W[P.soa ? (k*cap + i) : (i*d2 + k)] = W[P.soa ? (k*cap + (i+1)) : ((i+1)*d2 + k)];
@@ -999,7 +1145,18 @@ class NetGpuMetal : public NetGpuExpander {
     PTCTLMC_MTL_CHECK(device_ != nil, "no system default Metal device");
     queue_ = [device_ newCommandQueue];
     NSError* err = nil;
-    id<MTLLibrary> lib = [device_ newLibraryWithSource:kNetSource options:nil error:&err];
+    // Specialize the shader for THIS network: the kernels' private arrays and loop bounds are
+    // then the model's real sizes, not the 24-clock / 64-process worst case (see the PT_DIM
+    // block at the top of kNetSource). One extra source compile per run, already paid.
+    MTLCompileOptions* copts = [[MTLCompileOptions alloc] init];
+    copts.preprocessorMacros = @{
+      @"PT_DIM" : @(en_.dim),
+      @"PT_NP"  : @(en_.nprocs),
+      @"PT_NI"  : @(en_.nintvars),
+      @"PT_NC"  : @(en_.nclocks),
+    };
+    copts.fastMathEnabled = NO;   // integer-only kernels; keep semantics untouched
+    id<MTLLibrary> lib = [device_ newLibraryWithSource:kNetSource options:copts error:&err];
     PTCTLMC_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
                                       (err ? err.localizedDescription.UTF8String : "?"));
     id<MTLFunction> fn = [lib newFunctionWithName:@"net_expand"];
@@ -1065,6 +1222,11 @@ class NetGpuMetal : public NetGpuExpander {
     // to be, because gen_update is an expression the kernel cannot evaluate.
     b_locbase_ = ibuf(en_.locbase); b_inv_off_ = ibuf(en_.inv_off); b_inv_data_ = ibuf(en_.inv_data);
     b_frozen_ = ibuf(en_.frozen); b_active_ = ibuf(en_.active); b_qmask_ = ibuf(en_.qmask);
+    b_actmask_ = [device_ newBufferWithBytes:(en_.active_mask.empty() ? (const void*)&kZeroPad_
+                                                                      : (const void*)en_.active_mask.data())
+                                      length:(en_.active_mask.empty() ? sizeof(std::uint32_t)
+                                              : en_.active_mask.size() * sizeof(std::uint32_t))
+                                     options:MTLResourceStorageModeShared];
   }
 
   // Hand the CPU expander the same unified-memory buffers the GPU expand would fill,
@@ -1297,7 +1459,7 @@ class NetGpuMetal : public NetGpuExpander {
                     b_ol = grow(pb_ol_, static_cast<std::size_t>(nwork) * np * sizeof(int)),
                     b_oi = grow(pb_oi_, static_cast<std::size_t>(nwork) * (ni ? ni : 1) * sizeof(int)),
                     b_oz = grow(pb_oz_, static_cast<std::size_t>(nwork) * d2 * sizeof(int));
-      NetParams P{en_.dim, np, ni, en_.nclocks, nwork};
+      NetParams P{en_.dim, np, ni, en_.nclocks, nwork, static_cast<std::int32_t>(en_.qmask_bits)};
 
       if (g_eprof.on) g_eprof.stage += EngClock::now() - _t1;
       const double _t2 = g_eprof.on ? EngClock::now() : 0.0;
@@ -1322,6 +1484,7 @@ class NetGpuMetal : public NetGpuExpander {
                                 b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_, b_ov, b_ol, b_oi, b_oz};
       for (int i = 0; i < 23; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
       [enc setBytes:&P length:sizeof(P) atIndex:23];
+      [enc setBuffer:b_actmask_ offset:0 atIndex:24];
       if (use_rg) {
         const NSUInteger kRg = 8, kTg = kRg * 32;   // one SIMD group per zone
         const NSUInteger groups = (static_cast<NSUInteger>(nwork) + kRg - 1) / kRg;
@@ -1393,15 +1556,16 @@ class NetGpuMetal : public NetGpuExpander {
                     b_ni = fill(pb_mni_, new_idx), b_noff = fill(pb_mnoff_, new_off),
                     b_nc = fill(pb_mnc_, new_cnt), b_L = fill32(pb_mL_, L), b_U = fill32(pb_mU_, U);
       id<MTLBuffer> b_oc = pb_moc_; { iptr(pb_moc_, nb); b_oc = pb_moc_; }
-      // Convex-union is OFF by default on the GPU merge: it is a compression-only step (like
-      // opaal/LTSmin, which omit it) that is expensive on the GPU and reduces zero states on
-      // most models, so skipping it is faster everywhere and stays correct. PTCTLMC_UNION=1
-      // re-enables it (fewer stored zones for union-compressible models like philosophers).
-      // union_on doubles as the bounded-union CAP: 0 = off (default), K = merge against last K,
-      // huge = full. PTCTLMC_UNIONCAP=K for the bounded experiment; PTCTLMC_UNION=1 = full.
-      int union_cap = 0;
+      // Convex-union is ON by default on the GPU merge. It used to be off because the test was
+      // O(dim^5) per pair and cost 60%+ of the merge; with the minimal-graph facet set and the
+      // incremental close (dbm_try_union, dbm_ops.hpp) it is O(dim^3) and measures free or
+      // better -- while cutting stored states 37% on csma14 and peak RSS 24% on fischer12,
+      // because every zone it absorbs is a zone the next level does not expand.
+      // union_on doubles as the bounded-union CAP: 0 = off, K = merge against the last K only,
+      // huge = full. PTCTLMC_NOUNION=1 disables it; PTCTLMC_UNIONCAP=K for the bounded variant.
+      int union_cap = 1 << 20;
       if (const char* c = std::getenv("PTCTLMC_UNIONCAP")) union_cap = std::atoi(c);
-      else if (std::getenv("PTCTLMC_UNION")) union_cap = 1 << 20;
+      else if (std::getenv("PTCTLMC_NOUNION")) union_cap = 0;
       MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0, union_cap, soa_work_pool() ? 1 : 0};
       if (g_eprof.on) g_eprof.mstage += EngClock::now() - _m0;
       const double _m1 = g_eprof.on ? EngClock::now() : 0.0;
@@ -1525,7 +1689,7 @@ class NetGpuMetal : public NetGpuExpander {
   // No b_iu_* here: the integer update is applied host-side (gen_update is an
   // expression, so the kernel cannot replay it from a flat table).
   id<MTLBuffer> b_edge_tgt_, b_cg_off_, b_cg_data_, b_rs_off_, b_rs_clk_,
-      b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_;
+      b_locbase_, b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_, b_actmask_;
   id<MTLBuffer> pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_;   // persistent expand in/out zone+disc pools
   id<MTLBuffer> pb_work_, pb_wi_;                         // persistent merge work pool + isnew
   // Persistent expand INPUT staging (recipes + frontier locs + post-update ints). These used to
