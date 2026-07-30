@@ -491,12 +491,39 @@ struct GpuZoneIntern {
   static constexpr int kMaxChunks = 1 << 17;            // 1G zones ceiling
   static constexpr int kStripes = 512;
 
-  explicit GpuZoneIntern(int d2) : d2_(d2), stripes_(kStripes) {}
+  // NARROW STORAGE. A DBM entry is (value << 1) | weak, and in a zone graph over a model whose
+  // largest clock constant is M every finite entry lies in [-2M-1, 2M+1] (an entry is a shortest
+  // path, and any path to or from the reference clock is bounded by two direct border edges). So
+  // whenever M is small -- every real timed-automata model -- the whole passed set fits in 16-bit
+  // entries, halving what is by far the biggest resident structure at scale: fischer16 stores
+  // 4.95M zones of 289 entries, which is 5.7 GB dense in 32-bit and 2.9 GB in 16.
+  //
+  // The pools and kernels stay 32-bit; only this arena narrows, and the gather/rebuild loops that
+  // touch it were already a per-entry copy, so widening/narrowing there is free (and they move
+  // half the bytes). `fits16` decides once, from the model; a model with huge constants simply
+  // keeps 32-bit storage.
+  static constexpr std::int32_t kInf16 = 0x7ffe;   // sentinel for kInf in a narrowed entry
+  GpuZoneIntern(int d2, bool narrow) : d2_(d2), esz_(narrow ? 2 : 4), stripes_(kStripes) {}
   ~GpuZoneIntern() { for (auto& c : chunks_) delete c.load(std::memory_order_relaxed); }
 
-  const raw_t* get(int idx) const {
-    return chunks_[idx >> kChunkBits].load(std::memory_order_acquire)->data() +
-           static_cast<std::size_t>(idx & kChunkMask) * d2_;
+  // Widen zone `idx` into `out` (d2 entries).
+  void load(int idx, raw_t* out) const {
+    const std::uint8_t* p = base(idx);
+    if (esz_ == 4) { std::memcpy(out, p, static_cast<std::size_t>(d2_) * sizeof(raw_t)); return; }
+    const std::int16_t* q = reinterpret_cast<const std::int16_t*>(p);
+    for (int k = 0; k < d2_; ++k) out[k] = (q[k] == kInf16) ? kInf : static_cast<raw_t>(q[k]);
+  }
+  // As load(), but strided: entry k goes to out[k*stride] (the SoA merge pool).
+  void load_strided(int idx, raw_t* out, std::size_t stride) const {
+    const std::uint8_t* p = base(idx);
+    if (esz_ == 4) {
+      const raw_t* q = reinterpret_cast<const raw_t*>(p);
+      for (int k = 0; k < d2_; ++k) out[static_cast<std::size_t>(k) * stride] = q[k];
+      return;
+    }
+    const std::int16_t* q = reinterpret_cast<const std::int16_t*>(p);
+    for (int k = 0; k < d2_; ++k)
+      out[static_cast<std::size_t>(k) * stride] = (q[k] == kInf16) ? kInf : static_cast<raw_t>(q[k]);
   }
 
   // mode: Dedup interns (one copy per distinct zone); Append stores every zone without hashing,
@@ -507,17 +534,16 @@ struct GpuZoneIntern {
   int intern(const raw_t* z) {
     if (mode_ == Mode::Append) {
       const int idx = alloc();
-      std::memcpy(const_cast<raw_t*>(get(idx)), z, static_cast<std::size_t>(d2_) * sizeof(raw_t));
+      store(idx, z);
       return idx;
     }
     const std::uint64_t h = hash(reinterpret_cast<const std::uint32_t*>(z));
     Stripe& s = stripes_[h & (kStripes - 1)];
     std::lock_guard<std::mutex> lk(s.m);
     auto& bucket = s.tab[h];
-    for (const int cand : bucket)
-      if (std::memcmp(get(cand), z, static_cast<std::size_t>(d2_) * sizeof(raw_t)) == 0) return cand;
+    for (const int cand : bucket) if (equals(cand, z)) return cand;
     const int idx = alloc();
-    std::memcpy(const_cast<raw_t*>(get(idx)), z, static_cast<std::size_t>(d2_) * sizeof(raw_t));
+    store(idx, z);
     bucket.push_back(idx);
     return idx;
   }
@@ -536,11 +562,36 @@ struct GpuZoneIntern {
   }
 
   int count() const { return n_.load(std::memory_order_acquire); }
+  int entry_bytes() const { return esz_; }
+  // Allocated chunks, not the (pre-sized, mostly null) chunk-pointer array.
   std::size_t bytes() const {
-    return static_cast<std::size_t>(chunks_.size()) * kChunk * d2_ * sizeof(raw_t);
+    const std::size_t nch = (static_cast<std::size_t>(n_.load(std::memory_order_acquire)) + kChunk - 1) / kChunk;
+    return nch * kChunk * d2_ * esz_;
   }
 
  private:
+  std::uint8_t* base(int idx) const {
+    return chunks_[idx >> kChunkBits].load(std::memory_order_acquire)->data() +
+           static_cast<std::size_t>(idx & kChunkMask) * d2_ * esz_;
+  }
+  void store(int idx, const raw_t* z) {
+    std::uint8_t* p = base(idx);
+    if (esz_ == 4) { std::memcpy(p, z, static_cast<std::size_t>(d2_) * sizeof(raw_t)); return; }
+    std::int16_t* q = reinterpret_cast<std::int16_t*>(p);
+    for (int k = 0; k < d2_; ++k) q[k] = (z[k] >= kInf) ? static_cast<std::int16_t>(kInf16)
+                                                       : static_cast<std::int16_t>(z[k]);
+  }
+  bool equals(int idx, const raw_t* z) const {
+    const std::uint8_t* p = base(idx);
+    if (esz_ == 4) return std::memcmp(p, z, static_cast<std::size_t>(d2_) * sizeof(raw_t)) == 0;
+    const std::int16_t* q = reinterpret_cast<const std::int16_t*>(p);
+    for (int k = 0; k < d2_; ++k) {
+      const raw_t v = (q[k] == kInf16) ? kInf : static_cast<raw_t>(q[k]);
+      if (v != z[k]) return false;
+    }
+    return true;
+  }
+
   // Hash the WHOLE zone, in four independent lanes.
   //
   // Two failure modes to avoid. Hashing a prefix is catastrophic: canonical DBMs routinely agree
@@ -586,7 +637,7 @@ struct GpuZoneIntern {
     if (!chunks_[c].load(std::memory_order_acquire)) {
       std::lock_guard<std::mutex> lk(growMtx_);
       if (!chunks_[c].load(std::memory_order_relaxed))
-        chunks_[c].store(new std::vector<raw_t>(static_cast<std::size_t>(kChunk) * d2_),
+        chunks_[c].store(new std::vector<std::uint8_t>(static_cast<std::size_t>(kChunk) * d2_ * esz_),
                          std::memory_order_release);
     }
     return idx;
@@ -598,8 +649,9 @@ struct GpuZoneIntern {
     std::mutex m;
   };
   int d2_;
+  int esz_;                       // bytes per DBM entry in the arena: 2 (narrowed) or 4
   Mode mode_ = Mode::Dedup;
-  std::vector<std::atomic<std::vector<raw_t>*>> chunks_{kMaxChunks};   // fixed: never resized
+  std::vector<std::atomic<std::vector<std::uint8_t>*>> chunks_{kMaxChunks};   // fixed: never resized
   std::deque<Stripe> stripes_;
   std::mutex growMtx_;
   std::atomic<int> n_{0};
@@ -1669,7 +1721,7 @@ static std::size_t chunk_budget_bytes() {
   if (sysctlbyname("hw.memsize", &ram, &len, nullptr, 0) != 0) ram = 0;
 #endif
   if (!ram) ram = std::size_t(16) << 30;
-  return std::min<std::size_t>(ram / 6, std::size_t(4) << 30);
+  return std::min<std::size_t>(ram / 8, std::size_t(2) << 30);
 }
 
 #ifdef PTCTLMC_DEBUG_KNOBS
@@ -2056,7 +2108,21 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // distinct ones, i.e. GBs of unified memory representing ~120 KB of zone data. Without the
     // flag the pool simply appends, reproducing the old layout's memory with the same indexed
     // access path, so the flag isolates deduplication from everything else.
-    GpuZoneIntern zi(d2);
+    // Narrow the arena to 16-bit entries when the model's constants make overflow impossible
+    // (see GpuZoneIntern). The bound is 2*M+1 for the largest clock constant M anywhere in the
+    // model or the query; the margin below is deliberately generous.
+    std::int32_t maxc = 0;
+    for (int c = 0; c <= net.nclocks; ++c) {
+      if (L[c] != kAluNegInf) maxc = std::max(maxc, L[c]);
+      if (U[c] != kAluNegInf) maxc = std::max(maxc, U[c]);
+    }
+    for (const auto& p_ : net.procs) {
+      for (const auto& l : p_.locations) for (const auto& c : l.invariant) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
+      for (const auto& e : p_.edges) for (const auto& c : e.clock_guard) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
+    }
+    for (const auto& c : target.clock_cond) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
+    const bool narrow_zones = (maxc < 4000);   // (2M+1)<<1 must stay well inside int16
+    GpuZoneIntern zi(d2, narrow_zones);
     zi.set_mode(g_gpu_intern ? GpuZoneIntern::Mode::Dedup : GpuZoneIntern::Mode::Append);
     std::unordered_map<std::uint64_t, std::vector<int>> passed;   // dk -> antichain zone indices
     std::vector<int> fl(s0.locs.begin(), s0.locs.end());
@@ -2156,7 +2222,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
     } bidx;
     std::size_t prev_nb = 1024;
-    double fanout = 8.0;   // measured successors per frontier state, for the batch-size estimate
+    double fanout = 4.0;   // running MAX of successors per frontier state (batch-size estimate)
 
     {   // let the expand kernel pack the discrete key itself (see net_gpu.hpp)
       std::vector<int> ilo(net.intvars.size());
@@ -2247,7 +2313,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             pz[i] &= ~kNewBit;                                   // consumed
             for (int p = 0; p < np; ++p) fl[f * np + p] = dl[p];
             for (int v = 0; v < ni; ++v) fi[f * niw + v] = di[v];
-            std::memcpy(fz.data() + f * d2, zi.get(pz[i]), static_cast<std::size_t>(d2) * sizeof(raw_t));
+            zi.load(pz[i], fz.data() + f * d2);
             ++f;
           }
         }
@@ -2263,7 +2329,11 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (g_chunk_states > 0) {
           nfr = std::min(total, g_chunk_states);
         } else {
-          const double per_state = fanout * static_cast<double>(d2) * sizeof(raw_t) * 2.2;
+          // 3 words per successor per matrix entry: the expand output zones, the merge work
+          // pool (exist + new), and the frontier/staging arrays. The fan-out is the running MAX,
+          // not an average: under-predicting it is what lets a batch overshoot the budget, and a
+          // batch that overshoots is exactly the peak the budget exists to bound.
+          const double per_state = fanout * static_cast<double>(d2) * sizeof(raw_t) * 3.0;
           const double cap = static_cast<double>(chunk_budget_bytes()) / std::max(1.0, per_state);
           nfr = static_cast<int>(std::min<double>(total, std::max(4096.0, cap)));
         }
@@ -2377,7 +2447,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (std::getenv("PTCTLMC_LVLPROF"))
           std::fprintf(stderr, "[lvl] frontier=%d nwork=%zu expand_ms=%.3f\n", nfr, nwork, _dte);
       }
-      if (nfr > 0) fanout = 0.5 * fanout + 0.5 * (static_cast<double>(nwork) / nfr);
+      if (nfr > 0) fanout = std::max(fanout, static_cast<double>(nwork) / nfr);
       if (memprof && nwork > peak_nwork) peak_nwork = nwork;
       if (nwork == 0) {
         // this batch produced nothing: drop it and continue with what is left of the level
@@ -2489,14 +2559,11 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           raw_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
           if (soa) {   // transpose AoS antichain -> SoA pool: zone i entry k at dst[k*cap + i]
             const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
-            for (int i = 0; i < exist_cnt[b]; ++i) {
-              const raw_t* src = zi.get(pit->second[i] & ~kNewBit);
-              for (int k = 0; k < d2; ++k) dst[static_cast<std::size_t>(k) * cap + i] = src[k];
-            }
+            for (int i = 0; i < exist_cnt[b]; ++i)
+              zi.load_strided(pit->second[i] & ~kNewBit, dst + i, cap);
           } else {
             for (int i = 0; i < exist_cnt[b]; ++i)
-              std::memcpy(dst + static_cast<std::size_t>(i) * d2, zi.get(pit->second[i] & ~kNewBit),
-                          static_cast<std::size_t>(d2) * sizeof(raw_t));
+              zi.load(pit->second[i] & ~kNewBit, dst + static_cast<std::size_t>(i) * d2);
           }
           // Seed each already-stored zone's TAG with its passed-set index (kNewBit included). The
           // merge carries a kept zone's tag through its compaction and writes -1 for the zones it
@@ -2670,6 +2737,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         "          frontier copy  = %6.2f GB   (peak %zu zones — DUPLICATES passed)\n"
         "          gpu expand pool= %6.2f GB   (peak %zu work items, persistent)\n"
         "          gpu merge pool = %6.2f GB   (peak %zu work zones, persistent)\n"
+        "          passed arena   = %6.2f GB  (%d B/entry)\n"
         "          gpu pools LIVE = %6.2f GB  (sum of our own buffers)\n"
         "          gpu DRIVER map = %6.2f GB  (what Metal actually has mapped)\n"
         "          ---- accounted = %6.2f GB\n",
@@ -2679,7 +2747,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         peak_front * (double)d2 * B / GB, peak_front,
         peak_nwork * (double)d2 * B / GB, peak_nwork,
         peak_wtot * (double)d2 * B / GB, peak_wtot,
-        gpu->live_buffer_bytes() / GB, gpu->device_bytes() / GB,
+        zi.bytes() / GB, zi.entry_bytes(), gpu->live_buffer_bytes() / GB, gpu->device_bytes() / GB,
         (cap * B + node_ov + peak_front * (double)d2 * B + gpu->device_bytes()) / GB);
 #ifdef __APPLE__
       // Separate "bytes the program is using" from "bytes malloc is holding but not returning to
