@@ -86,11 +86,49 @@ ps -o pgid= -p $$ | tr -d ' ' > "$OUTDIR/timeout2h.pgid"
 log "driver pid $$ (pgid $(cat "$OUTDIR/timeout2h.pgid")) on $(hostname), $(nproc) cores"
 log "timeout=${TIMEOUT}s reps=$REPS memgb=$MEMGB strike=$STRIKE"
 
+# Families dropped from EVERY job, space-separated. Set to `single` on 2026-07-30 by request.
+# The worklist is DERIVED (gen_timeout_sets.py) and is deliberately left intact -- filtering here
+# instead means the exclusion is one variable, is printed in the driver log, and is undone without
+# regenerating anything:  DROPFAM= ./run_timeout2h.sh   restores the full list.
+#
+# What it costs, from the one config that completed at 2 h (t16 c2): single was 3.1 h of that
+# job's ~10 h. single7 does produce a real number the 600 s budget could not (114028 states in
+# ~32 min), so that row is the genuine loss; single8 timed out at the full 2 h for a blank row,
+# and strike-limit 1 means it is the only size that follows single7. Across the 12 remaining
+# configs this saves roughly 1.5 days.
+DROPFAM=${DROPFAM-single}
+
+# Strip DROPFAM entries from a `fam:N,N;fam:N,N` spec, preserving order. Emits "-" if nothing is
+# left, which run_job already understands as "pass no --families at all".
+drop_families() {
+  local spec=$1 keep="" part name d skip
+  [ -z "${DROPFAM:-}" ] && { printf '%s' "$spec"; return; }
+  [ "$spec" = "-" ] && { printf '%s' "$spec"; return; }
+  local IFS=';'
+  for part in $spec; do
+    [ -z "$part" ] && continue
+    name=${part%%:*}
+    skip=0
+    for d in $DROPFAM; do [ "$name" = "$d" ] && skip=1; done
+    [ "$skip" = 1 ] && continue
+    keep="${keep:+$keep;}$part"
+  done
+  printf '%s' "${keep:--}"
+}
+
 # One harness invocation. Reruns are resumable: bench_ltsmin.py never repeats a (model, tool,
 # threads, rep) that already has an OK/TIMEOUT/MEMOUT row in the output csv, so relaunching
 # after a stop picks up where it left off instead of starting over.
 run_job() {
   local tool=$1 threads=$2 chunk=$3 families=$4 viking=$5 fischer=$6 out=$7 lg=$8
+  local orig=$families
+  families=$(drop_families "$families")
+  [ "$families" != "$orig" ] && log "  DROPFAM='$DROPFAM': families '$orig' -> '$families'"
+  # Nothing left to measure for this config -- skip rather than invoke the harness with no models.
+  if [ "$families" = "-" ] && [ "$viking" = "-" ] && [ "$fischer" = "-" ]; then
+    log "SKIP  $tool threads=$threads chunk=$chunk -- no models left after DROPFAM"
+    return 0
+  fi
   local -a cmd=(python3 bench_ltsmin.py --no-train
                 --threads "$threads" --reps "$REPS"
                 --timeout "$TIMEOUT" --memgb "$MEMGB" --strike-limit "$STRIKE"

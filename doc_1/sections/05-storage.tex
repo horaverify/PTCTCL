@@ -78,6 +78,94 @@ $64$-bit hash collision cannot return a wrong index.  That verification is also
 exactly why the cache must be dropped on GC ---
 see \cref{prop:gc-cache}, which is a soundness obligation, not an optimisation.
 
+\subsection{Decoding is what packing costs}
+\label{sec:decode}
+
+Minimal-graph storage is not free: it is paid back on every \emph{read}.
+\code{ZoneIntern::get} decompresses a packed record into a dense per-thread
+scratch, and reconstructing the redundant entries is a full $O(\dim^3)$
+closure.  The compression ratio is quoted per zone \emph{stored}; the bill
+arrives per zone \emph{touched}, and the two are not proportional.
+
+How far apart they can drift is best seen on \code{viking}, the family the
+interner was designed for.  Instruction counts on \code{viking12}
+(\code{callgrind}, one thread):
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+function & share of all instructions \\
+\midrule
+\code{ZoneIntern::get}      & $23.7\%$ \\
+\code{mindbm\_unpack}       & $16.4\%$ \\
+\code{gen\_succ\_reuse}     & $12.2\%$ \\
+\code{NetPassed::add}       & $11.2\%$ \\
+\code{mindbm\_pack}         & $10.9\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Decoding is $40\%$ of the run and re-encoding a further $11\%$ --- together
+more than the successor generation and the antichain insertion combined.  The
+reason is structural rather than accidental: \code{viking} stores roughly
+\emph{one zone per discrete state}, so a zone is typically re-decoded moments
+after it was last decoded, and the very sharing that makes interning collapse
+$1.5$\,GB of zones into a few kilobytes also guarantees that the same handful
+of records is decompressed over and over.
+
+The recovery is a small per-thread decode cache.  Its correctness, however, is
+not the obvious argument.  Indices are \emph{recycled in place} by the collector
+(\cref{prop:gc-cache}): a swept \code{zidx} returns to a free list and is handed
+out again to a different zone, without renumbering.  A cache keyed on the index
+alone would therefore return a stale zone after a sweep --- the same aliasing
+that, in the intern cache, turned a satisfied mutual-exclusion property on
+\code{fischer6} into a spurious counterexample.  The cache is keyed on
+$(\text{interner}, \text{epoch}, \text{index})$ instead, with the epoch bumped
+exactly where the intern caches are already dropped, so one counter discharges
+both obligations.  A second detail decides whether it works at all: the lines
+are indexed on the \emph{local-index} bits, not the low bits of the
+\code{zidx} --- a \code{zidx} is $(\mathit{local} \ll \code{kShardBits})
+\mathbin{|} \mathit{shard}$, so its low bits are the shard number, and indexing
+on those would map every zone of a shard onto a handful of lines.
+
+Capacity is not a free parameter, and the two ends of it favour different
+families.  Measured at $16$ threads, chunk $8$:
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+ & no cache & $1$ line & $16$ lines \\
+\midrule
+\code{viking17}  & $13.79$\,s & $13.18$\,s & $\mathbf{12.70}$\,s \\
+\code{viking20}  & $166.4$\,s & $161.4$\,s & $\mathbf{155.7}$\,s \\
+\code{twolock13} & $90.55$\,s & $90.27$\,s & $89.04$\,s \\
+\code{fischer12} & $23.94$\,s & $23.89$\,s & $23.81$\,s \\
+\code{phil13}    & $12.36$\,s & $12.51$\,s & $12.42$\,s \\
+\code{single6}   & $3.48$\,s  & $\mathbf{3.31}$\,s  & $3.52$\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Sixteen lines is worth $-7.9\%$ on \code{viking17} and $-6.4\%$ on
+\code{viking20}, roughly double what a single line recovers, which is the
+signature of the misses being spread across \emph{distinct} indices within a
+level rather than being repeat reads of one.  \code{single} runs the other way:
+its long chains re-read one zone repeatedly, and a single line is enough to hold
+it while sixteen evict it.  The count is therefore a runtime knob
+(\code{PTCTLMC\_DECODELINES}) defaulting to $16$, and the families that gain
+nothing either way --- \code{fischer}, \code{phil} --- are the ones whose zones
+are nearly all distinct, where no cache of any size can help.
+
+State counts are identical at every line count on every family, as they must be
+--- the cache is a cache over immutable bytes.
+
+The gap between $40\%$ spent decoding and $4\%$ recovered is the honest measure
+of how much is left.  A one-entry memo only catches \emph{consecutive} reads of
+the same index; the bulk of the decoding is spread across distinct indices
+within a level, which a small direct-mapped decode cache --- reusing the epoch
+key established here --- would be able to absorb.  We record this as the
+largest identified and unexploited saving in the storage layer.
+
 \subsection{The frontier is not a list of states}
 
 The frontier holds $(\dk, \mathit{zidx})$ pairs: $12$ bytes.  The location

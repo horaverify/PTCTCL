@@ -18,6 +18,12 @@ MOD  = os.path.join(ROOT, "models")
 SO   = os.path.join(HERE, f"so_{PLAT}")
 OPAAL = os.path.join(ROOT, "deps/bin/opaal2lts-mc")
 PTCTLMC = os.path.abspath(os.path.join(HERE, "..", f"build-{'mac' if PLAT == 'macos' else 'omp'}", "ptctlmc"))
+# PTCTLMC_BIN overrides which binary is measured. Needed to sweep an OLD build against the
+# current one: the pre-2026-07-30 engine cannot be recovered from the current source by any
+# flag (the dense mirror arrived with the packed zone store, so turning the mirror off leaves
+# the store paying an unpack per chain walk and is worse than either), but the binary that
+# produced results_old still exists in build-spin/ and reproduces those numbers exactly.
+PTCTLMC = os.environ.get("PTCTLMC_BIN") or PTCTLMC
 if PLAT == "macos":
     VERIFYTA = "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta"
 else:
@@ -26,7 +32,13 @@ else:
     VERIFYTA = shutil.which("verifyta") or "verifyta"  # fallback to command name for PATH lookup
 TABLE_BITS = 26
 
-QDIR = os.path.join(HERE, f"queries_{PLAT}"); os.makedirs(QDIR, exist_ok=True)
+# One queries/ dir for every platform: the query text is model-level CTL and has nothing
+# platform-specific in it, and the old per-platform copies had drifted apart. Every query here
+# is checked to be SATISFIED on a small size of its family, which matters more than it sounds --
+# a falsified property makes both tools stop at the first counterexample, so the state counts
+# stop being a measure of the state space. queries_linux_old/csma.q was exactly that case:
+# `A[] not (S1.Send && S2.Send)` is violated after 3 explored states.
+QDIR = os.path.join(HERE, "queries"); os.makedirs(QDIR, exist_ok=True)
 
 def model_file(*cands):
     """First candidate that exists, else the first (so the caller reports a clear SKIP).
@@ -155,6 +167,15 @@ def main():
                     help="run only UPPAAL verifyta (skip ltsmin and PTCTLMC)")
     ap.add_argument("--omp-chunk", type=int, default=None,
                     help="pass --omp-chunk N to PTCTLMC when using backend omp")
+    # Passed-list tuning knobs, read by NetPassed in src/netreach.cpp. Both are recorded in the
+    # CSV and are part of the identity of a run, so several settings can sweep into ONE file
+    # without the resume logic mistaking one config's row for another's.
+    ap.add_argument("--mergescan", type=int, default=None,
+                    help="PTCTLMC_MERGESCAN: newest live zones a new zone tries to convex-merge "
+                         "with (0 = unbounded whole-chain scan). Binary default 32.")
+    ap.add_argument("--hotlen", type=int, default=None,
+                    help="PTCTLMC_HOTLEN: live zones a chain must reach before it gets a dense "
+                         "mirror (0 = never mirror). Binary default 64.")
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=1800)   # 30 minutes
     ap.add_argument("--memgb", type=float, default=15.0)
@@ -173,6 +194,21 @@ def main():
         fams[fam.strip()] = [int(x) for x in ns.split(",") if x.strip()]
     args.families = fams
 
+    # The knob setting is part of a run's IDENTITY, not just a note about it: a sweep appends
+    # every setting to the same CSV, and the resume logic must not read "phil12 at mergescan=8"
+    # as already covered by "phil12 at mergescan=32". Only PTCTLMC reads the knobs, so rows for
+    # verifyta/ltsmin carry "-", as do rows written before these columns existed (hence the
+    # .get(..., "-") when seeding) -- an unset knob means "whatever the binary defaults to".
+    MS = "-" if args.mergescan is None else str(args.mergescan)
+    HL = "-" if args.hotlen is None else str(args.hotlen)
+    def knobs_of(tool):
+        return (MS, HL) if tool == "ptctlmc-omp" else ("-", "-")
+    def knob_env():
+        e = {}
+        if args.mergescan is not None: e["PTCTLMC_MERGESCAN"] = str(args.mergescan)
+        if args.hotlen    is not None: e["PTCTLMC_HOTLEN"]    = str(args.hotlen)
+        return e
+
     def size_of(model):
         mm = re.search(r"(\d+)$", model)
         return int(mm.group(1)) if mm else 0
@@ -182,16 +218,18 @@ def main():
     # counts as a timeout for a tool iff it has recorded runs and NONE of them finished OK.
     # Seeded from the CSV so the rule survives restarts: three earlier timeouts on disk skip
     # the next size without re-running anything.
-    fam_tool_outcomes = {}   # (family, tool) -> {size N: timed_out bool}
-    def record_outcome(fam, tool, N, timed_out):
-        d = fam_tool_outcomes.setdefault((fam, tool), {})
+    # Keyed by (family, tool, mergescan, hotlen): a streak must not cross knob settings, or one
+    # config's timeout would silently skip that size for every other config in the same sweep.
+    fam_tool_outcomes = {}   # (family, tool, ms, hl) -> {size N: timed_out bool}
+    def record_outcome(fam, tool, N, timed_out, knobs=None):
+        d = fam_tool_outcomes.setdefault((fam, tool) + (knobs or knobs_of(tool)), {})
         if d.get(N) is False:            # a success at this size stays a success
             return
         d[N] = timed_out
     def should_skip(fam, tool, N):
         if args.strike_limit <= 0:
             return False
-        d = fam_tool_outcomes.get((fam, tool), {})
+        d = fam_tool_outcomes.get((fam, tool) + knobs_of(tool), {})
         streak = 0
         for n in sorted((x for x in d if x < N), reverse=True):   # walk DOWN from just below N
             if d[n]:
@@ -212,36 +250,42 @@ def main():
             for r in csv.DictReader(fh):
                 all_rows.append(r)
                 if r.get("status") in ("OK", "TIMEOUT", "MEMOUT"):
-                    done[(r["model"], r["tool"], r["threads"], r["rep"])] = r
-    # Seed the streaks: group history by (family, tool, model) and fold into outcomes.
+                    done[(r["model"], r["tool"], r["threads"], r["rep"],
+                          r.get("mergescan") or "-", r.get("hotlen") or "-")] = r
+    # Seed the streaks: group history by (family, tool, knobs, model) and fold into outcomes.
     hist = {}
     for r in all_rows:
-        hist.setdefault((r["family"], r["tool"], r["model"]), []).append(r.get("status"))
-    for (fam, tool, model), sts in hist.items():
+        hist.setdefault((r["family"], r["tool"], r.get("mergescan") or "-",
+                         r.get("hotlen") or "-", r["model"]), []).append(r.get("status"))
+    for (fam, tool, ms, hl, model), sts in hist.items():
         if any(s == "OK" for s in sts):
-            record_outcome(fam, tool, size_of(model), False)
+            record_outcome(fam, tool, size_of(model), False, (ms, hl))
         elif any(s in ("TIMEOUT", "MEMOUT") for s in sts):
-            record_outcome(fam, tool, size_of(model), True)
+            record_outcome(fam, tool, size_of(model), True, (ms, hl))
     print("seeded %d completed runs" % len(done), flush=True)
 
     new = not os.path.exists(args.out)
     fh = open(args.out, "a")
     w = csv.writer(fh)
     if new:
-        w.writerow(["family", "model", "tool", "threads", "rep", "states", "seconds", "rss_gb", "status"]); fh.flush()
+        w.writerow(["family", "model", "tool", "threads", "rep", "states", "seconds", "rss_gb",
+                    "status", "mergescan", "hotlen"]); fh.flush()
     for r in done.values():   # carry seeded rows into this file so it is self-contained
         if new:
             w.writerow([r["family"], r["model"], r["tool"], r["threads"], r["rep"],
-                        r["states"], r["seconds"], r["rss_gb"], r["status"]])
+                        r["states"], r["seconds"], r["rss_gb"], r["status"],
+                        r.get("mergescan") or "-", r.get("hotlen") or "-"])
     fh.flush()
 
     proxy = tbb_proxy()
     lts_env = {"DYLD_INSERT_LIBRARIES": proxy} if proxy else {}
 
     def emit(fam, model, tool, th, rep, states, secs, rss, status):
-        w.writerow([fam, model, tool, th, rep, states, "%.3f" % secs, "%.3f" % rss, status]); fh.flush()
-        print("  %-11s %-13s t=%-3s r=%s %10s %9.2fs %6.2fGB  %s"
-              % (model, tool, th, rep, states, secs, rss, status), flush=True)
+        ms, hl = knobs_of(tool)
+        w.writerow([fam, model, tool, th, rep, states, "%.3f" % secs, "%.3f" % rss, status,
+                    ms, hl]); fh.flush()
+        print("  %-11s %-13s t=%-3s r=%s %10s %9.2fs %6.2fGB  %s  ms=%s hl=%s"
+              % (model, tool, th, rep, states, secs, rss, status, ms, hl), flush=True)
 
     def bench(fam, model, xml, so, pq, vq):
         N = size_of(model)
@@ -274,7 +318,7 @@ def main():
         def verifyta_runs():
             sts, timed_out = [], False
             for rep in range(1, args.reps + 1):
-                key = (model, "verifyta", "1", str(rep))
+                key = (model, "verifyta", "1", str(rep)) + knobs_of("verifyta")
                 if key in done:
                     st = done[key]["status"]; sts.append(st)
                     timed_out = timed_out or st in ("TIMEOUT", "MEMOUT"); continue
@@ -293,7 +337,7 @@ def main():
             sts, timed_out = [], False
             for th in sorted(args.threads, reverse=True):   # most threads (fastest) first
                 for rep in range(1, args.reps + 1):
-                    key = (model, tool, str(th), str(rep))
+                    key = (model, tool, str(th), str(rep)) + knobs_of(tool)
                     if key in done:
                         st = done[key]["status"]; sts.append(st)
                         timed_out = timed_out or st in ("TIMEOUT", "MEMOUT"); continue
@@ -323,10 +367,10 @@ def main():
             lambda th: ([PTCTLMC, "--backend", "omp"] +
                         (["--omp-chunk", str(args.omp_chunk)] if args.omp_chunk is not None else []) +
                         [xml, pq]),
-            lambda th: {"OMP_NUM_THREADS": str(th)},
+            lambda th: {"OMP_NUM_THREADS": str(th), **knob_env()},
             r"explored ([0-9]+) symbolic"))
 
-    # generated families: benchmarks/models/<fam><N>.xml with queries_<plat>/<fam>.q.
+    # generated families: benchmarks/models/<fam><N>.xml with queries/<fam>.q.
     # An LTSmin module is used when one exists; otherwise the harness records
     # verifyta and PTCTLMC only, rather than skipping the model.
     for fam, ns in sorted(args.families.items()):

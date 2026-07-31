@@ -100,7 +100,16 @@ def group_cells(rows: list[dict[str, str]]) -> "OrderedDict[tuple[str, str], lis
 
 
 def config_key(stem: str) -> str:
-    """results file stem -> canonical config name (also the output file name)."""
+    """results file stem -> canonical config name (also the output file name).
+
+    The 600 s sweep files record the settings they were produced with
+    (ptctlmc_t16_c8_ms32_hl64_600s_v2), so the canonical name is taken from the leading
+    t<threads>_c<chunk> alone -- otherwise the descriptive suffix would follow the config
+    into the output name and stop it pairing with timeout2h/ptctlmc_t16_c8_2h.csv.
+    """
+    m = re.match(r"(ptctlmc_t\d+_c\d+)(?:_.*)?$", stem)
+    if m:
+        return m.group(1)
     return re.sub(r"_(v2|only)$", "", stem)
 
 

@@ -82,11 +82,17 @@ def main():
     report.append(("verifyta_only.csv", bad))
 
     def tc(path):   # sort by (threads, chunk) NUMERICALLY -- a plain filename sort puts c16 first
-        m = re.search(r"ptctlmc_t(\d+)_c(\d+)_v2\.csv$", os.path.basename(path))
+        # Not anchored on `_v2.csv$`: the 600 s sweep files also carry the settings they were
+        # produced with (ptctlmc_t16_c8_ms32_hl64_600s_v2.csv), now that mergescan/hotlen are
+        # sweepable and a bare name no longer says which values a file used.
+        m = re.search(r"ptctlmc_t(\d+)_c(\d+)", os.path.basename(path))
         return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
     for path in sorted(glob.glob(os.path.join(RES, "ptctlmc_t*_c*_v2.csv")), key=tc):
-        m = re.search(r"ptctlmc_t(\d+)_c(\d+)_v2\.csv$", os.path.basename(path))
+        # Not anchored on `_v2.csv$`: the 600 s sweep files also carry the settings they were
+        # produced with (ptctlmc_t16_c8_ms32_hl64_600s_v2.csv), now that mergescan/hotlen are
+        # sweepable and a bare name no longer says which values a file used.
+        m = re.search(r"ptctlmc_t(\d+)_c(\d+)", os.path.basename(path))
         if not m:
             continue
         T, C = int(m.group(1)), int(m.group(2))

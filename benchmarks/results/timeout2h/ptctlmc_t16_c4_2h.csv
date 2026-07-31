@@ -1,3 +1,0 @@
-family,model,tool,threads,rep,states,seconds,rss_gb,status
-phil,phil15,ptctlmc-omp,16,1,43848079,1332.971,10.947,OK
-phil,phil15,ptctlmc-omp,16,2,43765747,1324.008,10.886,OK
