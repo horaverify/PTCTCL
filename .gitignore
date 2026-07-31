@@ -95,3 +95,7 @@ UDBM
 
 # clangd background index (editor cache, not source)
 .cache/
+
+# sweep runtime artifacts (pid/pgid of a live driver, not results)
+benchmarks/results_complete/complete.pid
+benchmarks/results_complete/complete.pgid

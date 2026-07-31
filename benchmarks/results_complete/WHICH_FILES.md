@@ -14,7 +14,7 @@ Generated 2026-07-31. Sweep driver: `benchmarks/run_complete.sh`, stop with `./s
 |---|---|
 | PTCTLMC headline numbers (all families) | `results_complete/adaptive/ptctlmc_t<T>_c<C>_adaptive_2h.csv` |
 | PTCTLMC legacy-engine column (`single`, `csma` only) | `results_complete/legacy/ptctlmc_t<T>_c<C>_legacy_2h.csv` |
-| UPPAAL `verifyta` baseline | `results_old/verifyta_only.csv` (600 s) + `results_old/timeout2h/verifyta_2h.csv` (2 h) |
+| UPPAAL `verifyta` baseline | `results_complete/verifyta.csv` (600 s and 2 h already merged, 2 h winning — see `VERIFYTA.md`) |
 | queries used | `benchmarks/queries/<family>.q` |
 
 `<T>` in {16, 24, 32}, `<C>` in {8, 4}.
