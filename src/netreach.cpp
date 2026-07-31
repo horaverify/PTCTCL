@@ -522,6 +522,18 @@ struct GpuZoneIntern {
     for (int k = 0; k < d2_; ++k) out[k] = gz_store(q[k]);
   }
 
+  // load_gz(), strided: entry k goes to out[k*stride] (the SoA merge pool).
+  void load_gz_strided(int idx, gz_t* out, std::size_t stride) const {
+    const std::uint8_t* p = base(idx);
+    if (esz_ == 2) {
+      const gz_t* q = reinterpret_cast<const gz_t*>(p);
+      for (int k = 0; k < d2_; ++k) out[static_cast<std::size_t>(k) * stride] = q[k];
+      return;
+    }
+    const raw_t* q = reinterpret_cast<const raw_t*>(p);
+    for (int k = 0; k < d2_; ++k) out[static_cast<std::size_t>(k) * stride] = gz_store(q[k]);
+  }
+
   // As load(), but strided: entry k goes to out[k*stride] (the SoA merge pool).
   void load_strided(int idx, raw_t* out, std::size_t stride) const {
     const std::uint8_t* p = base(idx);
@@ -1823,12 +1835,15 @@ static void canonicalize(const std::vector<Automorphism>& G, const Network& net,
 // antichain is at work_buf[work_off_b .. +exist_cnt_b) (already gathered); new zones are read in
 // place from the expand output `oz` at indices new_idx_b[0..new_cnt_b). Writes the final antichain
 // back in place, sets WI (isnew flags: existing=0, appended new=1), returns the surviving count.
-static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
+static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
                              const gz_t* oz, const int* new_idx_b, int new_cnt_b,
                              const std::int32_t* L, const std::int32_t* U,
                              int dim, bool has_diag, int* WI) {
   const int d2 = dim * dim;
-  raw_t* W = work_buf + static_cast<std::size_t>(work_off_b) * d2;
+  // The pool keeps NARROW entries; the algebra stays raw_t. dbm_includes / dbm_is_alu_le /
+  // dbm_try_union are templated on their read-only operand's entry type (dbm_ops.hpp), so `zw`
+  // can point straight into the pool -- no widening pass per bucket.
+  gz_t* W = work_buf + static_cast<std::size_t>(work_off_b) * d2;
   raw_t zn[kDbmMaxDim * kDbmMaxDim];
   int cur = exist_cnt_b;                              // WI[0..cur) already 0 (existing zones)
   for (int t = 0; t < new_cnt_b; ++t) {
@@ -1836,16 +1851,16 @@ static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
     for (int k = 0; k < d2; ++k) zn[k] = gz_load(src[k]);   // widen out of the narrow pool
     bool subsumed = false;                            // zn subsumed by a stored zone?
     for (int i = 0; i < cur; ++i) {
-      const raw_t* zw = W + static_cast<std::size_t>(i) * d2;
+      const gz_t* zw = W + static_cast<std::size_t>(i) * d2;
       if (has_diag ? dbm_includes(zw, zn, dim) : dbm_is_alu_le(zn, zw, dim, L, U)) { subsumed = true; break; }
     }
     if (subsumed) continue;
     int w = 0;                                        // drop stored zones subsumed by zn
     for (int i = 0; i < cur; ++i) {
-      const raw_t* zw = W + static_cast<std::size_t>(i) * d2;
+      const gz_t* zw = W + static_cast<std::size_t>(i) * d2;
       const bool killed = has_diag ? dbm_includes(zn, zw, dim) : dbm_is_alu_le(zw, zn, dim, L, U);
       if (!killed) {
-        if (w != i) { std::memcpy(W + static_cast<std::size_t>(w)*d2, zw, d2*sizeof(raw_t)); WI[w] = WI[i]; }
+        if (w != i) { std::memcpy(W + static_cast<std::size_t>(w)*d2, zw, d2*sizeof(gz_t)); WI[w] = WI[i]; }
         ++w;
       }
     }
@@ -1856,13 +1871,15 @@ static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
       for (int kk = 0; kk < cur; ++kk)
         if (dbm_try_union(zn, W + static_cast<std::size_t>(kk)*d2, dim)) {
           for (int i = kk; i < cur - 1; ++i) {
-            std::memcpy(W + static_cast<std::size_t>(i)*d2, W + static_cast<std::size_t>(i+1)*d2, d2*sizeof(raw_t));
+            std::memcpy(W + static_cast<std::size_t>(i)*d2, W + static_cast<std::size_t>(i+1)*d2, d2*sizeof(gz_t));
             WI[i] = WI[i+1];
           }
           --cur; merged = true; break;
         }
     }
-    std::memcpy(W + static_cast<std::size_t>(cur)*d2, zn, d2*sizeof(raw_t)); WI[cur] = -1; ++cur;
+    gz_t* dst = W + static_cast<std::size_t>(cur)*d2;
+    for (int k = 0; k < d2; ++k) zput(dst, k, zn[k]);
+    WI[cur] = -1; ++cur;
   }
   return cur;
 }
@@ -2557,7 +2574,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       if (mtlprof) t_bucket += _ms(_tb, _now());
       if (memprof && wtot > peak_wtot) peak_wtot = wtot;
       const auto _tg = _now();
-      raw_t* work_buf = nullptr; int* work_isnew = nullptr;
+      gz_t* work_buf = nullptr; int* work_isnew = nullptr;
       gpu->stage_merge(wtot, d2, work_buf, work_isnew);
       // PARALLEL: gather only the EXISTING antichains into the work buffer (unified memory);
       // successor zones stay in the expand output and are read in place by the merge kernel.
@@ -2567,14 +2584,14 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       for (int b = 0; b < nb; ++b) {
         auto pit = passed.find(bdk[b]);
         if (pit != passed.end()) {
-          raw_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
+          gz_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
           if (soa) {   // transpose AoS antichain -> SoA pool: zone i entry k at dst[k*cap + i]
             const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
             for (int i = 0; i < exist_cnt[b]; ++i)
-              zi.load_strided(pit->second[i] & ~kNewBit, dst + i, cap);
+              zi.load_gz_strided(pit->second[i] & ~kNewBit, dst + i, cap);
           } else {
             for (int i = 0; i < exist_cnt[b]; ++i)
-              zi.load(pit->second[i] & ~kNewBit, dst + static_cast<std::size_t>(i) * d2);
+              zi.load_gz(pit->second[i] & ~kNewBit, dst + static_cast<std::size_t>(i) * d2);
           }
           // Seed each already-stored zone's TAG with its passed-set index (kNewBit included). The
           // merge carries a kept zone's tag through its compaction and writes -1 for the zones it
@@ -2593,7 +2610,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
       if (mtlprof) t_gather += _ms(_tg, _now());
       out_work_off.clear(); out_count.clear();
-      const raw_t* out_zones = nullptr;
+      const gz_t* out_zones = nullptr;
       const int* out_isnew = nullptr;
       // Merge routing. NAIVE (default): always the GPU one-thread-per-bucket merge (original
       // behavior). ADAPTIVE (--adaptive): CALIBRATE each path's throughput (work ~ sum bucket^2, per
@@ -2699,9 +2716,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           raw_t* pzi = tmp.data();
           const auto _r0 = rbnow(rbprof);
           if (soa)   // transpose SoA pool -> AoS zone: entry k at poolbase + k*cap + i
-            for (int k = 0; k < d2; ++k) pzi[k] = out_zones[poolbase + static_cast<std::size_t>(k) * cap + i];
+            for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones, static_cast<int>(poolbase) + k * static_cast<int>(cap) + i);
           else
-            std::memcpy(pzi, out_zones + slot * d2, static_cast<std::size_t>(d2) * sizeof(raw_t));
+            for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones + slot * d2, k);
           const auto _r1 = rbnow(rbprof);
           // The high bit of the stored index records "added during the CURRENT level". The
           // frontier is read off these flags once the level is finished (see the level-advance
