@@ -513,6 +513,15 @@ struct GpuZoneIntern {
     const std::int16_t* q = reinterpret_cast<const std::int16_t*>(p);
     for (int k = 0; k < d2_; ++k) out[k] = (q[k] == kInf16) ? kInf : static_cast<raw_t>(q[k]);
   }
+  // As load(), but into the NARROW device frontier buffer: when the arena is already narrow
+  // this is a plain memcpy, which is the common case.
+  void load_gz(int idx, gz_t* out) const {
+    const std::uint8_t* p = base(idx);
+    if (esz_ == 2) { std::memcpy(out, p, static_cast<std::size_t>(d2_) * sizeof(gz_t)); return; }
+    const raw_t* q = reinterpret_cast<const raw_t*>(p);
+    for (int k = 0; k < d2_; ++k) out[k] = gz_store(q[k]);
+  }
+
   // As load(), but strided: entry k goes to out[k*stride] (the SoA merge pool).
   void load_strided(int idx, raw_t* out, std::size_t stride) const {
     const std::uint8_t* p = base(idx);
@@ -1815,7 +1824,7 @@ static void canonicalize(const std::vector<Automorphism>& G, const Network& net,
 // place from the expand output `oz` at indices new_idx_b[0..new_cnt_b). Writes the final antichain
 // back in place, sets WI (isnew flags: existing=0, appended new=1), returns the surviving count.
 static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
-                             const raw_t* oz, const int* new_idx_b, int new_cnt_b,
+                             const gz_t* oz, const int* new_idx_b, int new_cnt_b,
                              const std::int32_t* L, const std::int32_t* U,
                              int dim, bool has_diag, int* WI) {
   const int d2 = dim * dim;
@@ -1823,8 +1832,8 @@ static int flat_merge_bucket(raw_t* work_buf, int work_off_b, int exist_cnt_b,
   raw_t zn[kDbmMaxDim * kDbmMaxDim];
   int cur = exist_cnt_b;                              // WI[0..cur) already 0 (existing zones)
   for (int t = 0; t < new_cnt_b; ++t) {
-    const raw_t* src = oz + static_cast<std::size_t>(new_idx_b[t]) * d2;
-    for (int k = 0; k < d2; ++k) zn[k] = src[k];
+    const gz_t* src = oz + static_cast<std::size_t>(new_idx_b[t]) * d2;
+    for (int k = 0; k < d2; ++k) zn[k] = gz_load(src[k]);   // widen out of the narrow pool
     bool subsumed = false;                            // zn subsumed by a stored zone?
     for (int i = 0; i < cur; ++i) {
       const raw_t* zw = W + static_cast<std::size_t>(i) * d2;
@@ -2329,7 +2338,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
       const bool whole = (nfr == total);
       if (stats) stats->explored += nfr;
-      const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const raw_t* oz = nullptr;
+      const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const gz_t* oz = nullptr;
       const std::uint64_t* odk = nullptr;   // device-packed discrete keys (null => pack host-side)
       const auto _te = _now();
       std::size_t nwork;
@@ -2345,7 +2354,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         constexpr std::size_t BLK = 256;
         const std::size_t cap = std::max<std::size_t>(
             static_cast<std::size_t>(nfr) * hyb_ratio + BLK * NT, 1024);
-        int *sv = nullptr, *sl = nullptr, *si2 = nullptr; raw_t* sz = nullptr;
+        int *sv = nullptr, *sl = nullptr, *si2 = nullptr; gz_t* sz = nullptr;
         gpu->stage_expand(cap, np, ni, d2, sv, sl, si2, sz);
         // Zero the flags once instead of tracking each thread's unused block tail: a
         // slot is a successor only if it was written, so unclaimed holes stay invalid.
@@ -2387,7 +2396,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
                 sv[w] = 1;
                 for (int p = 0; p < np; ++p) sl[w * np + p] = ns.locs[p];
                 for (int v = 0; v < ni; ++v) si2[w * ni + v] = static_cast<int>(ns.ints[v]);
-                std::memcpy(sz + w * d2, ns.zone.data().data(), d2 * sizeof(raw_t));
+                for (int k = 0; k < d2; ++k) sz[w * d2 + k] = gz_store(ns.zone.data()[k]);
               } else {
                 spl[tid].insert(spl[tid].end(), ns.locs.begin(), ns.locs.end());
                 spi[tid].insert(spi[tid].end(), ns.ints.begin(), ns.ints.end());
@@ -2408,7 +2417,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
               sv[w] = 1;
               for (int p = 0; p < np; ++p) sl[w * np + p] = spl[t][k * np + p];
               for (int v = 0; v < ni; ++v) si2[w * ni + v] = static_cast<int>(spi[t][k * ni + v]);
-              std::memcpy(sz + w * d2, spz[t].data() + k * d2, d2 * sizeof(raw_t));
+              for (int q2 = 0; q2 < d2; ++q2) sz[w * d2 + q2] = gz_store(spz[t][k * d2 + q2]);
             }
           }
         }
@@ -2423,13 +2432,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         // in the passed set already, so a level-wide dense copy was storing every one of them
         // twice -- 0.24 GB on fischer12 and 0.81 GB on fischer16 -- and it also meant reading
         // them out of the arena at level end only to copy them again here.
-        raw_t* fzbuf = nullptr;
+        gz_t* fzbuf = nullptr;
         gpu->stage_frontier(static_cast<std::size_t>(nfr), d2, fzbuf);
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(static)
 #endif
-        for (long i = 0; i < static_cast<long>(nfr); ++i)
-          zi.load(fz[static_cast<std::size_t>(i)], fzbuf + static_cast<std::size_t>(i) * d2);
+        for (long i = 0; i < static_cast<long>(nfr); ++i)   // arena is already narrow: a memcpy
+          zi.load_gz(fz[static_cast<std::size_t>(i)], fzbuf + static_cast<std::size_t>(i) * d2);
         cfz.clear();                              // "already staged" (see net_gpu.hpp)
         if (whole) {
           nwork = gpu->expand(nfr, fl, fi, cfz, ev, ol, oi, oz, odk);
@@ -2511,7 +2520,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           }
           if (!tgt) continue;
           Dbm td(net.nclocks);
-          std::copy(oz + w * d2, oz + w * d2 + d2, td.data().begin());
+          for (int k = 0; k < d2; ++k) td.data()[k] = gz_load(oz[w * d2 + k]);
           if (apply_all(td, ot.t->clock_cond)) return true;
         }
         const int bi = bidx.find_or_add(dk, static_cast<int>(bdk.size()));

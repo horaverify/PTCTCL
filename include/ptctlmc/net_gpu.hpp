@@ -23,6 +23,17 @@ namespace ptctlmc {
 
 struct Network;
 
+// Storage type of the two biggest device zone buffers -- the frontier and the expand output.
+// Both are only ever read or written a whole matrix at a time through a per-entry loop, so a
+// narrow entry costs nothing there and halves the allocation (and the expand kernel's store
+// traffic). The zone ALGEBRA is untouched: kernels and the CPU merge still work on raw_t.
+// kGzInf is the sentinel for raw_t's kInf; a backend only narrows when the model's constants
+// make overflow impossible (see GpuZoneIntern in netreach.cpp, same bound).
+using gz_t = std::int16_t;
+constexpr int kGzInf = 0x7ffe;
+inline raw_t gz_load(gz_t v) { return (static_cast<int>(v) == kGzInf) ? kInf : static_cast<raw_t>(v); }
+inline gz_t  gz_store(raw_t v) { return (v >= kInf) ? static_cast<gz_t>(kGzInf) : static_cast<gz_t>(v); }
+
 class NetGpuExpander {
  public:
   virtual ~NetGpuExpander() = default;
@@ -42,7 +53,7 @@ class NetGpuExpander {
                              const std::vector<long>& ints,
                              const std::vector<raw_t>& zones,
                              const int*& out_valid, const int*& out_locs,
-                             const int*& out_ints, const raw_t*& out_zones,
+                             const int*& out_ints, const gz_t*& out_zones,
                              const std::uint64_t*& out_dk) = 0;
 
   // Tell the backend how the driver packs a discrete state into 64 bits, so the expand kernel can
@@ -53,7 +64,7 @@ class NetGpuExpander {
   // into it (unified memory). The caller fills it and then passes an EMPTY `zones` to expand(),
   // which takes that as "already staged". The frontier itself is arena indices, so this is where
   // its zones are widened -- writing them straight here saves a whole pass over the batch.
-  virtual void stage_frontier(std::size_t nstates, int d2, raw_t*& zones) = 0;
+  virtual void stage_frontier(std::size_t nstates, int d2, gz_t*& zones) = 0;
 
 
   // Merge this level's `nb` discrete-state buckets on the GPU (aLU-subsumption + convex-union,
@@ -101,7 +112,7 @@ class NetGpuExpander {
   // small — calls again with the true size and `preserve=true`, which keeps the bytes
   // already written so only the overflow tail has to be appended.
   virtual void stage_expand(std::size_t nwork, int nprocs, int nintvars, int d2,
-                            int*& valid, int*& locs, int*& ints, raw_t*& zones,
+                            int*& valid, int*& locs, int*& ints, gz_t*& zones,
                             bool preserve = false) = 0;
 
   // Total bytes currently held in device / unified-memory buffers (diagnostics only, for

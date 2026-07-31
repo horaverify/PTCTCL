@@ -17,11 +17,11 @@ this pass; the `metal` column is the current tree.
 
 | model | `verifyta` | `omp` | `metal` before | `metal` now |
 |---|---:|---:|---:|---:|
-| fischer12 | 43.02 | 19.00 | 8.80 / 11.1 | **6.26** / 4.6 |
-| twolock12 | 47.64 | 19.00 | 8.53 / 10.6 | **6.43** / 4.9 |
-| arbiter17 | 11.81 | 6.37 | 3.85 / 7.4 | **2.27** / 3.5 |
-| csma14 | 8.86 | 3.62 | 2.03 / 4.0 | **1.26** / 2.0 |
-| phil12 | 9.94 | 1.83 | 2.63 / 2.8 | **1.37** / 1.6 |
+| fischer12 | 43.02 / 0.55 | 19.00 / 0.88 | 8.80 / 11.1 | **6.41** / **2.14** |
+| twolock12 | 47.64 / 0.55 | 19.00 / 0.88 | 8.53 / 10.6 | **6.75** / **2.18** |
+| arbiter17 | 11.81 / 0.21 | 6.37 / 0.34 | 3.85 / 7.4 | **2.17** / **1.54** |
+| csma14 | 8.86 / 0.14 | 3.62 / 0.22 | 2.03 / 4.0 | **1.03** / **0.98** |
+| phil12 | 9.94 / 0.18 | 1.83 / 0.13 | 2.63 / 2.8 | **1.36** / **0.78** |
 
 `metal` beats *both* `verifyta` and the 12-core `omp` backend on every model, exploring
 **exactly the same state space** — integer-for-integer against `verifyta` on fischer,
@@ -181,6 +181,49 @@ so a level that already fits is still expanded whole and small models pay nothin
 With batching a level is many batches, and the per-batch vectors (some hundreds of MB) were
 allocated and freed each time. Reused buffers keep their capacity.
 
+### 3.5 The frontier was storing the passed set's zones a second time
+
+The frontier held a dense zone per state for the whole level — but every one of those zones had
+just been interned into the passed arena. It holds the arena **index** now (4 B per state), and a
+batch's zones are widened straight into the GPU's frontier buffer. 0.24 GB on fischer12, 0.81 GB
+on fischer16, and it removes a pass: the level-end readout used to widen every zone into a host
+array that `expand()` then copied into the device buffer.
+
+Slots are consequently recycled **one level late**: a frontier entry now names a slot rather than
+owning a copy, and the merges that drop slots run during exactly the level consuming that
+frontier, so `release()` defers to a pending list flushed at the level boundary.
+
+### 3.6 Narrow zone storage — arena, frontier, expand output
+
+A DBM entry is `(value << 1) | weak`, and in a zone graph over a model whose largest clock
+constant is *M* every finite entry lies in `[-2M-1, 2M+1]` — an entry is a shortest path, and any
+path to or from the reference clock is bounded by two direct border edges. For any real
+timed-automata model that fits in **16 bits**.
+
+The passed arena, the frontier buffer and the expand output pool all narrowed. It costs nothing:
+every one of them is only ever read or written a whole matrix at a time through a per-entry loop
+into a private 32-bit working matrix, so the conversion rides along with a copy that already
+existed. The zone *algebra* is untouched, and so is the merge work pool — that one is indexed
+directly as `raw_t*` by the CPU merge, and narrowing it would mean templating the whole of
+`dbm_ops.hpp` on the entry type.
+
+It is also *faster*, because the expand kernel's per-successor store traffic halves:
+fischer12 6.93 → 6.41 s and 2.32 → 2.14 GB.
+
+### 3.7 The batch budget is the knob
+
+The expand and merge pools scale linearly with the per-batch byte budget, which makes it the
+primary memory/time control. `--mem <GB>` sets it; the default is a sixteenth of RAM capped at
+1 GB. Measured on fischer12 (peak RSS / wall):
+
+| `--mem` | 2 GB | 1 GB | 0.5 GB | 0.25 GB |
+|---|---:|---:|---:|---:|
+| peak RSS | 3.14 | 2.34 | ~2.1 | ~2.0 |
+| wall | 6.90 | 7.17 | 8.34 | 9.60 |
+
+1 GB is ~1% of time for 26% of memory. Below that the extra batches start to cost, and RSS hits a
+floor set by the passed arena rather than the pools.
+
 ---
 
 ## Part 4 — not used: symmetry reduction
@@ -235,11 +278,18 @@ dropping arbiter24 and up onto the (then single-threaded) CPU path.
   or restructuring the merge so a whole batch of new zones is tested against the antichain at
   once — one barrier per batch instead of per zone. Not attempted.
 
-- **16-bit bounds.** Every zone is `dim²` int32. At fischer16 the passed set alone is
-  4.95 M zones × 289 entries × 4 B = 5.7 GB, against the CPU backend's ~0.63 GB — the CPU
-  stores *minimal graphs* (`mindbm`), the GPU needs dense matrices for its kernels. 16-bit
-  packed bounds halve all of it and double effective bandwidth on a latency-bound kernel.
-  Gate on a static bound so a model whose constants could overflow keeps int32.
+- **Memory: what is left, and what each would cost.** fischer12's 2.14 GB is now roughly
+  0.90 GB passed arena + 0.68 GB GPU pools + 0.16 GB bucket overhead + slack, against the
+  OpenMP backend's 0.88 GB total. Three things could still move it:
+    - *Minimal-graph storage for the arena* (what the CPU backend does): 0.90 → ~0.2 GB. But
+      unpacking is an O(dim³) close, and the gather plus the frontier materialisation do ~10 M
+      loads on a fischer12 run — several seconds on a 6.4 s run. **Measured as a bad trade at
+      these dimensions, and it gets worse as dim grows.**
+    - *Narrowing the merge work pool* (0.49 → 0.25 GB): needs `dbm_ops.hpp` templated on the
+      entry type, because the CPU merge indexes the pool directly as `raw_t*`.
+    - *Zone dedup* (`--gpu-intern`) helps only philosophers (arena 0.20 → 0.01 GB, RSS 0.93 →
+      0.75) and *hurts* fischer/arbiter/csma, where nearly every zone is distinct and dedup mode
+      also disables slot recycling. It stays a flag.
 - **The merge work pool could be read by index.** The gather (761 ms on fischer12) copies each
   bucket's existing antichain out of the interner into the merge pool. If the arena were itself
   a Metal buffer, the merge could read it by index and the gather would disappear.
