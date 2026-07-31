@@ -1381,6 +1381,11 @@ class NetGpuMetal : public NetGpuExpander {
     b_intlo_ = ibuf(intlo);
   }
 
+  void stage_frontier(std::size_t nstates, int d2, raw_t*& zones) override {
+    id<MTLBuffer> b = grow(pb_fz_, (nstates ? nstates : 1) * d2 * sizeof(raw_t));
+    zones = static_cast<raw_t*>(b.contents);
+  }
+
   std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
                      const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
                      const int*& out_ints, const raw_t*& out_zones,
@@ -1470,7 +1475,10 @@ class NetGpuMetal : public NetGpuExpander {
 
     @autoreleasepool {
       const double _t1 = g_eprof.on ? EngClock::now() : 0.0;
-      id<MTLBuffer> b_fz = grow(pb_fz_, (zones.size() ? zones.size() : 1) * sizeof(raw_t));
+      // Empty `zones` => the caller filled pb_fz_ through stage_frontier() already.
+      id<MTLBuffer> b_fz = zones.empty()
+          ? pb_fz_
+          : grow(pb_fz_, zones.size() * sizeof(raw_t));
       if (!zones.empty()) std::memcpy(b_fz.contents, zones.data(), zones.size() * sizeof(raw_t));
       id<MTLBuffer> b_fl = pb_fl_; {   // frontier locations: persistent, filled in place
         int* p = iptr(pb_fl_, locs.size() ? locs.size() : 1);

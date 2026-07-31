@@ -319,7 +319,8 @@ class NetGpuCuda : public NetGpuExpander {
     // exactly this reason (see netengine_metal.mm grow()).
     int* d_fl = grow_i(mfl_, locs.size() ? locs.size() : 1);
     int* d_fi = grow_i(mfi_, ints32.size() ? ints32.size() : 1);
-    raw_t* d_fz = grow_r(mfz_, zones.size() ? zones.size() : 1);
+    // Empty `zones` => the caller filled the frontier buffer through stage_frontier() already.
+    raw_t* d_fz = zones.empty() ? mfz_.p : grow_r(mfz_, zones.size());
     if (!locs.empty())   std::memcpy(d_fl, locs.data(), locs.size() * sizeof(int));
     if (!ints32.empty()) std::memcpy(d_fi, ints32.data(), ints32.size() * sizeof(int));
     if (!zones.empty())  std::memcpy(d_fz, zones.data(), zones.size() * sizeof(raw_t));
@@ -336,6 +337,10 @@ class NetGpuCuda : public NetGpuExpander {
     free_tmp();
     out_valid = ov; out_locs = olb; out_ints = oib; out_zones = ozb;
     return static_cast<std::size_t>(nwork);
+  }
+
+  void stage_frontier(std::size_t nstates, int d2, raw_t*& zones) override {
+    zones = grow_r(mfz_, (nstates ? nstates : 1) * d2);
   }
 
   void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) override {

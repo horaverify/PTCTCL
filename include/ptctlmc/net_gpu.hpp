@@ -29,6 +29,7 @@ class NetGpuExpander {
 
   // Expand `nstates` frontier states. Inputs are row-major:
   //   locs[s*nprocs + p], ints[s*nintvars + v], zones[s*(dim*dim) + k].
+  // An EMPTY `zones` means the frontier buffer was already filled through stage_frontier().
   // Returns the number of work items W. Outputs point INTO the expander's persistent buffers
   // (valid until the next expand/merge call): work item w is a successor iff out_valid[w],
   // with discrete state out_locs[w*nprocs..], out_ints[w*nintvars..] (int32) and zone
@@ -47,6 +48,12 @@ class NetGpuExpander {
   // Tell the backend how the driver packs a discrete state into 64 bits, so the expand kernel can
   // emit the key itself. `dshift` is nprocs+nintvars bit offsets; `intlo` is per-int-var low bound.
   virtual void set_key_layout(const std::vector<int>& dshift, const std::vector<int>& intlo) {}
+
+  // Stage the frontier-zone buffer for `nstates` states and hand back a host-writable pointer
+  // into it (unified memory). The caller fills it and then passes an EMPTY `zones` to expand(),
+  // which takes that as "already staged". The frontier itself is arena indices, so this is where
+  // its zones are widened -- writing them straight here saves a whole pass over the batch.
+  virtual void stage_frontier(std::size_t nstates, int d2, raw_t*& zones) = 0;
 
 
   // Merge this level's `nb` discrete-state buckets on the GPU (aLU-subsumption + convex-union,

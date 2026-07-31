@@ -239,6 +239,11 @@ int main(int argc, char** argv) {
         const int v = std::atoi(argv[++i]);
         ptctlmc::set_omp_chunk(v);
       }
+    } else if (a == "--mem" && i + 1 < argc) {
+      // Peak GPU-pool budget per batch, in GB. A BFS level is expanded in batches sized so the
+      // expand + merge pools stay inside this; smaller means less memory and more batches.
+      const double gb = std::atof(argv[++i]);
+      if (gb > 0) ptctlmc::set_chunk_budget(static_cast<std::size_t>(gb * (1024.0*1024.0*1024.0)));
     } else if (a == "--chunking") {   // expand the frontier in bounded batches (caps peak memory)
       int states = 65536;             // optional size: --chunking 32768
       if (i + 1 < argc && argv[i + 1][0] != '-') {
