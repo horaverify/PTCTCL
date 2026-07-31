@@ -103,6 +103,18 @@ using namespace metal;
 constant int kInf = 1 << 30;
 constant int kZeroLe = 1;
 
+// NARROW ZONE STORAGE. The frontier buffer and the expand output pool are the two biggest
+// device allocations, and every read of them already goes through a per-entry loop into a
+// private int array (and every write out of one) -- so storing them as 16-bit entries costs
+// nothing but halves both, and halves this kernel's store traffic. The private working matrix
+// stays 32-bit, so the zone algebra is untouched. Bound: a DBM entry is (value << 1) | weak and
+// in a zone graph over a model whose largest clock constant is M every finite entry lies in
+// [-2M-1, 2M+1]; the host only narrows when M is far inside that (see GpuZoneIntern).
+#define GZ short
+constant int kGzInf = 0x7ffe;                       // sentinel for kInf in a narrowed entry
+inline int  gz_load(GZ v)  { return (int(v) == kGzInf) ? kInf : int(v); }
+inline GZ   gz_store(int v) { return (v >= kInf) ? GZ(kGzInf) : GZ(v); }
+
 inline int r_le(int v)     { return (v << 1) | 1; }
 inline int r_lt(int v)     { return (v << 1); }
 inline int r_bound(int r)  { return r >> 1; }
@@ -604,7 +616,7 @@ struct MergeParams { int dim, nb, has_diag, union_on, soa; };
 kernel void net_expand(
     device const int* front_locs [[buffer(0)]],
     device const int* work_ints  [[buffer(1)]],   // [nwork*nintvars], post-update
-    device const int* front_zone [[buffer(2)]],
+    device const GZ*  front_zone [[buffer(2)]],
     device const int* work_state [[buffer(3)]],
     device const int* part_off   [[buffer(4)]],
     device const int* part_cnt   [[buffer(5)]],
@@ -624,7 +636,7 @@ kernel void net_expand(
     device int*       out_valid  [[buffer(19)]],
     device ulong*     out_dk     [[buffer(20)]],   // packed discrete key (was out_locs)
     device int*       out_ints   [[buffer(21)]],
-    device int*       out_zone   [[buffer(22)]],
+    device GZ*        out_zone   [[buffer(22)]],
     constant Params&  P          [[buffer(23)]],
     device const uint* act_mask  [[buffer(24)]],   // per-location active-clock bitmask
     device const int* dshift     [[buffer(25)]],   // bit offset of each discrete field in the key
@@ -647,7 +659,7 @@ kernel void net_expand(
 
   // zone: all participants' clock guards, then all their resets
   int z[MAXDIM * MAXDIM];
-  for (int k = 0; k < d2; ++k) z[k] = front_zone[si*d2 + k];
+  for (int k = 0; k < d2; ++k) z[k] = gz_load(front_zone[si*d2 + k]);
   for (int t = 0; t < pc; ++t) {
     int ge = part_edge[po+t];
     for (int c = cg_off[ge]; c < cg_off[ge+1]; ++c)
@@ -690,13 +702,13 @@ kernel void net_expand(
   for (int v = 0; v < nintvars; ++v)
     dk |= ulong(uint(work_ints[w*nintvars + v] - intlo[v])) << dshift[nprocs + v];
   out_dk[w] = dk;
-  for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = z[k];
+  for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = gz_store(z[k]);
 }
 
 kernel void net_expand_tg(
     device const int* front_locs [[buffer(0)]],
     device const int* work_ints  [[buffer(1)]],   // [nwork*nintvars], post-update
-    device const int* front_zone [[buffer(2)]],
+    device const GZ*  front_zone [[buffer(2)]],
     device const int* work_state [[buffer(3)]],
     device const int* part_off   [[buffer(4)]],
     device const int* part_cnt   [[buffer(5)]],
@@ -716,7 +728,7 @@ kernel void net_expand_tg(
     device int*       out_valid  [[buffer(19)]],
     device int*       out_locs   [[buffer(20)]],
     device int*       out_ints   [[buffer(21)]],
-    device int*       out_zone   [[buffer(22)]],
+    device GZ*        out_zone   [[buffer(22)]],
     constant Params&  P          [[buffer(23)]],
     threadgroup int*  zbuf       [[threadgroup(0)]],
     uint w [[thread_position_in_grid]],
@@ -737,7 +749,7 @@ kernel void net_expand_tg(
   // of 16 (dim 12 -> 144), which would map all 32 lanes onto 2 banks -- a 16-way conflict.
   // An odd stride walks every bank.
   threadgroup int* z = zbuf + lid * (d2 + 1);
-  for (int k = 0; k < d2; ++k) z[k] = front_zone[si*d2 + k];
+  for (int k = 0; k < d2; ++k) z[k] = gz_load(front_zone[si*d2 + k]);
   for (int t = 0; t < pc; ++t) {
     int ge = part_edge[po+t];
     for (int c = cg_off[ge]; c < cg_off[ge+1]; ++c)
@@ -770,7 +782,7 @@ kernel void net_expand_tg(
   for (int q = 0; q < nprocs; ++q) out_locs[w*nprocs + q] = nlocs[q];
   // integers: already updated host-side for this recipe (see the header comment)
   for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
-  for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = z[k];
+  for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = gz_store(z[k]);
 }
 
 
@@ -779,7 +791,7 @@ kernel void net_expand_tg(
 kernel void net_expand_rg(
     device const int* front_locs [[buffer(0)]],
     device const int* work_ints  [[buffer(1)]],
-    device const int* front_zone [[buffer(2)]],
+    device const GZ*  front_zone [[buffer(2)]],
     device const int* work_state [[buffer(3)]],
     device const int* part_off   [[buffer(4)]],
     device const int* part_cnt   [[buffer(5)]],
@@ -799,7 +811,7 @@ kernel void net_expand_rg(
     device int*       out_valid  [[buffer(19)]],
     device int*       out_locs   [[buffer(20)]],
     device int*       out_ints   [[buffer(21)]],
-    device int*       out_zone   [[buffer(22)]],
+    device GZ*        out_zone   [[buffer(22)]],
     constant Params&  P          [[buffer(23)]],
     uint tgpos [[threadgroup_position_in_grid]],
     uint sgid  [[simdgroup_index_in_threadgroup]],
@@ -817,7 +829,7 @@ kernel void net_expand_rg(
 
   int row[MAXDIM];                          // MY row of the zone: dim ints, not dim*dim
   if (lane < uint(dim))
-    for (int j = 0; j < dim; ++j) row[j] = front_zone[si*d2 + int(lane)*dim + j];
+    for (int j = 0; j < dim; ++j) row[j] = gz_load(front_zone[si*d2 + int(lane)*dim + j]);
 
   for (int t = 0; t < pc; ++t) {
     const int ge = part_edge[po+t];
@@ -851,7 +863,7 @@ kernel void net_expand_rg(
     for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
   }
   if (lane < uint(dim))
-    for (int j = 0; j < dim; ++j) out_zone[w*d2 + int(lane)*dim + j] = row[j];
+    for (int j = 0; j < dim; ++j) out_zone[w*d2 + int(lane)*dim + j] = gz_store(row[j]);
 }
 
 // Cooperative variant of net_expand: ONE SIMD GROUP (32 lanes) per work item, with the
@@ -864,7 +876,7 @@ kernel void net_expand_rg(
 kernel void net_expand_sg(
     device const int* front_locs [[buffer(0)]],
     device const int* work_ints  [[buffer(1)]],
-    device const int* front_zone [[buffer(2)]],
+    device const GZ*  front_zone [[buffer(2)]],
     device const int* work_state [[buffer(3)]],
     device const int* part_off   [[buffer(4)]],
     device const int* part_cnt   [[buffer(5)]],
@@ -884,7 +896,7 @@ kernel void net_expand_sg(
     device int*       out_valid  [[buffer(19)]],
     device int*       out_locs   [[buffer(20)]],
     device int*       out_ints   [[buffer(21)]],
-    device int*       out_zone   [[buffer(22)]],
+    device GZ*        out_zone   [[buffer(22)]],
     constant Params&  P          [[buffer(23)]],
     uint tgid [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]],
@@ -908,7 +920,7 @@ kernel void net_expand_sg(
   if (lane == 0) for (int t = 0; t < pc; ++t) nlocs[part_proc[po+t]] = edge_tgt[part_edge[po+t]];
   simdgroup_barrier(mem_flags::mem_threadgroup);
 
-  for (int k = (int)lane; k < d2; k += 32) z[k] = front_zone[si*d2 + k];
+  for (int k = (int)lane; k < d2; k += 32) z[k] = gz_load(front_zone[si*d2 + k]);
   simdgroup_barrier(mem_flags::mem_threadgroup);
 
   for (int t = 0; t < pc; ++t) {
@@ -942,7 +954,7 @@ kernel void net_expand_sg(
     for (int q = 0; q < nprocs; ++q) out_locs[w*nprocs + q] = nlocs[q];
     for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
   }
-  for (int k = (int)lane; k < d2; k += 32) out_zone[w*d2 + k] = z[k];
+  for (int k = (int)lane; k < d2; k += 32) out_zone[w*d2 + k] = gz_store(z[k]);
 }
 
 // One thread per discrete-state bucket. Replicates add_to EXACTLY: for each new zone (in
@@ -955,7 +967,7 @@ kernel void net_merge(
     device const int* exist_cnt  [[buffer(1)]],
     device const int* new_off    [[buffer(2)]],  // start into new_idx
     device const int* new_cnt    [[buffer(3)]],
-    device const int* oz         [[buffer(4)]],  // expand output zones (new successors, in place)
+    device const GZ*  oz         [[buffer(4)]],  // expand output zones (new successors, in place)
     device const int* new_idx    [[buffer(5)]],  // expand work-item index of each new zone
     device const int* Lb         [[buffer(6)]],  // [nb*dim]
     device const int* Ub         [[buffer(7)]],  // [nb*dim]
@@ -979,7 +991,7 @@ kernel void net_merge(
 
   for (int t = 0; t < new_cnt[b]; ++t) {
     int widx = new_idx[new_off[b] + t];
-    for (int k = 0; k < d2; ++k) zn[k] = oz[(ulong)widx * d2 + k];
+    for (int k = 0; k < d2; ++k) zn[k] = gz_load(oz[(ulong)widx * d2 + k]);
 
     bool subsumed = false;                                   // zn subsumed by a stored zone?
     for (int i = 0; i < cur; ++i) {
@@ -1026,7 +1038,7 @@ kernel void net_merge_sg(
     device const int* exist_cnt  [[buffer(1)]],
     device const int* new_off    [[buffer(2)]],
     device const int* new_cnt    [[buffer(3)]],
-    device const int* oz         [[buffer(4)]],
+    device const GZ*  oz         [[buffer(4)]],
     device const int* new_idx    [[buffer(5)]],
     device const int* Lb         [[buffer(6)]],
     device const int* Ub         [[buffer(7)]],
@@ -1065,7 +1077,7 @@ kernel void net_merge_sg(
 
   for (int t = 0; t < new_cnt[b]; ++t) {
     const int widx = new_idx[new_off[b] + t];
-    for (int k = int(lane); k < d2; k += 32) zn[k] = oz[(ulong)widx * d2 + k];
+    for (int k = int(lane); k < d2; k += 32) zn[k] = gz_load(oz[(ulong)widx * d2 + k]);
     simdgroup_barrier(mem_flags::mem_threadgroup);
 
     // Phase A: is zn subsumed by an existing zone? Lanes split the antichain; simd_any reduces.
@@ -1251,18 +1263,18 @@ class NetGpuMetal : public NetGpuExpander {
   // Hand the CPU expander the same unified-memory buffers the GPU expand would fill,
   // so a CPU-generated successor set can be merged on the GPU with no copies.
   void stage_expand(std::size_t nwork, int np, int ni, int d2,
-                    int*& valid, int*& locs, int*& ints, raw_t*& zones,
+                    int*& valid, int*& locs, int*& ints, gz_t*& zones,
                     bool preserve) override {
     @autoreleasepool {
       const std::size_t n = nwork ? nwork : 1;
       id<MTLBuffer> b_ov = grow_keep(pb_ov_, n * sizeof(int), preserve),
                     b_ol = grow_keep(pb_ol_, n * std::max<std::size_t>(np * sizeof(int), sizeof(std::uint64_t)), preserve),
                     b_oi = grow_keep(pb_oi_, n * (ni ? ni : 1) * sizeof(int), preserve),
-                    b_oz = grow_keep(pb_oz_, n * d2 * sizeof(raw_t), preserve);
+                    b_oz = grow_keep(pb_oz_, n * d2 * sizeof(gz_t), preserve);
       valid = static_cast<int*>(b_ov.contents);
       locs  = static_cast<int*>(b_ol.contents);
       ints  = static_cast<int*>(b_oi.contents);
-      zones = static_cast<raw_t*>(b_oz.contents);
+      zones = static_cast<gz_t*>(b_oz.contents);
     }
   }
 
@@ -1381,14 +1393,14 @@ class NetGpuMetal : public NetGpuExpander {
     b_intlo_ = ibuf(intlo);
   }
 
-  void stage_frontier(std::size_t nstates, int d2, raw_t*& zones) override {
-    id<MTLBuffer> b = grow(pb_fz_, (nstates ? nstates : 1) * d2 * sizeof(raw_t));
-    zones = static_cast<raw_t*>(b.contents);
+  void stage_frontier(std::size_t nstates, int d2, gz_t*& zones) override {
+    id<MTLBuffer> b = grow(pb_fz_, (nstates ? nstates : 1) * d2 * sizeof(gz_t));
+    zones = static_cast<gz_t*>(b.contents);
   }
 
   std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
                      const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
-                     const int*& out_ints, const raw_t*& out_zones,
+                     const int*& out_ints, const gz_t*& out_zones,
                      const std::uint64_t*& out_dk) override {
     const int np = en_.nprocs, ni = en_.nintvars, d2 = en_.dim * en_.dim;
     out_valid = out_locs = out_ints = nullptr;
@@ -1478,8 +1490,11 @@ class NetGpuMetal : public NetGpuExpander {
       // Empty `zones` => the caller filled pb_fz_ through stage_frontier() already.
       id<MTLBuffer> b_fz = zones.empty()
           ? pb_fz_
-          : grow(pb_fz_, zones.size() * sizeof(raw_t));
-      if (!zones.empty()) std::memcpy(b_fz.contents, zones.data(), zones.size() * sizeof(raw_t));
+          : grow(pb_fz_, zones.size() * sizeof(gz_t));
+      if (!zones.empty()) {   // legacy dense-vector path (hybrid expand): narrow on upload
+        gz_t* p = static_cast<gz_t*>(b_fz.contents);
+        for (std::size_t k = 0; k < zones.size(); ++k) p[k] = gz_store(zones[k]);
+      }
       id<MTLBuffer> b_fl = pb_fl_; {   // frontier locations: persistent, filled in place
         int* p = iptr(pb_fl_, locs.size() ? locs.size() : 1);
         if (!locs.empty()) std::memcpy(p, locs.data(), locs.size() * sizeof(int));
@@ -1491,7 +1506,7 @@ class NetGpuMetal : public NetGpuExpander {
       id<MTLBuffer> b_ov = grow(pb_ov_, static_cast<std::size_t>(nwork) * sizeof(int)),
                     b_ol = grow(pb_ol_, static_cast<std::size_t>(nwork) * sizeof(std::uint64_t)),
                     b_oi = grow(pb_oi_, static_cast<std::size_t>(nwork) * (ni ? ni : 1) * sizeof(int)),
-                    b_oz = grow(pb_oz_, static_cast<std::size_t>(nwork) * d2 * sizeof(int));
+                    b_oz = grow(pb_oz_, static_cast<std::size_t>(nwork) * d2 * sizeof(gz_t));
       NetParams P{en_.dim, np, ni, en_.nclocks, nwork, static_cast<std::int32_t>(en_.qmask_bits)};
 
       if (g_eprof.on) g_eprof.stage += EngClock::now() - _t1;
@@ -1549,7 +1564,7 @@ class NetGpuMetal : public NetGpuExpander {
       out_valid = static_cast<const int*>(b_ov.contents);   // read valid rows in place
       out_dk = static_cast<const std::uint64_t*>(b_ol.contents);
       out_ints = static_cast<const int*>(b_oi.contents);
-      out_zones = static_cast<const raw_t*>(b_oz.contents);
+      out_zones = static_cast<const gz_t*>(b_oz.contents);
       return static_cast<std::size_t>(nwork);
     }
   }
