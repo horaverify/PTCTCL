@@ -92,3 +92,6 @@ Thumbs.db
 HDBM_local/
 /UDBM/
 UDBM
+
+# clangd background index (editor cache, not source)
+.cache/
