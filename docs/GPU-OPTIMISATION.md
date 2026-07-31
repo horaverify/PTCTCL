@@ -17,11 +17,11 @@ this pass; the `metal` column is the current tree.
 
 | model | `verifyta` | `omp` | `metal` before | `metal` now |
 |---|---:|---:|---:|---:|
-| fischer12 | 43.02 / 0.55 | 19.00 / 0.88 | 8.80 / 11.1 | **6.41** / **2.14** |
-| twolock12 | 47.64 / 0.55 | 19.00 / 0.88 | 8.53 / 10.6 | **6.75** / **2.18** |
-| arbiter17 | 11.81 / 0.21 | 6.37 / 0.34 | 3.85 / 7.4 | **2.17** / **1.54** |
-| csma14 | 8.86 / 0.14 | 3.62 / 0.22 | 2.03 / 4.0 | **1.03** / **0.98** |
-| phil12 | 9.94 / 0.18 | 1.83 / 0.13 | 2.63 / 2.8 | **1.36** / **0.78** |
+| fischer12 | 43.02 / 0.55 | 19.08 / 0.85 | 8.80 / 11.1 | **6.40** / **1.88** |
+| twolock12 | 47.64 / 0.55 | 19.00 / 0.88 | 8.53 / 10.6 | **6.48** / **1.92** |
+| arbiter17 | 11.81 / 0.21 | 6.37 / 0.34 | 3.85 / 7.4 | **2.06** / **1.34** |
+| csma14 | 8.86 / 0.14 | 3.61 / 0.22 | 2.03 / 4.0 | **1.04** / **0.88** |
+| phil12 | 9.94 / 0.18 | 1.87 / 0.13 | 2.63 / 2.8 | **1.25** / **0.65** |
 
 `metal` beats *both* `verifyta` and the 12-core `omp` backend on every model, exploring
 **exactly the same state space** — integer-for-integer against `verifyta` on fischer,
@@ -67,6 +67,38 @@ half-integer lattice — the direction that would be unsound if the rewrite were
 
 Consequence: convex-union merging is now **on by default** on the GPU. csma14's stored count
 drops to exactly the OpenMP backend's, and fischer12's peak RSS by 24%, at no time cost.
+
+**The CPU backends get it too**, since `dbm_try_union` is shared. They always *had* the exact
+convex union — it is why PTCTLMC explores fewer states than UPPAAL on csma and philosophers —
+but not an affordable one. A/B of `omp` against the previous O(dim⁵) implementation, identical
+state counts:
+
+| model | O(dim⁵) | O(dim³) | |
+|---|---:|---:|---|
+| phil13 | 13.42 | **9.88** | −26% |
+| phil12 | 2.41 | **1.87** | −22% |
+| csma14 | 3.73 | **3.61** | −3% |
+| fischer12 | 19.76 | **19.08** | −3% |
+
+The gap tracks how often zones actually union: constantly on philosophers, almost never on
+Fischer.
+
+### 1.1a Do we explore fewer states than UPPAAL?
+
+On two of the five families, and it is this merge that does it. `explored`, symmetry off, so
+like-for-like:
+
+| model | PTCTLMC | `verifyta` | |
+|---|---:|---:|---|
+| fischer12 | 4 758 404 | 4 758 404 | identical |
+| twolock12 | 4 807 556 | 4 807 556 | identical |
+| arbiter17 | 1 245 184 | 1 245 184 | identical |
+| csma14 | **618 496** | 991 232 | −38% |
+| phil12 | **908 838** | 1 140 361 | −20% |
+
+Sound: the union replaces two zones by a single zone only when that zone *is* their union, so no
+valuation is added. On Fischer, two-lock and arbiter the reachable zones simply never union, and
+the counts match integer for integer.
 
 ### 1.2 The reset-inactive scan
 
@@ -200,15 +232,26 @@ constant is *M* every finite entry lies in `[-2M-1, 2M+1]` — an entry is a sho
 path to or from the reference clock is bounded by two direct border edges. For any real
 timed-automata model that fits in **16 bits**.
 
-The passed arena, the frontier buffer and the expand output pool all narrowed. It costs nothing:
+The passed arena, the frontier buffer, the expand output pool **and the merge work pool** all
+narrowed. It costs nothing:
 every one of them is only ever read or written a whole matrix at a time through a per-entry loop
 into a private 32-bit working matrix, so the conversion rides along with a copy that already
-existed. The zone *algebra* is untouched, and so is the merge work pool — that one is indexed
-directly as `raw_t*` by the CPU merge, and narrowing it would mean templating the whole of
-`dbm_ops.hpp` on the entry type.
+existed.
 
-It is also *faster*, because the expand kernel's per-successor store traffic halves:
-fischer12 6.93 → 6.41 s and 2.32 → 2.14 GB.
+The merge work pool needed one more step, because the CPU merge indexes it directly rather than
+copying out of it. `dbm_includes`, `dbm_is_alu_le`, `dbm_try_union`, `dbm_hull`, `dbm_axis_gap`
+and `mindbm_analyze` are now templated on the entry type of their **read-only operands**, reading
+through `zget()`. The algebra itself is untouched — every working matrix, every mutated operand
+and every intermediate is still `raw_t` — and a `raw_t` operand deduces to the identity, so not
+one call site changed. It is the same shape the MSL kernels already used for their
+address-space-generic ops.
+
+The randomised differential test covers the narrow instantiation: 200 k zone pairs with the
+second operand stored 16-bit, checking `dbm_try_union`'s verdict *and* hull, and `dbm_includes`
+and `dbm_is_alu_le` in both directions, against the 32-bit call.
+
+Narrowing is also *faster*, because per-successor store traffic halves: fischer12 6.93 → 6.40 s
+and 2.32 → 1.88 GB.
 
 ### 3.7 The batch budget is the knob
 
@@ -285,8 +328,7 @@ dropping arbiter24 and up onto the (then single-threaded) CPU path.
       unpacking is an O(dim³) close, and the gather plus the frontier materialisation do ~10 M
       loads on a fischer12 run — several seconds on a 6.4 s run. **Measured as a bad trade at
       these dimensions, and it gets worse as dim grows.**
-    - *Narrowing the merge work pool* (0.49 → 0.25 GB): needs `dbm_ops.hpp` templated on the
-      entry type, because the CPU merge indexes the pool directly as `raw_t*`.
+    - ~~*Narrowing the merge work pool*~~ — **done**, see §3.6.
     - *Zone dedup* (`--gpu-intern`) helps only philosophers (arena 0.20 → 0.01 GB, RSS 0.93 →
       0.75) and *hurts* fischer/arbiter/csma, where nearly every zone is distinct and dedup mode
       also disables slot recycling. It stays a flag.
