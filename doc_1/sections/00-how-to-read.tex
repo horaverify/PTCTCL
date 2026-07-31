@@ -1,0 +1,52 @@
+% ---------------------------------------------------------------------------
+%  00-how-to-read.tex -- orientation for the two audiences this document has
+% ---------------------------------------------------------------------------
+\section*{How to read this document}
+\addcontentsline{toc}{section}{How to read this document}
+
+This document has two readers in mind at once, and it tries not to compromise
+for either.
+
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+\item \textbf{The reader who does not do timed automata.}  Every section opens
+      with the idea in ordinary language, and wherever the technical text gets
+      dense there is an \emph{In plain words} box restating the same content
+      with no notation.  You can read only the opening paragraphs, the boxes,
+      and the figure captions and come away with an accurate picture.
+
+\item \textbf{The reader who will referee this.}  The formal statements,
+      proofs, and the exact boundary between ``ours'' and ``standard'' are in
+      \cref{sec:theory} and \cref{sec:novelty}.  \cref{sec:novelty} is
+      deliberately blunt: it lists what is new, what is a port of somebody
+      else's idea, and what is engineering that carries no theoretical claim.
+      If you only read one section, read that one.
+\end{itemize}
+
+\paragraph{Everything is traced to code.}
+Each mechanism names the file and the function that implements it, so any
+claim here can be checked against the implementation rather than taken on
+trust:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Mechanism} & \textbf{Where it lives} \\
+\midrule
+level-synchronous parallel search & \file{src/netreach.cpp}, \code{reach\_engine} \\
+striped passed set, two-phase lock & \file{src/netreach.cpp}, \code{NetPassed}, \code{SpinRW} \\
+antichain update (subsume + merge)& \file{src/netreach.cpp}, \code{NetPassed::add} \\
+lock-free coverage probe & \file{src/netreach.cpp}, \code{NetPassed::probe\_kill} \\
+zone interner (64 shards) & \file{src/netreach.cpp}, \code{ZoneIntern} \\
+zone algebra, $\aLU$, convex union & \file{HDBM/include/ptctlmc/dbm\_ops.hpp} \\
+minimal-graph codec and inclusion & \file{HDBM/include/ptctlmc/mindbm.hpp} \\
+per-thread zone allocator & \file{HDBM/include/ptctlmc/dbm\_pool.hpp} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{A note on honesty.}
+Several things in the implementation look clever and are not: they were tried,
+measured, and are load-bearing only because a measurement said so.  Several
+other things were tried and \emph{removed}, and those are recorded too
+(\cref{sec:limits}).  A TACAS submission is stronger for naming the ideas that
+did not work than for pretending the design was obvious.

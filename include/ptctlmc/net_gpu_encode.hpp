@@ -22,6 +22,13 @@ struct NetEncoding {
   std::vector<int> inv_off, inv_data;  // per-loc invariant: triples (i,j,bound)
   std::vector<int> frozen;             // per-loc: bit0 committed, bit1 urgent
   std::vector<int> active;             // [total_locs*(nclocks+1)]
+  // Same information as `active`, one BIT per clock (bit c = clock c active here). The kernel's
+  // reset-inactive step needs the union over all processes' target locations; with the [loc][clk]
+  // table that is nprocs*nclocks device loads per successor (289 on arbiter17, comparable to the
+  // whole rest of the zone pipeline). With the mask it is nprocs loads and a bitwise OR.
+  // kMaxDim is 24, so 23 clocks always fit in a uint32.
+  std::vector<std::uint32_t> active_mask;   // [total_locs]
+  std::uint32_t qmask_bits = 0;             // clocks the query reads (same bit layout)
   std::vector<int> qmask;              // [nclocks+1]
   std::vector<int> edge_proc;          // [E] owning process of each global edge
   std::vector<int> edge_chan;          // [E] sync channel (-1 none)
@@ -40,17 +47,10 @@ struct NetEncoding {
   std::vector<std::vector<std::vector<int>>> loc_edges;
 };
 
-inline bool network_has_diagonal(const Network& net) {
-  auto diag = [](const std::vector<Constraint>& cs) {
-    for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
-    return false;
-  };
-  for (const auto& p : net.procs) {
-    for (const auto& l : p.locations) if (diag(l.invariant)) return true;
-    for (const auto& e : p.edges) if (diag(e.clock_guard)) return true;
-  }
-  return false;
-}
+// Declared, not defined: netreach.cpp owns the one definition. This header used to carry an
+// `inline` copy of the same body, which was an ODR violation the moment a GPU translation unit
+// and netreach.o were linked together (the strong symbol silently won).
+bool network_has_diagonal(const Network& net);
 
 inline NetEncoding encode(const Network& net, const std::vector<char>& qmask) {
   NetEncoding en;
@@ -67,6 +67,7 @@ inline NetEncoding encode(const Network& net, const std::vector<char>& qmask) {
   en.inv_off.assign(en.total_locs + 1, 0);
   en.frozen.assign(en.total_locs, 0);
   en.active.assign(static_cast<std::size_t>(en.total_locs) * (en.nclocks + 1), 0);
+  en.active_mask.assign(en.total_locs, 0u);
   const bool have_active = !net.active.empty();
   for (int p = 0; p < en.nprocs; ++p) {
     for (int l = 0; l < static_cast<int>(net.procs[p].locations.size()); ++l) {
@@ -81,6 +82,10 @@ inline NetEncoding encode(const Network& net, const std::vector<char>& qmask) {
       else
         for (int c = 1; c <= en.nclocks; ++c)
           en.active[static_cast<std::size_t>(Li) * (en.nclocks + 1) + c] = 1;  // no reduction => all active
+      std::uint32_t m = 0;
+      for (int c = 1; c <= en.nclocks; ++c)
+        if (en.active[static_cast<std::size_t>(Li) * (en.nclocks + 1) + c]) m |= (1u << c);
+      en.active_mask[Li] = m;
     }
   }
   for (int i = 1; i <= en.total_locs; ++i)
@@ -115,6 +120,7 @@ inline NetEncoding encode(const Network& net, const std::vector<char>& qmask) {
 
   en.qmask.assign(en.nclocks + 1, 0);
   for (int c = 0; c <= en.nclocks && c < static_cast<int>(qmask.size()); ++c) en.qmask[c] = qmask[c] ? 1 : 0;
+  for (int c = 1; c <= en.nclocks; ++c) if (en.qmask[c]) en.qmask_bits |= (1u << c);
   return en;
 }
 

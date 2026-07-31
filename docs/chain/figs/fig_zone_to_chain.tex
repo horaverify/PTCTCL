@@ -1,0 +1,25 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[>=Latex, node distance=10mm]
+  \tikzstyle{znode}=[draw, rounded corners, minimum width=18mm, minimum height=6mm, font=\small]
+  \tikzstyle{cnode}=[draw, rectangle, minimum width=26mm, minimum height=7mm, font=\small]
+
+  \node[znode] (s1) {$s_1=(dk_a,\Zone_1)$};
+  \node[znode, right=8mm of s1] (s2) {$s_2=(dk_b,\Zone_2)$};
+  \node[znode, right=8mm of s2] (s3) {$s_3=(dk_a,\Zone_3)$};
+  \node[znode, right=8mm of s3] (s4) {$s_4=(dk_c,\Zone_4)$};
+  \node[znode, right=8mm of s4] (s5) {$s_5=(dk_a,\Zone_5)$};
+
+  \node[cnode, below=13mm of s1] (ca) {$\Chain(dk_a):\ \Zone_1,\Zone_3,\Zone_5$};
+  \node[cnode, below=13mm of s2] (cb) {$\Chain(dk_b):\ \Zone_2$};
+  \node[cnode, below=13mm of s4] (cc) {$\Chain(dk_c):\ \Zone_4$};
+
+  \draw[->] (s1) -- (ca);
+  \draw[->] (s3) -- (ca);
+  \draw[->] (s5) -- (ca);
+  \draw[->] (s2) -- (cb);
+  \draw[->] (s4) -- (cc);
+\end{tikzpicture}
+\caption{Successors are projected by discrete key $dk$ into per-key chains.}
+\label{fig:zone-to-chain}
+\end{figure}

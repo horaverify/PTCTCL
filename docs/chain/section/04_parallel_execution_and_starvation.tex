@@ -1,0 +1,105 @@
+\section{Load Imbalance Across Frontier Levels (Detailed)}
+\subsection{Level-synchronous execution model}
+Let level $L$ produce task set $\{\tau_i\}_{i=1}^{m_L}$, where each task is one chain settle for key $dk_i$.
+With $P$ worker threads and a barrier at level end, level makespan is:
+\[
+T_L = \max_{p\in\{1,\dots,P\}} \sum_{\tau_i\in\mathcal{W}_p} C_i + B_L,
+\]
+where $C_i$ is chain cost and $B_L$ is barrier/synchronization overhead.
+
+If costs are highly skewed, then $T_L$ is dominated by a small subset of chains.
+
+\paragraph{Plain-language reading of the formula.}
+At one frontier level, each thread gets a bag of chain tasks.
+The level cannot finish until the \emph{slowest} thread finishes its bag.
+So the term
+\[
+\max_p \sum_{\tau_i\in\mathcal{W}_p} C_i
+\]
+means ``the most overloaded thread decides the level time.''
+The extra term $B_L$ is the fixed wait/synchronization cost paid by everyone at the end.
+
+\paragraph{Why this matters.}
+Even if 31 threads finish quickly, one thread with a very heavy chain still blocks progression to the next level.
+This is exactly why high core count does not guarantee high speedup in level-synchronous symbolic search.
+
+\subsection{Why successor fanout creates skew}
+For a chain keyed by $dk$:
+\[
+C(dk) \approx c_1\,|\Pend_{dk}|\,|\Live_{dk}| + c_2\,|\Pend_{dk}|^2 + c_3\,M(dk),
+\]
+where:
+\begin{itemize}
+  \item $|\Pend_{dk}|$: new zones this level,
+  \item $|\Live_{dk}|$: current antichain size,
+  \item $M(dk)$: successful/attempted convex-union operations.
+\end{itemize}
+Uneven successor fanout makes $|\Pend_{dk}|$ heavy-tailed across keys.
+If large fanout also lands on already-large antichains, cost becomes superlinear.
+
+\paragraph{What ``uneven successor fanout'' means concretely.}
+From one frontier level, each parent symbolic state generates a variable number of successors.
+Those successors are then projected to keys $dk$.
+If many parents happen to project to the \emph{same} key, that key's pending list explodes.
+Other keys may receive only one or two pending zones.
+
+\paragraph{Why this happens in timed symbolic models.}
+This concentration is structural, not random noise:
+\begin{itemize}
+  \item synchronization patterns can funnel many transitions into the same discrete control state,
+  \item zone abstraction merges many concrete valuations under identical discrete locations/integers,
+  \item extrapolation/subsumption can keep some keys compact while others remain large and active.
+\end{itemize}
+So the algorithm naturally creates hot and cold keys at the same level.
+
+\paragraph{Interpreting the proxy cost terms.}
+\begin{itemize}
+  \item $c_1|\Pend||\Live|$: each pending candidate is compared against many live survivors.
+  \item $c_2|\Pend|^2$: pending candidates also interact indirectly through kill/merge effects.
+  \item $c_3M(dk)$: successful/attempted convex unions add extra matrix work.
+\end{itemize}
+When both $|\Pend|$ and $|\Live|$ are large, this key becomes a straggler.
+
+\subsection{Starvation (tail) condition}
+Define total useful work in a level:
+\[
+W_L = \sum_{i=1}^{m_L} C_i,
+\]
+and ideal balanced time $W_L/P$.
+A practical starvation indicator is:
+\[
+
+\paragraph{Interpretation of $\rho_L$.}
+If $\rho_L=1$, the heaviest chain is about as large as ``fair share'' per worker.
+If $\rho_L=4$, then one chain alone costs four workers' fair-share budget.
+In that situation, no scheduling trick can fully hide the tail at that level; most workers will finish early and wait.
+
+\paragraph{A concrete mini-scenario.}
+Assume $P=8$ threads and total level work $W_L=800$ units, so ideal is $W_L/P=100$.
+If one hot chain has $C_{max}=320$, then
+\[
+\rho_L = 320/100 = 3.2.
+\]
+That single chain already needs over three ideal worker budgets, so noticeable idle time is unavoidable unless the chain itself can be split.
+\rho_L = \frac{\max_i C_i}{W_L/P}.
+\]
+When $\rho_L \gg 1$, one chain alone exceeds ideal per-thread budget and threads must idle near barrier.
+
+\subsection{Observed effect in this checker}
+The checker is level-synchronous; therefore tail chains directly delay the next level.
+Even with dynamic scheduling, once only one or two heavy chains remain, available parallelism collapses.
+This explains why adding threads can stop helping (or regress due to overhead).
+
+\paragraph{Thread timeline intuition.}
+At the start of a level, all workers are busy.
+As light chains complete, workers become idle.
+Near level end, only the hot chains remain, often on one or two workers.
+The remaining workers wait at the barrier.
+This ``long tail'' repeats every level where chain skew is high.
+
+\paragraph{Key takeaway.}
+The bottleneck is not ``insufficient thread count.''
+The bottleneck is \emph{per-level skew in chain costs} under barrier synchronization.
+So the primary optimization target is tail reduction: cost-aware ordering, heavy-chain chunking, and adaptive policy selection.
+
+\input{figs/fig_parallel_starvation}

@@ -126,6 +126,17 @@ void Network::compute_active() {
       }
     }
   }
+  // Bit-pack the fixpoint for the per-successor lookup (see Network::active_mask).
+  active_mask.clear();
+  if (nclocks <= 63) {
+    active_mask.resize(nprocs());
+    for (int p = 0; p < nprocs(); ++p) {
+      active_mask[p].assign(active[p].size(), 0);
+      for (std::size_t l = 0; l < active[p].size(); ++l)
+        for (int c = 1; c <= nclocks; ++c)
+          if (active[p][l][c]) active_mask[p][l] |= std::uint64_t(1) << c;
+    }
+  }
 }
 
 bool Network::resolve_location(const std::string& proc, const std::string& loc, int* pi,

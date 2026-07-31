@@ -1,0 +1,71 @@
+% -------------------------------------------------------------------------
+%  fig-coverage.tex  --  coverage monotonicity
+%
+%  Two panels.  Left: the covered region at time t, and a successor z sitting
+%  inside it.  Right: after an update that RETIRES Z_1 -- the retired blob is
+%  drawn dashed, strictly inside the blob that replaced it, so the eye sees
+%  immediately that coverage grew rather than moved.  Labels are placed OUTSIDE
+%  the blobs so nothing overlaps.
+% -------------------------------------------------------------------------
+\newcommand{\FigCoverage}{%
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[x=1mm,y=1mm]
+
+% ---- panel: time t ------------------------------------------------------
+\begin{scope}
+  \draw[draw=black!35, line width=0.4pt, rounded corners=2pt]
+    (0,-26) rectangle (56,10);
+  \node[lbl, anchor=north west] at (1.5,9) {antichain $A_t$};
+
+  \fill[black!10] (17,-11) ellipse (13 and 8);
+  \draw[black, line width=0.5pt] (17,-11) ellipse (13 and 8);
+  \node[lbl, anchor=north] at (17,-20.5) {$\aLU([Z_1])$};
+
+  \fill[black!10] (42,-9) ellipse (10 and 6.5);
+  \draw[black, line width=0.5pt] (42,-9) ellipse (10 and 6.5);
+  \node[lbl, anchor=north] at (42,-17.5) {$\aLU([Z_2])$};
+
+  \fill[black] (10,-13) circle (1.1);
+  \node[lbl, anchor=east] at (8.2,-13) {$z$};
+\end{scope}
+
+% ---- transition ---------------------------------------------------------
+\draw[fl] (59,-11) -- (69,-11);
+\node[lbl, anchor=south] at (64,-10) {\code{add}};
+
+% ---- panel: time t+1 ----------------------------------------------------
+\begin{scope}[xshift=72mm]
+  \draw[draw=black!35, line width=0.4pt, rounded corners=2pt]
+    (0,-26) rectangle (56,10);
+  \node[lbl, anchor=north west] at (1.5,9) {antichain $A_{t+1}$};
+
+  \fill[black!10] (20,-10) ellipse (19 and 10);
+  \draw[black, line width=0.5pt] (20,-10) ellipse (19 and 10);
+  % the retired zone, drawn where it was: strictly inside its replacement
+  \draw[black!55, line width=0.4pt, dash pattern=on 1.6pt off 1.4pt]
+    (17,-11) ellipse (13 and 8);
+  \node[lbl, anchor=north] at (20,-21.5) {$\aLU([Z_1 \sqcup Z_3])$};
+
+  \fill[black!10] (42,-9) ellipse (10 and 6.5);
+  \draw[black, line width=0.5pt] (42,-9) ellipse (10 and 6.5);
+
+  \fill[black] (10,-13) circle (1.1);
+  \node[lbl, anchor=east] at (8.2,-13) {$z$};
+\end{scope}
+
+\node[lblit, anchor=north, text width=124mm] at (64,-29)
+  {$Z_1$ is retired --- but only into a zone that contains it (dashed).  The
+   covered region grows; it never moves.  So $z$, once covered, stays covered.};
+
+\end{tikzpicture}
+\caption{Coverage monotonicity (\cref{thm:coverage}).  Concurrent workers
+mutate an antichain while other workers read it, which is normally fatal to a
+lock-free read.  It is safe here because of a structural property of the update
+rule: a stored zone is retired only by subsumption or by absorption into a
+convex hull, and in both cases the zone that replaces it \emph{contains} it.
+The union of the covered regions is therefore non-decreasing over time, so a
+``$z$ is already covered'' answer computed under a shared lock cannot be
+invalidated by a writer that acquires the lock a nanosecond later.}
+\label{fig:coverage}
+\end{figure}}

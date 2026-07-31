@@ -1,0 +1,63 @@
+\section{Implementation Notes}\label{sec:impl}
+
+\tool{} is C++17 with an OpenMP CPU backend and Metal/CUDA GPU backends sharing a
+single driver; the zone algebra lives in a standalone DBM library so the CPU and
+GPU paths compile the same codec and the same predicates.
+
+\paragraph{The expansion loop.}  Phase~1 of \cref{alg:par} is one pragma:
+
+\begin{lstlisting}[language=C++]
+#pragma omp parallel num_threads(nthreads)
+{
+  const int tid = omp_get_thread_num();
+  SymState cur;                       // reused across frontier states
+#pragma omp for schedule(dynamic, 8)
+  for (long i = 0; i < (long)frontier.size(); ++i) {
+    decode_key(frontier[i].first, cur.locs.data(), cur.ints.data());
+    const size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second),
+                                     L, U, qmask, emode, buf);
+    for (size_t k = 0; k < ns; ++k) {           // insert as generated
+      const uint64_t dk = disc_key(buf[k].locs, buf[k].ints);
+      std::lock_guard<std::mutex> lk(smtx[stripe_of(dk)]);
+      smap[stripe_of(dk)].add(std::move(buf[k]), dk, level, ...);
+    }
+  }
+}
+\end{lstlisting}
+
+\noindent
+The chunk size 8 is empirical but, as \cref{sec:diagnosis} reports, almost
+irrelevant: anything from 1 to 64 lands within $3\%$.  \code{buf} is deliberately
+\emph{not} cleared between states---\code{gen\_succ\_reuse} rebuilds slots in
+place and returns a count, so the location, integer and zone storage is reused
+across the whole level.
+
+\paragraph{Frontier representation.}  A frontier entry is a
+\code{(discrete key, zone index)} pair of 12 bytes.  The discrete part is packed
+losslessly into a 64-bit key (\code{disc\_key}/\code{decode\_key} are exact
+inverses) and the zone is referred to by its index in the shared intern table, so
+neither is copied per state.  Antichain nodes likewise store only a zone index
+and a BFS level; the discrete part is identical for every zone in a bucket and is
+recovered from the key when a survivor re-enters the frontier.
+
+\paragraph{Zone storage.}  Stored zones are packed minimal constraint systems
+(\cref{sec:mingraph}) in a shared intern table: one packed record per distinct
+zone, referenced by index, with records bump-allocated in slabs so their
+addresses are stable under concurrent interning.  \Cref{sec:filter}'s fast path
+queries those records \emph{in place}; only candidates that survive it are
+unpacked into a reusable per-thread array.
+
+\paragraph{GPU backends.}  The Metal and CUDA drivers share the flat level loop
+and differ only in the device implementation.  Unified memory on Apple silicon
+lets the host fill the buffers the merge kernel reads with no transfer, which is
+also what makes the CPU-expand/GPU-merge hybrid measured in \cref{sec:eval}
+possible at zero copy.  The GPU passed set is stored densely because the merge
+kernels consume dense matrices; \code{--gpu-intern} deduplicates it, which halves
+peak memory on models with few distinct zones (viking15:
+\SIrange{3213}{1708}{\mebi\byte}) and is neutral elsewhere.
+
+\paragraph{Reproducibility.}  \code{PTCTLMC\_MTLPROF} and \code{PTCTLMC\_MEMPROF}
+emit the per-phase and per-component breakdowns quoted throughout; the ablation
+of \cref{tab:ablation} is reproduced by toggling the two optimisations.  Verdicts
+are deterministic; stored-state counts are not, on models where convex-union
+merge order is thread-sensitive (\cref{sec:correctness}).

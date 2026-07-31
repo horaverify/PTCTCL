@@ -14,14 +14,35 @@ namespace ptctlmc {
 void set_adaptive_merge(bool on);
 bool adaptive_merge();
 
+// GPU passed-set storage (`--gpu-intern`). The GPU driver stores zones DENSE (its merge kernels
+// consume dense matrices), one copy per (discrete state, zone). On models where few distinct zones
+// are reachable that is hugely redundant -- viking15 holds 2.77M zones drawn from 120 distinct ones
+// -- and deduplicating them halves peak RSS there AND cuts wall-clock ~25%, because the per-level
+// rebuild then writes a 4-byte index per survivor instead of copying a full dense zone. It is
+// neutral on models whose zones are nearly all distinct (fischer, arbiter), so it is opt-in rather
+// than default; see the evaluation in docs/paperopenmp2.
+void set_gpu_intern(bool on);
+
 // GPU frontier chunking (`--chunking`). Off by default: a BFS level is expanded in one shot, so the
 // unified-memory pools are sized to the WIDEST level and peak memory scales with level width. On, the
 // frontier is processed in bounded batches, so the pools are sized to a chunk instead and peak memory
 // becomes independent of level width (raising the model size that fits in RAM). Sound: the frontier is
 // a worklist, so processing it in batches only changes the schedule — it may shift the order-sensitive
 // convex-union counts slightly, never the verdict. `states` = frontier states per chunk.
-void set_chunking(bool on, int states = 65536);
+void set_chunking(bool on, int states = 0);   // states = 0 -> size batches from the budget
+void set_chunk_budget(std::size_t bytes);    // GPU pool bytes per batch (0 = auto)
 bool chunking();
+
+// Does the network compare two clocks anywhere (a diagonal constraint x_i - x_j ~ c)? If so the
+// LU/aLU abstraction is unsound (Bouyer 2004) and the engine keeps diagonals exact instead.
+// Defined once in netreach.cpp; callers that only need the predicate declare it through here.
+bool network_has_diagonal(const Network& net);
+
+// Process-symmetry reduction: explore one representative per orbit of the network's automorphism
+// group (see symmetry.hpp). Off by default -- it is exact for the query but changes which states
+// are stored, so it is opted into per run.
+void set_symmetry(bool on);
+bool symmetry_on();
 
 // ---- general modelling-language guard/update -------------------------------
 // The `var OP const` / `var := const` fast paths live in NEdge::int_guard and
@@ -67,5 +88,15 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
 // satisfying `q` on all maximal runs? Location/integer predicates only.
 bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q,
                   Backend backend = Backend::Seq, ReachStats* stats = nullptr);
+
+// E<> deadlock : is a deadlock state reachable? A symbolic state is a deadlock when it
+// has NO action successor -- no edge (including synchronisation) is enabled anywhere in
+// its delay-closed zone, so the network can only let time pass with nothing left to do.
+// Explored on the exact-hash LU-extrapolated zone graph; extrapolation preserves guard
+// enabledness (guards only compare clocks to constants <= the max), so a state deadlocks
+// iff its extrapolated image does -- the same `adj.empty()` convention leads_to_net uses.
+// `A[] not deadlock` is then !deadlock_reachable(...).
+bool deadlock_reachable(const Network& net, Backend backend = Backend::Seq,
+                        ReachStats* stats = nullptr);
 
 }  // namespace ptctlmc

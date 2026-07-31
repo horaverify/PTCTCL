@@ -1,0 +1,110 @@
+\section{The Parallel Engine}\label{sec:engine}
+
+This section describes the engine as implemented, because the diagnosis in
+\cref{sec:diagnosis} is a statement about \emph{this} design.  Nothing here is
+claimed as novel; it is the design a careful implementer arrives at, and the
+point of the paper is that arriving at it is not sufficient.
+
+\subsection{Purity and level-synchronous exploration}
+
+The parallelisation rests on one observation.  $\succfn(q,Z)$ is a \emph{pure
+function}: its inputs are the read-only network and the pair $(q,Z)$, its output
+is a freshly allocated vector of successors, and it neither reads nor writes
+$\Passed$ or any other state's data.  Calls to $\succfn$ on distinct states are
+therefore independent.
+
+What is \emph{not} independent is the check-and-insert that follows each call.
+\Cref{alg:seq} interleaves the two per iteration, and that interleaving is what
+forces sequential execution.  Separating them by BFS level breaks the
+dependency: states are grouped into a frontier $\Frontier_k$, and every state in
+$\Frontier_k$ was already checked against $\Passed$ before being placed there, so
+their expansions may run in any order (\cref{fig:par-bfs}).
+
+\subsection{A lock-striped shared passed list}
+
+A natural next step---and the one our earlier design took---is to have each
+thread expand into a private buffer and then merge all buffers sequentially.  We
+abandoned it.  A sequential merge reintroduces a serial phase proportional to the
+number of \emph{successors} (roughly $10\times$ the number of states), and it
+forces a second pass over data that has just left cache.
+
+Instead, expansion and insertion are \emph{fused}: a thread inserts each
+successor into the shared passed list as soon as it is generated.  The passed
+list is sharded into $S = \max(1024, 64T)$ \emph{stripes} by a multiplicative
+hash of the discrete key $q$, each stripe carrying its own mutex.  A thread
+therefore holds one stripe lock for the duration of one antichain update, and
+$S \gg T$ keeps collisions rare.
+
+Per stripe the table is flat and open-addressed: a slot array maps $q$ to the
+head of its antichain, and antichain nodes live in a deque with stable addresses,
+each holding an index into the shared zone-intern table plus the BFS level that
+created it.  Storing the discrete part once per bucket (rather than per zone) and
+referring to zones by index keeps the resident frontier small enough to stay
+cache-resident: a frontier entry is $12$~bytes, not a full DBM.
+
+\begin{algorithm}[t]
+\caption{Level-synchronous parallel BFS with a striped shared passed list}
+\label{alg:par}
+\begin{algorithmic}[1]
+\Require network $\mathcal{N}$, target $\varphi$, thread count $T$
+\State $\Passed[q_0] \leftarrow \{Z_0\}$;\enspace
+       $\Frontier \leftarrow [(q_0, Z_0)]$;\enspace $k \leftarrow 0$
+\While{$\Frontier \neq \emptyset$}
+  \State $k \leftarrow k+1$
+  \ParFor{$i = 0,\ldots,|\Frontier|-1$}
+    \Comment{\texttt{schedule(dynamic,8)}}
+    \ForAll{$(q', Z') \in \succfn(\Frontier[i])$}
+      \If{$\varphi(q', Z')$} \Return \textbf{true} \EndIf
+      \State \textbf{lock} stripe of $q'$;\enspace
+             $\mathrm{add}(q', Z', k)$;\enspace \textbf{unlock}
+             \Comment{antichain update, \cref{alg:add}}
+    \EndFor
+  \EndParFor
+  \State $\Frontier \leftarrow$ entries of $\Passed$ stamped with level $k$
+         \Comment{gathered in parallel}
+  \State reclaim retired antichain nodes and unreferenced interned zones
+\EndWhile
+\Return \textbf{false}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{The antichain update}
+
+\Cref{alg:add} is where the time goes, so we state it precisely.  Given an
+incoming $(q', Z')$ it performs three folds over $q'$'s antichain---drop $Z'$ if
+some stored zone subsumes it; retire stored zones that $Z'$ subsumes; absorb
+stored zones whose union with $Z'$ is exactly convex---and finally interns and
+prepends $Z'$.
+
+\begin{algorithm}[t]
+\caption{$\mathrm{add}(q, Z, k)$ --- antichain update (original)}\label{alg:add}
+\begin{algorithmic}[1]
+\If{$q$ is new} intern $Z$, create its antichain, \Return \EndIf
+\ForAll{live nodes $m$ of $q$'s antichain}
+  \Comment{(a) subsumed? -- \emph{one unpack per node}}
+  \If{$Z \preceq_{aLU} \mathrm{unpack}(m)$} \Return \textsc{dropped} \EndIf
+\EndFor
+\ForAll{live nodes $m$}
+  \Comment{(b) retire nodes subsumed by $Z$}
+  \If{$\mathrm{unpack}(m) \preceq_{aLU} Z$} mark $m$ retired \EndIf
+\EndFor
+\While{some live $m$ has $Z \cup \mathrm{unpack}(m)$ convex}
+  \Comment{(c) convex-union absorption}
+  \State $Z \leftarrow Z \sqcup \mathrm{unpack}(m)$; mark $m$ retired
+\EndWhile
+\State intern $Z$ and prepend it to the antichain
+\end{algorithmic}
+\end{algorithm}
+
+Every $\mathrm{unpack}$ in \cref{alg:add} is an $O(n^3)$ closure
+(\cref{sec:mingraph}), and fold~(c) restarts its scan after each absorption, so a
+node can be unpacked repeatedly.  \Cref{sec:diagnosis} measures the consequence.
+
+\subsection{Between levels}
+
+After the parallel region, survivors are gathered into the next frontier in
+parallel over the touched discrete keys.  Two reclamation passes then run:
+retired antichain nodes are compacted away per stripe (one thread per stripe,
+geometrically triggered), and the zone-intern table is mark-and-swept so that
+records no longer referenced by any live node or frontier entry return to a free
+list.  The second of these is where \cref{sec:gc} finds its Amdahl term.

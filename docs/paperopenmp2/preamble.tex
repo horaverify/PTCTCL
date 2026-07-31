@@ -1,0 +1,114 @@
+% ---------------------------------------------------------------------------
+%  preamble.tex — shared packages and macros for the paperopenmp2 document
+% ---------------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+% amsthm is incompatible with llncs (both define proof/theorem).
+% Load it only when the fallback article class is active.
+\makeatletter
+\@ifclassloaded{llncs}{}{\RequirePackage{amsthm}}
+\makeatother
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{microtype}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{%
+  arrows.meta, positioning, calc, fit, backgrounds,
+  shapes.geometric, decorations.pathreplacing,
+  shadows.blur, matrix, patterns}
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink]{cleveref}
+\usepackage{multirow}
+\usepackage{siunitx}
+\sisetup{group-separator={,}, group-minimum-digits=4, detect-weight=true}
+
+% ---- colour palette (matches house style) ----------------------------------
+\definecolor{cpu}{HTML}{2C6E9B}     % blue   -- CPU / host
+\definecolor{gpu}{HTML}{B5651D}     % orange -- GPU / device
+\definecolor{acc}{HTML}{3F7A3F}     % green  -- accents
+\definecolor{soft}{HTML}{F1F4F8}    % light blue bg
+\definecolor{softg}{HTML}{FBEFE3}   % light orange bg
+\definecolor{codebg}{HTML}{F7F7F4}  % code background
+
+\colorlet{cA}{cpu}
+\colorlet{cB}{gpu}
+\colorlet{cC}{acc}
+\colorlet{cD}{cpu!60!black}
+\definecolor{cGrey}{HTML}{7F8C8D}
+
+% ---- tikz styles -----------------------------------------------------------
+\tikzset{
+  box/.style    = {rounded corners=2pt, draw=black!55, thick, align=center,
+                   font=\small, inner sep=5pt, minimum height=8mm},
+  cpubox/.style = {box, fill=soft,  draw=cpu!70},
+  gpubox/.style = {box, fill=softg, draw=gpu!75},
+  lane/.style   = {rounded corners=3pt, draw=black!25, thick, inner sep=7pt},
+  flow/.style   = {-{Stealth[length=2.4mm]}, thick, draw=black!65},
+  dflow/.style  = {-{Stealth[length=2.4mm]}, thick, draw=black!45, dashed},
+  lbl/.style    = {font=\scriptsize\itshape, text=black!60, align=center},
+  threadbox/.style = {rounded corners=2pt, draw=cA!60, thick, fill=soft,
+                      align=center, font=\scriptsize, inner sep=4pt,
+                      minimum width=18mm, minimum height=7mm},
+  mergebox/.style  = {rounded corners=2pt, draw=cC!70, thick, fill=cC!8,
+                      align=center, font=\small, inner sep=5pt, minimum height=8mm},
+  statebox/.style  = {circle, draw=black!50, fill=white, thick,
+                      font=\scriptsize, inner sep=2pt, minimum size=6mm},
+  zonenode/.style  = {rounded corners=1pt, draw=black!40, fill=white,
+                      font=\scriptsize\ttfamily, inner sep=3pt},
+}
+
+% ---- listings --------------------------------------------------------------
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  breaklines=true, columns=fullflexible, keepspaces=true,
+  frame=single, rulecolor=\color{black!20},
+  framesep=4pt, xleftmargin=4pt,
+  commentstyle=\color{acc},
+  keywordstyle=\color{cpu}\bfseries,
+  language=C++, showstringspaces=false,
+  morekeywords={pragma,omp,parallel,for,schedule,dynamic,threadprivate}
+}
+
+% ---- theorem environments -------------------------------------------------
+% llncs already provides theorem, lemma, proposition, definition, remark, proof.
+% When the fallback article class is used, define them ourselves.
+\makeatletter
+\@ifclassloaded{llncs}{}{%
+  \newtheorem{theorem}{Theorem}[section]%
+  \newtheorem{lemma}[theorem]{Lemma}%
+  \newtheorem{proposition}[theorem]{Proposition}%
+  \newtheorem{definition}[theorem]{Definition}%
+  \newtheorem{remark}{Remark}[section]%
+}
+\makeatother
+
+% ---- macros ----------------------------------------------------------------
+\newcommand{\tool}{\textsc{PtcTlmc}}
+\newcommand{\ltsmin}{\textsc{LTSmin}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\clocks}{\mathcal{C}}
+\newcommand{\Loc}{L}
+\newcommand{\Init}{\ell_0}
+\newcommand{\Inv}{\mathit{Inv}}
+\newcommand{\Guard}{\mathit{Grd}}
+\newcommand{\Zone}{\mathcal{Z}}
+\newcommand{\DBM}{\mathit{DBM}}
+\newcommand{\Frontier}{\mathcal{F}}
+\newcommand{\Passed}{\mathcal{P}}
+\newcommand{\Wait}{\mathcal{W}}
+\newcommand{\extraLU}{\mathit{Extra}^+_{LU}}
+\newcommand{\succfn}{\mathit{succ}}   % renamed to avoid clash with \succ (math symbol)
+\newcommand{\subsumedby}{\preceq}
+% ---- algorithmic extensions -----------------------------------------------
+\algdef{SE}[PARFOR]{ParFor}{EndParFor}[1]{\textbf{parallel for} #1 \textbf{do}}{\textbf{end parallel for}}

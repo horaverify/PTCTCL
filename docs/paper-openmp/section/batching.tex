@@ -28,7 +28,52 @@ with no lock held at all.
 Settling is lock-free by construction rather than by convention. A settling thread modifies
 only the \texttt{dead} and zone-identifier fields of nodes on the chain it owns, and never
 appends to the arena or grows the table, so two configurations that happen to share a stripe
-cannot interfere. \Cref{fig:timeline} shows the resulting schedules.
+cannot interfere. \Cref{fig:rho} shows why contention tracks $\rho$ at all, and \cref{fig:timeline} the resulting thread schedules.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\small, x=1mm, y=1mm,
+  wrk/.style={draw=black!70, fill=black!10, minimum width=8mm, minimum height=6mm, inner sep=0pt},
+  zn/.style={draw=black!60, fill=white, minimum width=7mm, minimum height=3.2mm, inner sep=0pt},
+  ttl/.style={font=\bfseries\small},
+  sub/.style={font=\scriptsize},
+  a/.style={-{Latex[length=1.5mm]}, draw=black!70},
+  bar/.style={draw=black!70, fill=black!35, minimum height=3mm, inner sep=0pt}]
+
+% ================= LEFT: many thin antichains =================
+\node[ttl] at (24,8) {many thin antichains};
+\node[sub] at (24,2) {$\rho \approx 1$ \;(Viking)};
+\foreach \i/\x in {0/4, 1/17, 2/30, 3/43} \node[wrk] at (\x,-8) {$T_\i$};
+\foreach \i/\x in {0/4, 1/17, 2/30, 3/43} {
+  \draw[a] (\x,-11.5) -- (\x,-17);
+  \node[zn] at (\x,-20) {};
+}
+\foreach \x in {10, 23, 36} \node[zn, draw=black!35] at (\x,-20) {};
+\node[sub, anchor=east] at (-2,-20) {visited};
+\node[sub] at (24,-27) {every thread lands on its own antichain};
+\node[bar, minimum width=5mm, anchor=west] at (4,-35) {};
+\node[bar, minimum width=5mm, anchor=west] at (17,-35) {};
+\node[bar, minimum width=5mm, anchor=west] at (30,-35) {};
+\node[bar, minimum width=5mm, anchor=west] at (43,-35) {};
+\node[sub, anchor=east] at (-2,-35) {lock held};
+
+% ================= RIGHT: few fat antichains =================
+\node[ttl] at (95,8) {few fat antichains};
+\node[sub] at (95,2) {$\rho \gg 1$ \;(Fischer)};
+\foreach \i/\x in {0/75, 1/88, 2/101, 3/114} \node[wrk] at (\x,-8) {$T_\i$};
+\foreach \x in {75, 88, 101, 114} \draw[a] (\x,-11.5) -- (95,-16.5);
+\foreach \k in {0,...,5} \node[zn] at (95,-19.5-3.6*\k) {};
+\node[sub] at (95,-45) {all four contend for one antichain};
+\node[bar, minimum width=26mm, anchor=west] at (75,-52) {};
+\node[sub, anchor=east] at (73,-52) {lock held};
+\end{tikzpicture}
+\caption{Why $\rho$ decides contention. Where a configuration carries a single zone, threads
+touch distinct antichains and each holds its stripe lock for one comparison. Where a
+configuration accumulates many zones, threads converge on the same antichain and each holds the
+lock across a traversal proportional to its length, so the traversals are executed serially.
+The batched engine performs exactly the same traversals, but after the lock is released.}
+\label{fig:rho}
+\end{figure}
 
 \begin{figure*}[t]
 \centering

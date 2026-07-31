@@ -1,0 +1,122 @@
+\section{Introduction}\label{sec:intro}
+
+Timed automata (TA)~\cite{AlurDill94} underpin \textsc{UPPAAL}~\cite{Larsen97},
+the reference tool for verifying real-time systems.  Its core is a symbolic
+reachability procedure that unfolds the system into a \emph{zone graph}, whose
+nodes are pairs $(\ell, Z)$ of a control location and a convex set of clock
+valuations represented as a Difference Bound Matrix (DBM)~\cite{Dill89}.  The
+graph is explored breadth-first against a \emph{passed list} that discards any
+newly generated zone already \emph{subsumed} by a stored one; together with
+LU$^+$ extrapolation~\cite{Behrmann06} this guarantees termination.  The
+procedure is sequential: every iteration reads and then writes the passed list,
+so UPPAAL leaves all but one core idle.
+
+Parallelising it is, by now, well-trodden ground.  The successor function
+$\succfn(\ell,Z)$ is a pure function of the (read-only) automaton and the state
+itself, so all expansions within a BFS level are independent.  Organise
+exploration level-synchronously, shard the passed list across lock stripes, and
+the expansion phase parallelises cleanly.  We built exactly that as the OpenMP
+backend of \tool{}, and it behaves as the textbook predicts.
+
+\medskip
+\noindent\textbf{The puzzle.}  It was not enough.  On the \emph{arbiter}
+benchmark family---a mutual-exclusion arbiter with one clock per process---our
+12-core engine beat sequential UPPAAL by only $\approx 1.5\times$.  That is a
+poor return on twelve cores, and the natural diagnosis is load imbalance:
+successor counts vary widely across states, so surely some threads starve while
+others grind.
+
+That diagnosis is wrong, and instructively so.  We instrumented the engine to
+attribute wall-clock time per phase and per thread.  The expansion phase runs at
+$99.8\%$ parallel efficiency; summed idle time from load imbalance is $4$~ms out
+of a $6.9$~s run.  Sweeping the OpenMP chunk size from $1$ to $64$ moves total
+runtime by under $3\%$.  Whatever was costing us eleven cores' worth of work, it
+was not the scheduler.
+
+Two other things were.  Neither is specific to our implementation, and we
+believe both are easy to reproduce accidentally in any parallel zone-graph tool.
+
+\medskip
+\noindent\textbf{Finding 1: a latched reclamation trigger.}  Zones are interned
+in a shared table and reclaimed by mark-and-sweep once no passed-list node
+references them.  Reclamation was guarded by a threshold on a \emph{high-water}
+counter---one that never decreases.  Once the threshold was crossed on an early
+level it stayed crossed, so a fully serial mark-and-sweep, $O(\text{arena} +
+\text{table})$, ran on \emph{every subsequent level}.  Its cost grows with the
+state space while the expansion phase stays parallel: a textbook Amdahl term,
+invisible on small models and worth $30\%$ of wall-clock time at arbiter17.
+Triggering reclamation on \emph{growth} instead makes it amortised $O(1)$ per
+interned zone.
+
+\medskip
+\noindent\textbf{Finding 2: the compression tax.}  This one is more
+interesting, and is the paper's main technical contribution.  Like UDBM, we
+store passed zones as \emph{minimal constraint systems}~\cite{LarsenLPY97}: only
+the non-redundant constraints, roughly a $12\times$ memory saving over the dense
+matrix at 17~clocks.  Memory-wise this is an unambiguous win, and it is why the
+technique is standard.  But the zone algebra needs \emph{dense, closed}
+matrices, so every query against a stored zone first rebuilt one---and
+rebuilding ends in a shortest-path closure costing $O(|\clocks|^3)$.
+
+Profiling showed what that costs in aggregate.  On arbiter17, $89.8\%$ of the
+$12.3$~M passed-list insertions are duplicates rejected by the very first
+subsumption test, against antichains of mean length $1.00$.  Reaching that test
+consumed $36.3$~s of decompression to feed $1.6$~s of actual comparison: we
+spent $22\times$ longer decompressing stored zones than comparing against them.
+The compression that cut our memory was quietly charging a large constant factor
+on every query---and a constant factor is precisely what parallelism cannot fix.
+
+The remedy is to make the compressed form directly queryable.  For a closed zone
+$Z$ and a minimal constraint system $G$ generating $Z'$, inclusion $Z \subseteq
+Z'$ holds iff $Z$ satisfies each of the $O(|\clocks|)$ generating constraints of
+$G$---no closure, no dense matrix (\cref{lem:minclosure}).  Our engine, however,
+prunes not with plain inclusion but with the coarser $\preceq_{aLU}$
+abstraction~\cite{Herbreteau12}, which is strictly more aggressive and does need
+dense entries.  We therefore use the cheap exact test as a \emph{sound
+pre-filter}: plain inclusion implies $aLU$-subsumption (\cref{lem:filter}), so a
+hit lets us drop the candidate immediately, and only the $\approx 10\%$ that
+survive it pay for decompression.  The composite predicate is \emph{identical}
+to the original (\cref{thm:samestates}), so the explored state set does not
+change---which our experiments confirm exactly, state count for state count.
+
+\medskip
+\noindent\textbf{Contributions.}
+\begin{enumerate}
+  \item An instrumented diagnosis of a parallel zone-graph engine showing that
+        thread scheduling and load balance are \emph{not} the limiting factor
+        ($99.8\%$ parallel efficiency), together with a measurement methodology
+        that attributes time to the phases and data structures that are
+        (\cref{sec:diagnosis}).
+  \item \emph{Amortised zone reclamation}: replacing a latched high-water
+        trigger by a growth trigger removes an Amdahl term that scales with the
+        state space, at bounded ($\leq 2\times$) memory overhead
+        (\cref{sec:gc}).
+  \item \emph{Compressed-form subsumption}: an exact $O(|G|)$ inclusion test
+        against minimal constraint systems, composed with the coarser
+        $\preceq_{aLU}$ abstraction as a two-tier test that provably explores the
+        same states (\cref{sec:filter}).  This removes the constant factor that
+        parallelism could not.
+  \item An evaluation against UPPAAL~5.0 over eight benchmark families
+        (\cref{sec:eval}), reporting the combined effect and, more importantly,
+        \emph{which} fix matters where.
+\end{enumerate}
+
+\medskip
+\noindent\textbf{A note on what is new.}  Neither ingredient is exotic in
+isolation: minimal constraint systems are UPPAAL's own representation, and
+testing inclusion against them is folklore in the DBM literature.  Our claim is
+about the \emph{interaction}.  A tool can port minimal-graph \emph{storage}---and
+reap the memory win, and validate it, and ship it---while leaving the
+\emph{query} path decompressing, and the resulting constant factor is invisible
+to every metric except a profiler.  Parallelism actively hides it, because the
+tool still scales beautifully; it simply scales from a worse starting point.  We
+think this failure mode deserves to be named.
+
+\medskip
+\noindent\textbf{Structure.}
+\Cref{sec:background} fixes notation and recalls the sequential procedure.
+\Cref{sec:engine} describes the parallel engine as implemented.
+\Cref{sec:diagnosis} presents the instrumented diagnosis.
+\Cref{sec:opt} gives the two optimisations and their correctness arguments.
+\Cref{sec:eval} evaluates.
+\Cref{sec:related} surveys related work and \cref{sec:conclusion} concludes.

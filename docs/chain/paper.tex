@@ -1,0 +1,27 @@
+\documentclass[11pt,a4paper]{article}
+\input{preamble}
+
+\title{Chain-Level Load Imbalance in OpenMP Symbolic Reachability\\
+A Formal Note with Practical Scheduling Directions}
+\author{PTCTCL Design Note}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note formalizes why high thread counts in symbolic timed reachability do not imply proportional speedup.
+We define zones, explain how per-discrete-state chains are created, and model chain settle cost under inclusion and convex-union rules.
+Using this model, we derive starvation and tail-latency effects in level-synchronous OpenMP execution.
+We then summarize algorithmic strategies used in related irregular-parallel systems and adapt them to this checker.
+\end{abstract}
+
+\input{section/01_intro}
+\input{section/02_zone_and_chain_formalism}
+\input{section/03_chain_construction_example}
+\input{section/04_parallel_execution_and_starvation}
+\input{section/05_related_approaches}
+\input{section/06_actionable_design}
+\input{section/07_conclusion}
+
+\end{document}

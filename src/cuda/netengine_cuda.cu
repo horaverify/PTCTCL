@@ -60,10 +60,10 @@ __device__ inline bool apply_inv(raw_t* z, int dim, int nprocs, const int* nlocs
 
 // One thread per successor recipe (participant list). Int guards + committed filtering + sync
 // enumeration are done on the host; the kernel is the pure zone pipeline over the participants.
-__global__ void net_expand_k(const int* front_locs, const int* front_ints, const raw_t* front_zone,
+__global__ void net_expand_k(const int* front_locs, const int* front_ints, const gz_t* front_zone,
                              const int* work_state, const int* part_off, const int* part_cnt,
                              const int* part_proc, const int* part_edge, DevNet net,
-                             int* out_valid, int* out_locs, int* out_ints, raw_t* out_zone, int nwork) {
+                             int* out_valid, int* out_locs, int* out_ints, gz_t* out_zone, int nwork) {
   int w = blockIdx.x * blockDim.x + threadIdx.x;
   if (w >= nwork) return;
   const int dim = net.dim, d2 = dim * dim, nprocs = net.nprocs, nintvars = net.nintvars, nclocks = net.nclocks;
@@ -79,7 +79,7 @@ __global__ void net_expand_k(const int* front_locs, const int* front_ints, const
   for (int t = 0; t < pc; ++t) nlocs[part_proc[po + t]] = net.edge_tgt[part_edge[po + t]];
 
   raw_t z[kMaxDim * kMaxDim];
-  for (int k = 0; k < d2; ++k) z[k] = front_zone[sbase * d2 + k];
+  for (int k = 0; k < d2; ++k) z[k] = gz_load(front_zone[sbase * d2 + k]);
   for (int t = 0; t < pc; ++t) {
     int ge = part_edge[po + t];
     for (int c = net.cg_off[ge]; c < net.cg_off[ge + 1]; ++c)
@@ -115,7 +115,7 @@ __global__ void net_expand_k(const int* front_locs, const int* front_ints, const
   out_valid[w] = 1;
   for (int q = 0; q < nprocs; ++q) out_locs[wbase * nprocs + q] = nlocs[q];
   for (int v = 0; v < nintvars; ++v) out_ints[wbase * nintvars + v] = nints[v];
-  for (int k = 0; k < d2; ++k) out_zone[wbase * d2 + k] = z[k];
+  for (int k = 0; k < d2; ++k) out_zone[wbase * d2 + k] = gz_store(z[k]);
 }
 
 // Device convex-union: dbm_ops.hpp's dbm_try_union is host-only (and sized to kDbmMaxDim=64),
@@ -144,16 +144,16 @@ __device__ inline bool d_try_union(raw_t* a, const raw_t* b, int dim) {
 
 // One thread per discrete-state bucket; replicates add_to (aLU-subsumption both ways + exact
 // convex-union) over the work pool the host prefilled with existing zones (isnew = 0).
-__global__ void net_merge_k(const int* work_off, const int* exist_cnt, const raw_t* oz,
+__global__ void net_merge_k(const int* work_off, const int* exist_cnt, const gz_t* oz,
                            const int* new_idx, const int* new_off, const int* new_cnt,
-                           const int* Lb, const int* Ub, raw_t* work, int* work_isnew,
+                           const int* Lb, const int* Ub, gz_t* work, int* work_isnew,
                            int* out_count, int dim, int nb, int has_diag) {
   int b = blockIdx.x * blockDim.x + threadIdx.x;
   if (b >= nb) return;
   const int d2 = dim * dim;
   // size_t indexing: work_off[b]*d2 and widx*d2 overflow int once the pools exceed ~3.7M zones
   // at d2=576, which is reachable on a datacentre GPU.
-  raw_t* W = work + static_cast<std::size_t>(work_off[b]) * d2;
+  gz_t* W = work + static_cast<std::size_t>(work_off[b]) * d2;
   int* WI = work_isnew + work_off[b];
   const int* L = Lb + b * dim;
   const int* U = Ub + b * dim;
@@ -162,18 +162,18 @@ __global__ void net_merge_k(const int* work_off, const int* exist_cnt, const raw
 
   for (int t = 0; t < new_cnt[b]; ++t) {
     const int widx = new_idx[new_off[b] + t];   // read the new zone in place from the expand output
-    for (int k = 0; k < d2; ++k) zn[k] = oz[static_cast<std::size_t>(widx) * d2 + k];
+    for (int k = 0; k < d2; ++k) zn[k] = gz_load(oz[static_cast<std::size_t>(widx) * d2 + k]);
 
     bool subsumed = false;
     for (int i = 0; i < cur; ++i) {
-      for (int k = 0; k < d2; ++k) zw[k] = W[i * d2 + k];
+      for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[i * d2 + k]);
       if (has_diag ? dbm_includes(zw, zn, dim) : dbm_is_alu_le(zn, zw, dim, L, U)) { subsumed = true; break; }
     }
     if (subsumed) continue;
 
     int w = 0;
     for (int i = 0; i < cur; ++i) {
-      for (int k = 0; k < d2; ++k) zw[k] = W[i * d2 + k];
+      for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[i * d2 + k]);
       bool killed = has_diag ? dbm_includes(zn, zw, dim) : dbm_is_alu_le(zw, zn, dim, L, U);
       if (!killed) { if (w != i) { for (int k = 0; k < d2; ++k) W[w * d2 + k] = W[i * d2 + k]; WI[w] = WI[i]; } ++w; }
     }
@@ -183,15 +183,15 @@ __global__ void net_merge_k(const int* work_off, const int* exist_cnt, const raw
     while (merged) {
       merged = false;
       for (int kk = 0; kk < cur; ++kk) {
-        for (int k = 0; k < d2; ++k) zw[k] = W[kk * d2 + k];
+        for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[kk * d2 + k]);
         if (d_try_union(zn, zw, dim)) {
           for (int i = kk; i < cur - 1; ++i) { for (int k = 0; k < d2; ++k) W[i * d2 + k] = W[(i + 1) * d2 + k]; WI[i] = WI[i + 1]; }
           --cur; merged = true; break;
         }
       }
     }
-    for (int k = 0; k < d2; ++k) W[cur * d2 + k] = zn[k];
-    WI[cur] = 1; ++cur;
+    for (int k = 0; k < d2; ++k) W[cur * d2 + k] = gz_store(zn[k]);
+    WI[cur] = -1;   // -1 = 'this merge created it' (see net_gpu.hpp) ++cur;
   }
   out_count[b] = cur;
 }
@@ -218,9 +218,14 @@ class NetGpuCuda : public NetGpuExpander {
     for (void* p : owned_) cudaFree(p);
   }
 
+  // The CUDA kernel still emits per-successor locs/ints; out_dk stays null and the driver packs
+  // the key host-side (see net_gpu.hpp). Mirroring the Metal kernel's device-side packing is a
+  // straight port of the four lines at the end of net_expand when this backend is next touched.
   std::size_t expand(int nstates, const std::vector<int>& locs, const std::vector<long>& ints,
                      const std::vector<raw_t>& zones, const int*& out_valid, const int*& out_locs,
-                     const int*& out_ints, const raw_t*& out_zones) override {
+                     const int*& out_ints, const raw_t*& out_zones,
+                     const std::uint64_t*& out_dk) override {
+    out_dk = nullptr;
     const int np = en_.nprocs, ni = en_.nintvars, d2 = en_.dim * en_.dim;
     out_valid = out_locs = out_ints = nullptr;
     out_zones = nullptr;
@@ -314,16 +319,17 @@ class NetGpuCuda : public NetGpuExpander {
     // exactly this reason (see netengine_metal.mm grow()).
     int* d_fl = grow_i(mfl_, locs.size() ? locs.size() : 1);
     int* d_fi = grow_i(mfi_, ints32.size() ? ints32.size() : 1);
-    raw_t* d_fz = grow_r(mfz_, zones.size() ? zones.size() : 1);
+    // Empty `zones` => the caller filled the frontier buffer through stage_frontier() already.
+    gz_t* d_fz = zones.empty() ? mfz_.p : grow_g(mfz_, zones.size());
     if (!locs.empty())   std::memcpy(d_fl, locs.data(), locs.size() * sizeof(int));
     if (!ints32.empty()) std::memcpy(d_fi, ints32.data(), ints32.size() * sizeof(int));
-    if (!zones.empty())  std::memcpy(d_fz, zones.data(), zones.size() * sizeof(raw_t));
+    if (!zones.empty())  for (std::size_t k = 0; k < zones.size(); ++k) d_fz[k] = gz_store(zones[k]);
     int* d_ws = tmp(dev_upload(ws)); int* d_po = tmp(dev_upload(part_off)); int* d_pc = tmp(dev_upload(part_cnt));
     int* d_pp = tmp(dev_upload(part_proc)); int* d_pe = tmp(dev_upload(part_edge));
     int* ov = grow_i(mv_, static_cast<std::size_t>(nwork));
     int* olb = grow_i(mol_, static_cast<std::size_t>(nwork) * np);
     int* oib = grow_i(moi_, static_cast<std::size_t>(nwork) * (ni ? ni : 1));
-    raw_t* ozb = grow_r(moz_, static_cast<std::size_t>(nwork) * d2);
+    gz_t* ozb = grow_g(moz_, static_cast<std::size_t>(nwork) * d2);
     const int T = 128, B = (nwork + T - 1) / T;
     net_expand_k<<<B, T>>>(d_fl, d_fi, d_fz, d_ws, d_po, d_pc, d_pp, d_pe, d_, ov, olb, oib, ozb, nwork);
     CUDA_CHECK(cudaGetLastError());
@@ -333,10 +339,15 @@ class NetGpuCuda : public NetGpuExpander {
     return static_cast<std::size_t>(nwork);
   }
 
-  void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf) override {
-    work_buf = grow_r(mwork_, (work_zones ? work_zones : 1) * d2);
+  void stage_frontier(std::size_t nstates, int d2, raw_t*& zones) override {
+    zones = grow_g(mfz_, (nstates ? nstates : 1) * d2);
+  }
+
+  void stage_merge(std::size_t work_zones, int d2, gz_t*& work_buf, int*& isnew) override {
+    work_buf = grow_g(mwork_, (work_zones ? work_zones : 1) * d2);
     int* wi = grow_i(mwi_, work_zones ? work_zones : 1);
-    std::memset(wi, 0, (work_zones ? work_zones : 1) * sizeof(int));  // existing isnew = 0
+    std::memset(wi, 0xff, (work_zones ? work_zones : 1) * sizeof(int));  // -1 = created here
+    isnew = wi;   // caller seeds the existing zones' level-new flags (see net_gpu.hpp)
   }
 
   void merge(int nb, int dim, bool has_diag,
@@ -377,9 +388,10 @@ class NetGpuCuda : public NetGpuExpander {
   template <class T> struct Managed { T* p = nullptr; std::size_t cap = 0; };
   // persistent managed (unified) buffers, grown on demand
   Managed<int> mv_, mol_, moi_, moc_, mwi_;
-  Managed<raw_t> moz_, mwork_;
+  Managed<gz_t>  moz_;     // expand output zones: narrow entries (see net_gpu.hpp)
+  Managed<gz_t>  mwork_;   // merge work pool: narrow entries (see net_gpu.hpp)
   Managed<int> mfl_, mfi_;     // persistent frontier locs/ints (were re-uploaded every level)
-  Managed<raw_t> mfz_;         // persistent frontier zones   (were re-uploaded every level)
+  Managed<gz_t>  mfz_;         // persistent frontier zones, narrow (re-uploaded every level before)
   std::vector<void*> owned_;   // static device buffers to free
   std::vector<void*> tmps_;    // per-call device uploads to free after the launch
   NetEncoding en_;
@@ -395,6 +407,7 @@ class NetGpuCuda : public NetGpuExpander {
 
   int* grow_i(Managed<int>& m, std::size_t n) { return grow_m(m, n); }
   raw_t* grow_r(Managed<raw_t>& m, std::size_t n) { return grow_m(m, n); }
+  gz_t*  grow_g(Managed<gz_t>& m, std::size_t n) { return grow_m(m, n); }
   template <class T> T* grow_m(Managed<T>& m, std::size_t n) {
     if (n == 0) n = 1;                       // never hand back an unallocated pointer
     if (m.cap < n) {

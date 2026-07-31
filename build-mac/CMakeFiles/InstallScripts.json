@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-mac/cmake_install.cmake",
-		"/Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC/build-mac/tests/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

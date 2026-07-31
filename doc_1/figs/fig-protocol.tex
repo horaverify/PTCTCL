@@ -1,0 +1,56 @@
+% -------------------------------------------------------------------------
+%  fig-protocol.tex  --  the two-phase lock protocol
+%
+%  A straight top-to-bottom spine (successor -> phase 1 -> phase 2) with the
+%  two exits leaving to the RIGHT at their own heights, so no edge label can
+%  collide with a box.  Annotations live to the right of the exits.
+% -------------------------------------------------------------------------
+\newcommand{\FigProtocol}{%
+\begin{figure}[tb]
+\centering
+\begin{tikzpicture}[x=1mm,y=1mm]
+
+  % ---- spine ------------------------------------------------------------
+  \node[bxs, anchor=north, minimum width=46mm] (s) at (25,0)
+    {successor $z$ generated at $\dk$};
+
+  \node[bxs, tone, anchor=north, minimum width=46mm, minimum height=12mm]
+    (p) at (25,-14)
+    {\textsc{phase 1} \;--\; \emph{shared} lock\\[1pt]
+     \code{probe\_kill}: is $z$ already covered?};
+
+  \node[bxs, tonedk, anchor=north, minimum width=46mm, minimum height=12mm]
+    (x) at (25,-40)
+    {\textsc{phase 2} \;--\; \emph{exclusive} lock\\[1pt]
+     \code{add}: re-test, retire, merge, insert};
+
+  \draw[fl] (s.south) -- (p.north);
+  \draw[fl] (p.south) -- node[lbl, right=1.5mm, pos=0.45] {no} (x.north);
+
+  % ---- exits ------------------------------------------------------------
+  \node[bxs, anchor=west, minimum width=26mm, minimum height=8mm] (drop) at (72,-20)
+    {\textbf{drop $z$}};
+  \node[bxs, anchor=west, minimum width=26mm, minimum height=8mm] (keep) at (72,-46)
+    {store, or \textbf{drop}};
+
+  \draw[fl] (p.east) -- node[lbl, above, pos=0.45] {yes, $\approx 83\%$} (drop.west);
+  \draw[fl] (x.east) -- node[lbl, above, pos=0.45] {} (keep.west);
+
+  % ---- annotations ------------------------------------------------------
+  \node[lblit, anchor=west, text width=32mm] at (100,-20)
+    {answered concurrently:\\many readers per stripe,\\no serialisation};
+  \node[lblit, anchor=west, text width=32mm] at (100,-46)
+    {the only exclusive\\section, and it is $O(1)$\\because chains are short};
+
+\end{tikzpicture}
+\caption{The two-phase stripe protocol.  Phase~1 is exactly the read-only
+prefix of the insertion procedure, run under a \emph{shared} lock: on
+\code{phil13} it disposes of $83\%$ of all $23$\,M insertion attempts, and
+because shared locks do not exclude each other, those $83\%$ never serialise.
+Phase~2 re-runs the test under an exclusive lock, so a stale ``no'' from
+phase~1 costs one wasted lock acquisition and can never change the outcome.  A
+stale ``yes'' \emph{would} change the outcome ---
+\cref{thm:coverage,cor:probe} prove that a ``yes'' can never go stale, which is
+what licenses releasing the lock between the two phases.}
+\label{fig:protocol}
+\end{figure}}

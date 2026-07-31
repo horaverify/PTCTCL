@@ -23,22 +23,49 @@ namespace ptctlmc {
 
 struct Network;
 
+// Storage type of the two biggest device zone buffers -- the frontier and the expand output.
+// Both are only ever read or written a whole matrix at a time through a per-entry loop, so a
+// narrow entry costs nothing there and halves the allocation (and the expand kernel's store
+// traffic). The zone ALGEBRA is untouched: kernels and the CPU merge still work on raw_t.
+// kGzInf is the sentinel for raw_t's kInf; a backend only narrows when the model's constants
+// make overflow impossible (see GpuZoneIntern in netreach.cpp, same bound).
+using gz_t = std::int16_t;
+constexpr int kGzInf = 0x7ffe;
+inline raw_t gz_load(gz_t v) { return (static_cast<int>(v) == kGzInf) ? kInf : static_cast<raw_t>(v); }
+inline gz_t  gz_store(raw_t v) { return (v >= kInf) ? static_cast<gz_t>(kGzInf) : static_cast<gz_t>(v); }
+
 class NetGpuExpander {
  public:
   virtual ~NetGpuExpander() = default;
 
   // Expand `nstates` frontier states. Inputs are row-major:
   //   locs[s*nprocs + p], ints[s*nintvars + v], zones[s*(dim*dim) + k].
+  // An EMPTY `zones` means the frontier buffer was already filled through stage_frontier().
   // Returns the number of work items W. Outputs point INTO the expander's persistent buffers
   // (valid until the next expand/merge call): work item w is a successor iff out_valid[w],
   // with discrete state out_locs[w*nprocs..], out_ints[w*nintvars..] (int32) and zone
   // out_zones[w*(dim*dim)..] — read in place, no compaction copy.
+  // `out_dk` is the successor's packed discrete key, computed on the device from the same
+  // `dshift`/`intlo` layout the host uses (set_key_layout). A backend that does not compute it
+  // leaves it null and the caller falls back to out_locs/out_ints.
   virtual std::size_t expand(int nstates,
                              const std::vector<int>& locs,
                              const std::vector<long>& ints,
                              const std::vector<raw_t>& zones,
                              const int*& out_valid, const int*& out_locs,
-                             const int*& out_ints, const raw_t*& out_zones) = 0;
+                             const int*& out_ints, const gz_t*& out_zones,
+                             const std::uint64_t*& out_dk) = 0;
+
+  // Tell the backend how the driver packs a discrete state into 64 bits, so the expand kernel can
+  // emit the key itself. `dshift` is nprocs+nintvars bit offsets; `intlo` is per-int-var low bound.
+  virtual void set_key_layout(const std::vector<int>& dshift, const std::vector<int>& intlo) {}
+
+  // Stage the frontier-zone buffer for `nstates` states and hand back a host-writable pointer
+  // into it (unified memory). The caller fills it and then passes an EMPTY `zones` to expand(),
+  // which takes that as "already staged". The frontier itself is arena indices, so this is where
+  // its zones are widened -- writing them straight here saves a whole pass over the batch.
+  virtual void stage_frontier(std::size_t nstates, int d2, gz_t*& zones) = 0;
+
 
   // Merge this level's `nb` discrete-state buckets on the GPU (aLU-subsumption + convex-union,
   // exactly as the CPU add_to), one GPU thread per bucket. For bucket b:
@@ -52,7 +79,10 @@ class NetGpuExpander {
   // to work_buf[work_off[b]*d2 ..] (exist_cnt[b] zones). `work_zones` = total (exist+new)
   // work-pool capacity. New zones are NOT staged — the merge reads them in place from the expand
   // output by work-item index (see `new_idx` below), so successor zones are never copied.
-  virtual void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf) = 0;
+  // `isnew` is the per-work-pool-slot "added during the current level" flag array; the caller
+  // seeds it for the EXISTING zones (a zone an earlier batch of this level added is still new)
+  // and the merge preserves it through compaction, flagging appended zones with 1.
+  virtual void stage_merge(std::size_t work_zones, int d2, gz_t*& work_buf, int*& isnew) = 0;
 
   // Per-bucket subsumption + convex-union merge. Existing zones come from the staged work buffer;
   // NEW zones are read in place from the previous expand's output at the given work-item indices:
@@ -66,7 +96,7 @@ class NetGpuExpander {
                      const std::vector<int>& new_cnt,
                      const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
                      std::vector<int>& out_work_off, std::vector<int>& out_count,
-                     const raw_t*& out_zones, const int*& out_isnew) = 0;
+                     const gz_t*& out_zones, const int*& out_isnew) = 0;
 
   // CPU-EXPAND / GPU-MERGE hybrid. Measurements say the two phases want different
   // hardware: successor generation is branchy, serially-dependent small-matrix work
@@ -82,12 +112,22 @@ class NetGpuExpander {
   // small — calls again with the true size and `preserve=true`, which keeps the bytes
   // already written so only the overflow tail has to be appended.
   virtual void stage_expand(std::size_t nwork, int nprocs, int nintvars, int d2,
-                            int*& valid, int*& locs, int*& ints, raw_t*& zones,
+                            int*& valid, int*& locs, int*& ints, gz_t*& zones,
                             bool preserve = false) = 0;
 
   // Total bytes currently held in device / unified-memory buffers (diagnostics only, for
   // PTCTLMC_MEMPROF). Default 0 so a backend that does not track it still compiles.
   virtual std::size_t device_bytes() const { return 0; }
+
+  // Sum of the expander's own live buffers. Together with device_bytes() (what the driver has
+  // mapped) this separates "our pools" from "pages a grown pool left behind".
+  virtual std::size_t live_buffer_bytes() const { return 0; }
+
+  // If true, the merge work pool is laid out STRUCTURE-OF-ARRAYS (zone i entry e at
+  // [work_off[b]*d2 + e*cap_b + i], cap_b = exist_cnt[b]+new_cnt[b]) so the GPU merge coalesces
+  // cross-lane reads. The host gather/rebuild must transpose accordingly, and the CPU-merge
+  // fallback (which reads AoS) must not be used. Default AoS.
+  virtual bool soa_work_pool() const { return false; }
 };
 
 // Build a Metal / CUDA expander for `net`. `qmask[c]` marks clocks the query reads (kept active

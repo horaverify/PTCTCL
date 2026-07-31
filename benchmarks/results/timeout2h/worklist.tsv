@@ -1,0 +1,14 @@
+# tool	threads	chunk	families	viking	fischer
+verifyta	1	0	phil:15,16,17;single:8;twolock:14,15,16	20	14
+ptctlmc-omp	16	2	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	16	4	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	16	8	phil:15,16,17;single:7,8;twolock:15,16	-	15 16
+ptctlmc-omp	16	16	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	24	2	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	24	4	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	24	8	phil:15,16,17;single:7,8;twolock:15,16	-	15 16
+ptctlmc-omp	24	16	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	32	2	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	32	4	phil:15,16,17;single:7,8;twolock:15,16	-	-
+ptctlmc-omp	32	8	phil:15,16,17;single:7,8;twolock:15,16	-	15 16
+ptctlmc-omp	32	16	phil:16,17;single:7,8;twolock:15,16	-	-
