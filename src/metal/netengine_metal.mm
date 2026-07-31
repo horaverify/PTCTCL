@@ -376,9 +376,9 @@ inline bool d_try_union(thread int* a, thread const int* b, int dim) {
 // unchanged; in SoA, 32 lanes reading the same entry of consecutive zones hit consecutive
 // addresses (coalesced).
 struct SoaZone {
-  device const int* base;
+  device const GZ* base;
   int stride;
-  int operator[](int e) const { return base[e * stride]; }
+  int operator[](int e) const { return gz_load(base[e * stride]); }
 };
 
 template <typename PZ, typename PZP>
@@ -971,7 +971,7 @@ kernel void net_merge(
     device const int* new_idx    [[buffer(5)]],  // expand work-item index of each new zone
     device const int* Lb         [[buffer(6)]],  // [nb*dim]
     device const int* Ub         [[buffer(7)]],  // [nb*dim]
-    device int*       work       [[buffer(8)]],  // in/out antichain zone pool
+    device GZ*        work       [[buffer(8)]],  // in/out antichain zone pool (narrow entries)
     device int*       work_isnew [[buffer(9)]],
     device int*       out_count  [[buffer(10)]],
     constant MergeParams& P      [[buffer(11)]],
@@ -982,7 +982,7 @@ kernel void net_merge(
   const int has_diag = P.has_diag;
   // ulong indexing: work_off[b]*d2 overflows 32 bits once the pool exceeds ~3.7M zones at d2=576
   // (kept in step with the same fix in netengine_cuda.cu, where a datacentre GPU reaches it).
-  device int* W = work + (ulong)work_off[b] * d2;
+  device GZ* W = work + (ulong)work_off[b] * d2;
   device int* WI = work_isnew + work_off[b];
   device const int* L = Lb + b * dim;
   device const int* U = Ub + b * dim;
@@ -995,14 +995,14 @@ kernel void net_merge(
 
     bool subsumed = false;                                   // zn subsumed by a stored zone?
     for (int i = 0; i < cur; ++i) {
-      for (int k = 0; k < d2; ++k) zw[k] = W[i*d2 + k];
+      for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[i*d2 + k]);
       if (has_diag ? d_includes(zw, zn, dim) : d_alu_le(zn, zw, dim, L, U)) { subsumed = true; break; }
     }
     if (subsumed) continue;
 
     int w = 0;                                               // drop stored zones subsumed by zn
     for (int i = 0; i < cur; ++i) {
-      for (int k = 0; k < d2; ++k) zw[k] = W[i*d2 + k];
+      for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[i*d2 + k]);
       bool killed = has_diag ? d_includes(zn, zw, dim) : d_alu_le(zw, zn, dim, L, U);
       if (!killed) { if (w != i) { for (int k = 0; k < d2; ++k) W[w*d2 + k] = W[i*d2 + k]; WI[w] = WI[i]; } ++w; }
     }
@@ -1012,7 +1012,7 @@ kernel void net_merge(
     while (merged) {
       merged = false;
       for (int kk = 0; kk < cur; ++kk) {
-        for (int k = 0; k < d2; ++k) zw[k] = W[kk*d2 + k];
+        for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[kk*d2 + k]);
         if (d_try_union(zn, zw, dim)) {                      // zn becomes the hull
           for (int i = kk; i < cur - 1; ++i) { for (int k = 0; k < d2; ++k) W[i*d2 + k] = W[(i+1)*d2 + k]; WI[i] = WI[i+1]; }
           --cur; merged = true; break;
@@ -1020,7 +1020,7 @@ kernel void net_merge(
       }
     }
 
-    for (int k = 0; k < d2; ++k) W[cur*d2 + k] = zn[k];      // append
+    for (int k = 0; k < d2; ++k) W[cur*d2 + k] = gz_store(zn[k]);   // append
     WI[cur] = -1; ++cur;   // -1 = 'this merge created it' (see net_gpu.hpp)
   }
   out_count[b] = cur;
@@ -1042,7 +1042,7 @@ kernel void net_merge_sg(
     device const int* new_idx    [[buffer(5)]],
     device const int* Lb         [[buffer(6)]],
     device const int* Ub         [[buffer(7)]],
-    device int*       work       [[buffer(8)]],
+    device GZ*        work       [[buffer(8)]],
     device int*       work_isnew [[buffer(9)]],
     device int*       out_count  [[buffer(10)]],
     constant MergeParams& P      [[buffer(11)]],
@@ -1067,7 +1067,7 @@ kernel void net_merge_sg(
     b = simd_broadcast(b, 0);
     if (b >= P.nb) break;
 
-    device int* W  = work + (ulong)work_off[b] * d2;   // SoA pool: zone i entry e at W[e*cap + i]
+    device GZ* W  = work + (ulong)work_off[b] * d2;   // SoA pool: zone i entry e at W[e*cap + i]
     device int* WI = work_isnew + work_off[b];
     device const int* L = Lb + b * dim;
     device const int* U = Ub + b * dim;
@@ -1099,7 +1099,7 @@ kernel void net_merge_sg(
       bool keep = false;
       int isnew_i = 0;
       if (i < cur) {
-        for (int k = 0; k < d2; ++k) zw[k] = W[P.soa ? (k*cap + i) : (i*d2 + k)];
+        for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[P.soa ? (k*cap + i) : (i*d2 + k)]);
         const bool kill = has_diag ? g_includes(zn, (thread const int*)zw, dim)
                                    : g_alu_le((thread const int*)zw, zn, dim, L, U);
         keep = !kill;
@@ -1108,7 +1108,7 @@ kernel void net_merge_sg(
       const uint kb = (uint)(simd_vote::vote_t)simd_ballot(keep);
       const int dst = w + popcount(kb & ((1u << lane) - 1u));
       simdgroup_barrier(mem_flags::mem_threadgroup);   // all reads of W done before any write
-      if (keep) { for (int k = 0; k < d2; ++k) W[P.soa ? (k*cap + dst) : (dst*d2 + k)] = zw[k]; WI[dst] = isnew_i; }
+      if (keep) { for (int k = 0; k < d2; ++k) W[P.soa ? (k*cap + dst) : (dst*d2 + k)] = gz_store(zw[k]); WI[dst] = isnew_i; }
       w += popcount(kb);
       simdgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -1134,7 +1134,7 @@ kernel void net_merge_sg(
       }
       if (winner < 0) break;
       for (int k = int(lane); k < d2; k += 32) {       // zn := elementwise-max hull
-        const int wv = W[P.soa ? (k*cap + winner) : (winner*d2 + k)];
+        const int wv = gz_load(W[P.soa ? (k*cap + winner) : (winner*d2 + k)]);
         if (wv > zn[k]) zn[k] = wv;
       }
       simdgroup_barrier(mem_flags::mem_threadgroup);
@@ -1149,7 +1149,7 @@ kernel void net_merge_sg(
       --cur;
     }
 
-    for (int k = int(lane); k < d2; k += 32) W[P.soa ? (k*cap + cur) : (cur*d2 + k)] = zn[k];   // append
+    for (int k = int(lane); k < d2; k += 32) W[P.soa ? (k*cap + cur) : (cur*d2 + k)] = gz_store(zn[k]);   // append
     if (lane == 0) WI[cur] = -1;   // -1 = 'this merge created it' (see net_gpu.hpp)
     ++cur;
     simdgroup_barrier(mem_flags::mem_threadgroup);
@@ -1569,11 +1569,11 @@ class NetGpuMetal : public NetGpuExpander {
     }
   }
 
-  void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) override {
-    id<MTLBuffer> bw = grow(pb_work_, (work_zones ? work_zones : 1) * d2 * sizeof(raw_t));
+  void stage_merge(std::size_t work_zones, int d2, gz_t*& work_buf, int*& isnew) override {
+    id<MTLBuffer> bw = grow(pb_work_, (work_zones ? work_zones : 1) * d2 * sizeof(gz_t));
     id<MTLBuffer> bi = grow(pb_wi_, (work_zones ? work_zones : 1) * sizeof(int));
     std::memset(bi.contents, 0xff, (work_zones ? work_zones : 1) * sizeof(int));  // -1 = created here
-    work_buf = static_cast<raw_t*>(bw.contents);   // caller fills existing directly (unified memory)
+    work_buf = static_cast<gz_t*>(bw.contents);    // caller fills existing directly (unified memory)
     isnew = static_cast<int*>(bi.contents);        // ...and seeds their level-new flags
   }
 
@@ -1583,7 +1583,7 @@ class NetGpuMetal : public NetGpuExpander {
              const std::vector<int>& new_cnt,
              const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
              std::vector<int>& out_work_off, std::vector<int>& out_count,
-             const raw_t*& out_zones, const int*& out_isnew) override {
+             const gz_t*& out_zones, const int*& out_isnew) override {
     out_work_off.clear();
     out_count.assign(nb, 0);
     out_zones = nullptr;
@@ -1656,7 +1656,7 @@ class NetGpuMetal : public NetGpuExpander {
       const int* oc = static_cast<const int*>(b_oc.contents);
       out_work_off = work_off;
       for (int b = 0; b < nb; ++b) out_count[b] = oc[b];
-      out_zones = static_cast<const raw_t*>(b_work.contents);
+      out_zones = static_cast<const gz_t*>(b_work.contents);
       out_isnew = static_cast<const int*>(b_wi.contents);
     }
   }

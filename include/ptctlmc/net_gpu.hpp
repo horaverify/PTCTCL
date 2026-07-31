@@ -82,7 +82,7 @@ class NetGpuExpander {
   // `isnew` is the per-work-pool-slot "added during the current level" flag array; the caller
   // seeds it for the EXISTING zones (a zone an earlier batch of this level added is still new)
   // and the merge preserves it through compaction, flagging appended zones with 1.
-  virtual void stage_merge(std::size_t work_zones, int d2, raw_t*& work_buf, int*& isnew) = 0;
+  virtual void stage_merge(std::size_t work_zones, int d2, gz_t*& work_buf, int*& isnew) = 0;
 
   // Per-bucket subsumption + convex-union merge. Existing zones come from the staged work buffer;
   // NEW zones are read in place from the previous expand's output at the given work-item indices:
@@ -96,7 +96,7 @@ class NetGpuExpander {
                      const std::vector<int>& new_cnt,
                      const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
                      std::vector<int>& out_work_off, std::vector<int>& out_count,
-                     const raw_t*& out_zones, const int*& out_isnew) = 0;
+                     const gz_t*& out_zones, const int*& out_isnew) = 0;
 
   // CPU-EXPAND / GPU-MERGE hybrid. Measurements say the two phases want different
   // hardware: successor generation is branchy, serially-dependent small-matrix work
