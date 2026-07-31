@@ -13,36 +13,24 @@ memory. `verifyta` is UPPAAL 5.0.0, single-threaded. `omp` is the 12-thread CPU 
 ## The headline
 
 Wall-clock seconds, min of 3, and peak RSS in GB. `metal-before` is the starting point of
-this pass; every other column is the current tree.
+this pass; the `metal` column is the current tree.
 
-| model | `verifyta` | `omp` | `metal` before | `metal` | `omp --sym` | `metal --sym` |
-|---|---:|---:|---:|---:|---:|---:|
-| fischer12 | 46.76 | 20.23 | 8.80 | **6.53** / 4.6 | 0.70 | **0.33** / 0.36 |
-| twolock12 | 50.62 | 20.03 | 8.53 | **6.67** / 4.9 | 0.68 | **0.33** / 0.36 |
-| arbiter17 | 12.13 | 6.65 | 3.85 | **2.40** / 3.5 | 0.12 | 0.16 / 0.15 |
-| csma14 | 9.30 | 3.81 | 2.03 | **1.30** / 1.8 | 0.11 | 0.14 / 0.08 |
-| phil12 | 10.34 | 1.98 | 2.63 | **1.46** / 1.6 | 0.22 | **0.20** / 0.15 |
+| model | `verifyta` | `omp` | `metal` before | `metal` now |
+|---|---:|---:|---:|---:|
+| fischer12 | 43.02 | 19.00 | 8.80 / 11.1 | **6.26** / 4.6 |
+| twolock12 | 47.64 | 19.00 | 8.53 / 10.6 | **6.43** / 4.9 |
+| arbiter17 | 11.81 | 6.37 | 3.85 / 7.4 | **2.27** / 3.5 |
+| csma14 | 8.86 | 3.62 | 2.03 / 4.0 | **1.26** / 2.0 |
+| phil12 | 9.94 | 1.83 | 2.63 / 2.8 | **1.37** / 1.6 |
 
-Without symmetry, `metal` now beats *both* `verifyta` and the 12-core `omp` backend on
-every model, and peak RSS on fischer12 went 11.1 GB → 4.6 GB. With symmetry the standard
-sizes become trivial (13 k–170 k states), so GPU dispatch overhead shows on the two
-smallest; at sizes where there is work to do the GPU wins there too:
+`metal` beats *both* `verifyta` and the 12-core `omp` backend on every model, exploring
+**exactly the same state space** — integer-for-integer against `verifyta` on fischer,
+twolock and arbiter, and fewer on csma and philosophers only because the exact
+convex-union merge is more aggressive than UPPAAL's representation.
 
-| model | `omp --sym` | `metal --sym` |
-|---|---:|---:|
-| arbiter24 | 18.97 | **9.38** |
-| csma20 | 8.46 | **4.39** |
-| fischer16 | 79.03 | **28.32** |
-| phil14 | 3.91 | **3.05** |
-| phil15 | **27.65** | 57.54 |
-
-`verifyta` does not finish fischer16 inside 400 s. **phil15 is the one place the GPU
-still loses** — see "What is still open".
-
-Two independent things are happening. The `metal` column is engineering: the same state
-space explored 1.5–1.7× faster and in a third of the memory. The symmetry columns are an
-*algorithmic* reduction — explore one representative per automorphism orbit — which now
-composes with the GPU instead of disabling it.
+Nothing here changes what is explored. A comparison that reduced the state space (process
+symmetry, say) would not be like-for-like against `verifyta` and is deliberately not part
+of this: see "Not used: symmetry reduction".
 
 ---
 
@@ -195,77 +183,20 @@ allocated and freed each time. Reused buffers keep their capacity.
 
 ---
 
-## Part 4 — symmetry reduction, and why it belongs in the kernel
+## Part 4 — not used: symmetry reduction
 
-Many of these networks are N copies of one template: permuting the copies maps the network onto
-itself, so the reachable space is covered by exploring **one representative per orbit**. That is
-a reduction no amount of parallelism can give you, and it multiplies with parallelism rather
-than competing with it.
+Many of these networks are N copies of one template, so the reachable space is covered by
+exploring one representative per automorphism orbit. `--symmetry` implements that and it is
+enormous — 28x fewer states on fischer12, 65x on arbiter17 — but it explores a *different*
+state space from `verifyta`, so any speedup measured with it on is not a like-for-like
+comparison. It stays **off**, it is **not** part of any number in this document, and the
+GPU path does not implement it (`--symmetry` still routes to the CPU, as before).
 
-`--symmetry` already existed but **forced the CPU path** (`!use_sym && backend == Metal`), so
-the two largest wins in the tool could not be had at once. Two changes fixed that.
-
-### 4.1 The canonicaliser is now a kernel
-
-Canonicalisation is |G| integer comparisons over data the thread already holds in registers —
-exactly what a GPU lane is for. The kernel reproduces the host `canonicalize` exactly: the
-lexicographically smallest (locations, integer values), ties broken by the smallest zone matrix.
-
-The zone is never materialised twice. A tie is resolved by comparing the two candidate matrices
-**through their inverse clock permutations** (a permuted entry `(a,b)` is `z[inv[a]][inv[b]]`),
-and only the winner is written — permuted directly into the output buffer. So canonicalisation
-costs this kernel *no extra private memory*, which matters because the private zone array is
-what it is bound on.
-
-It makes two passes over the group rather than one pass plus a tie list. A fixed-size tie list
-would cap the group the kernel can accept, and truncating it would be **unsound**: two states of
-one orbit could then choose different representatives and both be explored.
-
-### 4.2 The symmetry search only ever seeded from process 0
-
-`symmetry_group()` built its generators from images of process 0, so it found nothing whenever
-process 0 is the one asymmetric component — exactly the shape of **arbiter** (an `Arb` plus N
-interchangeable clients) and **CSMA/CD** (a `Bus` plus N stations). Two of the five benchmark
-families silently got the trivial group. Seeding from each process in turn costs np² propagations
-over an np-process network and finds them.
-
-Any closed subgroup of the automorphism group gives a sound reduction, so a partial generating
-set is safe; the closure is still verified and still complete.
-
-### 4.3 What it buys
-
-| model | explored, plain | explored, `--symmetry` | ratio |
-|---|---:|---:|---:|
-| fischer12 | 4 758 404 | 169 618 | 28× |
-| twolock12 | 4 807 556 | 171 762 | 28× |
-| arbiter17 | 1 245 184 | 19 056 | 65× |
-| csma14 | 618 496 | 13 238 | 47× |
-| phil12 | 908 838 | 70 805 | 13× |
-
-At fischer16, `metal --symmetry` finishes in 32 s where the 12-core CPU takes 79 s and
-`verifyta` does not finish at all.
-
-**Symmetry stays opt-in.** It deliberately explores a different state space, so the
-integer-for-integer parity against `verifyta` that the evaluation rests on is only meaningful
-with it off. Report both.
-
----
-
-## Correctness
-
-Everything above is checked three ways:
-
-- `ctest` (unit + selftest + bisim) after every change.
-- **80/80** curated model × backend combinations agree with `verifyta` — `seq`, `omp`,
-  `metal --adaptive`, `metal --adaptive --chunking 64`, and all four again with `--symmetry`.
-- The `dbm_try_union` rewrite additionally has a randomised differential test against the
-  previous implementation (400 k zone pairs, verdicts *and* hulls) plus a pointwise lattice
-  check of the convex verdicts.
-
-Explored/stored counts are reported at every step and were required to be unchanged by every
-change that was not deliberately a node-count reduction.
-
----
+Recorded only so the option is not rediscovered as new: the reduction is sound, and a
+device-side canonicaliser is cheap (|G| integer comparisons over data the thread already
+holds; ties resolved through inverse clock permutations so the zone need never be
+materialised twice). If the evaluation ever wants it, it has to be enabled for *both* sides
+of the comparison, which means giving UPPAAL a scalar-set model.
 
 ## Part 5 — two bugs the measurements exposed
 
@@ -312,5 +243,5 @@ dropping arbiter24 and up onto the (then single-threaded) CPU path.
 - **The merge work pool could be read by index.** The gather (761 ms on fischer12) copies each
   bucket's existing antichain out of the interner into the merge pool. If the arena were itself
   a Metal buffer, the merge could read it by index and the gather would disappear.
-- **CUDA parity.** The CUDA engine still lacks device-side key packing and the canonicaliser;
-  both are short ports of the Metal kernel's tail.
+- **CUDA parity.** The CUDA engine still lacks device-side key packing; it is a short port
+  of the Metal kernel's tail.
