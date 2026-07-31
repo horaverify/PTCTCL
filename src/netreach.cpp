@@ -2096,16 +2096,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // was an unused variable (and a -Wunused-variable warning) in every CPU-only build.
     const bool soa = use_gpu && gpu->soa_work_pool();
     const int np = net.nprocs(), ni = static_cast<int>(net.intvars.size()), dim = net.nclocks + 1, d2 = dim * dim;
-    auto int_ok_flat = [&](const std::vector<IntAtom>& g, const int* iv) {
-      for (const auto& a : g) {
-        const long x = iv[a.var]; bool r;
-        switch (a.op) { case IntOp::Eq: r = x==a.val; break; case IntOp::Ne: r = x!=a.val; break;
-          case IntOp::Lt: r = x<a.val; break; case IntOp::Le: r = x<=a.val; break;
-          case IntOp::Gt: r = x>a.val; break; default: r = x>=a.val; }
-        if (!r) return false;
-      }
-      return true;
-    };
     // The passed set holds ZONE INDICES into a shared dense pool rather than a private dense copy
     // per (discrete state, zone). With `--gpu-intern` the pool DEDUPLICATES, which is a large win
     // wherever few distinct zones are reachable: viking15 stores 2.77M zones drawn from just 120

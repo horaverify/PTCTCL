@@ -1248,7 +1248,6 @@ class NetGpuMetal : public NetGpuExpander {
       @"PT_NI"  : @(en_.nintvars),
       @"PT_NC"  : @(en_.nclocks),
     };
-    copts.fastMathEnabled = NO;   // integer-only kernels; keep semantics untouched
     id<MTLLibrary> lib = [device_ newLibraryWithSource:kNetSource options:copts error:&err];
     PTCTLMC_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
                                       (err ? err.localizedDescription.UTF8String : "?"));
