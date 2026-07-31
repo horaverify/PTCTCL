@@ -1963,32 +1963,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // Symmetry reduction rewrites each successor to its orbit representative on the host; the GPU
   // drivers have no such step, so the two are mutually exclusive for now.
 #ifdef PTCTLMC_HAVE_METAL
-  if (!force_exact && backend == Backend::Metal) {
-    gpu = make_net_gpu_metal(net, qmask);
-    // Symmetry: the expand kernel canonicalises each successor itself (see net_gpu.hpp). Flatten
-    // the group; if the backend cannot take it, drop to the CPU path, which canonicalises on the
-    // host -- the reduction is worth more than the device.
-    if (gpu && use_sym) {
-      const int ng = static_cast<int>(sym->size());
-      const int np_ = net.nprocs(), ni_ = static_cast<int>(net.intvars.size()), dim_ = net.nclocks + 1;
-      std::vector<int> sp(static_cast<std::size_t>(ng) * np_), sc(static_cast<std::size_t>(ng) * dim_);
-      std::vector<int> ivoff(static_cast<std::size_t>(ng) * ni_ + 1, 0), ivdata;
-      for (int g = 0; g < ng; ++g) {
-        const auto& a = (*sym)[g];
-        for (int p = 0; p < np_; ++p) sp[static_cast<std::size_t>(g) * np_ + p] = a.proc[p];
-        for (int c = 0; c < dim_; ++c) sc[static_cast<std::size_t>(g) * dim_ + c] = a.clk[c];
-        for (int v = 0; v < ni_; ++v) {
-          const std::size_t f = static_cast<std::size_t>(g) * ni_ + v;
-          ivoff[f] = static_cast<int>(ivdata.size());
-          if (v < static_cast<int>(a.ival.size()) && !a.ival[v].empty())
-            for (long x : a.ival[v]) ivdata.push_back(static_cast<int>(x));
-          ivoff[f + 1] = static_cast<int>(ivdata.size());
-        }
-      }
-      if (ivdata.empty()) ivdata.push_back(0);
-      if (!gpu->set_symmetry(ng, sp, sc, ivoff, ivdata)) gpu.reset();
-    }
-  }
+  if (!force_exact && !use_sym && backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
 #endif
 #ifdef PTCTLMC_HAVE_CUDA
   if (!force_exact && !use_sym && backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);

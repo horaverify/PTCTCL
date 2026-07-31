@@ -189,9 +189,9 @@ bool verify(const Network& net, const Automorphism& a) {
   return true;
 }
 
-// Try to complete an automorphism from the seed "process s0 -> q" by propagation.
+// Try to complete an automorphism from the seed "process 0 -> q" by propagation.
 bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
-                     std::vector<Slots>& slots, int s0, int q, Automorphism& out) {
+                     std::vector<Slots>& slots, int q, Automorphism& out) {
   const int np = net.nprocs();
   const int nch = static_cast<int>(net.channels.size());
   Automorphism a;
@@ -245,8 +245,8 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
   };
 
   const bool dbg = std::getenv("PTCTLMC_SYMDEBUG") != nullptr;
-  if (sig[s0] != sig[q]) { if (dbg) std::fprintf(stderr, "[sym] seed %d->%d: signature differs\n", s0, q); return false; }
-  if (!bind_proc(s0, q)) { if (dbg) std::fprintf(stderr, "[sym] seed %d->%d: bind failed\n", s0, q); return false; }
+  if (sig[0] != sig[q]) { if (dbg) std::fprintf(stderr, "[sym] seed 0->%d: signature differs\n", q); return false; }
+  if (!bind_proc(0, q)) { if (dbg) std::fprintf(stderr, "[sym] seed 0->%d: bind failed\n", q); return false; }
 
   // Propagate on PARTIAL information: an unmapped process is narrowed by whichever of its clocks
   // and channels already have images, and is fixed as soon as one candidate survives. Requiring
@@ -450,21 +450,13 @@ std::vector<Automorphism> symmetry_group(const Network& net, std::size_t cap) {
   std::vector<std::string> sig(np);
   for (int p = 0; p < np; ++p) sig[p] = signature(net.procs[p], slots[p], net.intvars.size());
 
-  // Generators: every image of every process that completes to a verified automorphism.
-  //
-  // This used to seed only from PROCESS 0, which finds nothing whenever process 0 is the one
-  // asymmetric component -- exactly the shape of arbiter (an `Arb` plus N interchangeable
-  // clients) and CSMA/CD (a `Bus` plus N stations), where sig[q] != sig[0] for every q and the
-  // group came out trivial. Seeding from each process in turn costs np^2 propagations of an
-  // np-process network (microseconds) and finds those groups. Any closed subgroup of the
-  // automorphism group gives a sound reduction, so a partial generating set is safe.
+  // Generators: every image of process 0 that completes to a verified automorphism.
   std::vector<Automorphism> gens;
-  for (int s0 = 0; s0 < np; ++s0)
-    for (int q = 0; q < np; ++q) {
-      if (q == s0 || sig[q] != sig[s0]) continue;
-      Automorphism a;
-      if (build_from_seed(net, sig, slots, s0, q, a)) gens.push_back(std::move(a));
-    }
+  for (int q = 1; q < np; ++q) {
+    if (sig[q] != sig[0]) continue;
+    Automorphism a;
+    if (build_from_seed(net, sig, slots, q, a)) gens.push_back(std::move(a));
+  }
   if (gens.empty()) return group;
 
   // Close under composition. Compositions of automorphisms are automorphisms, so the closure
