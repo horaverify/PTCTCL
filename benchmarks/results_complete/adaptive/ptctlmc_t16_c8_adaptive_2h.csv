@@ -118,3 +118,16 @@ csma,csma18,ptctlmc-omp,16,2,15007744,154.498,3.189,OK,-,-
 csma,csma20,ptctlmc-omp,16,1,71827456,936.327,15.450,OK,-,-
 csma,csma20,ptctlmc-omp,16,2,71827456,935.612,15.451,OK,-,-
 csma,csma22,ptctlmc-omp,16,1,338690048,5748.215,74.125,OK,-,-
+csma,csma22,ptctlmc-omp,16,2,338690048,5758.524,74.126,OK,-,-
+phil,phil15,ptctlmc-omp,16,1,43870520,1001.933,20.344,OK,-,-
+phil,phil15,ptctlmc-omp,16,2,43971810,999.130,20.372,OK,-,-
+phil,phil16,ptctlmc-omp,16,1,-,7200.047,67.362,TIMEOUT,-,-
+single,single7,ptctlmc-omp,16,1,113968,1440.902,0.141,OK,-,-
+single,single7,ptctlmc-omp,16,2,122847,1740.364,0.152,OK,-,-
+single,single8,ptctlmc-omp,16,1,-,7200.019,0.222,TIMEOUT,-,-
+twolock,twolock15,ptctlmc-omp,16,1,158083751,1368.358,19.977,OK,-,-
+twolock,twolock15,ptctlmc-omp,16,2,158083751,1363.291,19.978,OK,-,-
+twolock,twolock16,ptctlmc-omp,16,1,-,5410.695,100.020,MEMOUT,-,-
+fischer,fischer15,ptctlmc-omp,16,1,157592231,1406.400,20.874,OK,-,-
+fischer,fischer15,ptctlmc-omp,16,2,157592231,1401.539,20.884,OK,-,-
+fischer,fischer16,ptctlmc-omp,16,1,-,5291.302,100.033,MEMOUT,-,-

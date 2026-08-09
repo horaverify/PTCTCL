@@ -10,6 +10,18 @@
 \section{What was measured}
 \label{sec:eval}
 
+\begin{quote}\small\textbf{Numbers in this section are from the superseded
+grid and must be regenerated.}  They predate the adaptive mirror
+(\cref{sec:antichain}), the convex-union facet early-out and the decode cache
+(\cref{sec:decode}), each of which moves wall time on the families tabulated
+here: \code{phil13} $-28\%$, \code{phil14} $-27\%$, \code{viking17} $-7.9\%$,
+\code{viking20} $-6.4\%$, \code{single6} $-16\%$.  The replacement sweep writes
+to \file{benchmarks/results\_complete/}; the \uppaal{} baseline there is already
+final (\file{verifyta.csv}).  Speedup \emph{ratios} quoted against \uppaal{} are
+therefore conservative, not optimistic --- the engine got faster and
+\code{verifyta} did not.\end{quote}
+
+
 All numbers below are from \file{benchmarks/clean\_results/}, the cleaned grid
 in which the $600$\,s runs have had the $2$\,h re-runs substituted in where
 those exist.  The grid is five families (\code{phil}, \code{fischer},

@@ -75,6 +75,26 @@ geometry is \cref{fig:hull}.  It is worth stressing there that the test is
 never approximates, so it can never introduce a valuation the system cannot
 reach.
 
+
+One implementation detail of the test matters enough to record, because getting
+it wrong is invisible in the results and expensive in the timings.  The test
+examines each \emph{strict facet} of either operand, and a facet already implied
+by another path need not be examined at all; identifying those is a
+minimal-graph analysis costing $O(\dim^3)$.  Running it unconditionally is a
+loss whenever there is little to prune, and two zones differing in a handful of
+entries then pay the full analysis to discover there was nothing to do.  The
+facets are therefore counted first --- an $O(\dim^2)$ scan needing no analysis
+--- and the analysis runs only above a threshold
+(\code{PTCTLMC\_ANALYZEMIN}, default $8$).  The degenerate case falls out for
+free and needs no threshold: if an operand has \emph{no} strict facet then
+$Z[i][j] \ge H[i][j]$ everywhere, and since $H$ is the entrywise maximum
+$Z[i][j] \le H[i][j]$ always, so $Z = H$ and the hull is that operand.  On
+\code{single6} this is worth $-16\%$ with every state count unchanged.
+
+The gate is the facet count and not $\dim$, which is the natural but wrong
+choice: \code{csma14} has $\dim = 16$ and is unaffected by the analysis, while
+\code{viking20} at $\dim = 12$ is not, so $\dim$ does not predict the cost.
+
 \FigHull
 
 \subsection{Two bounds that make step (4) affordable}
@@ -86,18 +106,60 @@ leaves two zones where one would have done.
 
 \begin{itemize}[leftmargin=1.2em, itemsep=2pt]
 \item \textbf{Merge window} (\code{PTCTLMC\_MERGESCAN}, default $32$): only the
-      $32$ newest live zones are candidates.  Zones that merge are almost
-      always recent neighbours -- a merge happens when a successor extends a
-      zone stored moments earlier -- so a small window keeps effectively all of
-      the reduction.  On the pathological \code{single6} model (one location,
-      thousands of incomparable zones) the unbounded scan ran $4.6$k
-      convex-union tests \emph{per insertion}.
+      $32$ newest live zones are candidates.  On the pathological \code{single6}
+      model (one location, thousands of incomparable zones) the unbounded scan
+      ran $4.6$k convex-union tests \emph{per insertion}.
 
-\item \textbf{Dense mirror for long chains} (\code{PTCTLMC\_HOTLEN}, default
-      $64$): once a chain exceeds $64$ live zones it additionally keeps its
-      zones in dense canonical form, so the folds read them in place instead of
-      decompressing each one.  Chains that long occur only on zone-heavy
-      models, so this is a cache that exists exactly where it pays for itself.
+      The obvious justification --- that zones which merge are recent
+      neighbours, so a small window loses nothing --- is \emph{false}, and we
+      record it because it is the natural thing to assume.  Instrumenting the
+      unbounded run on \code{single6} (the only configuration that can see where
+      mergeable partners actually are) gives a flat-tailed distribution: a depth
+      of $8$ captures $37.5\%$ of merges, $32$ captures $43.6\%$, and $46.4\%$
+      lie deeper than $128$.  A window of $8$ is not a cheap approximation of the
+      merge set, it misses most of it --- and it is measurably \emph{worse},
+      storing $1.65\times$ more zones and running $3.2\times$ slower than $32$.
+
+      What the window really buys is not cheaper merging but shorter chains.
+      Fewer merges leave a longer antichain, and every later insertion pays an
+      unbounded subsumption scan over it; total scan work (insertions $\times$
+      mean chain) is $6.5$M at $32$ against $21.2$M at $8$, a ratio of $3.26$
+      that predicts the observed $3.2\times$.  Unbounded is worse again for the
+      opposite reason: it buys the shortest chains but pays $28\times$ the
+      convex-union tests, and since merging is non-confluent (a hull is a
+      different zone with different successors) it explores \emph{more} states,
+      not fewer.  $32$ sits where the two costs cross.
+
+\item \textbf{Dense mirror for hot chains} (\code{PTCTLMC\_HOTWORK} /
+      \code{PTCTLMC\_HOTMINLEN}, defaults $16$ and $8$): a chain may additionally
+      keep its zones in dense canonical form, so the folds read them in place
+      instead of decompressing each one.
+
+      The rule is what a chain has \emph{cost}, not how long it is.  A mirror
+      saves an $O(L \cdot \dim^3)$ decompression on every visit to a chain of $L$
+      live zones and costs $L \cdot \dim^2$ words once, so the payoff is driven
+      by $\mathit{visits} \times L$; a length-$16$ chain walked a hundred times
+      wastes far more than a length-$64$ chain walked once.  A chain is
+      therefore mirrored once $\mathit{visits} \times L \ge 16$, subject to
+      $L \ge 8$.
+
+      A fixed length threshold of $64$ --- the earlier rule --- is the
+      instructive failure.  It was tuned on \code{single}, whose chains run
+      $\sim1000$ zones, and the assumption that "chains that long occur only on
+      zone-heavy models" made it look free.  \code{phil} falsifies it: its chains
+      sit in the $8$--$63$ range, never reaching the threshold, yet long enough
+      that decompressing them on every visit dominates --- $1.14 \times 10^9$
+      instructions in \code{mindbm\_unpack}, $11.5\%$ of \code{phil13}.  Moving to
+      the work rule is worth $-28\%$ on \code{phil13} and $-27\%$ on \code{phil14}.
+
+      Both halves of the rule are load-bearing.  Hotness alone over-promotes:
+      gating on visits only, \code{fischer12} went $0.84 \to 2.48$\,GB, because a
+      mirror of a length-$1$ chain is a dense \emph{private} copy of a zone the
+      interner was \emph{sharing}, which defeats interning outright.  Length
+      alone is the fixed rule that missed \code{phil}.  Promotion is additionally
+      bounded by a memory budget (\code{PTCTLMC\_HOTBUDGET}, default a quarter of
+      RAM); refusing to promote is always sound, because the mirror is a pure
+      cache over packed records that remain the storage of record.
 \end{itemize}
 
 \subsection{When exact subsumption is forced}
