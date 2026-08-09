@@ -44,6 +44,17 @@ bool engine_legacy() {
   return v;
 }
 
+}  // namespace detail
+
+void set_narrow_ranges(bool on) { detail::options().narrow_ranges = on; }
+bool narrow_ranges_on() { return detail::options().narrow_ranges; }
+void set_slice(bool on) { detail::options().slice = on; }
+bool slice_on() { return detail::options().slice; }
+void set_gsim(bool on) { detail::options().gsim = on; }
+bool gsim_on() { return detail::options().gsim; }
+
+namespace detail {
+
 MirrorMode mirror_mode() {
   static const MirrorMode m = [] {
     if (engine_legacy()) return MirrorMode::Fixed;   // hl=64, the policy of that era

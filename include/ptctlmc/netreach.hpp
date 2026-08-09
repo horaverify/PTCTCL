@@ -44,6 +44,32 @@ bool network_has_diagonal(const Network& net);
 void set_symmetry(bool on);
 bool symmetry_on();
 
+// Integer-range narrowing (`--narrow`). The discrete key packs bits(hi-lo+1) per integer cell
+// from the DECLARED range, and UPPAAL's default for an unannotated `int` is [-32768,32767]; a
+// model with a handful of unannotated array cells therefore overflows the 63-bit key on width
+// alone, before state count enters into it (train0 needs 91 bits today and is rejected, while
+// verifyta verifies it in 55 stored states). With this on, the range comes from an interval
+// analysis of the values a cell can actually hold. Off by default while it is new.
+void set_narrow_ranges(bool on);
+bool narrow_ranges_on();
+
+// Discrete liveness reduction (`--slice`). An integer cell that no process can read before
+// overwriting, and that the query does not mention, cannot influence any run from here -- so two
+// states differing only in it are the same state. Such cells are canonicalised to their low
+// value before the discrete key is computed, which merges them. This is the discrete analogue of
+// the active-clock reduction the engine already applies to zones (reset_inactive). Off by
+// default: it changes WHICH states are stored.
+void set_slice(bool on);
+bool slice_on();
+
+// G-simulation subsumption (`--sim=g`). Replaces the a_LU test with the diagonal-free
+// G-simulation, which is the same test carrying each guard's STRICTNESS rather than only its
+// constant. Cor. 3.6/3.10 of Mukherjee's thesis collapse a diagonal-free constraint map to one
+// upper and one lower bound per clock, so that bit is the entire difference here -- the thesis
+// itself calls the improvement "not drastic". Off by default; it changes WHICH states are stored.
+void set_gsim(bool on);
+bool gsim_on();
+
 // ---- general modelling-language guard/update -------------------------------
 // The `var OP const` / `var := const` fast paths live in NEdge::int_guard and
 // NEdge::int_updates; anything richer (arithmetic, arrays, calls) is compiled

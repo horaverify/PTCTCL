@@ -1,0 +1,200 @@
+\documentclass[runningheads]{llncs}
+
+\makeatletter
+\@ifclassloaded{llncs}{}{%
+  \PassOptionsToClass{a4paper,11pt}{article}%
+  \LoadClass{article}%
+  \usepackage[a4paper,margin=2.4cm]{geometry}}
+\makeatother
+
+\input{preamble}
+
+\title{Parallelising the Passed Set:\\
+  Shared-Memory Zone-Graph Reachability for Timed Automata}
+\titlerunning{Parallelising the Passed Set}
+
+\author{PTCTLMC Project}
+\authorrunning{PTCTLMC Project}
+\institute{Anonymous Submission}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Zone-graph reachability for timed automata parallelises easily in its successor
+function and badly in its passed set, which maintains, per discrete state, a set
+of zones under a subsumption preorder: an insertion may drop the candidate,
+retire stored zones, or replace stored zones by their convex union.  We present a
+shared-memory engine in which threads expand a breadth-first level in parallel
+and insert into a passed set striped by discrete state, and in which every
+insertion is split into a read-only coverage probe under a shared stripe lock and
+the mutating update under an exclusive one.  We prove that coverage is monotone
+along every interleaving, which makes a positive probe an exact decision and
+yields termination and an interleaving-independent verdict without assuming that
+the stored set is an antichain --- an assumption convex merging destroys.  We
+then prove that three mechanisms lowering the cost of an update leave the
+explored state set unchanged, and bound the work performed at the level barrier.
+\end{abstract}
+
+\keywords{Timed automata \and Zone graph \and Parallel model checking \and
+          Difference bound matrices \and Subsumption \and Antichains \and OpenMP}
+
+\input{figs/fig_engine}
+\input{figs/fig_protocol}
+
+\input{section/introduction}
+\input{section/background}
+\input{section/approach}
+\input{section/correctness}
+\input{section/related}
+% \input{section/implementation}   % omitted: engineering detail, not the argument
+\input{section/evaluation}
+\input{section/conclusion}
+
+\begin{thebibliography}{20}
+
+\bibitem{Baier08}
+C.~Baier and J.-P. Katoen.
+\newblock {\em Principles of Model Checking}.
+\newblock MIT Press, 2008.
+
+\bibitem{Clarke99}
+E.~M. Clarke, O.~Grumberg, and D.~A. Peled.
+\newblock {\em Model Checking}.
+\newblock MIT Press, 1999.
+
+\bibitem{AlurCourcoubetisDill90}
+R.~Alur, C.~Courcoubetis, and D.~L. Dill.
+\newblock Model-checking for real-time systems.
+\newblock In {\em LICS}, pp.~414--425. IEEE, 1990.
+
+\bibitem{Behrmann04}
+G.~Behrmann, A.~David, and K.~G. Larsen.
+\newblock A tutorial on \textsc{Uppaal}.
+\newblock In {\em SFM-RT}, LNCS 3185, pp.~200--236. Springer, 2004.
+
+\bibitem{Bozga98}
+M.~Bozga, C.~Daws, O.~Maler, A.~Olivero, S.~Tripakis, and S.~Yovine.
+\newblock \textsc{Kronos}: A model-checking tool for real-time systems.
+\newblock In {\em CAV}, LNCS 1427, pp.~546--550. Springer, 1998.
+
+\bibitem{Mikucionis10}
+M.~Miku{\v c}ionis, K.~G. Larsen, J.~I. Rasmussen, B.~Nielsen, A.~Skou,
+  S.~U. Palm, J.~S. Pedersen, and P.~Hougaard.
+\newblock Schedulability analysis using \textsc{Uppaal}: Herschel-Planck case
+  study.
+\newblock In {\em ISoLA}, LNCS 6416, pp.~175--190. Springer, 2010.
+
+\bibitem{AlurDill94}
+R.~Alur and D.~L. Dill.
+\newblock A theory of timed automata.
+\newblock {\em Theoretical Computer Science}, 126(2):183--235, 1994.
+
+\bibitem{Dill89}
+D.~L. Dill.
+\newblock Timing assumptions and verification of finite-state concurrent
+  systems.
+\newblock In {\em Automatic Verification Methods for Finite State Systems},
+  LNCS 407, pp.~197--212. Springer, 1989.
+
+\bibitem{Larsen97}
+K.~G. Larsen, P.~Pettersson, and W.~Yi.
+\newblock \textsc{Uppaal} in a nutshell.
+\newblock {\em STTT}, 1(1--2):134--152, 1997.
+
+\bibitem{LarsenLPY97}
+K.~G. Larsen, F.~Larsson, P.~Pettersson, and W.~Yi.
+\newblock Efficient verification of real-time systems: Compact data structure
+  and state-space reduction.
+\newblock In {\em RTSS}, pp.~14--24. IEEE, 1997.
+
+\bibitem{Bengtsson04}
+J.~Bengtsson and W.~Yi.
+\newblock Timed automata: Semantics, algorithms and tools.
+\newblock In {\em Lectures on Concurrency and Petri Nets}, LNCS 3098,
+  pp.~87--124. Springer, 2004.
+
+\bibitem{Behrmann06}
+G.~Behrmann, P.~Bouyer, K.~G. Larsen, and R.~Pel{\'a}nek.
+\newblock Lower and upper bounds in zone-based abstractions of timed automata.
+\newblock {\em STTT}, 8(3):204--215, 2006.
+
+\bibitem{Herbreteau12}
+F.~Herbreteau, B.~Srivathsan, and I.~Walukiewicz.
+\newblock Better abstractions for timed automata.
+\newblock In {\em LICS}, pp.~375--384. IEEE, 2012.
+
+\bibitem{Herbreteau16}
+F.~Herbreteau, B.~Srivathsan, and I.~Walukiewicz.
+\newblock Why liveness for timed automata is hard, and what we can do about it.
+\newblock In {\em FSTTCS}, LIPIcs 65, pp.~48:1--48:14, 2016.
+
+\bibitem{Daws98}
+C.~Daws and S.~Tripakis.
+\newblock Model checking of real-time reachability properties using
+  abstractions.
+\newblock In {\em TACAS}, LNCS 1384, pp.~313--329. Springer, 1998.
+
+\bibitem{Stern01}
+U.~Stern and D.~L. Dill.
+\newblock Parallelizing the Mur$\varphi$ verifier.
+\newblock {\em Formal Methods in System Design}, 18(2):117--129, 2001.
+
+\bibitem{Holzmann07}
+G.~J. Holzmann and D.~Bo{\v s}na{\v c}ki.
+\newblock The design of a multicore extension of the \textsc{Spin} model
+  checker.
+\newblock {\em IEEE TSE}, 33(10):659--674, 2007.
+
+\bibitem{Barnat12}
+J.~Barnat, L.~Brim, V.~Havel, J.~Havl{\'\i}{\v c}ek, J.~Kriho, M.~Len{\v c}o,
+  P.~Ro{\v c}kai, V.~{\v S}till, and J.~Weiser.
+\newblock \textsc{DiVinE}~3.0 --- an explicit-state model checker for
+  multithreaded C \& C++ programs.
+\newblock In {\em CAV}, LNCS 8044, pp.~863--868. Springer, 2013.
+
+\bibitem{Laarman10}
+A.~Laarman, J.~van de Pol, and M.~Weber.
+\newblock Boosting multi-core reachability performance with shared hash tables.
+\newblock In {\em FMCAD}, pp.~247--255, 2010.
+
+\bibitem{Kant15}
+G.~Kant, A.~Laarman, J.~Meijer, J.~van de Pol, S.~Blom, and T.~van Dijk.
+\newblock \textsc{LTSmin}: High-performance language-independent model
+  checking.
+\newblock In {\em TACAS}, LNCS 9035, pp.~692--707. Springer, 2015.
+
+\bibitem{Dalsgaard12}
+A.~E. Dalsgaard, A.~Laarman, K.~G. Larsen, M.~C. Olesen, and J.~van de Pol.
+\newblock Multi-core reachability for timed automata.
+\newblock In {\em FORMATS}, LNCS 7595, pp.~91--106. Springer, 2012.
+
+\bibitem{Behrmann05}
+G.~Behrmann.
+\newblock Distributed reachability analysis in timed automata.
+\newblock {\em STTT}, 7(1):19--30, 2005.
+
+\bibitem{Behrmann00}
+G.~Behrmann, T.~Hune, and F.~Vaandrager.
+\newblock Distributing timed model checking --- how the search order matters.
+\newblock In {\em CAV}, LNCS 1855, pp.~216--231. Springer, 2000.
+
+\bibitem{Wulf06}
+M.~De~Wulf, L.~Doyen, T.~A. Henzinger, and J.-F. Raskin.
+\newblock Antichains: A new algorithm for checking universality of finite
+  automata.
+\newblock In {\em CAV}, LNCS 4144, pp.~17--30. Springer, 2006.
+
+\bibitem{Herbreteau13}
+F.~Herbreteau and G.~Point.
+\newblock \textsc{TChecker}: A model checker for timed automata.
+\newblock \url{https://github.com/ticktac-project/tchecker}, 2013--.
+
+\bibitem{Blelloch12}
+G.~E. Blelloch, J.~T. Fineman, P.~B. Gibbons, and J.~Shun.
+\newblock Internally deterministic parallel algorithms can be fast.
+\newblock In {\em PPoPP}, pp.~181--192. ACM, 2012.
+
+\end{thebibliography}
+
+\end{document}

@@ -12,6 +12,7 @@
 *.dll
 
 # Old/backup files
+/old_docs/
 *_old/
 *_old
 *old_

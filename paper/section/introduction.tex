@@ -1,0 +1,73 @@
+\section{Introduction}\label{sec:intro}
+
+Establishing the correctness of safety-critical software is a central concern of
+formal verification, for which model checking is the established
+approach~\cite{Baier08,Clarke99}.  For real-time systems, where correctness
+depends not only on functional behaviour but also on timing, software is
+typically modelled as a timed automaton~\cite{AlurDill94} and verified against
+requirements expressed in Timed Computation Tree
+Logic~\cite{AlurCourcoubetisDill90}, as exemplified by industrial case studies
+such as the schedulability analysis of the Herschel-Planck satellite
+system~\cite{Mikucionis10}.
+% TODO: add your own further case-study citations here.
+
+Several tools support this process~\cite{Bozga98,Herbreteau13}, and the one that
+has gained the most traction in academia and industry is
+\uppaal{}~\cite{Larsen97,Behrmann04}.  Alongside its interface, \uppaal{}
+provides an engine for checking timed automata against timed-CTL specifications
+that is the state of the art for verifying real-time systems.
+
+As the models to be checked grow, more effective techniques are needed.  The
+answer in the past was more powerful hardware, and that answer no longer applies:
+processor clock speeds have not increased appreciably in recent years, while core
+counts have, and a sequential search cannot use the additional cores.  The
+question is therefore what part of a zone-graph search admits parallel execution.
+
+One part admits it directly.  The search explores symbolic states $(q,\Zone)$
+pairing a discrete state $q$ with a zone $\Zone$ represented as a difference
+bound matrix~\cite{Dill89}, and the successor function $\succfn$ that generates
+them is pure: it reads the network and one symbolic state, allocates its result,
+and touches no shared data.  Calls on distinct symbolic states are independent,
+and a level-synchronous breadth-first search exposes that independence.  The
+passed set, which stores what the search has already seen, is the part that does
+not, and it differs from the explicit-state case in three ways that together
+decide the design of an engine.  It stores, per discrete state, a set of zones
+maintained under a subsumption preorder~\cite{Behrmann06,Herbreteau12}, so
+inserting a zone may drop it, retire stored zones, or replace stored zones by a
+convex union: the operation writes as well as reads, and insert-if-absent, which
+a lock-free shared hash table implements directly~\cite{Laarman10}, does not
+describe it.  Its effect depends on the order in which zones arrive, so the set
+of stored zones is not a function of the reachable set and no scheduling
+discipline makes it one.  And each call is expensive, because stored zones are
+kept as minimal constraint systems~\cite{LarsenLPY97} while the zone algebra
+needs dense canonical matrices.
+
+This paper presents a shared-memory engine organised around those three
+properties.  Threads expand one breadth-first level in parallel and insert
+successors directly into a passed set striped by discrete state, so expansion and
+insertion are fused.  Each insertion is split in two: a read-only coverage probe
+under a shared stripe lock, and the mutating update under an exclusive one.  The
+split is worth having only if a positive probe remains valid after the lock is
+released, and that is the technical core of the paper: coverage is monotone along
+every interleaving, so a probe is an exact decision for the case it answers
+rather than an observation a second phase must validate.  The same property does
+the rest of the work.  It bounds the number of insertions at a discrete state by
+the number of abstraction classes, which gives termination and an
+interleaving-independent verdict without assuming that the stored set is an
+antichain --- an assumption convex merging destroys and that termination
+arguments for subsumption-based searches normally rest on.
+
+Three further mechanisms reduce the cost of one update and are each proved not to
+change which symbolic states are explored: inclusion decided directly against the
+stored minimal constraint system, a dense mirror of a stored set admitted on
+accumulated query work rather than on size, and a bounded convex-union window.
+Three more bound the work at the level barrier, which is the engine's only serial
+term and the one that grows with the state space: a bucketed collection of the
+next frontier, an incrementally triggered compaction of retired nodes, and a
+growth-triggered reclamation of the shared zone table that is amortised $O(1)$
+per interned zone and keeps unreclaimed garbage below the live set.
+
+\Cref{sec:prelim} fixes notation and the three properties of subsumption the
+proofs use, \cref{sec:approach} describes the engine, \cref{sec:correct} proves
+it correct and bounds the cost of each mechanism, \cref{sec:related} places it
+against related work, and \cref{sec:eval} evaluates it.

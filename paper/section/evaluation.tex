@@ -1,0 +1,50 @@
+\section{Evaluation}\label{sec:eval}
+
+\emph{[To be written; the measurement plan is recorded as a comment in the
+source of this section.]}
+
+% =========================================================================
+% TODO --- this section is not written yet.  It should report, in this order,
+% so that each measurement answers a claim made earlier in the paper:
+%
+%   1. Setup: machine, thread counts, models and sizes, UPPAAL version used as
+%      the reference, and the protocol for repeated runs.
+%
+%   2. Verdict agreement and state counts against verifyta, per model.  This is
+%      the empirical check of Theorem \ref{thm:verdict}.
+%
+%   3. Identical stored-state counts with and without the packed-record filter,
+%      per model.  This is the empirical check of Theorem \ref{thm:samestates},
+%      and it is claimed in Section \ref{sec:filter}.
+%
+%   4. Strong scaling: speedup versus thread count per family, plus the measured
+%      occupancy of the expand phase and the fraction of wall time spent after
+%      the level barrier (collect + compact + reclaim).  This is what bounds the
+%      achievable speedup and is the subject of Section \ref{sec:boundary}.
+%
+%   5. Ablations, one per mechanism, each against the claim it supports:
+%        - two-phase protocol on/off (Section \ref{sec:protocol});
+%        - shared striped passed set vs. per-thread stored sets with a drain
+%          at the level boundary (claimed in Section \ref{sec:stripes});
+%        - packed-record filter on/off (Section \ref{sec:filter});
+%        - mirror off / fixed-length rule / work-based rule
+%          (Section \ref{sec:mirror}, Proposition \ref{prop:mirrorwork});
+%        - merge window m in {8, 32, unbounded} (Section \ref{sec:window}),
+%          reporting BOTH time and stored-state count, since m changes both;
+%        - reclamation trigger: growth-based vs. absolute threshold
+%          (Section \ref{sec:gc}, Propositions \ref{prop:gcamort} and
+%          \ref{prop:gcmem}), reporting time and peak RSS;
+%        - adaptive abstraction switch on/off (Section \ref{sec:adaptive}).
+%
+%   6. Peak resident memory per model, and its composition (packed records,
+%      chain nodes, slot tables, frontier, mirrors).
+%
+%   7. Comparison against sequential verifyta and against the multi-core
+%      opaal+LTSmin tool, on the families both can express.
+%
+% Before writing: re-confirm the three motivating figures quoted in the text ---
+% 89.8% of updates decided by the first test and the 22x unpack-to-compare ratio
+% on arbiter17 (Sections \ref{sec:protocol} and \ref{sec:folds}), and 14.5
+% successors per discrete state on phil13 (Section \ref{sec:protocol}) --- or
+% replace them with the numbers from the final run.
+% =========================================================================

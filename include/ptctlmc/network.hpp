@@ -82,6 +82,12 @@ struct Network {
   // reset first; kAluNegInf ("−∞") if c is never guarded from there. These make the
   // aLU subsumption far coarser away from guards — the key to UPPAAL's zone count.
   std::vector<std::vector<std::vector<std::int32_t>>> lbound_loc, ubound_loc;
+  // The same per-location bounds as RAW bounds, i.e. carrying each guard's strictness rather
+  // than only its constant. This is the diagonal-free G(q) of the G-simulation: by Cor. 3.6/3.10
+  // a diagonal-free constraint map collapses to at most one upper and one lower bound per clock,
+  // so G adds exactly one bit per bound over L/U -- which is what dbm_is_g_le consumes.
+  // kGNone marks "no constraint on this clock in this direction".
+  std::vector<std::vector<std::vector<raw_t>>> lraw_loc, uraw_loc;
   // active[p][l][c] = 1 if clock c may be read by process p from location l before
   // being reset (active-clock reduction: inactive clocks are reset to collapse zones).
   std::vector<std::vector<std::vector<char>>> active;
@@ -94,6 +100,23 @@ struct Network {
   void compute_bounds();
   void compute_loc_bounds();
   void compute_active();
+  // iread[p][l][v] = 1 if process p, starting at location l, may READ integer cell v before p
+  // itself writes it. The discrete analogue of `active` for clocks, and computed the same way:
+  // a per-process backwards fixpoint, no product construction.
+  //
+  // A cell is DEAD at a location vector L when iread[p][L[p]][v] is 0 for EVERY process p (and
+  // the query does not read it). Two states differing only in a dead cell have the same future:
+  // any read of v is performed by some process q from L[q], and every path of q from there
+  // writes v before reading it, so no read anywhere in any run observes the entry value. The
+  // universal quantifier is what makes that argument work -- an existential one would not.
+  // Dead cells are therefore canonicalised to `lo` before the discrete key is computed, which
+  // merges states that differ only in unobservable data.
+  //
+  // Conservative where it must be: any cell mentioned by a general expression guard/update
+  // (arrays, arithmetic, calls) is treated as read everywhere, since those are not analysed.
+  std::vector<std::vector<std::vector<char>>> iread;
+  std::vector<std::vector<std::uint64_t>> iread_mask;   // bit form, when intvars.size() <= 63
+  void compute_int_live();
   int nprocs() const { return static_cast<int>(procs.size()); }
 
   // resolve "Proc.Loc" -> (proc index, location index); returns false if unknown.
@@ -103,6 +126,14 @@ struct Network {
 
 // E<> target: every listed process must be in the given location, all int atoms
 // hold, and the zone satisfies the clock constraints.
+// Replace each integer variable's declared range by an over-approximation of the values it can
+// actually hold (src/intrange.cpp). The discrete key spends bits(hi-lo+1) per cell, and UPPAAL's
+// default range for an undeclared `int` is [-32768,32767], so a model with a few unannotated
+// array cells overflows the 63-bit key on width alone rather than on state count. Returns true
+// when at least one variable narrowed. OVER-approximates: no reachable value is ever excluded,
+// which is what keeps it sound against gen_apply's range check.
+bool narrow_int_ranges(Network& net);
+
 struct NetTarget {
   std::vector<std::pair<int, int>> loc_req;  // (proc, location)
   std::vector<IntAtom> int_cond;

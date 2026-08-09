@@ -27,9 +27,9 @@ one thread, so the gate refuses to produce them any other way.
 
 Usage:
     python3 benchmarks/verify_parity.py                       # baseline snapshot, no flags
-    python3 benchmarks/verify_parity.py --flags --slice       # gate a workstream
+    python3 benchmarks/verify_parity.py --flags="--narrow"       # gate a workstream
     python3 benchmarks/verify_parity.py --only fischer,phil --max-n 8
-    python3 benchmarks/verify_parity.py --baseline out/baseline.csv --flags --slice
+    python3 benchmarks/verify_parity.py --baseline benchmarks/baseline-mostoptimized.csv --flags="--narrow"
 """
 import argparse, csv, os, re, subprocess, sys
 
@@ -141,8 +141,12 @@ def pct(new, old):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", default=BIN)
-    ap.add_argument("--flags", nargs="*", default=[],
-                    help="workstream flags to gate, e.g. --flags --slice")
+    # One string, split here: with nargs="*" argparse swallows a leading "--slice" as an
+    # option of its own and the run dies on "unrecognized arguments".
+    ap.add_argument("--flags", default="",
+                    help='workstream flags to gate, as one string. MUST use the = form: '
+                         '--flags="--narrow", since argparse reads a value starting with "--" '
+                         'as another option.')
     ap.add_argument("--only", default="", help="comma-separated families")
     ap.add_argument("--max-n", type=int, default=10,
                     help="skip instances above this N (0 = no cap)")
@@ -151,6 +155,7 @@ def main():
     ap.add_argument("--baseline", default="",
                     help="a previous CSV to compare against, instead of the in-run baseline")
     args = ap.parse_args()
+    args.flags = args.flags.split()
 
     if not os.path.exists(args.bin):
         sys.exit(f"binary not found: {args.bin}  (build it, or set PTCTLMC_BIN)")

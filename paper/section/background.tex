@@ -1,0 +1,98 @@
+\section{Preliminaries}\label{sec:prelim}
+
+\paragraph{Networks and the zone graph.}
+A network $\net$ of timed automata~\cite{AlurDill94} is a parallel composition of
+finite automata over a set of real-valued clocks $\clocks$, shared bounded
+integer variables, and synchronisation channels; edges carry clock guards, resets
+and integer updates, locations carry invariants.  A \emph{discrete state} $q$ is
+the tuple of current locations together with the values of the integer variables;
+$\dstates$ is the finite set of discrete states.  A \emph{zone} is a set of clock
+valuations definable by a conjunction of constraints $x_i - x_j \prec c$, where
+$x_0$ is the reference clock, constantly zero.  A \emph{symbolic state} is a pair
+$(q,\Zone)$ with $\Zone$ non-empty.  The \emph{successor function}
+$\succfn(q,\Zone)$ applies one edge, or one synchronised pair or broadcast of
+edges: it conjoins guards, applies resets and integer updates, lets time elapse
+subject to the invariants of the target locations, and discards empty results.
+It reads only $\net$ and its argument and allocates its result, so it is pure.
+Given a predicate $\varphi$ on symbolic states, the question is whether some
+$(q,\Zone)$ with $\varphi(q,\Zone)$ is reachable from $(q_0,\Zone_0)$.
+
+\paragraph{Zones as matrices.}
+A zone over $n$ clocks is stored as a difference bound matrix
+(DBM)~\cite{Dill89,Bengtsson04}: entry $\Zone[i][j]$ is the tightest known bound
+on $x_i - x_j$, drawn from a set of bounds ordered by strength and closed under
+addition.  A DBM is \emph{canonical} when $\Zone[i][j] \le \Zone[i][k] +
+\Zone[k][j]$ for all $i,j,k$; canonicity is restored by an all-pairs
+shortest-path closure at cost $O(n^3)$, and all DBMs here are canonical.
+Canonicity makes inclusion entrywise,
+\begin{equation}\label{eq:denseincl}
+  \Zone \subseteq \Zone' \iff \forall i,j:\ \Zone[i][j] \le \Zone'[i][j],
+\end{equation}
+and makes the entrywise maximum $\hull(\Zone,\Zone')$ --- the smallest zone
+containing both --- canonical as well.  We say $\Zone$ and $\Zone'$ \emph{merge
+exactly} when $\Zone \cup \Zone' = \hull(\Zone,\Zone')$, so that replacing the
+pair by the hull loses and gains nothing.
+
+A \emph{minimal constraint system} $\mg(\Zone)$ is a set of difference
+constraints with $\mathrm{close}(\mg(\Zone)) = \Zone$ containing no redundant
+constraint~\cite{LarsenLPY97}; it has $O(n)$ constraints on the models we
+consider, against $O(n^2)$ matrix entries.  Its byte encoding is the
+\emph{packed record} of $\Zone$, and \emph{unpacking} is the $O(n^3)$ closure
+that rebuilds the canonical matrix from it.
+
+\paragraph{Subsumption.}
+A search need not store a symbolic state whose behaviour a stored one already
+covers.  Which states those are is fixed by a preorder on zones, and the engine
+uses one of two.  The first is inclusion.  The second is the abstraction
+$\abs_q$ induced by the $\preceq_{LU}$ preorder on
+valuations~\cite{Behrmann06,Herbreteau12}: with $L_q(x)$ and $U_q(x)$ the largest
+constants against which clock $x$ is compared by a lower, respectively upper,
+guard reachable from $q$, floored by the constants of $\varphi$, the relation $v
+\preceq_{LU} v'$ holds when no guard within those bounds separates $v$ from $v'$,
+and $\abs_q(\Zone)$ is the downward closure of $\Zone$ under it.  We write
+\begin{equation}\label{eq:alu}
+  \Zone \subq_q \Zone' \quad:\iff\quad \Zone \subseteq \abs_q(\Zone'),
+\end{equation}
+decidable entrywise on canonical DBMs in $O(n^2)$~\cite{Herbreteau12}, reading
+arbitrary entries of $\Zone'$.  The engine uses \cref{eq:alu} by default and
+inclusion when $\varphi$ constrains clocks or the network contains diagonal
+constraints, both of which make $\abs_q$ unsound.  We write $\subq_q$ for
+whichever is in force; every result below holds for both.  Given a passed set
+$\Passed$ mapping each $q$ to its \emph{stored set} $\Passed(q)$, a symbolic
+state is \emph{covered}, written $\mathrm{cov}_\Passed(q,\Zone)$, when some
+$Y \in \Passed(q)$ satisfies $\Zone \subq_q Y$.
+
+Three properties of $\subq_q$ are used throughout.
+
+\begin{lemma}[Preorder]\label{lem:preorder}
+$\subq_q$ is reflexive and transitive, and $\Zone \subseteq \Zone'$ implies
+$\Zone \subq_q \Zone'$.
+\end{lemma}
+\begin{proof}
+$\preceq_{LU}$ is reflexive and transitive, so its downward closure $\abs_q$ is
+extensive, monotone and idempotent, i.e.\ a closure operator.  Reflexivity is
+extensivity.  If $\Zone \subseteq \abs_q(\Zone')$ and $\Zone' \subseteq
+\abs_q(\Zone'')$ then $\abs_q(\Zone) \subseteq \abs_q(\abs_q(\Zone')) =
+\abs_q(\Zone') \subseteq \abs_q(\abs_q(\Zone'')) = \abs_q(\Zone'')$, and $\Zone
+\subseteq \abs_q(\Zone)$ gives transitivity.  The last claim is monotonicity
+followed by extensivity.  For inclusion all three are immediate.\qed
+\end{proof}
+
+\begin{lemma}[Simulation]\label{lem:sim}
+If $\Zone \subq_q \Zone'$ then every $(q',\Zone_1) \in \succfn(q,\Zone)$ has a
+counterpart $(q',\Zone_2) \in \succfn(q,\Zone')$ with $\Zone_1 \subq_{q'}
+\Zone_2$; and $\varphi(q,\Zone)$ implies $\varphi(q,\Zone')$.
+\end{lemma}
+
+\begin{lemma}[Finite index]\label{lem:finite}
+For each $q$, the set $\{\abs_q(\Zone) : \Zone \text{ a zone}\}$ is finite.
+\end{lemma}
+
+\Cref{lem:sim} is the defining property of a sound subsumption relation, proved
+for $\abs_q$ in~\cite{Behrmann06,Herbreteau12} and immediate from monotonicity of
+the DBM operations for inclusion; its second half is what forces the fallback to
+inclusion when $\varphi$ reads clocks, since $\abs_q$ may drop concrete
+valuations.  \Cref{lem:finite} is standard~\cite{Behrmann06}.  Under inclusion
+the corresponding finiteness comes instead from \emph{extrapolation}:
+$\extraLU(\Zone)$ widens $\Zone$ to a representative from a finite
+set~\cite{Daws98,Behrmann06}, at the price of a coarser zone.

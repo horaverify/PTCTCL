@@ -1,5 +1,7 @@
 #include "ptctlmc/uppaal.hpp"
 
+#include "ptctlmc/netreach.hpp"
+
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -1156,9 +1158,15 @@ Network load_uppaal_network(const std::string& path) {
     net.procs.push_back(std::move(proc));
   }
   net.nclocks = (int)net.clock_names.size() - 1;
+  // Narrow declared integer ranges to the values actually reachable BEFORE the discrete key is
+  // laid out, since the key spends bits(hi-lo+1) per cell. Opt-in (--narrow) while it is new:
+  // it is an over-approximation and therefore sound, but it changes the packing of every model
+  // with integer state, so the parity gate decides when it becomes the default.
+  if (narrow_ranges_on()) narrow_int_ranges(net);
   net.compute_bounds();
   net.compute_loc_bounds();
   net.compute_active();
+  net.compute_int_live();
   return net;
 }
 

@@ -234,6 +234,12 @@ int main(int argc, char** argv) {
       ptctlmc::set_gpu_intern(true);
     } else if (a == "--symmetry") {     // explore one representative per automorphism orbit
       ptctlmc::set_symmetry(true);
+    } else if (a == "--narrow") {       // pack dk from inferred integer ranges, not declared ones
+      ptctlmc::set_narrow_ranges(true);
+    } else if (a == "--slice") {        // canonicalise dead integer cells before the discrete key
+      ptctlmc::set_slice(true);
+    } else if (a == "--sim" && i + 1 < argc) {   // alu (default) | g
+      ptctlmc::set_gsim(std::string(argv[++i]) == "g");
     } else if (a == "--omp-chunk") {  // OpenMP dynamic-schedule chunk size (default 8)
       if (i + 1 < argc) {
         const int v = std::atoi(argv[++i]);

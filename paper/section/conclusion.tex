@@ -1,0 +1,35 @@
+\section{Conclusion}\label{sec:concl}
+
+\emph{[To be written once \cref{sec:eval} is in place.]}
+
+% =========================================================================
+% TODO --- outline, to be filled once the numbers exist:
+%
+%   * Restate the framing of Section \ref{sec:intro}: the successor function is
+%     the easy half, the passed set is the hard half, and the hard half is hard
+%     because its operation is a read-mostly, order-sensitive, expensive update
+%     rather than an insert-if-absent.
+%
+%   * Restate what the paper established, with the evaluation numbers attached:
+%     coverage monotonicity (Lemma \ref{lem:monotone}) as the property that lets
+%     a shared subsumption test be trusted without validation; termination and
+%     verdict determinism without assuming an antichain (Theorems \ref{thm:term}
+%     and \ref{thm:verdict}); and the three cost mechanisms, each proved not to
+%     change what is explored.
+%
+%   * The transferable design rule: a compressed representation must be chosen
+%     with its query pattern in view, not only with its size, and an adaptive
+%     policy should be driven by a signal the engine already computes (visits x
+%     size for the mirror, zones per discrete state for the abstraction switch)
+%     rather than by a model-specific constant.
+%
+%   * Limitations, stated plainly: the stored set is not reproducible across
+%     runs; strict level synchronisation leaves a tail-idle term that a
+%     work-stealing design would not have, at the cost of more stored states;
+%     the engine is shared-memory only.
+%
+%   * Future work: liveness properties, which need a different passed-set
+%     discipline; distributed execution over several shared-memory nodes; and
+%     using the same monotonicity argument to justify a lock-free stored-set
+%     update.
+% =========================================================================

@@ -1,0 +1,55 @@
+\section{Related Work}\label{sec:related}
+
+\paragraph{Shared passed sets in explicit-state model checking.}
+Stern and Dill~\cite{Stern01} partitioned the state space across processors and
+routed successors to their owner; multi-core \textsc{Spin}~\cite{Holzmann07} and
+\textsc{DiVinE}~\cite{Barnat12} refined that shape for shared memory, and
+\ltsmin{}~\cite{Laarman10,Kant15} replaced it with a single lockless hash table
+that every worker inserts into, removing the routing phase.  Our striped passed
+set follows that choice of a shared structure over a static partition.  What does
+not carry over is the operation: a lockless hash table implements
+insert-if-absent, which is idempotent and pure in its effect, whereas
+\cref{alg:update} retires and replaces stored zones.  This is why the engine uses
+a lock per stripe and a shared/exclusive split rather than a compare-and-swap on
+a slot, and why \cref{thm:probe} has to be proved.
+
+\paragraph{Parallel and distributed reachability for timed automata.}
+Behrmann et al.~\cite{Behrmann00,Behrmann05} distributed \uppaal{}'s search and
+observed that the search order changes the number of explored states, an effect
+that reappears here as the reason for keeping strict level synchronisation.
+Dalsgaard et al.~\cite{Dalsgaard12} combine the \opaal{} front end with
+\ltsmin{}'s shared table to obtain a multi-core timed-automaton reachability
+tool, and identify the interaction between subsumption and a shared table as the
+central difficulty.  Our contribution to that point is \cref{lem:monotone} and
+its consequences: what makes a shared subsumption test usable without validation
+is that coverage is monotone, and once that is available the read-mostly nature
+of the operation can be exploited directly.
+
+\paragraph{Subsumption and antichains.}
+Storing sets of incomparable elements under a subsumption preorder rather than
+individual elements is the antichain technique of De Wulf et al.~\cite{Wulf06}.
+For timed automata the relevant preorders are the $\preceq_{LU}$-based
+abstractions of Behrmann et al.~\cite{Behrmann06} and Herbreteau et
+al.~\cite{Herbreteau12}, implemented by \uppaal{} and
+\textsc{TChecker}~\cite{Herbreteau13}; extrapolation~\cite{Daws98,Behrmann06} is
+the older route to finiteness, and the engine chooses between the two per run
+rather than per tool.  Termination arguments for antichain-based searches
+normally rest on the stored set being an antichain, which convex merging breaks;
+\cref{thm:term} replaces that argument with one that bounds insertions by
+abstraction classes using only monotonicity of coverage.
+
+\paragraph{Compact zone representations.}
+Storing zones as minimal constraint systems is due to Larsen et
+al.~\cite{LarsenLPY97}.  The representation is chosen for bytes resident, and
+the cost it moves is the cost of a query, which must rebuild a dense matrix.
+\Cref{lem:minclosure} avoids the rebuild for the query that dominates by deciding
+inclusion against the generators, and the dense mirror buys the dense form back
+only for the stored sets whose measured query traffic pays for it.
+
+\paragraph{Determinism.}
+Blelloch et al.~\cite{Blelloch12} argue for internally deterministic parallel
+algorithms, whose intermediate state does not depend on the schedule.  This
+engine is not one, and cannot cheaply be made one, because convex merging is not
+confluent; \cref{thm:verdict} isolates what is deterministic --- the verdict and
+the set of covered symbolic states --- and every mechanism is checked against
+that property rather than against reproducibility of the passed set.

@@ -766,7 +766,28 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   }
   // Per-state aLU bounds: max of per-location bounds over processes, floored by the query.
   auto state_bounds = [&](const int* locs, std::vector<std::int32_t>& L2,
-                          std::vector<std::int32_t>& U2) {
+                          std::vector<std::int32_t>& U2, std::vector<raw_t>& Lr,
+                          std::vector<raw_t>& Ur) {
+    // The G arrays are the same per-location fixpoint with strictness kept. Combined over
+    // processes by raw max, which is the "weakest wins" rule Cor. 3.6 requires -- the same
+    // compositional union upstream TChecker uses for LU with pointwise max.
+    if (detail::options().gsim && !net.uraw_loc.empty()) {
+      Lr.assign(net.nclocks + 1, kGNone);
+      Ur.assign(net.nclocks + 1, kGNone);
+      for (int p = 0; p < net.nprocs(); ++p)
+        for (int c = 1; c <= net.nclocks; ++c) {
+          const raw_t lr = net.lraw_loc[p][locs[p]][c], ur = net.uraw_loc[p][locs[p]][c];
+          if (lr != kGNone && (Lr[c] == kGNone || lr > Lr[c])) Lr[c] = lr;
+          if (ur != kGNone && (Ur[c] == kGNone || ur > Ur[c])) Ur[c] = ur;
+        }
+      // The query's own constants must floor the bounds exactly as they do for L/U, or a state
+      // satisfying the property could be abstracted away. Non-strict: the safe direction.
+      for (int c = 1; c <= net.nclocks; ++c) {
+        if (Uq[c] != kAluNegInf && (Ur[c] == kGNone || le(Uq[c]) > Ur[c])) Ur[c] = le(Uq[c]);
+        if (Lq[c] != kAluNegInf && (Lr[c] == kGNone || le(-Lq[c]) > Lr[c])) Lr[c] = le(-Lq[c]);
+      }
+      Lr[0] = Ur[0] = kGNone;
+    }
     if (net.lbound_loc.empty()) { L2 = L; U2 = U; return; }  // fall back to global bounds
     L2.assign(net.nclocks + 1, kAluNegInf);
     U2.assign(net.nclocks + 1, kAluNegInf);
@@ -779,6 +800,39 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     L2[0] = U2[0] = 0;
   };
 
+
+  // Discrete liveness reduction: overwrite integer cells that no process can read before
+  // writing, and that the query does not mention, with their low value. Two states differing
+  // only in such cells have the same future, so this merges them -- the discrete analogue of
+  // reset_inactive zeroing dead clocks, and placed at the same point in the successor path.
+  // `qlive` is the query's own read set, the qmask analogue: a cell the property inspects is
+  // live everywhere regardless of what the processes do with it.
+  std::vector<char> qlive(net.intvars.size(), 0);
+  for (const auto& ic : target.int_cond)
+    if (ic.var >= 0 && ic.var < static_cast<int>(qlive.size())) qlive[ic.var] = 1;
+  const bool do_slice = detail::options().slice && !net.intvars.empty() && !net.iread.empty();
+  auto canon_ints = [&](const LocVec& locs, IntVec& ints) {
+    if (!do_slice) return;
+    const int nv = static_cast<int>(net.intvars.size());
+    if (!net.iread_mask.empty()) {              // bit path: nprocs OR-s, then a popcount loop
+      std::uint64_t live = 0;
+      for (int p = 0; p < net.nprocs(); ++p) live |= net.iread_mask[p][locs[p]];
+      for (int v = 0; v < nv; ++v) if (qlive[v]) live |= std::uint64_t(1) << v;
+      std::uint64_t dead = ~live & ((nv >= 64) ? ~std::uint64_t(0) : ((std::uint64_t(1) << nv) - 1));
+      while (dead) {
+        const int v = __builtin_ctzll(dead);
+        dead &= dead - 1;
+        ints[v] = net.intvars[v].lo;
+      }
+      return;
+    }
+    for (int v = 0; v < nv; ++v) {
+      if (qlive[v]) continue;
+      bool live = false;
+      for (int p = 0; p < net.nprocs() && !live; ++p) live = net.iread[p][locs[p]][v];
+      if (!live) ints[v] = net.intvars[v].lo;
+    }
+  };
 
   // `parallel` is decided AFTER the GPU factory below, because a GPU backend that falls back to
   // the CPU path (out-of-scope model, no device) must still use every core. It did not: the test
@@ -895,6 +949,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   }
   if (is_target(s0)) return true;
   if (use_sym) canonicalize(*sym, net, s0);
+  canon_ints(s0.locs, s0.ints);
 
 #if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
   // ---- FLAT GPU-resident driver (Metal / CUDA) -------------------------------------------
@@ -1398,8 +1453,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
         int dl[64]; long di[32];
         std::vector<std::int32_t> L2, U2;
+        std::vector<raw_t> Lr_, Ur_;   // GPU merge is a_LU only; the G arrays go unused here
         decode_key(bdk[b], dl, di);
-        state_bounds(dl, L2, U2);
+        state_bounds(dl, L2, U2, Lr_, Ur_);
         for (int c = 0; c < dim; ++c) { Lm[static_cast<std::size_t>(b) * dim + c] = L2[c]; Um[static_cast<std::size_t>(b) * dim + c] = U2[c]; }
       }
       if (mtlprof) t_gather += _ms(_tg, _now());
@@ -1882,6 +1938,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             }
 #endif
             if (use_sym) canonicalize(*sym, net, s);
+            canon_ints(s.locs, s.ints);
             const std::uint64_t dk = disc_key(s.locs, s.ints);
             if (dbg_lvl == level)
               std::fprintf(stderr, "[edge] %llu -> %llu\n",
@@ -1938,6 +1995,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             ++tls_gen[0];
             if (is_target(s)) return true;
             if (use_sym) canonicalize(*sym, net, s);
+            canon_ints(s.locs, s.ints);
             const std::uint64_t dk = disc_key(s.locs, s.ints);
             if (smap[stripe_of(dk)].add(std::move(s), dk, level, exact_sub, state_bounds, 0) >= 0)
               touched.insert(dk);

@@ -9,6 +9,8 @@
 #include "ptctlmc/mindbm.hpp"
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
@@ -32,6 +34,23 @@ namespace detail {
 // legacy add_to; only the container changed. The brand-new-dk path (the whole of
 // viking) allocates nothing per state and skips state_bounds.
 
+
+// One place decides which simulation the passed set subsumes with, so add() and probe_kill()
+// cannot drift apart. a_LU is the default; the G-simulation differs only in carrying each
+// guard's strictness (see dbm_is_g_le).
+inline bool sim_le(const raw_t* Z, const raw_t* Zp, int dim,
+                   const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
+                   const std::vector<raw_t>& Lr, const std::vector<raw_t>& Ur) {
+  if (detail::options().gsim && !Ur.empty()) {
+#ifndef NDEBUG
+#endif
+    static std::atomic<long> nG{0};
+    if (std::getenv("PTCTLMC_STATS") && nG.fetch_add(1, std::memory_order_relaxed) == 0)
+      std::fprintf(stderr, "[gsim] G-simulation test ACTIVE\n");
+    return dbm_is_g_le(Z, Zp, dim, Lr.data(), Ur.data());
+  }
+  return dbm_is_alu_le(Z, Zp, dim, L.data(), U.data());
+}
 
 struct NetPassed {
   // A node stores ONLY the zone + BFS level. The discrete part (locs/ints) is
@@ -167,12 +186,13 @@ struct NetPassed {
       const HotChain& hc = hit->second;
       const std::size_t d2 = static_cast<std::size_t>(dim) * dim;
       thread_local std::vector<std::int32_t> Ls, Us;
-      if (!exact_sub) bounds(s.locs.data(), Ls, Us);
+      thread_local std::vector<raw_t> Lr, Ur;
+      if (!exact_sub) bounds(s.locs.data(), Ls, Us, Lr, Ur);
       for (std::size_t i = hc.node.size(); i-- > 0;) {
         if (hc.node[i] < 0) continue;
         const raw_t* ez = hc.z.data() + i * d2;
         if (exact_sub ? dbm_includes(ez, sz, dim)
-                      : dbm_is_alu_le(sz, ez, dim, Ls.data(), Us.data()))
+                      : sim_le(sz, ez, dim, Ls, Us, Lr, Ur))
           return true;
       }
       return false;
@@ -205,7 +225,8 @@ struct NetPassed {
     // maybe_subsumed() deliberately does not touch it).
     if (tab[si].visits != UINT32_MAX) ++tab[si].visits;
     thread_local std::vector<std::int32_t> Ls, Us;
-    if (!exact_sub) bounds(s.locs.data(), Ls, Us);   // aLU bounds only needed by the aLU test
+    thread_local std::vector<raw_t> Lr, Ur;
+    if (!exact_sub) bounds(s.locs.data(), Ls, Us, Lr, Ur);   // only needed by the simulation test
     const int head = tab[si].head;
     // Unpack the live chain ONCE into a reused thread-local array, then fold over the array
     // rather than re-walking the chain. zi->get() decodes a packed min-graph record into a
@@ -288,13 +309,13 @@ struct NetPassed {
     // (2) s subsumed by a stored zone? -> drop
     for (std::size_t k = 0; k < zp.size(); ++k)
       if (exact_sub ? dbm_includes(zp[k], sz, dim)
-                    : dbm_is_alu_le(sz, zp[k], dim, Ls.data(), Us.data()))
+                    : sim_le(sz, zp[k], dim, Ls, Us, Lr, Ur))
         return -1;
     // (3) drop stored zones now subsumed by s
     for (std::size_t k = 0; k < live.size();) {
       const raw_t* ez = zp[live[k]];
       if (exact_sub ? dbm_includes(sz, ez, dim)
-                    : dbm_is_alu_le(ez, sz, dim, Ls.data(), Us.data())) {
+                    : sim_le(ez, sz, dim, Ls, Us, Lr, Ur)) {
         ++deadBySubsume;
         retire(k);
         live.erase(live.begin() + k);
