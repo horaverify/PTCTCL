@@ -370,6 +370,43 @@ either way at small N. And the size of the win is surprising given [THESIS] p. 3
 diagonal-free improvement "not drastic"; `single` is N independent clocks under one location
 with strict guards, which is precisely the shape where the strictness bit compounds.
 
+### W1 contraction — NOT VIABLE on this model class, and the reason is structural
+
+The contraction algorithm of §5.2 requires a supply of *legal removals*. The extraction settles
+what legal means: `G` must remain an **A-map** at every instant (guard-containing and
+`pre`-closed), and removing `φ` from `G(q)` is legal iff, for every outgoing `(q,g,R,q')`,
+`φ ∉ atoms_of(g)` and `φ ∉ pre(G(q'),R)`. Merely staying above `G*` is **not** sufficient — my
+original premise was wrong on exactly this point, and there is a two-location counterexample.
+
+Two facts about this engine then close the question:
+
+1. **Each per-process map is already a least fixpoint.** `Network::compute_loc_bounds` is an
+   ascending fixpoint seeded from guards and propagated backwards through resets — i.e. it is
+   `G*_p` for process `p` in isolation. Every constraint in it is justified by a guard or by
+   backward propagation, so *no removal passes the legality test*.
+2. **The compositional union is not an over-approximation here.** Measured across every
+   benchmark model: **zero clocks are referenced by more than one process.**
+
+   | model | templates | clocks | clocks shared by >1 process |
+   |---|---|---|---|
+   | arbiter6, csma6, fischer6, grc4, phil6, single6, twolock6, viking6 | 1–12 | 6–11 | **0** |
+
+   With process-local clocks, exactly one process contributes a bound per clock and the rest
+   contribute nothing, so `⋃_p G_p(L[p])` *equals* the owning process's map. There is no union
+   slack to contract.
+
+The only residual gap between the union and the true product `G*(L)` is a process's own local
+futures being unreachable *in the product*. Establishing that requires **negative** reachability
+information, which a forward search does not produce until it has already finished — so there is
+no online source of legal removals. A two-pass scheme (run, restrict the fixpoint to edges
+actually observed, re-run) is sound and would work, but its payoff is bounded by how many local
+edges are product-unreachable, and nothing here suggests that is large.
+
+**Conclusion.** Contraction stays specified and unimplemented, with the reason recorded. It is
+not refuted in general — on a model class with genuinely shared clocks the union *is* a strict
+over-approximation and the algorithm has something to do. It is refuted *for this benchmark
+class*, on measurement rather than on taste.
+
 ### What this says about the programme
 
 The floor argument of §1 held up exactly. W1 and W2 both left the five at-the-floor families
