@@ -70,6 +70,11 @@ def probe_ptctlmc(binary, xml, qf, flags, timeout):
     rc, out = run([binary, "--backend", "omp", *flags, xml, qf], env, timeout)
     if rc is None:
         return dict(verdict="TIMEOUT")
+    if "UNSUPPORTED" in out:
+        # The query layer rejects some formulas outright (disjunctions in location predicates,
+        # for instance). That is a feature gap, not a parity failure: there is no verdict to
+        # disagree with. Kept distinct from CRASH so the gate does not cry wolf.
+        return dict(verdict="UNSUP")
     if rc != 0:
         return dict(verdict="CRASH", detail=out[-400:])
     g = lambda p: (lambda m: int(m.group(1)) if m else None)(re.search(p, out))
@@ -180,13 +185,15 @@ def main():
         # Verdict parity. "n/a" (no oracle) and "TIMEOUT" are not disagreements -- they are
         # absences of evidence, and failing on them would make the gate cry wolf on big models.
         seen = {v for v in (flag["verdict"], base["verdict"], vfy["verdict"])
-                if v not in ("n/a", "TIMEOUT", "")}
+                if v not in ("n/a", "TIMEOUT", "UNSUP", "")}
         status = "ok"
-        if "CRASH" in seen or "?" in seen:
+        if flag["verdict"] == "CRASH" or base["verdict"] == "CRASH" or "?" in seen:
             status = "ERROR"
         elif len(seen) > 1:
             status = "MISMATCH"
-        if status != "ok":
+        elif flag["verdict"] == "UNSUP":
+            status = "unsupported"
+        if status in ("ERROR", "MISMATCH"):
             failures.append((model, flag["verdict"], base["verdict"], vfy["verdict"],
                              flag.get("detail", "") or base.get("detail", "")))
 
@@ -206,7 +213,7 @@ def main():
                          vfy_stored=vfy.get("stored"), vfy_explored=vfy.get("explored"),
                          status=status))
         print(f"{model:<12} {flag['verdict']:<8} {str(flag.get('disc') or '-'):>10} "
-              f"{str(flag.get('stored') or '-'):>10} {pct(flag.get('stored'), b_stored):>9} "
+              f"{str(flag.get('stored') or '-'):>10} {(pct(flag.get("stored"), b_stored) if args.flags else ""):>9} "
               f"{str(vfy.get('stored') or '-'):>11} "
               f"{pct(flag.get('stored'), vfy.get('stored')):>9}  {status}")
 

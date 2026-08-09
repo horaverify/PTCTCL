@@ -165,6 +165,30 @@ by the query is dead *everywhere*. Drop it from the `dk` bit-packing entirely. T
 the key, which also relieves the 63-bit width limit that currently rejects wide networks
 ([netreach.cpp:838]).
 
+**(c) Range narrowing.** Found by the first W0 gate run, and it turns W2 from a possible
+zero into a capability gain. `train0`/`train1` **crash today**:
+
+```
+error: reachable_net: discrete state needs 91 bits but the packed key holds 63
+  4 processes + 5 int vars. Widest fields:
+    16 bits  int Gate.list[0] [-32768,32767]   (x4)
+    16 bits  int Gate.len
+```
+
+The model declares `int list[N+1]` and `int len` with no explicit range, so the parser assigns
+the full 16-bit default and five variables consume 80 of the 63 available bits. The values
+those variables actually take are train ids in `0..N-1` and a queue length in `0..N` — three
+bits each. `verifyta` verifies `train0` in 55 stored states; we do not verify it at all.
+
+So: an interval fixpoint over the initial values, the constant assignments, and the update
+expressions, joined per variable to an over-approximation of its reachable range, and pack
+`dk` from the *inferred* range rather than the declared one. Over-approximation is what keeps
+it sound — no reachable value may be excluded — and where inference cannot bound a variable it
+falls back to the declared range, i.e. to today's behaviour.
+
+Note this is independent of the liveness analysis and pays even when every variable is live:
+`(a)` removes variables, `(c)` narrows the ones that remain, and either can shrink `dk` alone.
+
 **(b) Dynamic canonicalisation.** For a variable dead only at some location vectors: before
 computing `disc_key`, overwrite `ints[v] := intvars[v].lo` wherever `v` is dead at the
 successor's location vector. Identical in shape to `reset_inactive` overwriting dead clocks,
