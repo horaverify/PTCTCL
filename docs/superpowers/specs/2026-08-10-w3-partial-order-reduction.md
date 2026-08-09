@@ -60,6 +60,84 @@ one benchmark family here plus part of a second. The technique is general; the *
 good showcase for it, and adding a POR-friendly family (a pipeline, a producer/consumer farm)
 would be needed to evaluate it honestly rather than to flatter it.
 
+## 3b. The blocker: independence does NOT give a diamond here
+
+Independence is necessary for POR, not sufficient. In global-time semantics two independent
+actions commute only if the *zone* they produce is the same in both orders, and it generally is
+not — the survey states the obstacle directly (arXiv 2207.07479 §8.2):
+
+> "suppose that `x` is reset at `a` and `y` is reset at `b`, then `ab` and `ba` lead to different
+> zones keeping track of the different order of the resets. There is an implicit synchronization
+> due to the global nature of time."
+
+**This applies to `phil`, the one family with independence.** Its philosopher template:
+
+```
+invariant  c0 <= 2      guard  c0 >= 1      assignment  c0 = 0      sync  take0!/take1!/put0!/put1!
+no urgent locations, no committed locations
+```
+
+Every philosopher resets its own clock, has an invariant bounding delay, and nothing is urgent —
+so time passes between two independent philosophers' actions and the order of their resets is
+recorded in the zone as the sign of `c_i − c_j`. Firing `P0` then `P3` and firing `P3` then `P0`
+reach the same discrete state with **different, incomparable zones**. Exploring one order loses
+valuations the other reaches.
+
+**Measured confirmation.** If independent actions commuted at the zone level, two interleavings
+reaching one discrete state would produce *identical* zones and be caught as exact duplicates.
+Instead they arrive distinct and have to be reconciled:
+
+| model | discrete states | stored zones | subsumed by newer | absorbed into convex union |
+|---|---|---|---|---|
+| phil6 | 728 | 732 | 13 | 49 |
+| phil8 | 6 560 | 6 797 | 378 | 754 |
+| phil10 | 59 048 | 62 030 | 13 679 | **11 242** |
+
+On `phil10`, 11 242 zones arrived at a discrete state already holding a *different* zone whose
+union with the newcomer happened to be convex, and 13 679 more were strictly subsumed. Those
+24 921 events are the interleaving divergence, counted. The diamond does not hold.
+
+**The three sound escapes, and why two are closed here.**
+
+1. **Zero-time independence** — if the independent actions are urgent or committed, no time passes
+   between them and the resets coincide. `phil` has **no** urgent and **no** committed locations,
+   and neither does any other model in the suite. Closed.
+2. **Reset-free, invariant-free independence** — actions that reset no clocks record no order, so
+   they commute. `phil`'s edges reset (`c0 = 0`) and its locations carry invariants (`c0 <= 2`),
+   which also makes the permitted delay differ between the two orders. Closed.
+3. **POR modulo abstraction** (Hansen et al., CAV'14) — do not require the two zones to be equal,
+   only equivalent under the simulation already in use. This one is open, and it is the only
+   route left.
+
+**Consequence: implementing classical ample-set POR here would be unsound**, not merely
+unprofitable. It would silently drop reachable valuations on the only family it applies to. It is
+therefore not implemented.
+
+## 3c. What the engine already recovers
+
+Worth recording, because it explains why `phil` is not exploding despite the divergence: the
+**exact convex-union merge is already reclaiming most of the interleaving redundancy**, at the
+zone level rather than the interleaving level. That is what holds `phil` at 1.05 zones per
+discrete state instead of letting order-divergent zones accumulate. POR would attack the same
+redundancy earlier — by not generating the interleavings — but the engine is not paying full
+price for them today.
+
+## 3d. The only remaining route, stated precisely
+
+**POR modulo simulation on a mutable subsumption antichain.** Do not require `Z_ab = Z_ba`;
+require `Z_ab ⊑ Z_ba` under the engine's own simulation (`a_LU` or `G`). The measurements above
+say this is often *nearly* true — 11 242 of the divergent pairs on `phil10` were close enough to
+have a convex union. The research content is:
+
+* deciding the equivalence **without computing both orders**, or the reduction pays nothing;
+* the interaction with the antichain: if `v` is expanded with a reduced successor set and is
+  later killed because `Z_u ⊑ Z_v`, the behaviours `v` deferred are lost — unaddressed anywhere;
+* the ignoring proviso under level-synchronous parallel BFS, which has neither a DFS stack nor a
+  sequential order.
+
+This is a research project, not an implementation task, and it is the specific open challenge the
+survey ends on.
+
 ## 4. Design constraints already established
 
 * **No local-time semantics.** The survey (arXiv 2207.07479 §8.2) records that there is no finite
