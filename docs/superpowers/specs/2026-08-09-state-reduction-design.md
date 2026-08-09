@@ -329,6 +329,55 @@ Contraction lands second, gated on (A)/(B)/(C).
 
 ---
 
+## 5b. MEASURED RESULTS (2026-08-10)
+
+All numbers at one thread, `verifyta` 5.0.0 as oracle, 33 (model, query) pairs at N <= 7.
+
+### W2(c) `--narrow` — behaviour-neutral, and it unblocks a family
+
+Stored-zone counts **identical to baseline on all 33 pairs**. That is the invariant that had to
+hold: narrowing changes how `dk` is packed, never which states are reachable, so any movement
+would have meant the interval analysis was unsound. Nothing moved.
+
+`train0`/`train1` go from "rejected, 91 bits needed" to running. The analysis infers
+`list[0..3] ∈ [0,2]`, which is exactly the model's own `typedef int[0,N-1] id_t` with `N = 3`.
+
+### W2(a)/(b) `--slice` — measures exactly ZERO
+
+Every integer variable is live everywhere in every benchmark family, so no state is ever
+canonicalised. This is the outcome §4 predicted in advance and it is recorded, not buried. The
+analysis is correct and costs nothing when it fires on nothing; it is retained because it is a
+precondition for any model that does carry dead discrete state.
+
+### W1 `--sim=g` — large where it matters, invisible everywhere else
+
+With the adaptive widening switch disabled (`PTCTLMC_ADAPT=0`) so the simulation is isolated:
+
+| model | a_LU | G | verifyta |
+|---|---|---|---|
+| single4 | 22 | 24 | 34 |
+| single5 | 203 | **130** | 181 |
+| single6 | 1975 | **375** | 1116 |
+| phil, fischer, csma, twolock, viking, arbiter | — | unchanged to the digit | — |
+
+`single` was the **only** family where this engine stored more than `verifyta` (1959 vs 1116,
++75.5%). At 375 it stores 66% *fewer*. Everything else is untouched, which is expected: those
+families sit at one zone per discrete state, and no simulation however coarse can go below that.
+
+Two honest qualifications. `single4` gets slightly *worse* (22 -> 24) — a coarser subsumption
+changes which zones are retired and which convex unions become available, so counts can move
+either way at small N. And the size of the win is surprising given [THESIS] p. 36 calls the
+diagonal-free improvement "not drastic"; `single` is N independent clocks under one location
+with strict guards, which is precisely the shape where the strictness bit compounds.
+
+### What this says about the programme
+
+The floor argument of §1 held up exactly. W1 and W2 both left the five at-the-floor families
+untouched, because nothing operating on zones or on `dk` width can remove a state that is one
+zone at one reachable discrete state. What they did instead is (a) close the one family where we
+*lost* to `verifyta`, and (b) make a family verifiable that could not run at all. Neither is the
+headline "beat UPPAAL everywhere" result; both are real.
+
 ## 6. Risks
 
 - **W2 yields zero on the current suite.** Plausible. It is still correct, still narrows `dk`,
