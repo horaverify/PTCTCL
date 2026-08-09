@@ -196,10 +196,86 @@ measures it; we do not guess, and we report a zero as a zero.
 
 ---
 
-## 5. W1 — G-simulation (design decision only)
+## 5. W1 — contracting constraint maps (a new algorithm, not a port)
 
-Detailed algorithm specification is deferred to a companion document, pending literature
-extraction now in progress. What is already settled, and why:
+We are not porting TChecker's G-simulation. We import the *abstraction* — which is published,
+proven, and better than what we run today — and put a **new refinement algorithm** on top of it
+that only makes sense because our search is parallel. The G-simulation is the substrate; the
+contribution is the direction we move in and why we are allowed to.
+
+### 5.1 The observation
+
+Refining a constraint map has a direction, and the two directions are not equally compatible
+with a parallel antichain.
+
+Write `G*` for the least-fixpoint constraint map (the standard one) and `⪯_G` for the induced
+simulation. The relevant monotonicity — which the literature extraction must confirm before any
+code is written — is that **a larger constraint set gives a finer simulation**: more constraints
+to preserve means fewer zones subsumed. `G*` is therefore the *coarsest sound* choice, and every
+`G ⊇ G*` is still sound but prunes less.
+
+That gives two possible refinement strategies:
+
+| direction | constraint set | simulation | covered region | parallel probe |
+|---|---|---|---|---|
+| **CAV'13 lazy abstraction** | starts empty, **grows** | gets **finer** | **shrinks** | **unsound** |
+| **this proposal** | starts over-approximate, **shrinks** toward `G*` | gets **coarser** | **grows** | **sound** |
+
+`thm:coverage` says the covered region at each discrete state only ever grows, and
+`cor:probe` turns that into the licence for the shared-lock `probe_kill` — a kill decided at
+time `t` is still valid at any later `t'`. Lazy abstraction moves the wrong way: it makes the
+abstraction finer over time, so a state that was covered can stop being covered, and every
+concurrent read decided against the old, coarser abstraction becomes retroactively wrong. That
+is why CAV'13's algorithm cannot simply be dropped into this engine.
+
+Contraction moves the right way. Shrinking `G` makes the simulation coarser, so the covered
+region only grows, so `thm:coverage` survives untouched and the probe stays sound with no new
+synchronisation.
+
+### 5.2 The algorithm
+
+1. **Start from a cheap sound over-approximation.** For a network, take the union of the
+   per-process constraint maps `⋃_p G_p(L[p])`. Computable statically, per process, with no
+   product construction — the same compositional trick the engine already uses for LU bounds
+   ([netreach.cpp:768]). Sound because it is a superset of `G*`; weak because it is too big.
+2. **Contract in the background.** Spare cores — the ones a sequential tool does not have —
+   run a refiner that removes constraints from `G(L)` at individual location vectors as it
+   establishes they cannot matter there, moving each entry down toward `G*(L)`.
+3. **Explorers read whatever strength is currently published.** No barrier, no re-checking of
+   stored zones: a zone stored under a larger `G` stays valid and simply becomes *more*
+   effective at subsuming newcomers once `G` shrinks. (This is item (ii) the extraction must
+   confirm.)
+
+The result is an abstraction that gets **coarser as the search runs**, funded entirely by
+parallelism, with the soundness argument carried by a theorem the codebase already has.
+
+### 5.3 Why this is a contribution and not an optimisation
+
+- It is the **dual** of the published lazy-abstraction direction, and the choice of direction is
+  forced by a property of *parallel* search. A sequential tool has no reason to prefer it —
+  which is presumably why it has not been done.
+- It converts the compositional over-approximation from a *compromise* (we cannot afford the
+  product fixpoint) into a *starting point* (we begin sound and cheap, then improve), which
+  removes the main objection to compositional constraint maps for networks.
+- It composes with, rather than competes against, the exact convex-union merge: merging reduces
+  how many zones a chain holds, contraction increases how many newcomers each one kills.
+
+### 5.4 What must be established before writing code
+
+The extraction is scoped to answer exactly these, and W1 does not start until it has:
+
+- **(A)** Is every `G ⊇ G*` sound, and strictly finer? (If the direction is the other way round,
+  the whole scheme inverts and must be rethought.)
+- **(B)** Does contraction preserve soundness at every intermediate point, and do already-stored
+  zones stay valid across a shrink?
+- **(C)** Can `G` be shrunk at one location vector independently, or does the fixpoint couple
+  them so a local shrink forces global recomputation? This decides whether the refiner runs
+  per-stripe or needs a barrier — i.e. whether the parallelism claim survives contact.
+
+If (A) or (B) fails, W1 falls back to **static compositional `G` only** — still strictly better
+than `a_LU`, still worth having, with no contraction and no research claim.
+
+### 5.5 Settled points
 
 **The result being imported.** The `G`-simulation (Gastin–Mukherjee–Srivathsan) is, restricted
 to diagonal-free automata, **strictly coarser than the LU-simulation, with a simulation test
@@ -212,19 +288,16 @@ entirely and falls back to plain inclusion.
 least fixpoint propagating guards backwards through resets — replaces the two integers per
 clock that `lbound_loc` / `ubound_loc` hold today.
 
-**The open design question, and where our contribution sits.** `G(q)` is defined per state of
-a single automaton. For a network, `q` is the location vector, so the fixpoint is over the
-product and costs what the search costs. This engine already sidesteps the analogous problem
-for LU by storing per-process, per-location bounds and taking a max over processes
-([netreach.cpp:768]). Whether the same compositional move is sound for constraint *sets* is
-the question the literature extraction must answer.
+**Why networks force the issue.** `G(q)` is defined per state of a single automaton. For a
+network, `q` is the location vector, so the fixpoint is over the product and costs what the
+search costs. This engine already sidesteps the analogous problem for LU by storing
+per-process, per-location bounds and taking a max over processes ([netreach.cpp:768]). The
+compositional union of per-process constraint maps is the same move for constraint *sets*, and
+§5.2 step 1 makes it the starting point of the contraction rather than a permanent compromise.
 
-**Decision: static-compositional first, lazy second.** Lazy refinement (CAV'13) makes the
-abstraction *finer* over time, so the covered region **shrinks**, which invalidates
-`thm:coverage` and makes the shared-lock `probe_kill` unsound — the one theorem the parallel
-design rests on. Static-compositional `G` does not move at all during the search and preserves
-the theorem untouched. So: land static-compositional, measure it, and treat reconciling lazy
-refinement with a concurrently-read antichain as the research contribution rather than a task.
+**Staging.** Static compositional `G` lands first and is measured on its own — it is a complete,
+useful result even if contraction never happens, and it is the baseline contraction has to beat.
+Contraction lands second, gated on (A)/(B)/(C).
 
 **Touchpoints.** `dbm_is_alu_le` → new predicate; `state_bounds` → constraint-map lookup;
 `NetPassed::add` steps (2) and (3); `NetPassed::probe_kill`. Behind `--sim=alu|g`, default
