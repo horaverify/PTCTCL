@@ -108,7 +108,9 @@ omits them cannot explain its own numbers.
       warm-up).
 \item Frontier as $(\dk,\mathit{zidx})$ pairs; discrete state decoded from a
       packed $63$-bit key.
-\item Dense mirror for chains past $64$ live zones.
+\item Dense mirror for chains promoted on accumulated work
+      ($\mathit{visits} \times \mathit{length}$) under a memory budget, rather than on a
+      fixed length.
 \item Per-stripe compaction with an amortised trigger.
 \item Register-local counters instead of per-thread array slots, to avoid false
       sharing on a per-successor increment.
