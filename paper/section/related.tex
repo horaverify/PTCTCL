@@ -30,6 +30,19 @@ its consequences: what makes a shared subsumption test usable without validation
 is that coverage is monotone, and once that is available the read-mostly nature
 of the operation can be exploited directly.
 
+\paragraph{When parallelism costs states.}
+The effect above is worth isolating, because it bounds what parallelism can be used for here.
+Behrmann et al.~\cite{Behrmann00} report \textsc{Dacapo} rising from $45\,001$ stored states on one
+node to $110\,634$ on seventeen, purely from distributing a search that uses subsumption: a state
+that one order finds covered, another order expands.  The same wall is visible from the other side
+in our own measurements --- \uppaal{}'s three search orders give identical stored counts on
+\code{fischer}, \code{viking} and \code{csma}, depth-first is $31.6\%$ worse on \code{phil}, and
+\code{fischer8} is bit-identical from $1$ to $12$ threads \emph{because} strict level
+synchronisation is enforced rather than in spite of it.  The rule we draw from this, and follow
+throughout, is that additional workers may be spent on redundant but independently sound work, and
+may not be spent on relaxing the order in which states are inserted: the first is free, the second
+is paid for in states.
+
 \paragraph{Distributed timed model checking.}
 The \textsc{Zeus} line~\cite{Braberman05,Braberman06} is the sustained attempt at
 distributing timed verification, built over \textsc{Kronos} and computing

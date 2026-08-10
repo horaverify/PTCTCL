@@ -1,0 +1,54 @@
+\section{Race the risky abstraction against the exact search \hfill \live{}}
+
+\textbf{The claim, and it is not the usual one.} Parallelism here does not make the search faster.
+It changes \emph{which algorithms are usable at all}.
+
+Every large technique in this document is sound in one direction only. Environment abstraction
+(\S1): if the abstract system is safe, the real one is safe; if the abstract system is unsafe, we
+learned nothing and must start over. That one-sidedness is exactly why such techniques are not in
+production tools --- a sequential checker has to commit, and a wrong commitment burns the run.
+
+With cores you do not commit. Run the cheap one-sided technique \emph{and} the exact search at the
+same time. If the cheap one proves safety first, kill the exact search. If it fails, you spent one
+core and the exact search was never interrupted. \textbf{Parallelism converts a risky bet into a
+free one.}
+
+\paragraph{We measured an instance of this by accident.} The liveness deadlock gate offers two
+strategies that compute the same verdict:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+model & gate $+$ $a_{LU}$ & exact only \\
+\midrule
+\texttt{fischer7} & $180\,420$ & $\mathbf{30\,994}$ \\
+\texttt{arbiter6} & $\mathbf{28\,591}$ & $66\,393$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$5.8\times$ one way, $2.3\times$ the other, and \emph{which one wins cannot be known in advance} ---
+deciding it is as hard as the query. Racing them yields $\min(A,B)$ on every model instead of $A$
+always. It is sound because both compute the same verdict, and it is implementable immediately on a
+measured spread.
+
+\paragraph{The general version.} Put environment abstraction on the fast lane. Its cost is $O(1)$ in
+$N$, so the race costs essentially one idle core, and the upside is the factor of $1000$ from \S1.
+This is the specific remedy for what killed the CMC line: the decomposition order was hand-chosen
+and a wrong choice wasted the run. Choose wrong in parallel and it costs nothing.
+
+\paragraph{The counterweight, stated because it bounds the whole idea.} Parallelism also actively
+\emph{hurts} state count when it is used the wrong way. Behrmann et al.\ measured \textsc{Dacapo}
+rising from $45\,001$ states on one node to $110\,634$ on seventeen, purely from parallelising a
+subsumption search: a state covered in one order is expanded in another. We hit the same wall from
+the other side --- \verifyta{} \texttt{-o\{0,1,2\}} gives identical counts, DFS is $31.6\%$ worse on
+\texttt{phil}, and \texttt{fischer8} is bit-identical from $1$ to $12$ threads \emph{only because}
+strict level synchronisation is enforced.
+
+So the rule this document ends on:
+
+\begin{center}
+\emph{Use cores for redundant, independently sound work. Never use them to relax the search order.}
+\end{center}
+
+One direction is free. The other is a tax.
