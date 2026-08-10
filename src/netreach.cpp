@@ -2734,45 +2734,104 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     return false;
   };
 
-  // Outer discovery over the FULL reachable graph, breadth-first. A p /\ !q state may only be
-  // reachable through q states, so the !q analysis alone would never see it.
+  // Outer discovery over the FULL reachable graph, LEVEL-SYNCHRONOUS AND PARALLEL.
   //
-  // The inner !q search is started ONLY from an accepting node -- one satisfying p /\ !q -- which
-  // is the nested-DFS discipline and is what keeps it cheap. Starting it at every !q node instead
-  // is correct but self-defeating: the first !q node dequeued drags the entire !q subgraph in
-  // before the outer search has had a chance to reach the state that actually settles the query
-  // (measured: 81716 nodes on fischer7 versus 106 for verifyta).
+  // A p /\ !q state may only be reachable through q states, so the !q analysis alone would never
+  // see it -- the outer search has to cover everything. That search is where the time goes on the
+  // exhaustive (property-holds) queries, because each node costs a full successor computation:
+  // delay, constrain, reset, canonicalise, extrapolate, per outgoing edge. It parallelises the
+  // same way reach_engine's does, and for the same reason: the expensive part happens OUTSIDE the
+  // shared structure, and only interning touches it.
   //
-  // Breadth-first matters for the same reason. Violations sit near the initial state, and
-  // verifyta explores breadth-first by default; a depth-first outer order dives away from the
-  // shallow witness and pays for it.
+  // The inner !q search stays sequential. Tarjan is inherently so, and it does not need to be
+  // parallel: it runs only from accepting nodes and, on every query measured, either settles the
+  // verdict within a handful of nodes or is never reached at all because the property holds.
+  //
+  // Early exit is kept at LEVEL granularity rather than per state. Accepting nodes found in a
+  // level are examined once the level closes, which is early enough -- violations sit near the
+  // initial state -- while letting the whole level expand concurrently.
   const bool ltdbg = std::getenv("PTCTLMC_LTDEBUG") != nullptr;
   std::vector<char> seen;
-  std::vector<int> work{0};
-  std::size_t head = 0;
+  std::vector<int> frontier{0};
   seen.assign(node.size(), 0);
   seen[0] = 1;
-  while (head < work.size()) {
-    const int u = work[head++];
-    expand(u);
-    if (ltdbg && (head % 20000 == 0))
-      std::fprintf(stderr, "[lt] expanded=%zu nodes=%zu discrete-keys=%zu zones/dk=%.2f\n",
-                   head, node.size(), bucket.size(),
-                   bucket.empty() ? 0.0 : double(node.size()) / double(bucket.size()));
-    if (is_p(u) && !is_q(u)) {
-      // Cheapest witness first: this state alone already stays in !q forever.
+  std::mutex gmtx;                       // guards node/adj/bucket/fwd and the id-indexed vectors
+  std::atomic<bool> lt_found{false};      // a local witness found by any worker ends the search
+  int nthreads = 1;
+#ifdef PTCTLMC_HAVE_OPENMP
+  if (backend != Backend::Seq) nthreads = omp_get_max_threads();
+#endif
+  while (!frontier.empty()) {
+    std::vector<int> accepting;          // p /\ !q nodes seen in this level
+    std::vector<int> next;
+    // Expand the level. Successor generation is pure and runs unlocked; only interning the
+    // results and publishing the frontier take the lock.
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel num_threads(nthreads)
+    {
+      std::vector<int> loc_next, loc_acc;
+      std::vector<SymState> succ;
+#pragma omp for schedule(dynamic, 8) nowait
+      for (long fi = 0; fi < static_cast<long>(frontier.size()); ++fi) {
+        const int u = frontier[fi];
+        SymState cur;
+        { std::lock_guard<std::mutex> lk(gmtx); cur = node[u]; if (expanded[u]) continue; }
+        succ.clear();
+        successors_net(net, cur, cur.zone, L, U, qmask, emode, succ);   // the expensive part
+        // Cheapest witness, checked WITHOUT the lock: this state alone satisfies p, violates q,
+        // and already stays in !q forever -- no successors at all, or time diverges in it. It
+        // depends only on this thread's own copy, so waiting for the level to close before
+        // noticing would just make the answer later (phil6 9 nodes -> 29 when deferred).
+        if (holds(p, cur) && !holds(q, cur) && (succ.empty() || time_diverges(cur)))
+          lt_found.store(true, std::memory_order_relaxed);
+        if (lt_found.load(std::memory_order_relaxed)) continue;
+        std::lock_guard<std::mutex> lk(gmtx);
+        if (expanded[u]) continue;
+        expanded[u] = 1;
+        if (stats) ++stats->explored;
+        // Two steps on purpose: intern() appends to `adj`, which can REALLOCATE it, so the
+        // reference implied by `adj[u].push_back(intern(...))` may dangle mid-expression.
+        for (auto& ns : succ) { const int v = intern(std::move(ns)); adj[u].push_back(v); }
+        if (is_p(u) && !is_q(u)) loc_acc.push_back(u);
+        for (std::size_t k = 0; k < adj[u].size(); ++k) {
+          const int v = resolve(adj[u][k]);
+          if (seen.size() < node.size()) seen.resize(node.size(), 0);
+          if (!seen[v]) { seen[v] = 1; loc_next.push_back(v); }
+        }
+      }
+#pragma omp critical
+      {
+        next.insert(next.end(), loc_next.begin(), loc_next.end());
+        accepting.insert(accepting.end(), loc_acc.begin(), loc_acc.end());
+      }
+    }
+#else
+    {
+      std::vector<SymState> succ;
+      for (std::size_t fi = 0; fi < frontier.size(); ++fi) {
+        const int u = frontier[fi];
+        if (expanded[u]) continue;
+        expand(u);
+        if (is_p(u) && !is_q(u)) accepting.push_back(u);
+        for (std::size_t k = 0; k < adj[u].size(); ++k) {
+          const int v = resolve(adj[u][k]);
+          if (seen.size() < node.size()) seen.resize(node.size(), 0);
+          if (!seen[v]) { seen[v] = 1; next.push_back(v); }
+        }
+      }
+    }
+#endif
+    if (lt_found.load()) return false;
+    // Settle the level's accepting nodes. Cheapest witness first: the state alone already stays
+    // in !q forever. Otherwise ask whether it can REACH such a state or a !q cycle, memoised
+    // across calls through comp_of/esc_comp so every node is analysed at most once overall.
+    for (int u : accepting) {
       if (adj[u].empty() || time_diverges(node[u])) return false;
-      // Otherwise ask whether it can REACH such a state, or a !q cycle. Memoised across calls
-      // through comp_of/esc_comp, so every node is analysed at most once overall.
       if (comp_of[u] >= 0) { if (escapes[u]) return false; }
       else if (neg_scc(u)) return false;
       else if (escapes[u]) return false;
     }
-    for (std::size_t k = 0; k < adj[u].size(); ++k) {
-      const int v = resolve(adj[u][k]);
-      if (seen.size() < node.size()) seen.resize(node.size(), 0);
-      if (!seen[v]) { seen[v] = 1; work.push_back(v); }
-    }
+    frontier.swap(next);
   }
   if (ltdbg)
     std::fprintf(stderr, "[lt] FINAL nodes=%zu discrete-keys=%zu zones/dk=%.2f\n",
