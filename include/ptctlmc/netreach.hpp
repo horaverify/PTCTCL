@@ -1,6 +1,8 @@
 // netreach.hpp — E<> reachability over a network of timed automata.
 #pragma once
 
+#include <atomic>
+
 #include "ptctlmc/network.hpp"
 #include "ptctlmc/reach.hpp"
 
@@ -123,6 +125,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q,
 // iff its extrapolated image does -- the same `adj.empty()` convention leads_to_net uses.
 // `A[] not deadlock` is then !deadlock_reachable(...).
 bool deadlock_reachable(const Network& net, Backend backend = Backend::Seq,
-                        ReachStats* stats = nullptr);
+                        ReachStats* stats = nullptr,
+                        const std::atomic<bool>* cancel = nullptr);
 
 }  // namespace ptctlmc

@@ -699,10 +699,16 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
 // copies in an unordered_map keyed by a std::string. Folding it in here is what gives deadlock
 // queries the parallel expansion and the packed interned zones.
 template <class TargetFn>
+// `cancel`, when non-null, is polled once per BFS level: another worker has already settled the
+// question and this search is now dead weight. Checked at the level boundary rather than per state
+// so it costs one relaxed load per level, and abandoning between levels leaves nothing half-built
+// -- the caller discards the whole engine anyway. Returns false when cancelled; the caller must
+// therefore only consult the result of a search it did not cancel.
 static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&& is_target,
                          bool force_exact, Backend backend, ReachStats* stats,
                          const std::vector<Automorphism>* sym = nullptr,
-                         const std::vector<NetTarget>* orbit = nullptr) {
+                         const std::vector<NetTarget>* orbit = nullptr,
+                         const std::atomic<bool>* cancel = nullptr) {
   const bool use_sym = sym && sym->size() > 1;
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   extend_bounds(L, U, target.clock_cond);
@@ -1781,6 +1787,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     constexpr std::size_t kSweepFloor = 50000;   // don't bother GCing a small interner
     std::size_t sweep_at = kSweepFloor;
     while (!frontier.empty()) {
+      if (cancel && cancel->load(std::memory_order_relaxed)) return false;
       if (stats) stats->explored += frontier.size();
       if (has_diag && (nexpanded += frontier.size()) > 500000)
         throw std::runtime_error("state cap exceeded — model likely has unbounded diagonal clocks");
@@ -2615,7 +2622,25 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     // used before subsumption was introduced. That version cannot create a spurious cycle,
     // because it never redirects an edge to a different zone, so any verdict difference between
     // the two modes is a subsumption artefact.
-    static const bool lt_nosub = std::getenv("PTCTLMC_LTNOSUB") != nullptr;
+    // NODE IDENTITY IS EXACT ZONE EQUALITY BY DEFAULT; subsumption is opt-in (PTCTLMC_LTSUB),
+    // because subsumption here was measured to produce a WRONG VERDICT.
+    //
+    // On grc4 with `T0.in --> T0.far` the subsuming version answers UNSAT where verifyta and this
+    // engine's own pre-subsumption implementation both answer SAT. The mechanism is structural,
+    // not a coding slip: dropping u because Z_u subseteq Z_v redirects every edge w -> u into
+    // w -> v, so a predecessor whose real successor was the smaller zone now appears to step into
+    // the larger one. A cycle through v that uses such an edge need not be realised by any run,
+    // and a spurious !q cycle is a spurious violation. Subsumption over-approximates runs, so the
+    // error is always in this direction: witnesses are invented, never lost.
+    //
+    // What is NOT affected: divergence and deadlock witnesses are local properties of a stored
+    // node, and every stored node is a genuinely reachable symbolic state, so they stay sound
+    // under subsumption. Only the CYCLE witness depends on edges. The principled repair is to mark
+    // subsumption edges and refuse a cycle that uses one -- the liveness-compatible subsumption
+    // criterion of Herbreteau-Srivathsan-Walukiewicz (FMSD 2012) and Laarman et al. (CAV 2013) --
+    // rather than to abandon subsumption. Until that is built and tested, the default is the
+    // identity that cannot be wrong.
+    static const bool lt_nosub = std::getenv("PTCTLMC_LTSUB") == nullptr;
     if (use_alu && !lt_nosub) state_bounds(s.locs.data(), bL, bU);
     auto covered_by = [&](int j) {
       if (lt_nosub)
@@ -2680,7 +2705,9 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     for (int i = 1; i <= net.nclocks; ++i) if (z.get(i, 0) != kInf) return false;
     return true;
   };
-  intern(std::move(s0));
+  // COPY, never move: `search` is invoked more than once (aLU first, exact inclusion as the
+  // fallback), and moving the initial state would leave the second call interning an empty one.
+  { SymState s0copy = s0; intern(std::move(s0copy)); }
 
   // ---- on-the-fly emptiness for `p --> q` -----------------------------------------------
   //
@@ -2927,11 +2954,56 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   // orders of magnitude ahead of verifyta, pay for a traversal whose answer it never needed.
   if (!network_has_diagonal(net)) {
     if (!search(/*use_alu=*/true)) return false;      // genuine witness: done, gate never paid
-    ReachStats dl_stats;
-    if (!deadlock_reachable(net, backend, &dl_stats)) return true;   // aLU was sound here
+    // No witness under aLU. Two ways to finish, and they compute the same verdict:
+    //
+    //   (A) prove the model deadlock-free, which makes the aLU answer above sound;
+    //   (B) redo the search with exact inclusion, which is sound unconditionally.
+    //
+    // NEITHER DOMINATES, and which one wins cannot be predicted -- deciding it is as hard as the
+    // query. Measured in symbolic states: fischer7 is 180420 for (A) against 30994 for (B), a
+    // factor of 5.8 the one way; arbiter6 is 28591 against 66393, a factor of 2.3 the other.
+    //
+    // So run both and take whichever finishes first, cancelling the loser. This is where extra
+    // cores buy something a sequential tool cannot have at any price: it does not make either
+    // strategy faster, it removes the need to choose between them. The race is sound because both
+    // branches decide the same proposition -- (A) says the aLU run was conclusive, (B) computes
+    // the answer directly -- so whichever reports first is reporting the truth.
+    // PTCTLMC_NORACE: take lane A then lane B sequentially, the pre-race behaviour, so the two
+    // strategies can be compared in one binary.
+    static const bool no_race = std::getenv("PTCTLMC_NORACE") != nullptr;
+    if (no_race) {
+      ReachStats dl_seq;
+      if (!deadlock_reachable(net, backend, &dl_seq)) return true;
+      return search(/*use_alu=*/false);
+    }
+    std::atomic<bool> stop{false};
+    std::atomic<int> verdict{-1};        // 0 = property holds, 1 = violated
+    std::atomic<bool> gate_says_safe{false}, gate_done{false};
+
+    std::thread lane_b([&] {
+      const bool holds = search(/*use_alu=*/false);
+      if (!stop.exchange(true)) verdict.store(holds ? 0 : 1, std::memory_order_release);
+    });
+    {
+      ReachStats dl_stats;
+      const bool may_dl = deadlock_reachable(net, backend, &dl_stats, &stop);
+      // A cancelled reach_engine returns false, which is indistinguishable from "no deadlock
+      // reachable" -- so only trust this lane if it was NOT the one cancelled.
+      if (!stop.load(std::memory_order_acquire)) {
+        gate_says_safe.store(!may_dl);
+        gate_done.store(true);
+        if (!may_dl && !stop.exchange(true))
+          verdict.store(0, std::memory_order_release);   // aLU found no witness and was sound
+      }
+    }
+    lane_b.join();
+    const int v = verdict.load(std::memory_order_acquire);
+    if (v >= 0) return v == 0;
+    // The gate finished first and reported that the model CAN deadlock, so the aLU answer is not
+    // usable and lane B was cancelled before finishing. Redo it, uncancelled.
+    return search(/*use_alu=*/false);
   }
-  // Either the model has diagonals (aLU unusable) or it can deadlock (aLU may have missed the
-  // witness). Exact inclusion is sound unconditionally.
+  // Diagonals: aLU is unusable outright, so exact inclusion is the only option.
   return search(/*use_alu=*/false);
 }
 
@@ -3103,13 +3175,14 @@ static bool state_has_deadlock(const Network& net, const SymState& s) {
 // unordered_map<std::string, vector<Dbm>> holding DENSE zone copies keyed by a freshly built
 // string. On the engine it gets the parallel level expansion, the sharded stripe-locked passed
 // list and packed min-graph zone records instead.
-bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats) {
+bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
+                        const std::atomic<bool>* cancel) {
   // The GPU drivers cannot express this target, and reach_engine keeps force_exact queries on
   // the CPU regardless; ask for the parallel CPU backend rather than silently running serially.
   const Backend b = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
   return reach_engine(net, NetTarget{},
                       [&](const SymState& s) { return state_has_deadlock(net, s); },
-                      /*force_exact=*/true, b, stats);
+                      /*force_exact=*/true, b, stats, nullptr, nullptr, cancel);
 }
 
 }  // namespace ptctlmc
