@@ -145,6 +145,7 @@ int dump(const char* model) {
 //   obs   <act>*                      (observable labels; used by the weak kinds)
 //   aut                               (exactly two blocks: A then B)
 //   clocks <n> / locs <n> / init <n>
+//   inv   <loc> ge|gt|le|lt <clock> <value>   (location invariant; repeat to conjoin)
 //   edge  <src> <dst> <act>           (subsequent g/r lines attach to this edge)
 //   g     ge|gt|le|lt <clock> <value>
 //   r     <clock>
@@ -181,6 +182,18 @@ int bisim_cmd(const char* path) {
     } else if (tok == "clocks") { ls >> auts.back().nclocks; }
     else if (tok == "locs")     { ls >> auts.back().nlocs; }
     else if (tok == "init")     { ls >> auts.back().initial; }
+    else if (tok == "inv") {
+      int loc, clk, val; std::string op;
+      if (!(ls >> loc >> op >> clk >> val)) { die("inv needs <loc> <op> <clock> <value>"); return 2; }
+      if (loc < 0) { die("negative location"); return 2; }
+      auto& iv = auts.back().invariants;
+      if (static_cast<int>(iv.size()) <= loc) iv.resize(loc + 1);
+      if (op == "ge") iv[loc].push_back(c_ge(clk, val));
+      else if (op == "gt") iv[loc].push_back(c_gt(clk, val));
+      else if (op == "le") iv[loc].push_back(c_le(clk, val));
+      else if (op == "lt") iv[loc].push_back(c_lt(clk, val));
+      else { die("unknown invariant op '" + op + "'"); return 2; }
+    }
     else if (tok == "edge") {
       BEdge e; ls >> e.src >> e.dst >> e.act;
       auts.back().edges.push_back(e);

@@ -7,6 +7,11 @@ target_link_libraries(ptctlmc_unit PRIVATE ptctlmc_core)
 add_test(NAME unit COMMAND ptctlmc_unit)
 set_tests_properties(unit PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 
+# Measurement driver for the environment-abstraction lead (not a ctest: it is a study, and the
+# larger instances are deliberately long-running). docs/superpowers/specs/weaksim-quotient.md
+add_executable(ptctlmc_envquot env_quotient.cpp)
+target_link_libraries(ptctlmc_envquot PRIVATE ptctlmc_core)
+
 add_executable(ptctlmc_bisim bisim_tests.cpp)
 target_link_libraries(ptctlmc_bisim PRIVATE ptctlmc_core)
 add_test(NAME bisim COMMAND ptctlmc_bisim)

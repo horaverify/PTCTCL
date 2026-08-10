@@ -4,6 +4,8 @@
 using namespace ptctlmc;
 enum { a = 0, b = 1, c = 2, tau = 9 };
 static Constraint ge(int clk, int k) { return c_ge(clk, k); }  // x_clk >= k
+static Constraint leq(int clk, int k) { return c_le(clk, k); }  // x_clk <= k
+using Inv = std::vector<std::vector<Constraint>>;
 
 struct Case { const char* name; BAut A, B; std::set<int> obs;
               bool sBi, sAB, sBA, wBi, wAB, wBA; };
@@ -44,6 +46,29 @@ int main() {
     BAut B; B.nclocks=1; B.nlocs=4; B.edges={{0,1,{},{},a},{1,2,{},{},b},{1,3,{},{},c}};
     cases.push_back({"7",A,B,{a,b,c}, false,true,false, false,true,false}); }
 
+  // ---- location invariants -----------------------------------------------------------
+  // #8 responder's invariant stops time: B may not sit at l0 past x=1, A may.
+  { BAut A; A.nclocks=1; A.nlocs=2; A.edges={{0,1,{},{},a}};
+    BAut B=A; B.invariants=Inv{{leq(1,1)},{}};
+    cases.push_back({"8",A,B,{a}, false,false,true, false,false,true}); }
+  // #9 challenger's own invariant bounds the delays it can challenge with, so the guard
+  //    x<=1 on B's edge is enough: A<=B holds, and only because `avail` is A's invariant.
+  { BAut A; A.nclocks=1; A.nlocs=2; A.edges={{0,1,{},{},a}}; A.invariants=Inv{{leq(1,1)},{}};
+    BAut B; B.nclocks=1; B.nlocs=2; B.edges={{0,1,{leq(1,1)},{},a}};
+    cases.push_back({"9",A,B,{a}, false,true,false, false,true,false}); }
+  // #10 the target invariant kills the edge: guard x>=2 lands in l1 with x<=1, so A's `a`
+  //     is not a transition at all and A is just a clock — same as the edgeless B.
+  { BAut A; A.nclocks=1; A.nlocs=2; A.edges={{0,1,{ge(1,2)},{},a}}; A.invariants=Inv{{},{leq(1,1)}};
+    BAut B; B.nclocks=1; B.nlocs=2;
+    cases.push_back({"10",A,B,{a}, true,true,true, true,true,true}); }
+  // #11 a responder τ-chain may not pass THROUGH a location whose invariant the valuation
+  //     violates: B reaches its `a` only via l1 (x<=1), so past x=1 B is stuck at l0.
+  { BAut A; A.nclocks=1; A.nlocs=2; A.edges={{0,1,{},{},a}};
+    BAut B; B.nclocks=1; B.nlocs=4;
+    B.edges={{0,1,{},{},tau},{1,2,{},{},tau},{2,3,{},{},a}};
+    B.invariants=Inv{{},{leq(1,1)},{},{}};
+    cases.push_back({"11",A,B,{a}, false,false,false, false,false,true}); }
+
   for (auto& t : cases) {
     chk(t.name, "sBi",  decide_bisim(t.A,t.B,BisimKind::StrongBisim),          t.sBi);
     chk(t.name, "sA<=B",decide_bisim(t.A,t.B,BisimKind::StrongSim),            t.sAB);
@@ -68,6 +93,29 @@ int main() {
     chk("impl","bi=>ab", !bi||ab, true); chk("impl","bi=>ba", !bi||ba, true);
     chk("impl","selfbi", bi, true);  // same automaton twice must be bisimilar
   }
+  // Reflexivity with invariants — the identity IS a bisimulation, so all four kinds must
+  // hold on a cyclic automaton whose every location constrains time.
+  { BAut C; C.nclocks=1; C.nlocs=3;
+    C.edges={{0,1,{ge(1,2)},{1},a},{1,2,{},{},b},{2,0,{ge(1,1)},{1},a},{1,0,{},{},tau}};
+    C.invariants=Inv{{},{leq(1,3)},{leq(1,5)}};
+    chk("invrefl","A~A",  decide_bisim(C,C,BisimKind::StrongBisim),     true);
+    chk("invrefl","wA~A", decide_bisim(C,C,BisimKind::WeakBisim,{a,b}), true);
+    chk("invrefl","A<=A", decide_bisim(C,C,BisimKind::StrongSim),       true);
+    chk("invrefl","wA<=A",decide_bisim(C,C,BisimKind::WeakSim,{a,b}),   true); }
+  // An invariant the origin violates leaves the automaton with no initial state; the engine
+  // reports `false` rather than treating the pair as vacuously related (see the spec).
+  { BAut A; A.nclocks=1; A.nlocs=1; A.invariants=Inv{{ge(1,1)}};
+    chk("noinit","A~A", decide_bisim(A,A,BisimKind::StrongBisim), false); }
+  // The exposed relation must agree with the boolean it is derived from.
+  { BAut A; A.nclocks=1; A.nlocs=2; A.edges={{0,1,{},{},a}};
+    BAut B=A; B.invariants=Inv{{leq(1,1)},{}};
+    bool r1=false, r2=false;
+    auto RA = bisim_relation(A,B,BisimKind::StrongSim,{},&r1);
+    auto RB = bisim_relation(B,A,BisimKind::StrongSim,{},&r2);
+    chk("rel","size", RA.size()==static_cast<std::size_t>(A.nlocs)*B.nlocs, true);
+    chk("rel","A<=B", r1, decide_bisim(A,B,BisimKind::StrongSim));
+    chk("rel","B<=A", r2, decide_bisim(B,A,BisimKind::StrongSim));
+    chk("rel","nonempty", !RB[B.initial*A.nlocs+A.initial].empty(), true); }
   printf("bisim validation: %d passed, %d failed\n", pass, fail);
   return fail ? 1 : 0;
 }
