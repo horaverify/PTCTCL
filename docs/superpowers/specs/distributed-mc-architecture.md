@@ -1478,3 +1478,33 @@ the **most novel** layer (parallel SCC over a shared monotone fact store) is las
 targets a phase measured at 3% and E4 may show there is nothing there at all. A design document
 that ordered these by novelty rather than by expected value would be selling something.
 
+
+---
+
+## E0 RESULT (run by the coordinator, after this document was written)
+
+The experiment this document called "the cheapest thing in here and the one I would run first"
+has been run. `PTCTLMC_LTNOSUB=1` forces exact zone EQUALITY as the node identity -- the
+pre-subsumption behaviour, which never merges nodes or redirects an edge and therefore cannot
+fabricate a cycle. Every query was answered three ways: subsumption on, the exact-equality
+control, and `verifyta`.
+
+```
+liveness queries compared 3 ways : 262
+skipped (unsupported/timeout)    : 6
+subsumption-vs-exact differences : 0
+verifyta mismatches              : 0
+```
+
+Queries were generated as all ordered location pairs within a process, plus cross-process pairs,
+over fischer4-6, twolock4-5, arbiter4-5, phil4/6, csma4 and grc4. `viking` was skipped because
+its XML uses a location layout the generator does not parse -- an honest gap, not a pass.
+
+**What this establishes and what it does not.** No spurious witness was produced on any of these
+models, including arbiter, where subsumption does the most work (260 zones per discrete state
+collapsing to one). That is real evidence the quotient is not creating cycles in practice. It is
+NOT the proof obligation of section 4.5: that criterion is structural -- no cycle carrying both an
+accepting node and a subsumption edge -- while the guard in the code remains a timing condition
+(`!expanded && tidx == -1`). A model whose shape triggers the difference could still exist; these
+262 queries did not find one. Until the structural criterion is established or a counterexample is
+constructed, the liveness verdicts rest on measurement rather than on a theorem.
