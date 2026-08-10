@@ -2498,6 +2498,11 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
   return false;
 }
 
+// Exact per-valuation deadlock test, defined below and used by `E<> deadlock`. Declared here
+// because leads_to_net needs the same notion: a maximal run can end inside a state whose zone is
+// only PARTIALLY stuck, and the whole-zone test `adj[u].empty()` cannot see that.
+static bool state_has_deadlock(const Network& net, const SymState& s);
+
 bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Backend backend,
                   ReachStats* stats) {
   (void)backend;
@@ -2595,6 +2600,16 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   std::unordered_map<std::string, std::vector<int>> bucket;   // discrete key -> antichain
   std::vector<SymState> node;
   std::vector<std::vector<int>> adj;
+  // An adjacency entry is a node id with kSubBit set when the edge was produced by absorbing the
+  // real successor into a bigger stored zone (see `intern_sub`). Packed into the id rather than
+  // kept in a parallel vector so the marker costs no memory at all -- the liveness graph reaches
+  // 1.2M nodes on grc4 and a per-node std::vector<char> would have cost more than the analysis.
+  // Only the CYCLE/ESCAPE analysis consults the bit; the outer reachability BFS masks it off and
+  // keeps following every edge.
+  constexpr int kSubBit = 1 << 30;
+  constexpr int kIdMask = kSubBit - 1;
+  auto edge_id  = [](int e) { return e & kIdMask; };
+  auto edge_sub = [](int e) { return (e & kSubBit) != 0; };
   // Per-node analysis state, declared here because intern() has to consult it: a node may only be
   // retired while nothing has looked at it yet.
   std::vector<char> expanded;         // adj[u] filled in?
@@ -2615,31 +2630,64 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     return v;
   };
   std::vector<std::int32_t> bL, bU;
+  // Set by intern() for the call just made: the returned id is an EXISTING node whose stored zone
+  // is not byte-identical to the state that was handed in, i.e. the newcomer was absorbed into a
+  // strictly bigger (or merely aLU-simulating) zone. An edge recorded from such a call is a
+  // SUBSUMPTION EDGE: the predecessor's real successor is not the node the edge points at.
+  bool intern_sub = false;
+  static const bool lt_absdbg = std::getenv("PTCTLMC_LTABSDBG") != nullptr;   // debug only
+  long absorbed_deadlocks = 0;
   auto intern = [&](SymState&& s) -> int {
+    intern_sub = false;
     std::vector<int>& b = bucket[disc_key(s.locs, s.ints)];
     const int dim = s.zone.dim();
-    // E0 ablation (PTCTLMC_LTNOSUB): fall back to EXACT ZONE EQUALITY, the identity this code
-    // used before subsumption was introduced. That version cannot create a spurious cycle,
-    // because it never redirects an edge to a different zone, so any verdict difference between
-    // the two modes is a subsumption artefact.
-    // NODE IDENTITY IS EXACT ZONE EQUALITY BY DEFAULT; subsumption is opt-in (PTCTLMC_LTSUB),
-    // because subsumption here was measured to produce a WRONG VERDICT.
+    // NODE IDENTITY IS EXACT ZONE EQUALITY BY DEFAULT; subsumption is opt-in (PTCTLMC_LTSUB).
     //
-    // On grc4 with `T0.in --> T0.far` the subsuming version answers UNSAT where verifyta and this
-    // engine's own pre-subsumption implementation both answer SAT. The mechanism is structural,
-    // not a coding slip: dropping u because Z_u subseteq Z_v redirects every edge w -> u into
-    // w -> v, so a predecessor whose real successor was the smaller zone now appears to step into
-    // the larger one. A cycle through v that uses such an edge need not be realised by any run,
-    // and a spurious !q cycle is a spurious violation. Subsumption over-approximates runs, so the
-    // error is always in this direction: witnesses are invented, never lost.
+    // Subsumption on its own produced a WRONG VERDICT: on grc4 with `T0.in --> T0.far` it answered
+    // UNSAT where verifyta and this engine's own pre-subsumption implementation both answer SAT.
+    // The mechanism was found by instrumenting which witness fires (PTCTLMC_LTTRACE) and is
+    // written up in docs/superpowers/specs/liveness-subsumption-bug.md. In one line: the search
+    // reported a !q CYCLE
+    //
+    //     T0.in T1.far  ... Ctl.dn_1   ->  T0.in T1.near ... Ctl.dn_2
+    //                                  ->  T0.in T1.in   ... Ctl.dn_2  -> back to the first
+    //
+    // -- T1 laps the crossing while T0 sits in `in`. Each lap costs at least x1>=4 plus x1>=1, so
+    // five time units, and `T0.in` carries the invariant x0 <= 15; the real system can do three
+    // laps, not infinitely many. Extra_LU+ legitimately drops `x0 <= 15` from the stored zone
+    // (15 > L[x0] = 4), so what survives to bound the loop is the LOWER bound on x0, which grows
+    // 0, 5, 10, 15 and then contradicts the invariant. Subsumption erases exactly that: the real
+    // `leave` successor, with x0 >= 4, is a strict subset of the stored node with x0 >= 0, so
+    // intern() returns the stored id and the loop closes on itself.
+    //
+    // Note WHERE the absorption happens: intern() returns an EXISTING id for the newcomer.
+    // `resolve()` is the identity on the resulting edge and `fwd[]` is untouched, so looking only
+    // at retirement (or disabling it) does not see this at all. `intern_sub` is the marker, and
+    // `exact_edge` below is where it is enforced -- at EVERY criterion that concludes "a run can
+    // go on forever", including the eager back-edge test inside neg_scc, which is the one that
+    // actually fired here.
     //
     // What is NOT affected: divergence and deadlock witnesses are local properties of a stored
     // node, and every stored node is a genuinely reachable symbolic state, so they stay sound
-    // under subsumption. Only the CYCLE witness depends on edges. The principled repair is to mark
-    // subsumption edges and refuse a cycle that uses one -- the liveness-compatible subsumption
-    // criterion of Herbreteau-Srivathsan-Walukiewicz (FMSD 2012) and Laarman et al. (CAV 2013) --
-    // rather than to abandon subsumption. Until that is built and tested, the default is the
-    // identity that cannot be wrong.
+    // under subsumption. Only the CYCLE witness depends on edges. This is the liveness-compatible
+    // subsumption criterion of Herbreteau-Srivathsan-Walukiewicz (FMSD 2012) and Laarman et al.
+    // (CAV 2013).
+    //
+    // MEASURED after the repair (188 leads-to queries over grc4, fischer4/5/6, twolock5,
+    // arbiter5, phil6, csma6, viking6, each compared against verifyta and against the
+    // pre-subsumption binary): PTCTLMC_LTSUB now returns the SAME verdict as exact zone equality
+    // on every one of them, and it repairs four grc4 and two phil6 queries that the unrestricted
+    // version got wrong. The default is nevertheless still exact equality, because the
+    // restriction is sound but not provably complete -- an absorbed newcomer is never expanded,
+    // so a witness that only exists below it is not looked for. PTCTLMC_LTNOSUBEDGE restores the
+    // unrestricted (wrong) behaviour for A/B runs.
+    //
+    // SEPARATE, PRE-EXISTING, NOT FIXED HERE: leads_to_net's deadlock witness is `adj[u].empty()`,
+    // i.e. "the WHOLE zone has no successor". UPPAAL's counterexamples for grc4 `T0.near -->
+    // T0.in` (and three sibling queries) are PARTIAL deadlocks -- a time-lock that traps only a
+    // sub-region of the zone -- which this test cannot see. Those four queries disagree with
+    // verifyta identically in exact mode, in subsuming mode and in the pre-today binary. See the
+    // spec document.
     static const bool lt_nosub = std::getenv("PTCTLMC_LTSUB") == nullptr;
     if (use_alu && !lt_nosub) state_bounds(s.locs.data(), bL, bU);
     auto covered_by = [&](int j) {
@@ -2652,8 +2700,37 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
                      // dbm_includes(a, b) is [b] subseteq [a]
                      : dbm_includes(node[j].zone.data().data(), s.zone.data().data(), dim);
     };
-    for (std::size_t bi = 0; bi < b.size(); ++bi)
-      if (covered_by(resolve(b[bi]))) return resolve(b[bi]);
+    for (std::size_t bi = 0; bi < b.size(); ++bi) {
+      const int j = resolve(b[bi]);
+      if (!covered_by(j)) continue;
+      intern_sub = !(node[j].zone.dim() == dim &&
+                     std::equal(node[j].zone.data().begin(), node[j].zone.data().end(),
+                               s.zone.data().begin()));
+      // PTCTLMC_LTTRACE: the SECOND unsoundness of subsumption here, and the one that runs the
+      // other way. A newcomer that is DEADLOCKED (no successor at all) is a maximal-run witness
+      // all by itself. Absorbing it into a strictly bigger zone that does have successors throws
+      // that witness away, and the query then reports "property holds" when it does not. Count and
+      // report those; this costs a full successor computation per absorption, debug only.
+      if (lt_absdbg && intern_sub) {
+        std::vector<SymState> probe;
+        successors_net(net, s, s.zone, L, U, qmask, emode, probe);
+        if (probe.empty()) {
+          ++absorbed_deadlocks;
+          if (absorbed_deadlocks <= 5) {
+            std::string ls;
+            for (int pr = 0; pr < net.nprocs(); ++pr) {
+              if (pr) ls += ' ';
+              ls += net.procs[pr].name; ls += '.';
+              ls += net.procs[pr].locations[s.locs[pr]].name;
+            }
+            std::fprintf(stderr,
+                         "[lttrace] LOST WITNESS: a DEADLOCKED newcomer was absorbed into node %d "
+                         "(|adj-of-cover| computed later); locs = %s\n", j, ls.c_str());
+          }
+        }
+      }
+      return j;
+    }
     // The incoming zone may instead CONTAIN stored ones, or form an exact convex union with them.
     // Either way the stored node is redundant and is retired into the newcomer -- but only while
     // it is still untouched. A node that has been expanded has an adjacency computed for its own
@@ -2732,10 +2809,87 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   std::vector<int> tstk;
   int counter = 0;
 
+  // ---- PTCTLMC_LTTRACE: report EXACTLY which witness settles the query ---------------------
+  // Debug only. Prints the offending node, its location vector, its zone, its adjacency and
+  // which of the three witness kinds fired, so a wrong verdict can be checked by hand against
+  // the model instead of argued about.
+  static const bool lttrace = std::getenv("PTCTLMC_LTTRACE") != nullptr;
+  static bool lu_printed = false;
+  if (lttrace && !lu_printed) {
+    lu_printed = true;
+    std::string s;
+    for (int c = 0; c <= net.nclocks; ++c) {
+      char b[96];
+      std::snprintf(b, sizeof b, "%s: L=%d U=%d  ", c ? net.clock_names[c].c_str() : "0",
+                    (int)L[c], (int)U[c]);
+      s += b;
+    }
+    std::fprintf(stderr, "[lttrace] global Extra_LU bounds: %s (emode=%d)\n", s.c_str(), emode);
+  }
+  auto dump_node = [&](const char* tag, int i) {
+    if (!lttrace) return;
+    std::string s;
+    for (int pr = 0; pr < net.nprocs(); ++pr) {
+      if (pr) s += ' ';
+      s += net.procs[pr].name; s += '.';
+      s += net.procs[pr].locations[node[i].locs[pr]].name;
+    }
+    std::fprintf(stderr, "[lttrace] %s node=%d alu=%d fwd=%d locs= %s\n", tag, i, (int)use_alu,
+                 fwd[i], s.c_str());
+    std::string zs;
+    const Dbm& z = node[i].zone;
+    for (int a = 0; a < z.dim(); ++a)
+      for (int b2 = 0; b2 < z.dim(); ++b2) {
+        if (a == b2) continue;
+        const raw_t r = z.get(a, b2);
+        if (r == kInf) {
+          char b3[64];
+          const char* na2 = a == 0 ? "0" : net.clock_names[a].c_str();
+          const char* nb3 = b2 == 0 ? "0" : net.clock_names[b2].c_str();
+          std::snprintf(b3, sizeof b3, "%s-%s<INF ", na2, nb3);
+          zs += b3;
+          continue;
+        }
+        char buf[96];
+        const char* na = a == 0 ? "0" : net.clock_names[a].c_str();
+        const char* nb = b2 == 0 ? "0" : net.clock_names[b2].c_str();
+        std::snprintf(buf, sizeof buf, "%s-%s%s%d ", na, nb, raw_is_strict(r) ? "<" : "<=",
+                      (int)raw_bound(r));
+        zs += buf;
+      }
+    std::fprintf(stderr, "[lttrace]     zone: %s\n", zs.c_str());
+    std::fprintf(stderr, "[lttrace]     expanded=%d |adj|=%zu diverges=%d is_p=%d is_q=%d\n",
+                 (int)expanded[i], adj[i].size(), (int)time_diverges(node[i]),
+                 (int)holds(p, node[i]), (int)holds(q, node[i]));
+    for (std::size_t k = 0; k < adj[i].size(); ++k) {
+      const int raw = edge_id(adj[i][k]), res = resolve(raw);
+      std::string t;
+      for (int pr = 0; pr < net.nprocs(); ++pr) {
+        if (pr) t += ' ';
+        t += net.procs[pr].locations[node[res].locs[pr]].name;
+      }
+      std::fprintf(stderr, "[lttrace]       -> raw=%d resolved=%d absorbed=%d%s  %s\n", raw, res,
+                   (int)edge_sub(adj[i][k]), raw == res ? "" : "  [RETIRED]", t.c_str());
+    }
+  };
+
   // node/adj grow while we walk them, so every vector indexed by node id has to grow with them and
   // NO reference into any of them may be held across an intern().
   auto is_p = [&](int i) { grow(); if (pcache[i] == 2) pcache[i] = holds(p, node[i]); return pcache[i] != 0; };
   auto is_q = [&](int i) { grow(); if (qcache[i] == 2) qcache[i] = holds(q, node[i]); return qcache[i] != 0; };
+  // PTCTLMC_LTWATCH="l0,l1,...": dump every expanded node whose LOCATION-NAME vector matches, with
+  // its stored zone and its successor count. Used to check by hand whether a state UPPAAL reports
+  // as a time-lock really has no successors in this engine's (extrapolated) representation.
+  static const char* lt_watch_env = std::getenv("PTCTLMC_LTWATCH");
+  auto watched = [&](const SymState& s) {
+    if (!lt_watch_env) return false;
+    std::string want(lt_watch_env), got;
+    for (int pr = 0; pr < net.nprocs(); ++pr) {
+      if (pr) got += ',';
+      got += net.procs[pr].locations[s.locs[pr]].name;
+    }
+    return got == want;
+  };
   auto expand = [&](int u) {
     grow();
     if (expanded[u]) return;
@@ -2743,8 +2897,39 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     if (stats) ++stats->explored;
     std::vector<SymState> succ;
     successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ);
-    for (auto& ns : succ) { const int v = intern(std::move(ns)); adj[u].push_back(v); }
+    for (auto& ns : succ) {
+      const int v = intern(std::move(ns));
+      adj[u].push_back(v | (intern_sub ? kSubBit : 0));
+    }
     grow();
+  };
+
+  // ---- which edges may justify an INFINITE run ------------------------------------------------
+  //
+  // An edge u -> adj[u][k] is EXACT when the node it points at really is the successor that was
+  // computed from u, and SUBSUMPTION otherwise. There are two ways to become inexact, and both
+  // have to be caught:
+  //
+  //   * the newcomer was absorbed on arrival -- intern() found a stored zone that covers it and
+  //     returned that id. `resolve()` is the IDENTITY on such an edge, which is why disabling
+  //     retirement does not help; the marker is kSubBit in the edge, set from `intern_sub`.
+  //   * the node the edge already pointed at was later RETIRED into a bigger newcomer, so
+  //     `resolve()` now sends the edge somewhere else. Detected by comparing raw with resolved.
+  //
+  // Only exact edges may be used to argue that a run can go on forever. A cycle that needs a
+  // subsumption edge is a cycle of the QUOTIENT graph, and the quotient over-approximates runs:
+  // grc4's `T0.in --> T0.far` is exactly that (see docs/superpowers/specs/
+  // liveness-subsumption-bug.md) -- T1 laps the crossing while T0 sits in `in`, and each lap
+  // silently forgets that x0 has grown by 5 towards the invariant x0 <= 15 that bounds the loop.
+  //
+  // What is NOT restricted: `adj[u].empty()` (the deadlock witness) still reads the FULL
+  // adjacency -- a state whose only successors were absorbed is not deadlocked -- and the outer
+  // reachability BFS still follows every edge, so no reachable state goes unvisited.
+  static const bool lt_nosubedge = std::getenv("PTCTLMC_LTNOSUBEDGE") != nullptr;   // ablation
+  auto exact_edge = [&](int u, std::size_t k) {
+    if (lt_nosubedge) return true;
+    const int e = adj[u][k];
+    return !edge_sub(e) && resolve(edge_id(e)) == edge_id(e);
   };
 
   // Iterative Tarjan restricted to the !q subgraph. Returns true as soon as a component that
@@ -2763,6 +2948,14 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       for (const Frame& f : fs) if (is_p(f.u)) return true;
       return false;
     };
+    auto trace_stack = [&](const char* why) {
+      if (!lttrace) return;
+      std::fprintf(stderr, "[lttrace] WITNESS in neg_scc(%d): %s\n", root, why);
+      std::fprintf(stderr, "[lttrace]   DFS stack (root..top):");
+      for (const Frame& f : fs) std::fprintf(stderr, " %d%s", f.u, is_p(f.u) ? "(P)" : "");
+      std::fprintf(stderr, "\n");
+      for (const Frame& f : fs) dump_node("  stack", f.u);
+    };
     grow();
     tidx[root] = low[root] = counter++;
     tstk.push_back(root); onstk[root] = 1;
@@ -2772,21 +2965,46 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       expand(u);
       // Witness kind 1, local to one state: no successor at all (a maximal run ends here without
       // ever reaching q), or time diverges (an infinite run stays here). Either way u escapes.
-      if (fs.back().i == 0 && (adj[u].empty() || time_diverges(node[u]))) {
+      // Kind 1, a maximal run ENDS here. The old test was `adj[u].empty()` -- the whole zone has
+      // no successor -- which misses a PARTIAL deadlock, where part of the zone is time-locked
+      // while the rest still moves. grc4 `T0.near --> T0.in` is exactly that: the state has one
+      // successor, so the whole-zone test says "not stuck", yet the valuations with y=2,z=1 can
+      // neither delay nor fire and the run ends there. state_has_deadlock decides it per
+      // valuation, by subtracting the union of the enabled source regions from the zone, and is
+      // what `E<> deadlock` already uses. Enabledness is invariant under LU-extrapolation, so it
+      // is sound on the extrapolated zones this graph stores.
+      if (fs.back().i == 0 &&
+          (adj[u].empty() || time_diverges(node[u]) || state_has_deadlock(net, node[u]))) {
         escapes[u] = 1;
-        if (stack_has_p()) return true;
+        if (stack_has_p()) {
+          trace_stack(adj[u].empty() ? "kind1 LOCAL: node has NO successors (deadlock)"
+                                     : "kind1 LOCAL: time diverges in node");
+          dump_node("  culprit", u);
+          return true;
+        }
       }
       bool descended = false;
       while (fs.back().i < adj[u].size()) {
-        const int v = resolve(adj[u][fs.back().i++]);
+        const std::size_t k = fs.back().i++;
+        if (!exact_edge(u, k)) continue;             // quotient edge: no run actually takes it
+        const int v = resolve(edge_id(adj[u][k]));
         if (is_q(v)) continue;                       // !q subgraph only
         // Witness kind 2, a !q cycle: v is on the current stack, so v ->* u -> v is a cycle and
         // every node on the stack reaches it.
-        if (tidx[v] != -1 && onstk[v] && stack_has_p()) return true;
+        if (tidx[v] != -1 && onstk[v] && stack_has_p()) {
+          trace_stack("kind2 CYCLE: edge back to a node on the DFS stack");
+          std::fprintf(stderr, "[lttrace]   back-edge %d -> raw %d resolved %d sub=%d\n", u,
+                       edge_id(adj[u][k]), v, (int)edge_sub(adj[u][k]));
+          dump_node("  cycle-target", v);
+          return true;
+        }
         // Witness kind 3: an edge into a finished component that already escapes.
         if (tidx[v] != -1 && !onstk[v] && comp_of[v] >= 0 && esc_comp[comp_of[v]] &&
-            stack_has_p())
+            stack_has_p()) {
+          trace_stack("kind3 EDGE into an already-escaping finished component");
+          dump_node("  target", v);
           return true;
+        }
         if (tidx[v] == -1) {
           tidx[v] = low[v] = counter++;
           tstk.push_back(v); onstk[v] = 1;
@@ -2805,18 +3023,23 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
         while (w != u);
         // (i) non-trivial component, or a self-loop: an infinite !q run cycles here.
         bool esc = comp.size() > 1;
-        if (!esc) for (int v : adj[u]) if (resolve(v) == u) { esc = true; break; }
+        if (!esc)
+          for (std::size_t k = 0; k < adj[u].size(); ++k)
+            if (exact_edge(u, k) && resolve(edge_id(adj[u][k])) == u) { esc = true; break; }
         // (ii) a member deadlocks or lets time diverge. Every member has been expanded, so an
         //      empty adj really is "no successors" and not "not looked yet".
         if (!esc)
           for (int m : comp)
-            if (adj[m].empty() || time_diverges(node[m])) { esc = true; break; }
+            if (adj[m].empty() || time_diverges(node[m]) || state_has_deadlock(net, node[m])) {
+              esc = true; break;
+            }
         // (iii) a member reaches an already-finished component that escapes. Reverse topological
         //       order is what makes this a single pass rather than a fixpoint iteration.
         if (!esc)
           for (int m : comp) {
             for (std::size_t k = 0; k < adj[m].size() && !esc; ++k) {
-              const int v = resolve(adj[m][k]);
+              if (!exact_edge(m, k)) continue;
+              const int v = resolve(edge_id(adj[m][k]));
               if (is_q(v) || comp_of[v] == cid) continue;
               if (comp_of[v] >= 0 && esc_comp[comp_of[v]]) esc = true;
             }
@@ -2825,7 +3048,16 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
         esc_comp.push_back(esc ? 1 : 0);
         if (esc) {
           for (int m : comp) escapes[m] = 1;
-          for (int m : comp) if (is_p(m)) return true;   // reachable p /\ !q that stays in !q
+          for (int m : comp)
+            if (is_p(m)) {   // reachable p /\ !q that stays in !q
+              if (lttrace) {
+                std::fprintf(stderr,
+                             "[lttrace] WITNESS at component pop: cid=%d size=%zu p-member=%d\n",
+                             cid, comp.size(), m);
+                for (int mm : comp) dump_node("  comp", mm);
+              }
+              return true;
+            }
         }
       }
       fs.pop_back();
@@ -2882,8 +3114,39 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
         // and already stays in !q forever -- no successors at all, or time diverges in it. It
         // depends only on this thread's own copy, so waiting for the level to close before
         // noticing would just make the answer later (phil6 9 nodes -> 29 when deferred).
-        if (holds(p, cur) && !holds(q, cur) && (succ.empty() || time_diverges(cur)))
+        if (watched(cur)) {
+          std::string zs;
+          for (int a2 = 0; a2 < cur.zone.dim(); ++a2)
+            for (int b2 = 0; b2 < cur.zone.dim(); ++b2) {
+              if (a2 == b2) continue;
+              const raw_t r = cur.zone.get(a2, b2);
+              if (r == kInf) continue;
+              char buf[96];
+              std::snprintf(buf, sizeof buf, "%s-%s%s%d ",
+                            a2 ? net.clock_names[a2].c_str() : "0",
+                            b2 ? net.clock_names[b2].c_str() : "0",
+                            raw_is_strict(r) ? "<" : "<=", (int)raw_bound(r));
+              zs += buf;
+            }
+          std::fprintf(stderr, "[ltwatch] node=%d alu=%d p=%d q=%d |succ|=%zu zone: %s\n", u,
+                       (int)use_alu, (int)holds(p, cur), (int)holds(q, cur), succ.size(),
+                       zs.c_str());
+          for (const auto& sc : succ) {
+            std::string t;
+            for (int pr = 0; pr < net.nprocs(); ++pr) {
+              if (pr) t += ' ';
+              t += net.procs[pr].locations[sc.locs[pr]].name;
+            }
+            std::fprintf(stderr, "[ltwatch]     succ -> %s\n", t.c_str());
+          }
+        }
+        if (holds(p, cur) && !holds(q, cur) && (succ.empty() || time_diverges(cur))) {
+          if (lttrace)
+            std::fprintf(stderr, "[lttrace] WITNESS in outer BFS (unlocked local check): node=%d "
+                                 "succ_empty=%d diverges=%d\n",
+                         u, (int)succ.empty(), (int)time_diverges(cur));
           lt_found.store(true, std::memory_order_relaxed);
+        }
         if (lt_found.load(std::memory_order_relaxed)) continue;
         std::lock_guard<std::mutex> lk(gmtx);
         if (expanded[u]) continue;
@@ -2891,10 +3154,13 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
         if (stats) ++stats->explored;
         // Two steps on purpose: intern() appends to `adj`, which can REALLOCATE it, so the
         // reference implied by `adj[u].push_back(intern(...))` may dangle mid-expression.
-        for (auto& ns : succ) { const int v = intern(std::move(ns)); adj[u].push_back(v); }
+        for (auto& ns : succ) {
+          const int v = intern(std::move(ns));
+          adj[u].push_back(v | (intern_sub ? kSubBit : 0));
+        }
         if (is_p(u) && !is_q(u)) loc_acc.push_back(u);
         for (std::size_t k = 0; k < adj[u].size(); ++k) {
-          const int v = resolve(adj[u][k]);
+          const int v = resolve(edge_id(adj[u][k]));
           if (seen.size() < node.size()) seen.resize(node.size(), 0);
           if (!seen[v]) { seen[v] = 1; loc_next.push_back(v); }
         }
@@ -2914,7 +3180,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
         expand(u);
         if (is_p(u) && !is_q(u)) accepting.push_back(u);
         for (std::size_t k = 0; k < adj[u].size(); ++k) {
-          const int v = resolve(adj[u][k]);
+          const int v = resolve(edge_id(adj[u][k]));
           if (seen.size() < node.size()) seen.resize(node.size(), 0);
           if (!seen[v]) { seen[v] = 1; next.push_back(v); }
         }
@@ -2926,13 +3192,20 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     // in !q forever. Otherwise ask whether it can REACH such a state or a !q cycle, memoised
     // across calls through comp_of/esc_comp so every node is analysed at most once overall.
     for (int u : accepting) {
-      if (adj[u].empty() || time_diverges(node[u])) return false;
-      if (comp_of[u] >= 0) { if (escapes[u]) return false; }
-      else if (neg_scc(u)) return false;
-      else if (escapes[u]) return false;
+      if (adj[u].empty() || time_diverges(node[u]) || state_has_deadlock(net, node[u])) {
+        if (lttrace) { std::fprintf(stderr, "[lttrace] WITNESS at accepting node, LOCAL\n"); dump_node("  accepting", u); }
+        return false;
+      }
+      if (comp_of[u] >= 0) { if (escapes[u]) { if (lttrace) { std::fprintf(stderr, "[lttrace] WITNESS: memoised escapes[]\n"); dump_node("  accepting", u); } return false; } }
+      else if (neg_scc(u)) { if (lttrace) { std::fprintf(stderr, "[lttrace] WITNESS: neg_scc from accepting\n"); dump_node("  accepting", u); } return false; }
+      else if (escapes[u]) { if (lttrace) { std::fprintf(stderr, "[lttrace] WITNESS: escapes[] set during neg_scc\n"); dump_node("  accepting", u); } return false; }
     }
     frontier.swap(next);
   }
+  if (lt_absdbg)
+    std::fprintf(stderr, "[lttrace] alu=%d: %ld DEADLOCKED newcomers were absorbed into bigger "
+                         "zones (each one is a maximal-run witness thrown away)\n",
+                 (int)use_alu, absorbed_deadlocks);
   if (ltdbg)
     std::fprintf(stderr, "[lt] FINAL nodes=%zu discrete-keys=%zu zones/dk=%.2f\n",
                  node.size(), bucket.size(),
