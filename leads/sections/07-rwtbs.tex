@@ -1,0 +1,53 @@
+\section{RTWBS: can a new bisimulation quotient more than \uppaal{}? \hfill \open{}}
+
+RTWBS (Relaxed Weak Timed Bisimulation) is an \emph{asymmetric} refinement relation: it insists
+that a refined component preserve the timing of everything it \emph{sends}, while allowing it to be
+slower about when it \emph{receives}. It is built on weak timed bisimulation, so internal
+($\tau$) steps are abstracted away, and it is decided by partition refinement over the zone graphs
+of the two components.
+
+\paragraph{First, the mismatch to be honest about.} RTWBS as published answers ``does this update
+refine the deployed system?'' --- a question about \emph{two} systems. Reducing the state space of
+\emph{one} system is a different use. To get a quotient you take the kernel of the preorder (relate
+$s$ and $t$ when each refines the other) and factor by it. That is legitimate, but it is a
+different theorem from the ones in the paper, and it needs stating.
+
+\paragraph{Why it could nevertheless be the best lead in this document.} Three reasons.
+
+\begin{enumerate}
+\item \textbf{\uppaal{} does no bisimulation quotienting at all.} It reduces by zone abstraction and
+      inclusion. So any working quotient is strictly extra, not a re-implementation of something
+      they have.
+
+\item \textbf{Weak is the point.} A \emph{strong} bisimulation quotient on these models would
+      collapse almost nothing, for the same reason \S3 fails: every discrete move changes what
+      others can do. A \emph{weak} one abstracts internal steps, and here the property names only
+      two processes --- so every move of the other $N-2$ is a candidate $\tau$. That is precisely
+      the structure the relation is built to exploit, and it attacks the discrete dimension, which
+      is the only dimension with slack.
+
+\item \textbf{It composes with \S1.} The environment-abstraction lead needs a small $\hat E$ that is
+      at least as permissive as the real environment. A weak-bisimulation quotient of the
+      environment is a principled way to \emph{construct} one, instead of writing it by hand ---
+      and hand-construction is exactly the step that stalled that line of work in 1997.
+\end{enumerate}
+
+\paragraph{The obstacle, stated plainly.} Computing a quotient of the product needs the product,
+which is the thing we are trying not to build. The technique only pays if the quotient is taken
+\emph{per component, before composition} --- compositional minimisation. Whether the relation is a
+congruence for \uppaal{}'s composition (shared bounded integers, binary and broadcast channels,
+committed locations) is the question that decides the whole lead, and it is not answered in the
+paper, which composes contracts rather than quotients components.
+
+\paragraph{Two smaller things worth noting.} The paper observes that pair validation is
+``naturally parallelisable'' with an effective speedup up to the core count, which fits this
+engine's setting exactly. And the relation preserves CTL$^*$ over \emph{observable events}, whereas
+our properties are predicates over \emph{locations}; those need to be reconciled before any
+soundness claim, most likely by making the property's locations observable and everything else
+internal.
+
+\paragraph{What would settle it, cheaply.} Take \texttt{fischer}, designate every action of
+processes $3..N$ as internal, compute the weak-bisimulation quotient of a \emph{single} process
+template, and count the resulting classes. If one template collapses, compositional minimisation is
+worth building. If it does not, the lead dies for the same reason \S3 died, and we will know in an
+afternoon.

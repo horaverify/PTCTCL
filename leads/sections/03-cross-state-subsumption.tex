@@ -1,0 +1,35 @@
+\section{Subsumption across different discrete states \hfill \dead{}}
+
+\textbf{The idea.} Today a stored zone can only ever kill another zone sitting at the \emph{same}
+discrete state --- same locations, same integers. That is the weakest possible matching rule. If
+the property only reads two processes, surely the other eight processes' locations should not have
+to agree exactly for one state to subsume another?
+
+\begin{theorem}[Componentwise-simulation subsumption]
+Let $\preceq$ be a preorder on discrete states such that $\mathrm{dk}_1 \preceq \mathrm{dk}_2$
+implies that every transition enabled at $\mathrm{dk}_1$ is enabled at $\mathrm{dk}_2$ with a
+$\preceq$-larger target, and that $\mathrm{dk}_1, \mathrm{dk}_2$ agree on every proposition of
+$\varphi$. Then $(\mathrm{dk}_1, Z)$ may be discarded whenever some stored $(\mathrm{dk}_2, Z')$
+has $\mathrm{dk}_1 \preceq \mathrm{dk}_2$ and $Z \subseteq Z'$.
+\end{theorem}
+
+The relation is sound --- it is a simulation, and simulation preserves reachability of anything the
+property can see.
+
+\paragraph{And it collapses nothing.} Computed on all six families: the collapse factor is
+\textbf{exactly 1}. Not ``small''. One. No pair of distinct reachable discrete states is related.
+
+\paragraph{Why, and why this is not a benchmark artefact.} In these protocols the discrete state is
+not decoration, it is the mechanism. A process sitting in \texttt{wait} rather than \texttt{idle}
+changes which transitions are enabled for \emph{everyone}, because they contend for the same lock,
+variable or channel. For one state to simulate another, the simulating one must enable at least as
+much; here, enabling more of one process's moves systematically disables another's. The preorder
+degenerates to equality.
+
+That reasoning does not depend on the choice of benchmarks. It depends on the models being
+\emph{contention protocols}, which is what timed mutual-exclusion models are. A model where
+processes genuinely do not interact would collapse --- but such a model has a small product anyway,
+so there is nothing to win.
+
+\paragraph{Verdict.} Dead, and worth recording precisely because it is the obvious idea. Anyone
+looking at this engine will propose it within five minutes. The answer is one measured number.

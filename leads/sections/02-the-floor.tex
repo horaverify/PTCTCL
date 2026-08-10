@@ -1,0 +1,39 @@
+\section{Is our ``floor'' actually a floor? \hfill \open{}}
+
+Everything else in this document rests on one claim, so it deserves scrutiny.
+
+\paragraph{The claim.} On five families we store exactly one zone per reachable discrete state.
+Since you cannot store less than one thing per state you visit, and since the set of reachable
+discrete states is fixed by the model, the number of stored states is a floor. \verifyta{} sits on
+the same floor. Hence no zone-level cleverness can win there --- and we measured that directly:
+every antichain has exactly one member, so techniques that compare pairs of zones have nothing to
+compare.
+
+\paragraph{The problem.} Ben Salah, Bozga and Maler, \emph{On Interleaving in Timed Automata},
+CONCUR 2006, report Fischer at $N = 5$ in \textbf{527} symbolic states. We report $727$.
+\verifyta{} reports $727$. And $727$ is the number of reachable discrete states.
+
+So either their Fischer is a different model, or symbolic states can be fewer than discrete states
+--- which would mean the floor is not a floor.
+
+\paragraph{How that could be possible.} Their Theorem~1 says the union of all zones reached by
+different interleavings of the same set of transitions is convex. That is a stronger, cleaner
+statement of the thing our convex-union merge does opportunistically. If you aggregate along those
+lines you are no longer storing ``one zone per discrete state'' --- you are storing one object per
+\emph{equivalence class of interleavings}, and a class can span several discrete states.
+
+\paragraph{Why this matters more than the number.} If aggregation can index fewer objects than
+discrete states, then the whole framing of this document is wrong, and the right question is not
+``how do we avoid visiting discrete states'' but ``what is the right unit of storage''. That would
+also reframe the convex-union merge, currently our most distinctive feature, as a weak special
+case of a published theorem.
+
+\paragraph{What to do.} Reconstruct their Fischer model and count. Half a day. Two outcomes:
+\begin{itemize}
+\item their model differs (most likely) --- the floor claim survives and we cite the theorem as
+      the general form of our merge;
+\item their model is ours --- the floor claim is wrong, and this becomes the most important lead in
+      the document.
+\end{itemize}
+
+Until this is settled, no paper should assert the floor.

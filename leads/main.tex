@@ -1,0 +1,53 @@
+\documentclass[11pt]{article}
+\input{preamble}
+
+\title{Leads\\[2pt]\large Where the states might still be, and where they are not}
+\author{PTCTLMC}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\noindent
+This is a working document, not a paper. It is written to be read quickly and argued with.
+Each section is one \emph{lead} --- an idea for exploring or storing fewer states than \uppaal{}
+--- and each says plainly whether it is alive, dead, or unresolved, and why. Formal statements
+appear only where a claim needs to be exact; everything else is prose.
+
+\medskip\noindent
+\textbf{The situation in one paragraph.} On five of the benchmark families (\texttt{fischer},
+\texttt{arbiter}, \texttt{viking}, \texttt{twolock}, \texttt{csma}) the engine stores exactly one
+zone per reachable discrete state and matches \verifyta{}'s count to the digit --- on states
+explored as well as states stored. Every antichain on those families has exactly one member, so
+every technique that compares two zones is provably doing nothing there. The interesting question
+is therefore not ``which zone abstraction is coarser'' but ``why are we looking at that many
+\emph{discrete} states at all''.
+
+\medskip\noindent
+\textbf{Summary of the leads.}
+
+\begin{center}
+\begin{tabular}{@{}llp{7.4cm}@{}}
+\toprule
+\S & verdict & one line \\
+\midrule
+1 & \live{}  & Verify a small subsystem against a bounded fake environment. \\
+2 & \open{}  & A 2006 paper reports fewer states than our supposed floor. \\
+3 & \dead{}  & Subsumption across different discrete states: collapse factor exactly 1. \\
+4 & \dead{}  & Sweep-line: nothing to delete, and we can prove it. \\
+5 & \live{}  & 41\% of expansions are wasted, and the cause is syntactic. \\
+6 & \open{}  & Symmetry: the numbers are huge, the objection is fair. \\
+7 & \open{}  & RWTBS: can a new bisimulation quotient more than \uppaal{}? \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\input{sections/01-environment-abstraction}
+\input{sections/02-the-floor}
+\input{sections/03-cross-state-subsumption}
+\input{sections/04-sweepline}
+\input{sections/05-wasted-expansions}
+\input{sections/06-symmetry}
+\input{sections/07-rwtbs}
+
+\end{document}

@@ -1,0 +1,25 @@
+\section{Deleting states behind you \hfill \dead{}}
+
+\textbf{The idea.} The sweep-line method (Christensen, Kristensen, Mailund) keeps a
+\emph{progress measure} --- some quantity that only ever increases along transitions --- and
+throws away stored states whose measure has been overtaken, because nothing can come back to them.
+Peak memory falls dramatically, and memory is this engine's real wall.
+
+\begin{theorem}[Sweep-line vacuity for cyclic reactive models]
+If the reachable discrete-state graph is strongly connected, every monotone progress measure is
+constant, and the sweep-line method deletes nothing.
+\end{theorem}
+
+The proof is one line: in a strongly connected graph every state reaches every other, so a measure
+that never decreases along an edge cannot decrease around a cycle, hence must be equal everywhere.
+
+\paragraph{The measurement.} Fischer's reachable discrete-state graph is a \emph{single} strongly
+connected component covering $100\%$ of its states. So is every other family here. These are
+reactive protocols: they return to idle and start again. There is no progress.
+
+\paragraph{Extra reason not to pursue it.} \uppaal{} has shipped the generalised sweep-line method
+since 2006. Even if it fired, it would not be a distinguishing feature.
+
+\paragraph{Verdict.} Dead, with a proof rather than a measurement --- which is better, because it
+tells you the condition under which it \emph{would} work: models with a real notion of progress,
+such as pipelines or protocols with a terminating phase. None of ours has one.
