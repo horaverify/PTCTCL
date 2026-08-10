@@ -2485,6 +2485,43 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   // location-reachability abstraction that may drop individual valuations, and one dropped
   // valuation is exactly what a deadlock witness is made of -- the same reason `E<> deadlock`
   // forces exact zones.
+  // aLU SUBSUMPTION, GATED ON DEADLOCK-FREEDOM.
+  //
+  // Exact inclusion leaves the liveness graph enormously larger than the reachability passed set
+  // for the same model: measured on arbiter6, 256 discrete keys carrying 66522 zones -- 260 per
+  // discrete state -- where the reachability engine stores exactly one. aLU is what collapses
+  // them, and it is a genuine simulation, so for two of the three witnesses it is sound outright:
+  // a simulating zone matches every delay (hence divergence transfers) and every discrete step
+  // (hence !q cycles transfer), and p/q read only the discrete key, which subsumption preserves.
+  //
+  // The third witness is the problem. A maximal run may end by DEADLOCKING in !q, and that is a
+  // per-valuation property: if v is deadlocked and v is simulated by v', v' may well have
+  // successors, so the witness evaporates. That is the same reason `E<> deadlock` sets
+  // force_exact.
+  //
+  // So decide deadlock-freedom first, with the engine's own parallel deadlock check. If no
+  // reachable state has a deadlocked valuation then the third witness cannot arise at all and aLU
+  // is sound here; otherwise fall back to exact inclusion, which is always sound and is what this
+  // code did before. The check costs one reachability run and buys back two orders of magnitude.
+  ReachStats dl_stats;
+  const bool may_deadlock = deadlock_reachable(net, backend, &dl_stats);
+  const bool use_alu = !may_deadlock && !network_has_diagonal(net);
+  std::vector<std::int32_t> aL = net.lbound, aU = net.ubound;
+  aL[0] = aU[0] = 0;   // reference clock: mandatory for the aLU test
+  // Per-state bounds, exactly as reach_engine computes them: the max over processes of the
+  // per-location bounds, which is far coarser than the global ones away from guards.
+  auto state_bounds = [&](const int* locs, std::vector<std::int32_t>& L2,
+                          std::vector<std::int32_t>& U2) {
+    if (net.lbound_loc.empty()) { L2 = aL; U2 = aU; return; }
+    L2.assign(net.nclocks + 1, kAluNegInf);
+    U2.assign(net.nclocks + 1, kAluNegInf);
+    for (int pr = 0; pr < net.nprocs(); ++pr)
+      for (int c = 1; c <= net.nclocks; ++c) {
+        L2[c] = std::max(L2[c], net.lbound_loc[pr][locs[pr]][c]);
+        U2[c] = std::max(U2[c], net.ubound_loc[pr][locs[pr]][c]);
+      }
+    L2[0] = U2[0] = 0;
+  };
   std::unordered_map<std::string, std::vector<int>> bucket;   // discrete key -> antichain
   std::vector<SymState> node;
   std::vector<std::vector<int>> adj;
@@ -2507,14 +2544,19 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     while (fwd[v] != v) { fwd[v] = fwd[fwd[v]]; v = fwd[v]; }
     return v;
   };
+  std::vector<std::int32_t> bL, bU;
   auto intern = [&](SymState&& s) -> int {
     std::vector<int>& b = bucket[disc_key(s.locs, s.ints)];
     const int dim = s.zone.dim();
-    for (std::size_t bi = 0; bi < b.size(); ++bi) {
-      const int j = resolve(b[bi]);
-      // dbm_includes(a, b) is [b] subseteq [a]
-      if (dbm_includes(node[j].zone.data().data(), s.zone.data().data(), dim)) return j;
-    }
+    if (use_alu) state_bounds(s.locs.data(), bL, bU);
+    auto covered_by = [&](int j) {
+      return use_alu ? dbm_is_alu_le(s.zone.data().data(), node[j].zone.data().data(), dim,
+                                     bL.data(), bU.data())
+                     // dbm_includes(a, b) is [b] subseteq [a]
+                     : dbm_includes(node[j].zone.data().data(), s.zone.data().data(), dim);
+    };
+    for (std::size_t bi = 0; bi < b.size(); ++bi)
+      if (covered_by(resolve(b[bi]))) return resolve(b[bi]);
     // The incoming zone may instead CONTAIN stored ones, or form an exact convex union with them.
     // Either way the stored node is redundant and is retired into the newcomer -- but only while
     // it is still untouched. A node that has been expanded has an adjacency computed for its own
@@ -2537,8 +2579,12 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       // downside -- it never changes a stored zone, only removes a redundant one -- and is
       // therefore always on.
       static const bool lt_merge = std::getenv("PTCTLMC_LTMERGE") != nullptr;
+      const bool covers_j =
+          use_alu ? dbm_is_alu_le(node[j].zone.data().data(), s.zone.data().data(), dim,
+                                  bL.data(), bU.data())
+                  : dbm_includes(s.zone.data().data(), node[j].zone.data().data(), dim);
       if (untouched &&
-          (dbm_includes(s.zone.data().data(), node[j].zone.data().data(), dim) ||
+          (covers_j ||
            (lt_merge && dbm_try_union(s.zone.data().data(), node[j].zone.data().data(), dim)))) {
         fwd[j] = n;          // j is absorbed; every edge already pointing at it resolves here
         continue;            // drop j from the bucket
@@ -2700,6 +2746,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   // Breadth-first matters for the same reason. Violations sit near the initial state, and
   // verifyta explores breadth-first by default; a depth-first outer order dives away from the
   // shallow witness and pays for it.
+  const bool ltdbg = std::getenv("PTCTLMC_LTDEBUG") != nullptr;
   std::vector<char> seen;
   std::vector<int> work{0};
   std::size_t head = 0;
@@ -2708,6 +2755,10 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   while (head < work.size()) {
     const int u = work[head++];
     expand(u);
+    if (ltdbg && (head % 20000 == 0))
+      std::fprintf(stderr, "[lt] expanded=%zu nodes=%zu discrete-keys=%zu zones/dk=%.2f\n",
+                   head, node.size(), bucket.size(),
+                   bucket.empty() ? 0.0 : double(node.size()) / double(bucket.size()));
     if (is_p(u) && !is_q(u)) {
       // Cheapest witness first: this state alone already stays in !q forever.
       if (adj[u].empty() || time_diverges(node[u])) return false;
@@ -2723,6 +2774,10 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       if (!seen[v]) { seen[v] = 1; work.push_back(v); }
     }
   }
+  if (ltdbg)
+    std::fprintf(stderr, "[lt] FINAL nodes=%zu discrete-keys=%zu zones/dk=%.2f\n",
+                 node.size(), bucket.size(),
+                 bucket.empty() ? 0.0 : double(node.size()) / double(bucket.size()));
   return true;
 }
 
