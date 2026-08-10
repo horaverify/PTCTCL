@@ -2467,15 +2467,36 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   }
 
   // Build the full reachable graph (exact-hash nodes, extrapolated for finiteness).
-  std::unordered_map<std::string, int> id;
+  // SUBSUMPTION, not exact-zone equality.
+  //
+  // Nodes used to be deduplicated by an exact hash of (discrete key + raw DBM bytes), so two
+  // states at the same discrete state whose zones merely CONTAINED one another were stored twice.
+  // That is why the liveness graph dwarfed the reachability passed set for the same model:
+  // arbiter6 built 1343096 nodes where verifyta stores 10453.
+  //
+  // Storing an antichain under zone INCLUSION instead is sound here for a reason specific to this
+  // engine: DiscPred forbids clock constraints (see netreach.hpp), so `p` and `q` are functions of
+  // the DISCRETE key alone and never of the zone. Hence if Z_u subseteq Z_v at the same discrete
+  // state, every run of u is a run of v over the same sequence of discrete states, so u can stay
+  // in !q forever only if v can. Dropping u loses no witness, and finding none at v proves none
+  // at u.
+  //
+  // Plain inclusion, NOT the aLU simulation the reachability engine uses. aLU is a
+  // location-reachability abstraction that may drop individual valuations, and one dropped
+  // valuation is exactly what a deadlock witness is made of -- the same reason `E<> deadlock`
+  // forces exact zones.
+  std::unordered_map<std::string, std::vector<int>> bucket;   // discrete key -> antichain
   std::vector<SymState> node;
   std::vector<std::vector<int>> adj;
   auto intern = [&](SymState&& s) -> int {
-    std::string k = key(s);
-    auto it = id.find(k);
-    if (it != id.end()) return it->second;
+    std::vector<int>& b = bucket[disc_key(s.locs, s.ints)];
+    const int dim = s.zone.dim();
+    for (int j : b)   // dbm_includes(a, b) is [b] subseteq [a]
+      if (dbm_includes(node[j].zone.data().data(), s.zone.data().data(), dim)) return j;
     const int n = static_cast<int>(node.size());
-    id.emplace(std::move(k), n); node.push_back(std::move(s)); adj.emplace_back();
+    b.push_back(n);
+    node.push_back(std::move(s));
+    adj.emplace_back();
     return n;
   };
   auto time_diverges = [&](const SymState& s) -> bool {
@@ -2487,66 +2508,177 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
     return true;
   };
   intern(std::move(s0));
-  for (int u = 0; u < static_cast<int>(node.size()); ++u) {
+
+  // ---- on-the-fly emptiness for `p --> q` -----------------------------------------------
+  //
+  // `p --> q` fails exactly when some REACHABLE state satisfying p /\ !q can stay in !q forever.
+  // From such a state that means reaching, through !q edges only, one of three things: a state
+  // with no successors (a maximal run ends there without ever seeing q), a state where time
+  // diverges (an infinite run stays put), or a !q cycle. Write ESC for the !q states that can.
+  //
+  // ESC is a least fixpoint over the !q subgraph and Tarjan computes it in ONE pass, because it
+  // emits strongly connected components in reverse topological order: when a component is popped,
+  // every component reachable from it is already finished, so its own value is decidable on the
+  // spot from (i) is it non-trivial, (ii) does a member deadlock or diverge, (iii) does a member
+  // have an edge into a finished component that escapes.
+  //
+  // Everything is generated LAZILY. Successors are computed the first time a node is expanded, so
+  // the search stops the moment an escaping p /\ !q state is found rather than after building the
+  // whole zone graph. That is the entire difference against the previous implementation, which
+  // constructed every reachable node before looking at the question: its cost was a function of
+  // the MODEL alone -- 1087 nodes on fischer4 and 8806 on fischer5 no matter what was asked --
+  // while verifyta answered the same queries in 1 to 56 states.
+  std::vector<char> expanded;         // adj[u] filled in?
+  std::vector<char> pcache, qcache;   // holds(p, .) / holds(q, .), computed once per node
+  std::vector<int> tidx, low, comp_of;
+  std::vector<char> onstk, escapes;
+  std::vector<char> esc_comp;         // per completed component
+  std::vector<int> tstk;
+  int counter = 0;
+
+  // node/adj grow while we walk them, so every vector indexed by node id has to grow with them and
+  // NO reference into any of them may be held across an intern().
+  auto sync = [&] {
+    const std::size_t n = node.size();
+    expanded.resize(n, 0); pcache.resize(n, 2); qcache.resize(n, 2);
+    tidx.resize(n, -1); low.resize(n, 0); comp_of.resize(n, -1);
+    onstk.resize(n, 0); escapes.resize(n, 0);
+  };
+  auto is_p = [&](int i) { sync(); if (pcache[i] == 2) pcache[i] = holds(p, node[i]); return pcache[i] != 0; };
+  auto is_q = [&](int i) { sync(); if (qcache[i] == 2) qcache[i] = holds(q, node[i]); return qcache[i] != 0; };
+  auto expand = [&](int u) {
+    sync();
+    if (expanded[u]) return;
+    expanded[u] = 1;
     if (stats) ++stats->explored;
     std::vector<SymState> succ;
     successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ);
     for (auto& ns : succ) { const int v = intern(std::move(ns)); adj[u].push_back(v); }
-  }
-  const int N = static_cast<int>(node.size());
-  std::vector<char> pv(N), qv(N), seed(N, 0);
-  for (int i = 0; i < N; ++i) { pv[i] = holds(p, node[i]); qv[i] = holds(q, node[i]); }
-  // Seeds of an infinite/maximal ¬q run: a ¬q deadlock, or a ¬q state where time diverges.
-  for (int i = 0; i < N; ++i)
-    if (!qv[i] && (adj[i].empty() || time_diverges(node[i]))) seed[i] = 1;
+    sync();
+  };
 
-  // ¬q-cycle nodes are also seeds — iterative Tarjan SCC over the ¬q-subgraph.
-  std::vector<int> tidx(N, -1), low(N, 0);
-  std::vector<char> onstk(N, 0);
-  std::vector<int> tstk;
-  int counter = 0;
+  // Iterative Tarjan restricted to the !q subgraph. Returns true as soon as a component that
+  // escapes contains a p /\ !q state -- that state is a witness and the verdict is settled.
   struct Frame { int u; std::size_t i; };
-  for (int s = 0; s < N; ++s) {
-    if (qv[s] || tidx[s] != -1) continue;
+  auto neg_scc = [&](int root) -> bool {
     std::vector<Frame> fs;
-    fs.push_back({s, 0}); tidx[s] = low[s] = counter++; tstk.push_back(s); onstk[s] = 1;
+    // EAGER ESCAPE. Waiting for a component to be popped before deciding that it escapes is
+    // correct but far too late: the whole point of going on-the-fly is to stop at the first
+    // witness. The DFS stack is, by construction, a !q path from the root to the node being
+    // visited, so the instant ANY node is shown to escape, every node on the stack escapes with
+    // it -- and if one of those satisfies p, the query is already settled. Without this the
+    // search still terminates with the right answer, but only after the component containing the
+    // initial state is finished, which on fischer7 means 748k nodes instead of 1.
+    auto stack_has_p = [&]() {
+      for (const Frame& f : fs) if (is_p(f.u)) return true;
+      return false;
+    };
+    sync();
+    tidx[root] = low[root] = counter++;
+    tstk.push_back(root); onstk[root] = 1;
+    fs.push_back({root, 0});
     while (!fs.empty()) {
-      const int u = fs.back().u;  // copy: fs may reallocate on push_back below
+      const int u = fs.back().u;
+      expand(u);
+      // Witness kind 1, local to one state: no successor at all (a maximal run ends here without
+      // ever reaching q), or time diverges (an infinite run stays here). Either way u escapes.
+      if (fs.back().i == 0 && (adj[u].empty() || time_diverges(node[u]))) {
+        escapes[u] = 1;
+        if (stack_has_p()) return true;
+      }
       bool descended = false;
       while (fs.back().i < adj[u].size()) {
         const int v = adj[u][fs.back().i++];
-        if (qv[v]) continue;
+        if (is_q(v)) continue;                       // !q subgraph only
+        // Witness kind 2, a !q cycle: v is on the current stack, so v ->* u -> v is a cycle and
+        // every node on the stack reaches it.
+        if (tidx[v] != -1 && onstk[v] && stack_has_p()) return true;
+        // Witness kind 3: an edge into a finished component that already escapes.
+        if (tidx[v] != -1 && !onstk[v] && comp_of[v] >= 0 && esc_comp[comp_of[v]] &&
+            stack_has_p())
+          return true;
         if (tidx[v] == -1) {
-          tidx[v] = low[v] = counter++; tstk.push_back(v); onstk[v] = 1; fs.push_back({v, 0});
-          descended = true; break;
-        } else if (onstk[v]) { if (tidx[v] < low[u]) low[u] = tidx[v]; }
+          tidx[v] = low[v] = counter++;
+          tstk.push_back(v); onstk[v] = 1;
+          fs.push_back({v, 0});
+          descended = true;
+          break;
+        }
+        if (onstk[v] && tidx[v] < low[u]) low[u] = tidx[v];
       }
       if (descended) continue;
       if (low[u] == tidx[u]) {
-        std::vector<int> comp; int w;
-        do { w = tstk.back(); tstk.pop_back(); onstk[w] = 0; comp.push_back(w); } while (w != u);
-        bool cyc = comp.size() > 1;
-        if (!cyc) for (int v : adj[u]) if (v == u) cyc = true;  // self-loop
-        if (cyc) for (int c : comp) seed[c] = 1;
+        const int cid = static_cast<int>(esc_comp.size());
+        std::vector<int> comp;
+        int w;
+        do { w = tstk.back(); tstk.pop_back(); onstk[w] = 0; comp.push_back(w); comp_of[w] = cid; }
+        while (w != u);
+        // (i) non-trivial component, or a self-loop: an infinite !q run cycles here.
+        bool esc = comp.size() > 1;
+        if (!esc) for (int v : adj[u]) if (v == u) { esc = true; break; }
+        // (ii) a member deadlocks or lets time diverge. Every member has been expanded, so an
+        //      empty adj really is "no successors" and not "not looked yet".
+        if (!esc)
+          for (int m : comp)
+            if (adj[m].empty() || time_diverges(node[m])) { esc = true; break; }
+        // (iii) a member reaches an already-finished component that escapes. Reverse topological
+        //       order is what makes this a single pass rather than a fixpoint iteration.
+        if (!esc)
+          for (int m : comp) {
+            for (std::size_t k = 0; k < adj[m].size() && !esc; ++k) {
+              const int v = adj[m][k];
+              if (is_q(v) || comp_of[v] == cid) continue;
+              if (comp_of[v] >= 0 && esc_comp[comp_of[v]]) esc = true;
+            }
+            if (esc) break;
+          }
+        esc_comp.push_back(esc ? 1 : 0);
+        if (esc) {
+          for (int m : comp) escapes[m] = 1;
+          for (int m : comp) if (is_p(m)) return true;   // reachable p /\ !q that stays in !q
+        }
       }
       fs.pop_back();
       if (!fs.empty() && low[u] < low[fs.back().u]) low[fs.back().u] = low[u];
     }
-  }
+    return false;
+  };
 
-  // escape = ¬q nodes that can reach a seed via ¬q-edges (reverse reachability).
-  std::vector<std::vector<int>> radj(N);
-  for (int u = 0; u < N; ++u)
-    if (!qv[u]) for (int v : adj[u]) if (!qv[v]) radj[v].push_back(u);
-  std::vector<char> escape(N, 0);
-  std::vector<int> stk;
-  for (int i = 0; i < N; ++i) if (seed[i]) { escape[i] = 1; stk.push_back(i); }
-  while (!stk.empty()) {
-    const int u = stk.back(); stk.pop_back();
-    for (int w : radj[u]) if (!escape[w]) { escape[w] = 1; stk.push_back(w); }
+  // Outer discovery over the FULL reachable graph, breadth-first. A p /\ !q state may only be
+  // reachable through q states, so the !q analysis alone would never see it.
+  //
+  // The inner !q search is started ONLY from an accepting node -- one satisfying p /\ !q -- which
+  // is the nested-DFS discipline and is what keeps it cheap. Starting it at every !q node instead
+  // is correct but self-defeating: the first !q node dequeued drags the entire !q subgraph in
+  // before the outer search has had a chance to reach the state that actually settles the query
+  // (measured: 81716 nodes on fischer7 versus 106 for verifyta).
+  //
+  // Breadth-first matters for the same reason. Violations sit near the initial state, and
+  // verifyta explores breadth-first by default; a depth-first outer order dives away from the
+  // shallow witness and pays for it.
+  std::vector<char> seen;
+  std::vector<int> work{0};
+  std::size_t head = 0;
+  seen.assign(node.size(), 0);
+  seen[0] = 1;
+  while (head < work.size()) {
+    const int u = work[head++];
+    expand(u);
+    if (is_p(u) && !is_q(u)) {
+      // Cheapest witness first: this state alone already stays in !q forever.
+      if (adj[u].empty() || time_diverges(node[u])) return false;
+      // Otherwise ask whether it can REACH such a state, or a !q cycle. Memoised across calls
+      // through comp_of/esc_comp, so every node is analysed at most once overall.
+      if (comp_of[u] >= 0) { if (escapes[u]) return false; }
+      else if (neg_scc(u)) return false;
+      else if (escapes[u]) return false;
+    }
+    for (std::size_t k = 0; k < adj[u].size(); ++k) {
+      const int v = adj[u][k];
+      if (seen.size() < node.size()) seen.resize(node.size(), 0);
+      if (!seen[v]) { seen[v] = 1; work.push_back(v); }
+    }
   }
-  // p --> q fails iff a reachable p ∧ ¬q state can stay in ¬q forever (escape).
-  for (int i = 0; i < N; ++i) if (pv[i] && !qv[i] && escape[i]) return false;
   return true;
 }
 

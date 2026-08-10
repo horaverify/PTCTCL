@@ -80,6 +80,10 @@ struct NetPassed {
   // incrementally makes the trigger O(1), so it can be evaluated every level.
   std::size_t deadCount = 0;
   std::size_t deadBySubsume = 0, deadByMerge = 0;   // PTCTLMC_STATS attribution
+  // [RDAE PROBE, temporary] histogram of (retirement level - insertion level). Bucket 0 = the
+  // node died inside its OWN level, i.e. it was never emitted into a frontier and cost nothing.
+  // Bucket g>=1 = it was emitted and expanded g levels before the covering zone showed up.
+  std::uint64_t gapHist[66] = {0};
   ZoneIntern* zi = nullptr;   // shared distinct-zone table (set before first add)
 
   // DENSE MIRROR of a long chain.
@@ -303,6 +307,10 @@ struct NetPassed {
     }
     const raw_t* sz = s.zone.data().data();
     auto retire = [&](std::size_t k) {
+      {   // [RDAE PROBE, temporary]
+        const int g = level - arena[cidx[live[k]]].level;
+        ++gapHist[g < 0 ? 0 : (g > 64 ? 65 : g)];
+      }
       arena[cidx[live[k]]].dead = true; ++deadCount;
       if (hc && hpos[live[k]] != kCold) { hc->node[hpos[live[k]]] = -1; ++hc->ndead; }
     };
@@ -513,6 +521,9 @@ struct NetPassed {
   void retire_causes(std::size_t& sub, std::size_t& mrg) const {
     sub += deadBySubsume; mrg += deadByMerge;
   }
+
+  // [RDAE PROBE, temporary]
+  void gap_hist(std::uint64_t* out) const { for (int i = 0; i < 66; ++i) out[i] += gapHist[i]; }
 
   void counts(std::size_t& live, std::size_t& disc) const {
     live += arena.size() - deadCount;
