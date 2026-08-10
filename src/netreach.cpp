@@ -2503,9 +2503,6 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   // reachable state has a deadlocked valuation then the third witness cannot arise at all and aLU
   // is sound here; otherwise fall back to exact inclusion, which is always sound and is what this
   // code did before. The check costs one reachability run and buys back two orders of magnitude.
-  ReachStats dl_stats;
-  const bool may_deadlock = deadlock_reachable(net, backend, &dl_stats);
-  const bool use_alu = !may_deadlock && !network_has_diagonal(net);
   std::vector<std::int32_t> aL = net.lbound, aU = net.ubound;
   aL[0] = aU[0] = 0;   // reference clock: mandatory for the aLU test
   // Per-state bounds, exactly as reach_engine computes them: the max over processes of the
@@ -2522,6 +2519,9 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       }
     L2[0] = U2[0] = 0;
   };
+  // LAZY GATING. The search below runs in one of two subsumption modes and is invoked more than
+  // once, so everything it owns is declared inside it.
+  auto search = [&](bool use_alu) -> bool {
   std::unordered_map<std::string, std::vector<int>> bucket;   // discrete key -> antichain
   std::vector<SymState> node;
   std::vector<std::vector<int>> adj;
@@ -2548,8 +2548,17 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   auto intern = [&](SymState&& s) -> int {
     std::vector<int>& b = bucket[disc_key(s.locs, s.ints)];
     const int dim = s.zone.dim();
-    if (use_alu) state_bounds(s.locs.data(), bL, bU);
+    // E0 ablation (PTCTLMC_LTNOSUB): fall back to EXACT ZONE EQUALITY, the identity this code
+    // used before subsumption was introduced. That version cannot create a spurious cycle,
+    // because it never redirects an edge to a different zone, so any verdict difference between
+    // the two modes is a subsumption artefact.
+    static const bool lt_nosub = std::getenv("PTCTLMC_LTNOSUB") != nullptr;
+    if (use_alu && !lt_nosub) state_bounds(s.locs.data(), bL, bU);
     auto covered_by = [&](int j) {
+      if (lt_nosub)
+        return node[j].zone.dim() == dim &&
+               std::equal(node[j].zone.data().begin(), node[j].zone.data().end(),
+                          s.zone.data().begin());
       return use_alu ? dbm_is_alu_le(s.zone.data().data(), node[j].zone.data().data(), dim,
                                      bL.data(), bU.data())
                      // dbm_includes(a, b) is [b] subseteq [a]
@@ -2580,6 +2589,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       // therefore always on.
       static const bool lt_merge = std::getenv("PTCTLMC_LTMERGE") != nullptr;
       const bool covers_j =
+          lt_nosub ? false :
           use_alu ? dbm_is_alu_le(node[j].zone.data().data(), s.zone.data().data(), dim,
                                   bL.data(), bU.data())
                   : dbm_includes(s.zone.data().data(), node[j].zone.data().data(), dim);
@@ -2838,6 +2848,28 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
                  node.size(), bucket.size(),
                  bucket.empty() ? 0.0 : double(node.size()) / double(bucket.size()));
   return true;
+  };
+
+  // Which mode, and whether the deadlock gate has to be paid at all.
+  //
+  // aLU is a simulation, so it can only ever LOSE a witness, never invent one -- every witness it
+  // reports sits at a real stored node whose own zone was tested. A witness under aLU is
+  // therefore genuine and settles the query on the spot. It is the ABSENCE of a witness that is
+  // not conclusive, because aLU may have dropped the valuation a deadlock witness is made of.
+  //
+  // So: search with aLU first, and pay for deadlock-freedom only when the answer would otherwise
+  // rest on it. This matters because the gate is a COMPLETE reachability traversal in exact mode
+  // -- measured at 169252 states and 3.86s on fischer7, against 6 nodes for the liveness query
+  // itself. Running it up front made every counterexample query, which is where this engine is
+  // orders of magnitude ahead of verifyta, pay for a traversal whose answer it never needed.
+  if (!network_has_diagonal(net)) {
+    if (!search(/*use_alu=*/true)) return false;      // genuine witness: done, gate never paid
+    ReachStats dl_stats;
+    if (!deadlock_reachable(net, backend, &dl_stats)) return true;   // aLU was sound here
+  }
+  // Either the model has diagonals (aLU unusable) or it can deadlock (aLU may have missed the
+  // witness). Exact inclusion is sound unconditionally.
+  return search(/*use_alu=*/false);
 }
 
 // Does the (delay-closed, extrapolated) symbolic state `s` contain a concrete valuation
