@@ -2488,15 +2488,69 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   std::unordered_map<std::string, std::vector<int>> bucket;   // discrete key -> antichain
   std::vector<SymState> node;
   std::vector<std::vector<int>> adj;
+  // Per-node analysis state, declared here because intern() has to consult it: a node may only be
+  // retired while nothing has looked at it yet.
+  std::vector<char> expanded;         // adj[u] filled in?
+  std::vector<int> tidx, low, comp_of, fwd;
+  std::vector<char> onstk, escapes;
+  std::vector<char> pcache, qcache;
+  auto grow = [&] {
+    const std::size_t n = node.size();
+    expanded.resize(n, 0); pcache.resize(n, 2); qcache.resize(n, 2);
+    tidx.resize(n, -1); low.resize(n, 0); comp_of.resize(n, -1);
+    onstk.resize(n, 0); escapes.resize(n, 0);
+    for (std::size_t k = fwd.size(); k < n; ++k) fwd.push_back(static_cast<int>(k));
+  };
+  // A retired node forwards to the one that absorbed it. Union-find with path compression, so
+  // resolving is effectively O(1) and edges stored as plain indices stay valid forever.
+  std::function<int(int)> resolve = [&](int v) -> int {
+    while (fwd[v] != v) { fwd[v] = fwd[fwd[v]]; v = fwd[v]; }
+    return v;
+  };
   auto intern = [&](SymState&& s) -> int {
     std::vector<int>& b = bucket[disc_key(s.locs, s.ints)];
     const int dim = s.zone.dim();
-    for (int j : b)   // dbm_includes(a, b) is [b] subseteq [a]
+    for (std::size_t bi = 0; bi < b.size(); ++bi) {
+      const int j = resolve(b[bi]);
+      // dbm_includes(a, b) is [b] subseteq [a]
       if (dbm_includes(node[j].zone.data().data(), s.zone.data().data(), dim)) return j;
+    }
+    // The incoming zone may instead CONTAIN stored ones, or form an exact convex union with them.
+    // Either way the stored node is redundant and is retired into the newcomer -- but only while
+    // it is still untouched. A node that has been expanded has an adjacency computed for its own
+    // (smaller) zone, and a node the Tarjan pass has entered carries live state; growing or
+    // retiring either would invalidate work already done, so those are left alone and simply
+    // remain in the antichain. Skipping a retirement only ever costs one extra node.
     const int n = static_cast<int>(node.size());
+    std::size_t w = 0;
+    for (std::size_t bi = 0; bi < b.size(); ++bi) {
+      const int j = resolve(b[bi]);
+      const bool untouched = !expanded[j] && tidx[j] == -1;
+      // The convex-union merge is OPT-IN here (PTCTLMC_LTMERGE), unlike in the reachability
+      // engine where it is the default and a clear win. Measured on the liveness graph it is a
+      // net LOSS on half the models -- fischer6 55623 -> 48336 but arbiter6 66137 -> 75818 and
+      // twolock6 35351 -> 41943. Merging replaces two stored zones with their union, which is a
+      // strictly larger zone whose successors differ, so it can generate more distinct downstream
+      // states than it saves. The same effect is recorded in this project's TCTLSAT CEGAR notes,
+      // where dropping the finer cut points cost 251032 nodes against 68624 because those cut
+      // points were also acting as a canonicaliser. Retirement by plain inclusion has no such
+      // downside -- it never changes a stored zone, only removes a redundant one -- and is
+      // therefore always on.
+      static const bool lt_merge = std::getenv("PTCTLMC_LTMERGE") != nullptr;
+      if (untouched &&
+          (dbm_includes(s.zone.data().data(), node[j].zone.data().data(), dim) ||
+           (lt_merge && dbm_try_union(s.zone.data().data(), node[j].zone.data().data(), dim)))) {
+        fwd[j] = n;          // j is absorbed; every edge already pointing at it resolves here
+        continue;            // drop j from the bucket
+      }
+      b[w++] = b[bi];
+    }
+    b.resize(w);
     b.push_back(n);
     node.push_back(std::move(s));
     adj.emplace_back();
+    grow();
+    fwd[n] = n;
     return n;
   };
   auto time_diverges = [&](const SymState& s) -> bool {
@@ -2528,33 +2582,23 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   // constructed every reachable node before looking at the question: its cost was a function of
   // the MODEL alone -- 1087 nodes on fischer4 and 8806 on fischer5 no matter what was asked --
   // while verifyta answered the same queries in 1 to 56 states.
-  std::vector<char> expanded;         // adj[u] filled in?
-  std::vector<char> pcache, qcache;   // holds(p, .) / holds(q, .), computed once per node
-  std::vector<int> tidx, low, comp_of;
-  std::vector<char> onstk, escapes;
   std::vector<char> esc_comp;         // per completed component
   std::vector<int> tstk;
   int counter = 0;
 
   // node/adj grow while we walk them, so every vector indexed by node id has to grow with them and
   // NO reference into any of them may be held across an intern().
-  auto sync = [&] {
-    const std::size_t n = node.size();
-    expanded.resize(n, 0); pcache.resize(n, 2); qcache.resize(n, 2);
-    tidx.resize(n, -1); low.resize(n, 0); comp_of.resize(n, -1);
-    onstk.resize(n, 0); escapes.resize(n, 0);
-  };
-  auto is_p = [&](int i) { sync(); if (pcache[i] == 2) pcache[i] = holds(p, node[i]); return pcache[i] != 0; };
-  auto is_q = [&](int i) { sync(); if (qcache[i] == 2) qcache[i] = holds(q, node[i]); return qcache[i] != 0; };
+  auto is_p = [&](int i) { grow(); if (pcache[i] == 2) pcache[i] = holds(p, node[i]); return pcache[i] != 0; };
+  auto is_q = [&](int i) { grow(); if (qcache[i] == 2) qcache[i] = holds(q, node[i]); return qcache[i] != 0; };
   auto expand = [&](int u) {
-    sync();
+    grow();
     if (expanded[u]) return;
     expanded[u] = 1;
     if (stats) ++stats->explored;
     std::vector<SymState> succ;
     successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ);
     for (auto& ns : succ) { const int v = intern(std::move(ns)); adj[u].push_back(v); }
-    sync();
+    grow();
   };
 
   // Iterative Tarjan restricted to the !q subgraph. Returns true as soon as a component that
@@ -2573,7 +2617,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       for (const Frame& f : fs) if (is_p(f.u)) return true;
       return false;
     };
-    sync();
+    grow();
     tidx[root] = low[root] = counter++;
     tstk.push_back(root); onstk[root] = 1;
     fs.push_back({root, 0});
@@ -2588,7 +2632,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       }
       bool descended = false;
       while (fs.back().i < adj[u].size()) {
-        const int v = adj[u][fs.back().i++];
+        const int v = resolve(adj[u][fs.back().i++]);
         if (is_q(v)) continue;                       // !q subgraph only
         // Witness kind 2, a !q cycle: v is on the current stack, so v ->* u -> v is a cycle and
         // every node on the stack reaches it.
@@ -2615,7 +2659,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
         while (w != u);
         // (i) non-trivial component, or a self-loop: an infinite !q run cycles here.
         bool esc = comp.size() > 1;
-        if (!esc) for (int v : adj[u]) if (v == u) { esc = true; break; }
+        if (!esc) for (int v : adj[u]) if (resolve(v) == u) { esc = true; break; }
         // (ii) a member deadlocks or lets time diverge. Every member has been expanded, so an
         //      empty adj really is "no successors" and not "not looked yet".
         if (!esc)
@@ -2626,7 +2670,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
         if (!esc)
           for (int m : comp) {
             for (std::size_t k = 0; k < adj[m].size() && !esc; ++k) {
-              const int v = adj[m][k];
+              const int v = resolve(adj[m][k]);
               if (is_q(v) || comp_of[v] == cid) continue;
               if (comp_of[v] >= 0 && esc_comp[comp_of[v]]) esc = true;
             }
@@ -2674,7 +2718,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       else if (escapes[u]) return false;
     }
     for (std::size_t k = 0; k < adj[u].size(); ++k) {
-      const int v = adj[u][k];
+      const int v = resolve(adj[u][k]);
       if (seen.size() < node.size()) seen.resize(node.size(), 0);
       if (!seen[v]) { seen[v] = 1; work.push_back(v); }
     }
