@@ -43,6 +43,27 @@ no amount of waiting helps. A probe answered this: of $40$ sampled cases, \textb
 the state's own expansion, and an oracle-order test attributes $86$--$89\%$ of the waste to
 ordering. So the idea survives its own worst case.
 
+\paragraph{Tried, and it measures zero: retroactive cancellation.} The cheap version of this idea
+is to re-check, at the moment a state is popped for expansion, whether it has been retired since it
+was collected --- if so, skip it. It is sound (a retirement always coincides with storing a
+covering zone) and it was implemented and measured. It cancels \textbf{zero} expansions on
+\texttt{fischer10}, \texttt{twolock10}, \texttt{phil11}, \texttt{arbiter14} and \texttt{viking12}.
+
+The reason is visible in the lag histogram and is worth stating because it rules out a whole family
+of fixes. Retirements happen at lag $0$ or at lag exactly $g$, and nothing in between. The lag-$0$
+ones die \emph{inside their own level}, before they are ever emitted into a frontier, so they
+already cost nothing --- the survivor scan filters them. The lag-$g$ ones die $g$ levels
+\emph{after} being expanded. So there is no interval during which a pending frontier entry is
+already dead, and nothing to cancel. The code was reverted.
+
+What survives is only the expensive version: hold a state back \emph{before} expanding it, and hope
+its replacement arrives. That needs a predictor for which states to hold, and the two obvious
+predictors are both already dead --- ordering by generality was tried and produced \emph{more}
+states (\texttt{phil12} $841\,637$ against $803\,845$), and ``lies on a key-preserving cycle'' does
+not discriminate because the reachable graph is a single strongly connected component, so every
+state lies on one. Until a discriminating predictor exists, this lead has a measured prize and no
+mechanism.
+
 \paragraph{Where parallelism comes in.} Deferral is a bet: pay latency now to avoid a subtree
 later. A sequential search cannot afford the bet, because delaying its only state stalls it
 completely. With many workers there is always other work, so the bet is free. This is the one place
