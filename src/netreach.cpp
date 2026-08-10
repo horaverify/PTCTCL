@@ -2263,6 +2263,69 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       for (const auto& mp : smap) mp.retire_causes(rsub, rmrg);
       std::fprintf(stderr, "[retire] subsumed-by-newer=%zu absorbed-into-convex-union=%zu\n",
                    rsub, rmrg);
+      // ---- PTCTLMC_GAPHIST: how many BFS levels elapse between a zone being STORED and being
+      // retired by a later, more general one. Bucket 0 = retired inside its own level (the node
+      // never reached the frontier, so it cost no expansion); bucket g>=1 = the node was already
+      // expanded g levels ago, so that expansion is the re-exploration tax. Bounds any
+      // "hold the state back for W levels and let it grow first" policy: such a policy can only
+      // reach retirements with gap <= W.
+      if (std::getenv("PTCTLMC_GAPHIST")) {
+        std::uint64_t gh[66] = {0};
+        for (const auto& mp : smap) mp.gap_hist(gh);
+        std::uint64_t tot = 0, cross = 0;
+        for (int i = 0; i < 66; ++i) { tot += gh[i]; if (i >= 1) cross += gh[i]; }
+        std::fprintf(stderr, "[gaphist] retirements=%llu same-level(g=0)=%llu cross-level(g>=1)=%llu\n",
+                     (unsigned long long)tot, (unsigned long long)gh[0], (unsigned long long)cross);
+        std::uint64_t cum = 0;
+        std::fprintf(stderr, "[gaphist] cumulative %% of cross-level retirements caught by a W-level hold:");
+        for (int W = 1; W <= 16 && cross; ++W) {
+          cum += gh[W];
+          std::fprintf(stderr, " W=%d:%.1f%%", W, 100.0 * (double)cum / (double)cross);
+        }
+        std::fprintf(stderr, "\n[gaphist] raw:");
+        for (int i = 0; i < 66; ++i) if (gh[i]) std::fprintf(stderr, " %d:%llu", i, (unsigned long long)gh[i]);
+        std::fprintf(stderr, "\n");
+      }
+      // ---- PTCTLMC_FEDPROBE: measurement-only headroom for a NON-convex (federation) merge.
+      // For each discrete state's antichain, greedily drop any member covered by the UNION of the
+      // survivors (fed_covers is exact, so this is a legal representation change: the denoted set
+      // is unchanged). The delta is the most a federation representation could ever save.
+      if (std::getenv("PTCTLMC_FEDPROBE")) {
+        std::size_t tot = 0, red = 0, multi = 0, maxk = 0, capped = 0;
+        std::vector<std::size_t> hist(16, 0);
+        for (const auto& mp : smap)
+          mp.for_each_antichain([&](const std::vector<Dbm>& zs) {
+            const std::size_t k = zs.size();
+            tot += k;
+            if (k >= 2) ++multi;
+            maxk = std::max(maxk, k);
+            hist[std::min<std::size_t>(k, 15)] += 1;
+            if (k < 2) { red += k; return; }
+            static const std::size_t kcap = [] {
+              const char* e = std::getenv("PTCTLMC_FEDPROBECAP");
+              return e ? static_cast<std::size_t>(std::atol(e)) : std::size_t(10);
+            }();
+            if (k > kcap) { ++capped; red += k; return; }  // fed_subtract blows up; do not guess
+            std::vector<bool> gone(k, false);
+            std::size_t live = k;
+            for (std::size_t i = 0; i < k && live > 1; ++i) {
+              Federation rest;
+              for (std::size_t j = 0; j < k; ++j)
+                if (j != i && !gone[j]) rest.push_back(zs[j]);
+              if (fed_covers(rest, zs[i])) { gone[i] = true; --live; }
+            }
+            red += live;
+          });
+        std::fprintf(stderr,
+                     "[fedprobe] antichains-with>=2=%zu maxk=%zu capped(k>10)=%zu | zones=%zu "
+                     "after-federation-reduce=%zu removable=%zu (%.2f%%)\n",
+                     multi, maxk, capped, tot, red, tot - red,
+                     tot ? 100.0 * static_cast<double>(tot - red) / static_cast<double>(tot) : 0.0);
+        std::fprintf(stderr, "[fedprobe] antichain size histogram:");
+        for (std::size_t i = 1; i < 16; ++i)
+          if (hist[i]) std::fprintf(stderr, " %zu:%zu", i, hist[i]);
+        std::fprintf(stderr, "\n");
+      }
       std::fprintf(stderr,
                    "[bytes] packed-zones=%.0fMB intern-map=%.0fMB tcaches=%.0fMB | arena=%.0fMB "
                    "(%zu nodes, %zu dead=%.0f%%) tab=%.0fMB\n",

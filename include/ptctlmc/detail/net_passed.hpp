@@ -549,6 +549,21 @@ struct NetPassed {
     for (const auto& nd : arena)
       if (!nd.dead) f(zi->get(nd.zidx));
   }
+
+  // Probe (PTCTLMC_FEDPROBE, measurement only): visit each discrete state's live antichain as a
+  // vector of zones, so an offline pass can ask how many members a NON-convex (federation) union
+  // would let it drop. Never called on any search path.
+  template <class F>
+  void for_each_antichain(F&& f) const {
+    std::vector<Dbm> zs;
+    for (const auto& s : tab) {
+      if (s.head == -1) continue;
+      zs.clear();
+      for (int n = s.head; n != -1; n = arena[static_cast<std::size_t>(n)].next)
+        if (!arena[static_cast<std::size_t>(n)].dead) zs.push_back(zi->get(arena[static_cast<std::size_t>(n)].zidx));
+      if (!zs.empty()) f(zs);
+    }
+  }
 };
 
 }  // namespace detail
