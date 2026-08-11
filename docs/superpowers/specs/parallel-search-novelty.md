@@ -917,6 +917,47 @@ exists only on fischer (1.71x), twolock (1.69x) and phil (1.39x).
 
 ---
 
+## 4duodecies. Is the memo general, or fitted to our models? MEASURED: fitted to a STRUCTURE.
+
+The question was put to **held-out families never used in any tuning**: grc, hddi, single, train.
+Tuning had used viking, phil, arbiter, fischer, csma, twolock.
+
+| family | in tuning set? | hit rate | speed (after fail-fast windowing) |
+|---|---|---|---|
+| viking12 | yes | **99.0 %** | **2.12–2.19x** |
+| phil10   | yes | **97.3 %** | **2.48–2.49x** |
+| arbiter15| yes | 0.0 % | 0.99–1.01x |
+| fischer10| yes | 0.0 % | 0.98–1.00x |
+| csma8    | yes | 0.0 % | ~1.0x |
+| **grc5** | **no** | **0.0 %** | 0.97–1.01x |
+| **grc6** | **no** | **0.0 %** | ~1.0x |
+| **hddi10/15/20** | **no** | **0.0 %** | trivial (40–80 states) |
+| **single6** | **no** | **0.0 %** | ~1.0x |
+
+**Verdict, in two parts, because they differ.**
+
+1. **The parameters are NOT overfitted.** The hand-tuned `SAMPLE=5000` was removed entirely and
+   replaced by a windowed, reversible breaker with exponential backoff and a growing window --
+   no constant tied to model size -- and performance was *unchanged* (phil10 2.70x -> 2.61x,
+   viking12 2.20x -> 2.16x). A design whose numbers survive the removal of its tuned constant was
+   not living on that constant.
+2. **The TECHNIQUE is structural, not general.** Hit rate is 0 % on *every* held-out family. The
+   memo pays on exactly the zone-degenerate models -- **2 of the 10 families tested** -- and is
+   neutral on the other 8.
+
+So this is a targeted optimisation with a reliable automatic off-switch, not a general speedup:
+**free when it does not apply, 2.1–2.5x when it does.** Claiming more than that would be wrong.
+
+### The residual loss, and its fix
+
+The first windowed breaker still cost 2–4 % on no-reuse families (grc5 0.96–0.98x reproducibly
+over 3 runs), because it probed 3 windows x 4096 successors for nothing. Making the window
+**start small (512) and grow only while healthy** detects "no reuse" 8x sooner and brings those
+families to 0.97–1.01x -- neutral within run-to-run noise -- while the reusing families never
+disable and simply check less often as their window doubles. The healthy path gets *cheaper*.
+
+---
+
 ## 5. Final position
 
 | | C1 (liveness) | C2 (reachability `explored`) |

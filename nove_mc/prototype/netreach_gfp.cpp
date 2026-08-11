@@ -4714,8 +4714,15 @@ void memo_search(const Network& net, bool use_memo) {
   // the backoff elapses the memo is re-probed for one window. A model that is merely warming up
   // recovers on a later window; one with genuinely no reuse pays a cost that decays as
   // window/backoff -> 0. No constant is tied to model size.
-  const long kWindow = std::getenv("PTCTLMC_MEMOWINDOW")
-                       ? std::atol(std::getenv("PTCTLMC_MEMOWINDOW")) : 4096;
+  // The window GROWS when healthy and starts small. A model with no reuse is detected after
+  // kWindow0 lookups instead of kWindowMax, which is what the residual 2-4% loss on the
+  // held-out families was: grc5 disabled 3 times, so it probed 3 x 4096 successors for nothing.
+  // Failing fast cuts that 8x. A model WITH reuse never disables, so it simply checks less and
+  // less often as the window doubles -- the healthy path gets cheaper, not more expensive.
+  const long kWindow0 = std::getenv("PTCTLMC_MEMOWINDOW")
+                       ? std::atol(std::getenv("PTCTLMC_MEMOWINDOW")) : 512;
+  const long kWindowMax = 65536;
+  long kWindow = kWindow0;
   const double kMinHit = 0.30;
   const long kMaxBackoff = 1L << 22;          // beyond this we are confident: release the table
   bool memo_on = use_memo;
@@ -4909,10 +4916,12 @@ void memo_search(const Network& net, bool use_memo) {
             if (wr < kMinHit) {
               memo_on = false; ++disables; breaker_at = lookups;
               backoff = backoff < kMaxBackoff ? backoff * 2 : kMaxBackoff;
+              kWindow = kWindow0;                            // re-probe with a SHORT window
               if (backoff >= kMaxBackoff)                    // confident: release the table
                 std::unordered_map<MemoKey, int, MemoKeyHash>().swap(memo);
             } else {
-              backoff = kWindow;                             // healthy: reset the backoff
+              backoff = kWindow0;                            // healthy: reset the backoff
+              if (kWindow < kWindowMax) kWindow *= 2;        // and check less often
             }
             winLookups = winHits = 0;
           }
