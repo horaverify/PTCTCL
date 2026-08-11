@@ -444,6 +444,7 @@ struct SuccMemo {
   static constexpr long kWindowMax = 65536;
   static constexpr long kMaxBackoff = 1L << 22;
   static constexpr double kMinHit = 0.30;
+  static constexpr double kMinDensity = 32.0;  ///< lookups per entry below which the table is not worth it
 };
 inline SuccMemo& tls_succ_memo() { static thread_local SuccMemo sm; return sm; }
 
@@ -490,7 +491,15 @@ inline bool memo_tick(SuccMemo& sm) {
     return sm.on;
   }
   if (sm.winLookups >= sm.window) {
-    if (double(sm.winHits) / double(sm.winLookups) < SuccMemo::kMinHit) {
+    // TWO criteria, because hit rate alone is the wrong one. phil12 sustains a 78% hit rate and
+    // is still 33% SLOWER, because its table holds 117 629 entries per thread: each entry is
+    // consulted only ~4.6 times, so the lookup and memory-pressure cost exceeds the Post it
+    // saves. viking15 consults each of its 933 entries ~855 times. REUSE DENSITY
+    // (lookups / entries) separates these cleanly where hit rate does not, and it is
+    // dimensionless -- nothing is tied to model size.
+    const double density = sm.m.empty() ? 0.0 : double(sm.lookups) / double(sm.m.size());
+    const bool thin = sm.m.size() > 4096 && density < SuccMemo::kMinDensity;
+    if (thin || double(sm.winHits) / double(sm.winLookups) < SuccMemo::kMinHit) {
       sm.on = false; ++sm.disables;
       sm.backoff = sm.backoff < SuccMemo::kMaxBackoff ? sm.backoff * 2 : SuccMemo::kMaxBackoff;
       sm.window = 512;
