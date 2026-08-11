@@ -4700,11 +4700,29 @@ void memo_search(const Network& net, bool use_memo) {
   //       families with no reuse, full gain on the ones with it, and no threshold to tune.
   const int THRESH = std::getenv("PTCTLMC_MEMOTHRESH")
                        ? std::atoi(std::getenv("PTCTLMC_MEMOTHRESH")) : 2;
-  const long kSample = std::getenv("PTCTLMC_MEMOSAMPLE")
-                       ? std::atol(std::getenv("PTCTLMC_MEMOSAMPLE")) : 200000;
+  //   (2) CIRCUIT BREAKER -- WINDOWED AND REVERSIBLE.
+  //
+  // The first version checked the CUMULATIVE hit rate once, at a fixed absolute lookup count.
+  // That does not measure reuse, it measures "is the working set smaller than the sample": a
+  // cold cache has inserted up to `sample` distinct keys by then, so the hit rate is low BY
+  // CONSTRUCTION whenever the working set is larger, however good the eventual reuse. viking
+  // survived only because its working set is 220 entries. A model with 50k distinct keys and
+  // 95% eventual reuse would have been killed at lookup 5000 and never reconsidered.
+  //
+  // So: evaluate the hit rate over a sliding WINDOW (recent behaviour, not lifetime), and make
+  // the decision REVERSIBLE. A window that misses disables the memo and doubles a backoff; after
+  // the backoff elapses the memo is re-probed for one window. A model that is merely warming up
+  // recovers on a later window; one with genuinely no reuse pays a cost that decays as
+  // window/backoff -> 0. No constant is tied to model size.
+  const long kWindow = std::getenv("PTCTLMC_MEMOWINDOW")
+                       ? std::atol(std::getenv("PTCTLMC_MEMOWINDOW")) : 4096;
   const double kMinHit = 0.30;
+  const long kMaxBackoff = 1L << 22;          // beyond this we are confident: release the table
   bool memo_on = use_memo;
   long lookups = 0, breaker_at = -1;
+  long winLookups = 0, winHits = 0;           // current window
+  long backoff = kWindow, skipped = 0;        // while disabled
+  long probes = 0, disables = 0;              // diagnostics
 
   // ---- zone interning, with a MULTIPLICITY counter --------------------------------------
   // The counter is the adaptive signal and it is free: the interner has to hash the zone
@@ -4791,11 +4809,44 @@ void memo_search(const Network& net, bool use_memo) {
   // ---- passed set: nodes store a zone ID -------------------------------------------------
   struct MNode { LocVec locs; IntVec ints; int zid; };
   std::vector<MNode> node;
+  // PACKED DISCRETE KEY. disc_key() builds a std::string per successor and hashes it -- 8.36M
+  // string constructions on viking15. The shipping engine already packs the discrete state into
+  // a uint64 (NetPassed keys on `std::uint64_t dk`), so the string is a PROTOTYPE artefact that
+  // dilutes the memo's measured benefit. Packing it here makes the prototype representative:
+  // if the memo's relative speedup RISES once the per-successor overhead drops, then the figures
+  // measured with the string key are a LOWER bound on what the engine would see.
+  int locShift[64] = {0}, ivShift[64] = {0};
+  long ivLo[64] = {0};
+  bool packable = net.nprocs() <= 64 && net.intvars.size() <= 64;
+  { int tot = 0;
+    for (int pr = 0; pr < net.nprocs() && packable; ++pr) {
+      int n = static_cast<int>(net.procs[pr].locations.size()), b = 1;
+      while ((1 << b) < n) ++b;
+      locShift[pr] = tot; tot += b;
+      if (tot > 63) packable = false;
+    }
+    // Integer variables pack too, using their DECLARED range -- viking's only variable is
+    // `int L` (which side the torch is on), so excluding models with any int var (the first
+    // version) needlessly forced viking onto the string key.
+    for (std::size_t v = 0; v < net.intvars.size() && packable; ++v) {
+      const long span = net.intvars[v].hi - net.intvars[v].lo + 1;
+      int b = 1; while ((1L << b) < span) ++b;
+      ivLo[v] = net.intvars[v].lo; ivShift[v] = tot; tot += b;
+      if (tot > 63) packable = false;
+    } }
+  auto packed_key = [&](const LocVec& l, const IntVec& iv) -> std::uint64_t {
+    std::uint64_t k = 0;
+    for (int pr = 0; pr < net.nprocs(); ++pr) k |= std::uint64_t(l[pr]) << locShift[pr];
+    for (std::size_t v = 0; v < iv.size(); ++v)
+      k |= std::uint64_t(iv[v] - ivLo[v]) << ivShift[v];
+    return k;
+  };
+  std::unordered_map<std::uint64_t, std::vector<int>> pbucket;
   std::unordered_map<std::string, std::vector<int>> bucket;
   std::vector<std::int32_t> bL, bU;
   long idhits = 0;                                        // subsumption decided by integer compare
   auto intern_state = [&](const LocVec& l, const IntVec& iv, int zid) -> int {
-    auto& b = bucket[disc_key(l, iv)];
+    auto& b = packable ? pbucket[packed_key(l, iv)] : bucket[disc_key(l, iv)];
     if (use_alu && !b.empty()) state_bounds(l.data(), bL, bU);
     for (int j : b) {
       if (node[j].zid == zid) { ++idhits; return -1; }     // identical zone: covered, no DBM work
@@ -4847,16 +4898,28 @@ void memo_search(const Network& net, bool use_memo) {
       for (auto& c : cands) {
         ++generated;
         int tzid;
+        if (!memo_on && use_memo && !memo.empty()) {
+          // Disabled: count down the backoff, then re-probe for one window (half-open).
+          if (++skipped >= backoff) { memo_on = true; skipped = 0; winLookups = winHits = 0; ++probes; }
+        }
         if (hot) {
-          ++lookups;
-          if (lookups == kSample && double(hits) / double(lookups) < kMinHit) {
-            memo_on = false; breaker_at = lookups;
-            std::unordered_map<MemoKey, int, MemoKeyHash>().swap(memo);   // release, not just clear
+          ++lookups; ++winLookups;
+          if (winLookups >= kWindow) {                       // evaluate THIS window only
+            const double wr = double(winHits) / double(winLookups);
+            if (wr < kMinHit) {
+              memo_on = false; ++disables; breaker_at = lookups;
+              backoff = backoff < kMaxBackoff ? backoff * 2 : kMaxBackoff;
+              if (backoff >= kMaxBackoff)                    // confident: release the table
+                std::unordered_map<MemoKey, int, MemoKeyHash>().swap(memo);
+            } else {
+              backoff = kWindow;                             // healthy: reset the backoff
+            }
+            winLookups = winHits = 0;
           }
           const MemoKey mk{zsrc, sig_of_tag_cached(net, c.tag, sig_of_edge), sig_of_locs(c.locs)};
           auto it = memo.find(mk);
           if (it != memo.end()) {
-            ++hits;
+            ++hits; ++winHits;
             tzid = it->second;
             if (tzid < 0) continue;                            // memoised empty
           } else {
@@ -4895,7 +4958,9 @@ void memo_search(const Network& net, bool use_memo) {
               use_memo ? "MEMO" : "BASE", node.size(), generated, posts,
               100.0 * double(hits) / double(generated ? generated : 1), gated_out, idhits,
               ms, rss_mb, memo.size(), zval.size(),
-              breaker_at >= 0 ? "TRIPPED(memo off)" : (use_memo ? "no" : "-"));
+              breaker_at >= 0 ? "TRIPPED" : (use_memo ? "no" : "-"));
+  if (use_memo) std::printf("      breaker: disables=%ld re-probes=%ld final-backoff=%ld window=%ld\n", disables, probes, backoff, kWindow);
+  std::printf("      packed-key=%s\n", packable ? "YES (uint64, like the engine)" : "no (string fallback)");
 }
 
 }  // namespace ptctlmc
