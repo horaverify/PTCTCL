@@ -391,6 +391,121 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
 }
 
 // Slot-reusing successor generation for the shared-passed hot path. Semantically
+
+// ---------------------------------------------------------------------------------------
+// TRANSITION MEMO (opt-in: --memo, or PTCTLMC_MEMO=1).
+//
+// The successor zone is a function of (source zone, edge, target-location data), and on some
+// models very few DISTINCT zones exist -- viking stores 13.6M states drawn from 120 zones -- so
+// the same O(dim^3) delay/constrain/close is recomputed enormous numbers of times. The engine
+// already noticed this (see PTCTLMC_SRCSTATS above); this caches the result.
+//
+// KEY. Everything Post reads, and nothing more:
+//   * source zone id      -- free: the frontier already carries the interned zidx
+//   * edge identity       -- (proc, edge index), packed
+//   * target-location sig -- Post reads the target locations ONLY through the combined
+//                            invariant, the urgent/committed flags, and the active-clock mask.
+//                            Many location vectors share one signature; that sharing is the
+//                            whole effect. The signature is INTERNED (not hashed to a fixed
+//                            width) so there is no collision risk -- a wrong hit would be
+//                            silent corruption, which is not an acceptable trade for a cache.
+//
+// THREAD-LOCAL, so no locks and no sharing between workers. The tables are tiny where the memo
+// pays (220 entries for viking17's 13.6M states), so per-thread duplication costs nothing.
+//
+// ADAPTIVITY. A sliding window measures the RECENT hit rate; a bad window disables the memo and
+// doubles a backoff; after the backoff elapses it re-probes for one window. The window starts
+// small and grows while healthy, so a model with no reuse is detected in ~512 lookups and a
+// model with reuse checks less and less often. Nothing is tuned to model size.
+struct MemoKey {
+  int z; std::uint32_t t; std::uint32_t l;
+  bool operator==(const MemoKey& o) const { return z == o.z && t == o.t && l == o.l; }
+};
+struct MemoKeyHash {
+  std::size_t operator()(const MemoKey& k) const {
+    std::uint64_t h = 1469598103934665603ull;
+    h ^= (std::uint64_t)(std::uint32_t)k.z; h *= 1099511628211ull;
+    h ^= k.t; h *= 1099511628211ull;
+    h ^= k.l; h *= 1099511628211ull;
+    return (std::size_t)h;
+  }
+};
+struct MemoStat { long hits = 0, lookups = 0, disables = 0; std::size_t entries = 0; };
+inline std::vector<MemoStat>& memo_stats() { static std::vector<MemoStat> v; return v; }
+inline std::mutex& memo_stats_mtx() { static std::mutex m; return m; }
+struct SuccMemo {
+  std::unordered_map<MemoKey, Dbm, MemoKeyHash> m;   // an EMPTY Dbm means "this transition dies"
+  std::unordered_map<std::string, std::uint32_t> lsig;
+  std::string lk;                                    // reused signature buffer: no allocation
+  long winLookups = 0, winHits = 0;
+  long window = 512, backoff = 512, skipped = 0;
+  bool on = true;
+  long hits = 0, lookups = 0, disables = 0;
+  static constexpr long kWindowMax = 65536;
+  static constexpr long kMaxBackoff = 1L << 22;
+  static constexpr double kMinHit = 0.30;
+};
+inline SuccMemo& tls_succ_memo() { static thread_local SuccMemo sm; return sm; }
+
+inline bool memo_enabled() {
+  static const bool v = detail::options().memo || std::getenv("PTCTLMC_MEMO") != nullptr;
+  return v;
+}
+
+// Interned target-location signature. Cheap: it walks nprocs but only emits for processes whose
+// location actually carries an invariant or a frozen flag, which is a small minority.
+inline std::uint32_t memo_locsig(const Network& net, const LocVec& l, SuccMemo& sm) {
+  sm.lk.clear();
+  auto enc = [&](std::uint32_t v) {
+    sm.lk += char(v & 0xff); sm.lk += char((v >> 8) & 0xff);
+    sm.lk += char((v >> 16) & 0xff); sm.lk += char((v >> 24) & 0xff);
+  };
+  for (int p = 0; p < net.nprocs(); ++p) {
+    const Location& loc = net.procs[p].locations[l[p]];
+    if (!loc.invariant.empty()) { enc((std::uint32_t)p); enc((std::uint32_t)l[p]); }
+    if (loc.urgent || loc.committed) enc(0x80000000u | (std::uint32_t)p);
+  }
+  if (!net.active_mask.empty()) {
+    std::uint64_t a = 0;
+    for (int p = 0; p < net.nprocs(); ++p) a |= net.active_mask[p][l[p]];
+    enc((std::uint32_t)(a & 0xffffffffu)); enc((std::uint32_t)(a >> 32));
+  } else if (!net.active.empty()) {
+    for (int c = 1; c <= net.nclocks; ++c) {
+      bool live = false;
+      for (int p = 0; p < net.nprocs() && !live; ++p) if (net.active[p][l[p]][c]) live = true;
+      if (live) enc((std::uint32_t)c);
+    }
+  }
+  auto it = sm.lsig.find(sm.lk);
+  if (it != sm.lsig.end()) return it->second;
+  const std::uint32_t id = (std::uint32_t)sm.lsig.size();
+  sm.lsig.emplace(sm.lk, id);
+  return id;
+}
+
+// Evaluate the sliding window; called once per lookup. Returns whether the memo is live.
+inline bool memo_tick(SuccMemo& sm) {
+  if (!sm.on) {
+    if (++sm.skipped >= sm.backoff) { sm.on = true; sm.skipped = 0; sm.winLookups = sm.winHits = 0; }
+    return sm.on;
+  }
+  if (sm.winLookups >= sm.window) {
+    if (double(sm.winHits) / double(sm.winLookups) < SuccMemo::kMinHit) {
+      sm.on = false; ++sm.disables;
+      sm.backoff = sm.backoff < SuccMemo::kMaxBackoff ? sm.backoff * 2 : SuccMemo::kMaxBackoff;
+      sm.window = 512;
+      if (sm.backoff >= SuccMemo::kMaxBackoff) {
+        std::unordered_map<MemoKey, Dbm, MemoKeyHash>().swap(sm.m);   // confident: release
+      }
+    } else {
+      sm.backoff = 512;
+      if (sm.window < SuccMemo::kWindowMax) sm.window *= 2;
+    }
+    sm.winLookups = sm.winHits = 0;
+  }
+  return sm.on;
+}
+
 // identical to successors_net above, but instead of building a fresh SymState
 // (two pooled loc/int vectors + a DBM) per successor and push_back-ing it -- ~3
 // allocations for every one of tens of millions of successors, all discarded by
@@ -403,8 +518,11 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
 // are slated for removal.)
 std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szone,
                            const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
-                           const std::vector<char>& qmask, int emode, std::vector<SymState>& out) {
+                           const std::vector<char>& qmask, int emode, std::vector<SymState>& out,
+                           int szidx) {
   thread_local std::vector<Constraint> inv;
+  SuccMemo& sm = tls_succ_memo();
+  const bool memo = memo_enabled() && szidx >= 0;
   std::size_t on = 0;
   auto slot = [&]() -> SymState& { if (on == out.size()) out.emplace_back(); return out[on]; };
   bool src_committed, src_urgent;
@@ -418,14 +536,44 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
       if (e.sync_chan >= 0) continue;
       if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints.data(), s.ints.size())) continue;
       SymState& ns = slot();
-      ns.zone = szone;                                    // into reused capacity
-      if (!apply_all(ns.zone, e.clock_guard)) continue;
-      for (int r : e.clock_resets) ns.zone.reset(r);
+      // The DISCRETE half first, so the memo can be consulted before any DBM work. This is a
+      // pure reordering: every `continue` below is a discrete decision that does not read the
+      // zone, and on the miss path the zone pipeline runs exactly as before.
       ns.locs.assign(s.locs.begin(), s.locs.end());
       ns.locs[p] = e.tgt;
       ns.ints.assign(s.ints.begin(), s.ints.end());
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
       if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
+      if (memo && memo_tick(sm)) {
+        const MemoKey mk{szidx, (std::uint32_t)((p << 16) | ei), memo_locsig(net, ns.locs, sm)};
+        ++sm.lookups; ++sm.winLookups;
+        auto mit = sm.m.find(mk);
+        if (mit != sm.m.end()) {
+          ++sm.hits; ++sm.winHits;
+          if (mit->second.empty()) continue;             // memoised: this transition dies
+          ns.zone = mit->second;
+          ++on;
+          continue;
+        }
+        // MISS: run the pipeline, then record. `memo_pend` marks that we owe an insert.
+        ns.zone = szone;
+        if (!apply_all(ns.zone, e.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
+        for (int r : e.clock_resets) ns.zone.reset(r);
+        all_invariants(net, ns.locs, inv);
+        if (!apply_all(ns.zone, inv)) { sm.m.emplace(mk, Dbm()); continue; }
+        { bool nc2, nu2; frozen_flags(net, ns.locs, &nc2, &nu2);
+          if (!nc2 && !nu2) { ns.zone.delay(); apply_all(ns.zone, inv); } }
+        reset_inactive(net, ns.locs, ns.zone, qmask);
+        if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
+        else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+        sm.m.emplace(mk, ns.zone);                       // records empty zones too
+        if (ns.zone.empty()) continue;
+        ++on;
+        continue;
+      }
+      ns.zone = szone;                                    // into reused capacity
+      if (!apply_all(ns.zone, e.clock_guard)) continue;
+      for (int r : e.clock_resets) ns.zone.reset(r);
       all_invariants(net, ns.locs, inv);
       if (!apply_all(ns.zone, inv)) continue;
       bool nc, nu;
@@ -455,11 +603,9 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
           if (src_committed && !(i_comm || net.procs[j].locations[s.locs[j]].committed)) continue;
           if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints.data(), s.ints.size())) continue;
           SymState& ns = slot();
-          ns.zone = szone;
-          if (!apply_all(ns.zone, se.clock_guard)) continue;
-          if (!apply_all(ns.zone, re.clock_guard)) continue;
-          for (int r : se.clock_resets) ns.zone.reset(r);
-          for (int r : re.clock_resets) ns.zone.reset(r);
+          // Discrete half first, so the memo can be consulted before any DBM work. Channel
+          // models (viking, phil) take almost ALL their transitions through this path, so
+          // memoising only the local-edge site above leaves them untouched.
           ns.locs.assign(s.locs.begin(), s.locs.end());
           ns.locs[i] = se.tgt;
           ns.locs[j] = re.tgt;
@@ -467,6 +613,38 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
           for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
           if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) || !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
+          if (memo && memo_tick(sm)) {
+            const std::uint32_t tsig =
+                (std::uint32_t)(((i * 1000003 + ei) * 31u) ^ (std::uint32_t)(j * 1000003 + ej));
+            const MemoKey mk{szidx, tsig, memo_locsig(net, ns.locs, sm)};
+            ++sm.lookups; ++sm.winLookups;
+            auto mit = sm.m.find(mk);
+            if (mit != sm.m.end()) {
+              ++sm.hits; ++sm.winHits;
+              if (mit->second.empty()) continue;
+              ns.zone = mit->second; ++on; continue;
+            }
+            ns.zone = szone;
+            if (!apply_all(ns.zone, se.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
+            if (!apply_all(ns.zone, re.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
+            for (int r : se.clock_resets) ns.zone.reset(r);
+            for (int r : re.clock_resets) ns.zone.reset(r);
+            all_invariants(net, ns.locs, inv);
+            if (!apply_all(ns.zone, inv)) { sm.m.emplace(mk, Dbm()); continue; }
+            { bool nc2, nu2; frozen_flags(net, ns.locs, &nc2, &nu2);
+              if (!nc2 && !nu2) { ns.zone.delay(); apply_all(ns.zone, inv); } }
+            reset_inactive(net, ns.locs, ns.zone, qmask);
+            if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
+            else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+            sm.m.emplace(mk, ns.zone);
+            if (ns.zone.empty()) continue;
+            ++on; continue;
+          }
+          ns.zone = szone;
+          if (!apply_all(ns.zone, se.clock_guard)) continue;
+          if (!apply_all(ns.zone, re.clock_guard)) continue;
+          for (int r : se.clock_resets) ns.zone.reset(r);
+          for (int r : re.clock_resets) ns.zone.reset(r);
           all_invariants(net, ns.locs, inv);
           if (!apply_all(ns.zone, inv)) continue;
           bool nc, nu;
@@ -1256,7 +1434,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             for (int p = 0; p < np; ++p) cur.locs[p] = fl[static_cast<std::size_t>(i) * np + p];
             for (int v = 0; v < ni; ++v) cur.ints[v] = fi[static_cast<std::size_t>(i) * niw + v];
             zi.load(fz[static_cast<std::size_t>(i)], pz.data().data());   // frontier holds arena indices
-            const std::size_t n = gen_succ_reuse(net, cur, pz, L, U, qmask, emode, buf);
+            const std::size_t n = gen_succ_reuse(net, cur, pz, L, U, qmask, emode, buf,
+                                                 fz[static_cast<std::size_t>(i)]);
             for (std::size_t k = 0; k < n; ++k) {
               const SymState& ns = buf[k];
               if (!spilled && mi == me) {                       // claim the next block
@@ -1884,7 +2063,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             }
           // buf is NOT cleared: gen_succ_reuse rebuilds slots in place and returns
           // the count, so the loc/int/zone storage is reused across frontier states.
-          const std::size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second), L, U, qmask, emode, buf);
+          const std::size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second), L, U, qmask, emode,
+                                                buf, frontier[i].second);
           for (std::size_t sk = 0; sk < ns; ++sk) {
             SymState& s = buf[sk];
             ++gen;
@@ -1996,7 +2176,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         cur.ints.resize(ni_);
         for (auto& fr : frontier) {
           decode_key(fr.first, cur.locs.data(), cur.ints.data());
-          const std::size_t ns = gen_succ_reuse(net, cur, zi.get(fr.second), L, U, qmask, emode, buf);
+          const std::size_t ns = gen_succ_reuse(net, cur, zi.get(fr.second), L, U, qmask, emode, buf, fr.second);
           for (std::size_t sk = 0; sk < ns; ++sk) {
             SymState& s = buf[sk];
             ++tls_gen[0];
@@ -2259,6 +2439,17 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           for (raw_t r : d) { h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(r)); h *= 1099511628211ULL; }
           distinct.insert(h);
         });
+      if (memo_enabled()) {
+        long mh = 0, ml = 0, md = 0; std::size_t me = 0;
+        for (int t = 0; t < nthreads; ++t) { (void)t; }
+        // Each worker owns its own memo; sum what this thread can see plus the published totals.
+        SuccMemo& sm0 = tls_succ_memo();
+        mh += sm0.hits; ml += sm0.lookups; md += sm0.disables; me += sm0.m.size();
+        { std::lock_guard<std::mutex> lk(memo_stats_mtx());
+          for (const auto& kv : memo_stats()) { mh += kv.hits; ml += kv.lookups; md += kv.disables; me += kv.entries; } }
+        std::fprintf(stderr, "[memo] lookups=%ld hits=%ld hit-rate=%.1f%% entries=%zu disables=%ld\n",
+                     ml, mh, ml ? 100.0 * double(mh) / double(ml) : 0.0, me, md);
+      }
       std::fprintf(stderr, "[stats] discrete-states=%zu stored-zones=%zu distinct-zones=%zu generated=%zu (shared-passed, %zu stripes)\n",
                    disc, zones, distinct.size(), stats ? stats->generated : 0, NB);
       std::size_t packedB = 0, mapB = 0, cacheB = 0;
