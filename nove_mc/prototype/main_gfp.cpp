@@ -26,6 +26,7 @@ bool leads_to_gfp(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
 void retire_causality(const Network& net);
 void defer_probe(const Network& net, int D);
 void gen_profile(const Network& net);
+void memo_search(const Network& net, bool use_memo);
 }
 namespace ptctlmc {
 }  // namespace ptctlmc
@@ -62,6 +63,14 @@ int main(int argc, char** argv) {
   if (std::string(argv[2]) == "--retire-causality") { retire_causality(net); return 0; }
   if (std::string(argv[2]) == "--defer") { defer_probe(net, std::atoi(argv[3])); return 0; }
   if (std::string(argv[2]) == "--genprofile") { gen_profile(net); return 0; }
+  if (std::string(argv[2]) == "--memo") {
+    // 0 = baseline only, 1 = memo only (separate processes so peak RSS is attributable),
+    // anything else = both in one process (peak RSS then meaningless).
+    const std::string which = argc > 3 ? argv[3] : "2";
+    if (which == "0") { memo_search(net, false); return 0; }
+    if (which == "1") { memo_search(net, true);  return 0; }
+    memo_search(net, false); memo_search(net, true); return 0;
+  }
 
   // E[] phi  (exists an infinite run all of whose states satisfy phi) is EXACTLY the greatest
   // fixpoint this algorithm already computes: take q = !phi, so the !q-restricted region is phi

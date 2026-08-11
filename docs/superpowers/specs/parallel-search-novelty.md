@@ -790,6 +790,56 @@ models with few distinct zones, e.g. viking; neutral elsewhere"). What is not ex
 
 ---
 
+## 4nonies. Transition memoisation: BUILT and MEASURED (time and memory)
+
+Implemented in the prototype (`--memo 0|1`). The forward search is split into a **discrete half**
+(enumerate transitions: integer guards, sync shape, target locations) and a **zone half** (the DBM
+pipeline). The memo elides the zone half.
+
+**Key design — this is where it lives or dies.** The key must capture everything `Post` reads and
+nothing more, and must be O(1):
+
+`(source zone id, transition CONTENT signature, target location SIGNATURE)`
+
+- Keying on the target's **discrete id** instead of its signature gives **0 hits on every family** —
+  measured. `Post` reads the target locations only through its combined invariant, its
+  urgent/committed flags, and its active-clock mask; many location vectors share one such
+  signature, and that sharing is the whole effect.
+- Keying the transition by **(proc, edge index)** instead of by guard/reset **content** loses ~2×,
+  because symmetric processes' edges are interchangeable: viking10 gives 293× by identity and
+  **561×** by content.
+
+### Result — `stored` is bit-identical to the baseline on every family (pure memoisation)
+
+| model | hit rate | Posts base → memo | reduction | wall base → memo | speed | peak RSS base → memo |
+|---|---|---|---|---|---|---|
+| viking12 | 100.0 % | 688 128 → **222**    | **3100×** | 751 → 650 ms | 1.16× | 246 → 278 MB (+13 %) |
+| viking10 |  99.8 % | 122 880 → **219**    | **561×**  | 140 → 96 ms  | 1.46× | — |
+| phil12   |  99.0 % | 8 596 512 → **83 017** | **103×** | 19 628 → 10 144 ms | **1.93×** | 1311 → 1454 MB (+11 %) |
+| phil10   |  98.4 % | 603 880 → 9 761      | 61.9×     | 902 → 532 ms | 1.70× | — |
+| arbiter10 |  0.0 % | 38 400 → 38 400      | 1.00×     | 43 → 60 ms   | **0.73× (slower)** | 7.4 → 17.0 MB (**+130 %**) |
+| fischer7 |   3.9 % | 42 609 → 40 944      | 1.04×     | 16 → 31 ms   | **0.53× (slower)** | 6.8 → 18.8 MB (**+176 %**) |
+
+### Reading it honestly
+
+1. **A 103× cut in Post gives only 1.93× wall-clock.** Amdahl: `Post` is roughly half of phil12's
+   runtime. The rest is transition enumeration, aLU subsumption tests and passed-set hashing. So
+   the ceiling for this technique alone is ~2×, not 100×, and further gains have to come from the
+   *other* half.
+2. **Where reuse is absent the memo is a straight loss** — 1.4–1.9× slower and 2.3–2.8× more
+   memory, for nothing. It must be adaptive: sample the hit rate over the first few thousand
+   expansions and drop the tables if it is below ~20 %.
+3. **Memory is +11–13 % where it pays**, and the dominant term is not the memo (3.8 MB on phil12)
+   but the per-location-vector signature cache (**66.9 MB**). That is a prototype artefact: the
+   engine already computes `disc_key` per state for the passed set, so the signature id belongs
+   *in the bucket*, which makes that term free. Zone interning (18 MB) is also already paid by the
+   existing `--gpu-intern`.
+
+So the realistic engine-side figure is ~2× wall-clock on the zone-degenerate families at
+near-zero extra memory, and nothing (turned off) elsewhere.
+
+---
+
 ## 5. Final position
 
 | | C1 (liveness) | C2 (reachability `explored`) |

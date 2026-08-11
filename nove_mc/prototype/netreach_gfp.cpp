@@ -1,6 +1,7 @@
 #include "ptctlmc/netreach.hpp"
 #include "ptctlmc/symmetry.hpp"
 #include <cstdio>
+#include <sys/resource.h>
 #include <array>
 #include <chrono>
 #ifdef __APPLE__
@@ -4352,8 +4353,51 @@ void gen_profile(const Network& net) {
 
   long generated = 0, discarded = 0;
   std::unordered_set<std::string> pairA;   // (target node, edge label)
-  std::unordered_set<std::string> pairB;   // (source zone value, edge label)
+  std::unordered_set<std::string> pairB;   // (source zone value, edge label)  -- OPTIMISTIC
+  std::unordered_set<std::string> pairC;   // full SEMANTIC key                -- HONEST
   std::unordered_set<std::string> zvals;   // distinct source zone values
+
+  // The honest memo key. Post depends on strictly more than (source zone, edge): it also reads
+  // the TARGET location vector, through (i) the combined invariant, (ii) the urgent/committed
+  // flags that decide whether time may pass, and (iii) the active-clock mask that reset_inactive
+  // consumes. A memo keyed on less than this is unsound. Constraints are sorted so that two
+  // location vectors with the same invariant SET hash together regardless of enumeration order.
+  auto enc = [](std::string& k, long v) { for (int b = 0; b < 8; ++b) k += char((v >> (8 * b)) & 0xff); };
+  std::vector<Constraint> kinv;
+  auto semkey = [&](const std::string& zv, const GfpTag& t, const LocVec& tl) {
+    std::string k = zv; k += '|';
+    for (const auto& pe : t.parts) {
+      const NEdge& e = net.procs[pe.first].edges[pe.second];
+      std::vector<Constraint> g = e.clock_guard;
+      std::sort(g.begin(), g.end(), [](const Constraint& a, const Constraint& b) {
+        return a.i != b.i ? a.i < b.i : (a.j != b.j ? a.j < b.j : a.bound < b.bound); });
+      for (const auto& c : g) { enc(k, c.i); enc(k, c.j); enc(k, c.bound); }
+      k += ';';
+      std::vector<int> r = e.clock_resets; std::sort(r.begin(), r.end());
+      for (int x : r) enc(k, x);
+      k += '/';
+    }
+    k += '|';
+    all_invariants(net, tl, kinv);
+    std::sort(kinv.begin(), kinv.end(), [](const Constraint& a, const Constraint& b) {
+      return a.i != b.i ? a.i < b.i : (a.j != b.j ? a.j < b.j : a.bound < b.bound); });
+    for (const auto& c : kinv) { enc(k, c.i); enc(k, c.j); enc(k, c.bound); }
+    k += '|';
+    bool nc, nu; frozen_flags(net, tl, &nc, &nu);
+    k += char('0' + (int)nc); k += char('0' + (int)nu); k += '|';
+    if (!net.active_mask.empty()) {
+      std::uint64_t a = 0;
+      for (int pr = 0; pr < net.nprocs(); ++pr) a |= net.active_mask[pr][tl[pr]];
+      enc(k, (long)a);
+    } else if (!net.active.empty()) {
+      for (int c = 1; c <= net.nclocks; ++c) {
+        bool live = false;
+        for (int pr = 0; pr < net.nprocs() && !live; ++pr) if (net.active[pr][tl[pr]][c]) live = true;
+        k += char('0' + (int)live);
+      }
+    }
+    return k;
+  };
 
   auto intern = [&](SymState&& s, bool* covered) -> int {
     auto& b = bucket[disc_key(s.locs, s.ints)];
@@ -4407,6 +4451,7 @@ void gen_profile(const Network& net) {
         ++generated;
         const std::string tk = tagkey(tags[k]);
         pairB.insert(szv + "|" + tk);
+        pairC.insert(semkey(szv, tags[k], succ[k].locs));
         bool cov = false;
         const int v = intern(std::move(succ[k]), &cov);
         pairA.insert(std::to_string(v) + "|" + tk);
@@ -4423,8 +4468,396 @@ void gen_profile(const Network& net) {
   std::printf("  distinct source zone VALUES               = %zu\n", zvals.size());
   std::printf("  (A) distinct (target node, edge label)    = %zu   -> reuse R_A = %.2f\n",
               pairA.size(), double(generated) / double(pairA.size()));
-  std::printf("  (B) distinct (source zone value, label)   = %zu   -> reuse R_B = %.2f\n",
+  std::printf("  (B) distinct (source zone value, label)   = %zu   -> reuse R_B = %.2f  [OPTIMISTIC]\n",
               pairB.size(), double(generated) / double(pairB.size()));
+  std::printf("  (C) distinct FULL SEMANTIC memo key        = %zu   -> reuse R_C = %.2f  [HONEST]\n",
+              pairC.size(), double(generated) / double(pairC.size()));
+}
+
+
+// ============================================================================
+// TRANSITION MEMOISATION for the forward search.
+//
+// `generated/stored` is 2.85-10.60 on every family and 59-84% of every Post is thrown away.
+// On the zone-degenerate families the SAME Post is recomputed enormous numbers of times:
+// viking10 computes 122880 Posts that take only 219 distinct (semantic) values.
+//
+// The memo key must capture everything Post reads, which is strictly more than
+// (source zone, edge): also the TARGET location vector, via its combined invariant, its
+// urgent/committed flags, and its active-clock mask. To keep the lookup O(1) the key is
+// three INTERNED IDS, never raw bytes:
+//
+//     (source zone id, transition id, target discrete id)
+//
+// The source zone id is free (the passed set interns zones anyway) and the target discrete id
+// is free (it is the passed-set bucket key, already computed). So a hit costs one hash of 12
+// bytes instead of an O(n^3) closure.
+//
+// Structure: transition enumeration is split from zone application, so the discrete half runs
+// once and the DBM half is what the memo elides.
+// ============================================================================
+
+struct MemoKey {
+  int z, t, l;
+  bool operator==(const MemoKey& o) const { return z == o.z && t == o.t && l == o.l; }
+};
+struct MemoKeyHash {
+  std::size_t operator()(const MemoKey& k) const {
+    std::size_t h = std::size_t(k.z) * 0x9E3779B97F4A7C15ull;
+    h ^= std::size_t(k.t) + 0x9E3779B9 + (h << 6) + (h >> 2);
+    h ^= std::size_t(k.l) + 0x9E3779B9 + (h << 6) + (h >> 2);
+    return h;
+  }
+};
+
+// One candidate transition, discrete part only. No zone has been touched yet.
+struct Cand { GfpTag tag; LocVec locs; IntVec ints; };
+
+// Enumerate every transition enabled DISCRETELY (integer guards, committed/urgent rules,
+// synchronisation shape). Zone feasibility is decided later, by the zone half.
+static void memo_enumerate(const Network& net, const SymState& s, std::vector<Cand>& out) {
+  bool src_committed, src_urgent;
+  frozen_flags(net, s.locs, &src_committed, &src_urgent);
+  for (int p = 0; p < net.nprocs(); ++p) {
+    if (src_committed && !net.procs[p].locations[s.locs[p]].committed) continue;
+    for (int ei : net.procs[p].edges_of(s.locs[p])) {
+      const NEdge& e = net.procs[p].edges[ei];
+      if (e.sync_chan >= 0) continue;
+      if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints.data(), s.ints.size())) continue;
+      Cand c; c.locs = s.locs; c.locs[p] = e.tgt; c.ints = s.ints;
+      for (const auto& a : e.int_updates) c.ints[a.var] = a.val;
+      if (!gen_apply(net, e, c.ints.data(), c.ints.size())) continue;
+      c.tag.parts.push_back({p, ei});
+      out.push_back(std::move(c));
+    }
+  }
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1) continue;
+      if (net.chan_broadcast[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      const bool i_comm = net.procs[i].locations[s.locs[i]].committed;
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan != se.sync_chan || re.sync_dir != -1) continue;
+          if (src_committed && !(i_comm || net.procs[j].locations[s.locs[j]].committed)) continue;
+          if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints.data(), s.ints.size())) continue;
+          Cand c; c.locs = s.locs; c.locs[i] = se.tgt; c.locs[j] = re.tgt; c.ints = s.ints;
+          for (const auto& a : se.int_updates) c.ints[a.var] = a.val;
+          for (const auto& a : re.int_updates) c.ints[a.var] = a.val;
+          if (!gen_apply(net, se, c.ints.data(), c.ints.size()) ||
+              !gen_apply(net, re, c.ints.data(), c.ints.size())) continue;
+          c.tag.parts.push_back({i, ei}); c.tag.parts.push_back({j, ej});
+          out.push_back(std::move(c));
+        }
+      }
+    }
+  }
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      std::vector<std::pair<int, std::vector<int>>> parts;
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        std::vector<int> es;
+        for (int ej : net.procs[j].edges_of(s.locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 &&
+              int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
+            es.push_back(ej);
+        }
+        if (!es.empty()) parts.push_back({j, std::move(es)});
+      }
+      std::vector<std::size_t> pick(parts.size(), 0);
+      for (;;) {
+        bool part_committed = net.procs[i].locations[s.locs[i]].committed;
+        for (const auto& pr : parts)
+          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        if (!src_committed || part_committed) {
+          Cand c; c.locs = s.locs; c.ints = s.ints; c.locs[i] = se.tgt;
+          for (const auto& a : se.int_updates) c.ints[a.var] = a.val;
+          c.tag.parts.push_back({i, ei});
+          bool ok = true;
+          for (std::size_t t2 = 0; t2 < parts.size(); ++t2) {
+            const int pj = parts[t2].first, ej = parts[t2].second[pick[t2]];
+            const NEdge& re = net.procs[pj].edges[ej];
+            c.locs[pj] = re.tgt;
+            for (const auto& a : re.int_updates) c.ints[a.var] = a.val;
+            c.tag.parts.push_back({pj, ej});
+          }
+          if (ok && gen_apply(net, se, c.ints.data(), c.ints.size())) {
+            for (std::size_t t2 = 0; t2 < parts.size() && ok; ++t2)
+              ok = gen_apply(net, net.procs[parts[t2].first].edges[parts[t2].second[pick[t2]]],
+                             c.ints.data(), c.ints.size());
+            if (ok) out.push_back(std::move(c));
+          }
+        }
+        if (parts.empty()) break;
+        std::size_t k = 0;
+        for (; k < parts.size(); ++k) { if (++pick[k] < parts[k].second.size()) break; pick[k] = 0; }
+        if (k == parts.size()) break;
+      }
+    }
+  }
+}
+
+// The zone half: everything Post does. This is what the memo elides on a hit.
+static bool memo_apply_zone(const Network& net, const Cand& c, const Dbm& src,
+                            const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
+                            const std::vector<char>& qmask, int emode, Dbm& out) {
+  static thread_local std::vector<Constraint> inv;
+  Dbm z1 = src;
+  for (const auto& pe : c.tag.parts)
+    if (!apply_all(z1, net.procs[pe.first].edges[pe.second].clock_guard)) return false;
+  for (const auto& pe : c.tag.parts)
+    for (int r : net.procs[pe.first].edges[pe.second].clock_resets) z1.reset(r);
+  all_invariants(net, c.locs, inv);
+  if (!apply_all(z1, inv)) return false;
+  bool nc, nu; frozen_flags(net, c.locs, &nc, &nu);
+  if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
+  reset_inactive(net, c.locs, z1, qmask);
+  if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
+  else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
+  if (z1.empty()) return false;
+  out = std::move(z1);
+  return true;
+}
+
+void memo_search(const Network& net, bool use_memo) {
+  const auto t_start = std::chrono::steady_clock::now();
+  std::vector<std::int32_t> L = net.lbound, U = net.ubound;
+  const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;
+  const std::vector<char> qmask(net.nclocks + 1, 0);
+  std::vector<std::int32_t> aL = net.lbound, aU = net.ubound; aL[0] = aU[0] = 0;
+  auto state_bounds = [&](const int* lv, std::vector<std::int32_t>& L2, std::vector<std::int32_t>& U2) {
+    if (net.lbound_loc.empty()) { L2 = aL; U2 = aU; return; }
+    L2.assign(net.nclocks + 1, kAluNegInf); U2.assign(net.nclocks + 1, kAluNegInf);
+    for (int pr = 0; pr < net.nprocs(); ++pr)
+      for (int c = 1; c <= net.nclocks; ++c) {
+        L2[c] = std::max(L2[c], net.lbound_loc[pr][lv[pr]][c]);
+        U2[c] = std::max(U2[c], net.ubound_loc[pr][lv[pr]][c]);
+      }
+    L2[0] = U2[0] = 0;
+  };
+  const bool use_alu = !network_has_diagonal(net);
+
+  std::unordered_map<std::string, int> zid;  std::vector<Dbm> zval;
+  auto intern_zone = [&](const Dbm& z) -> int {
+    const auto& d = z.data();
+    std::string k(reinterpret_cast<const char*>(d.data()), d.size() * sizeof(raw_t));
+    auto it = zid.find(k);
+    if (it != zid.end()) return it->second;
+    const int id = static_cast<int>(zval.size());
+    zval.push_back(z); zid.emplace(std::move(k), id);
+    return id;
+  };
+  // TRANSITION SIGNATURE BY CONTENT, not by edge identity. Post reads a participating edge only
+  // through its clock guard and its reset set, so two edges of two SYMMETRIC processes with the
+  // same guard/resets are interchangeable and must share a memo entry. Keying on (proc, edge index)
+  // instead leaves a factor on the table -- measured 293x rather than the 561x the content key
+  // achieves on viking10. Signatures are cached per (proc, edge) so the cost is one small hash.
+  std::unordered_map<std::string, int> tsig;                 // content signature -> id
+  std::unordered_map<long long, int> edgesig;                // (proc,edge) -> content sig id
+  auto intern_tag = [&](const GfpTag& t) -> int {
+    std::string k;
+    auto enc = [&k](long v) { for (int b = 0; b < 8; ++b) k += char((v >> (8 * b)) & 0xff); };
+    std::vector<int> partsigs;
+    for (const auto& pe : t.parts) {
+      const long long ek = (long long)pe.first * 1000003 + pe.second;
+      auto eit = edgesig.find(ek);
+      int esid;
+      if (eit != edgesig.end()) esid = eit->second;
+      else {
+        const NEdge& e = net.procs[pe.first].edges[pe.second];
+        std::string ek2;
+        auto enc2 = [&ek2](long v) { for (int b = 0; b < 8; ++b) ek2 += char((v >> (8 * b)) & 0xff); };
+        std::vector<Constraint> g = e.clock_guard;
+        std::sort(g.begin(), g.end(), [](const Constraint& a, const Constraint& b) {
+          return a.i != b.i ? a.i < b.i : (a.j != b.j ? a.j < b.j : a.bound < b.bound); });
+        for (const auto& c : g) { enc2(c.i); enc2(c.j); enc2(c.bound); }
+        ek2 += ';';
+        std::vector<int> r = e.clock_resets; std::sort(r.begin(), r.end());
+        for (int x : r) enc2(x);
+        auto sit = tsig.find(ek2);
+        if (sit != tsig.end()) esid = sit->second;
+        else { esid = static_cast<int>(tsig.size()); tsig.emplace(std::move(ek2), esid); }
+        edgesig.emplace(ek, esid);
+      }
+      partsigs.push_back(esid);
+    }
+    std::sort(partsigs.begin(), partsigs.end());   // participants are unordered
+    for (int x : partsigs) enc(x);
+    static std::unordered_map<std::string, int> combo;
+    auto cit = combo.find(k);
+    if (cit != combo.end()) return cit->second;
+    const int id = static_cast<int>(combo.size());
+    combo.emplace(std::move(k), id);
+    return id;
+  };
+  // TARGET SIGNATURE, not target identity. Post reads the target location vector only through
+  // (i) its combined invariant, (ii) its urgent/committed flags, (iii) its active-clock mask.
+  // Keying on the target's discrete ID instead makes every key unique and destroys all reuse --
+  // measured: 0 hits on every family. Many location vectors share one signature, which is exactly
+  // why the reuse factor is 561x on viking. Signatures are cached per location vector, so the
+  // per-successor cost is a hash of nprocs ints, not an invariant walk.
+  std::unordered_map<std::string, int> sigid;      // signature string -> id
+  std::unordered_map<std::string, int> locsig;     // location vector  -> signature id
+  std::vector<Constraint> sinv;
+  auto intern_sig = [&](const LocVec& l) -> int {
+    std::string lk(reinterpret_cast<const char*>(l.data()), l.size() * sizeof(int));
+    auto lit = locsig.find(lk);
+    if (lit != locsig.end()) return lit->second;
+    std::string k;
+    auto enc = [&k](long v) { for (int b = 0; b < 8; ++b) k += char((v >> (8 * b)) & 0xff); };
+    all_invariants(net, l, sinv);
+    std::sort(sinv.begin(), sinv.end(), [](const Constraint& a, const Constraint& b) {
+      return a.i != b.i ? a.i < b.i : (a.j != b.j ? a.j < b.j : a.bound < b.bound); });
+    for (const auto& c : sinv) { enc(c.i); enc(c.j); enc(c.bound); }
+    k += '|';
+    bool nc, nu; frozen_flags(net, l, &nc, &nu);
+    k += char('0' + (int)nc); k += char('0' + (int)nu); k += '|';
+    if (!net.active_mask.empty()) {
+      std::uint64_t a = 0;
+      for (int pr = 0; pr < net.nprocs(); ++pr) a |= net.active_mask[pr][l[pr]];
+      enc((long)a);
+    } else if (!net.active.empty()) {
+      for (int c = 1; c <= net.nclocks; ++c) {
+        bool live = false;
+        for (int pr = 0; pr < net.nprocs() && !live; ++pr) if (net.active[pr][l[pr]][c]) live = true;
+        k += char('0' + (int)live);
+      }
+    }
+    auto sit = sigid.find(k);
+    int id;
+    if (sit != sigid.end()) id = sit->second;
+    else { id = static_cast<int>(sigid.size()); sigid.emplace(std::move(k), id); }
+    locsig.emplace(std::move(lk), id);
+    return id;
+  };
+
+  std::unordered_map<MemoKey, int, MemoKeyHash> memo;   // -> zone id, or -1 for "empty"
+  long generated = 0, posts = 0, hits = 0;
+
+  std::vector<SymState> node;
+  std::unordered_map<std::string, std::vector<int>> bucket;
+  std::vector<std::int32_t> bL, bU;
+  auto intern_state = [&](SymState&& s) -> int {
+    auto& b = bucket[disc_key(s.locs, s.ints)];
+    if (use_alu) state_bounds(s.locs.data(), bL, bU);
+    for (int j : b) {
+      const bool cov = use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU)
+                               : node[j].zone.includes(s.zone);
+      if (cov) return -1;
+    }
+    for (std::size_t k = 0; k < b.size(); ++k) {
+      const int j = b[k];
+      const bool covers = use_alu ? node[j].zone.alu_subsumed_by(s.zone, bL, bU)
+                                  : s.zone.includes(node[j].zone);
+      if (covers) { node[j].zone = s.zone; return j; }
+    }
+    const int id = static_cast<int>(node.size());
+    node.push_back(std::move(s)); b.push_back(id);
+    return id;
+  };
+
+  SymState s0;
+  s0.locs.resize(net.nprocs());
+  for (int pr = 0; pr < net.nprocs(); ++pr) s0.locs[pr] = net.procs[pr].initial;
+  s0.ints.resize(net.intvars.size());
+  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
+  s0.zone = Dbm(net.nclocks);
+  { std::vector<Constraint> inv; all_invariants(net, s0.locs, inv);
+    if (!apply_all(s0.zone, inv)) return;
+    bool c, u; frozen_flags(net, s0.locs, &c, &u);
+    if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
+    reset_inactive(net, s0.locs, s0.zone, qmask);
+    if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
+    else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U); }
+  const int root = intern_state(std::move(s0));
+
+  std::vector<char> expanded;
+  std::vector<int> frontier{root};
+  std::vector<Cand> cands;
+  std::size_t max_level = 1, level_no = 0, peak_level_no = 0;
+  while (!frontier.empty()) {
+    if (frontier.size() > max_level) { max_level = frontier.size(); peak_level_no = level_no; }
+    ++level_no;
+    std::vector<int> next;
+    for (int u : frontier) {
+      if (expanded.size() < node.size()) expanded.resize(node.size(), 0);
+      if (expanded[u]) continue;
+      expanded[u] = 1;
+      const int zsrc = use_memo ? intern_zone(node[u].zone) : -1;
+      cands.clear();
+      memo_enumerate(net, node[u], cands);
+      for (auto& c : cands) {
+        ++generated;
+        Dbm z;
+        bool ok;
+        if (use_memo) {
+          const MemoKey mk{zsrc, intern_tag(c.tag), intern_sig(c.locs)};
+          auto it = memo.find(mk);
+          if (it != memo.end()) {
+            ++hits;
+            if (it->second < 0) continue;              // memoised: empty, drop
+            z = zval[it->second]; ok = true;
+          } else {
+            ++posts;
+            ok = memo_apply_zone(net, c, node[u].zone, L, U, qmask, emode, z);
+            memo.emplace(mk, ok ? intern_zone(z) : -1);
+          }
+        } else {
+          ++posts;
+          ok = memo_apply_zone(net, c, node[u].zone, L, U, qmask, emode, z);
+        }
+        if (!ok) continue;
+        SymState ns; ns.locs = c.locs; ns.ints = c.ints; ns.zone = std::move(z);
+        const int v = intern_state(std::move(ns));
+        if (v < 0) continue;
+        if (expanded.size() < node.size()) expanded.resize(node.size(), 0);
+        if (!expanded[v]) next.push_back(v);
+      }
+    }
+    frontier.swap(next);
+  }
+
+  const double ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - t_start).count();
+  // Peak RSS for the whole process. Meaningful only when BASE and MEMO run in SEPARATE
+  // processes (ru_maxrss is a high-water mark and never falls), which is why --memo takes a
+  // 0/1 argument selecting exactly one of them.
+  struct rusage ru; getrusage(RUSAGE_SELF, &ru);
+#ifdef __APPLE__
+  const double rss_mb = double(ru.ru_maxrss) / (1024.0 * 1024.0);   // bytes on macOS
+#else
+  const double rss_mb = double(ru.ru_maxrss) / 1024.0;              // KiB on Linux
+#endif
+  std::size_t memo_bytes = memo.size() * (sizeof(MemoKey) + sizeof(int) + 32);
+  std::size_t locsig_bytes = 0;
+  for (const auto& kv : locsig) locsig_bytes += kv.first.size() + sizeof(int) + 32;
+  std::size_t zone_bytes = 0;
+  for (const auto& z : zval) zone_bytes += z.data().size() * sizeof(raw_t);
+  std::printf("%-5s stored=%-8zu gen=%-9ld POSTS=%-9ld hit=%5.1f%% red=%7.2fx wall=%8.1f ms | peakRSS=%7.1f MB  side-tables: memo=%.2f MB locsig=%.2f MB zones=%.2f MB (%zu distinct)\n",
+              use_memo ? "MEMO" : "BASE", node.size(), generated, posts,
+              100.0 * double(hits) / double(generated),
+              double(generated) / double(posts ? posts : 1), ms, rss_mb,
+              memo_bytes / 1048576.0, locsig_bytes / 1048576.0, zone_bytes / 1048576.0, zval.size());
+  {
+    const std::size_t dim = net.nclocks + 1;
+    const std::size_t zbytes = dim * dim * sizeof(raw_t);
+    const std::size_t per_state = zbytes + net.nprocs() * sizeof(int) +
+                                  net.intvars.size() * sizeof(long) + 3 * 24;
+    std::printf("      widest BFS level = %zu states @level %zu | SymState = %zu B (zone %zu B, dim %zu)"
+                " -> live frontier ~ %.1f MB   [16-bit zone entries would save ~%.1f MB]\n",
+                max_level, peak_level_no, per_state, zbytes, dim,
+                double(max_level) * double(per_state) / 1048576.0,
+                double(max_level) * double(zbytes / 2) / 1048576.0);
+  }
 }
 
 }  // namespace ptctlmc
