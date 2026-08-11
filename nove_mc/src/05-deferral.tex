@@ -1,0 +1,129 @@
+\section{The reachability side: a measured negative}
+\label{sec:deferral}
+
+This section reports a failure. It is kept in full because it closes an axis the project has spent
+effort on twice, and because the way it failed is more general than the theorem that predicted it.
+
+\subsection{The tax, and the obstacle}
+
+Prior work establishes that $\texttt{explored} - \texttt{stored}$ equals, to the state, the number
+of \textbf{cross-level retirements}: a zone stored at level $d$, expanded, then superseded at level
+$d+g$ by a more general zone for the same discrete state. The first expansion was wasted. That is
+$41.7\%$ of all expansions on \texttt{fischer10} and $40.8\%$ on \texttt{twolock10}, and exactly
+zero on \texttt{arbiter}, \texttt{viking} and \texttt{csma}. \measured{}
+
+It also establishes the obstacle. Under a level-synchronous schedule that inserts a depth-$d$ state
+at $T(d)$ and expands it at $T(d)+W$, we get $T(d) = d(W+1)$, so the retiring zone at depth $d+g$
+arrives at $T(d) + g(W+1)$ and is caught only if
+\begin{equation}
+  g(W+1) < W, \label{eq:nodelay}
+\end{equation}
+false for every $g \ge 1$, $W \ge 0$. \proved{} The prior study concluded that only an
+\emph{oracle} naming the doomed states could collect the tax, and left one question undecided as
+deciding the whole idea.
+
+\subsection{The undecided question, answered: causal independence holds}
+
+Is the retiring zone causally independent of the retired one? If the bigger zone at $q$ arrives
+along a path through $q$'s own expansion, parking $q$ parks its own retirer.
+
+We instrumented a BFS with $aLU$ subsumption so every node records its BFS parent and birth level,
+and on each retirement walked the parent chain of the state producing the enlarging successor.
+
+\begin{center}\small
+\begin{tabular}{lrrrrl}
+\toprule
+model & stored & expansions & cross-level retirements & \textbf{independent} & gap histogram \\
+\midrule
+fischer4 & 222    & 270    & 48    & \textbf{48 (100\,\%)}   & 0:12\ \ 4:48 \\
+fischer5 & 762    & 1\,012 & 250   & \textbf{250 (100\,\%)}  & 0:110\ \ 4:250 \\
+fischer6 & 2\,694 & 3\,774 & 1\,080& \textbf{1080 (100\,\%)} & 0:630\ \ 4:1080 \\
+fischer7 & 9\,798 & 14\,012& 4\,214& \textbf{4214 (100\,\%)} & 0:2912\ \ 4:4214 \\
+twolock5 & 922    & 1\,172 & 250   & \textbf{250 (100\,\%)}  & 0:110\ \ 6:250 \\
+twolock7 & 10\,694& 14\,908& 4\,214& \textbf{4214 (100\,\%)} & 0:2912\ \ 6:4214 \\
+phil6/8/10 & --- & --- & \textbf{0} & --- & 0 only \\
+arbiter5 & 112 & 112 & \textbf{0} & --- & no retirements at all \\
+\bottomrule
+\end{tabular}
+\end{center}
+\measured{}
+
+The answer is favourable: $100\%$ independent at every size, with the gap a model constant ($4$ on
+\texttt{fischer}, $6$ on \texttt{twolock}) exactly reproducing the prior study's signature. So the
+blocking objection --- ``parking a state stalls its own retirer'' --- is \textbf{false} on these
+families.
+
+\subsection{There is no cheap oracle}
+
+Per-\texttt{(process, location)} retirement rates on \texttt{fischer5}: \texttt{Pi.idle} $0.217$,
+\texttt{Pi.req} $0.394$, \texttt{Pi.wait} $0.380$, \texttt{Pi.cs} $0.000$, identical across all five
+symmetric processes. $32.8\%$ of stored nodes are retired and \textbf{no location-vector feature
+separates them}. \measured{} A predictor that had to inspect zones would cost what it saves.
+
+\subsection{The reformulation, and why it fails}
+
+Since prediction is unavailable, the natural move is to \emph{observe} instead: park a popped node,
+let other branches run, and if its zone grows while parked, drop the parked entry --- the wasted
+expansion is never performed. Inequality~(\ref{eq:nodelay}) rules this out under a level-synchronous
+schedule, but it appears not to rule it out on a \emph{barrier-free} frontier, and the independence
+result above appears to license exactly that.
+
+We implemented it. The frontier is a single global FIFO with no level barrier --- an asynchronous
+frontier observed in one interleaving. Queue entries are (node, version-at-push, park-count); a pop
+whose recorded version is stale is dropped (the saving), a pop with park-count $< D$ is re-queued
+with the count incremented (the parking), otherwise the node is expanded.
+
+\begin{center}\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+model & level-sync & $D{=}0$ & $D{=}1$ & $D{=}2$ & $D{=}4$ & $D{=}8$ & $D{=}16$ \\
+\midrule
+fischer5 & 1\,012 & 990    & 990    & 990    & 990    & 990    & 990 \\
+fischer6 & 3\,774 & 3\,514 & 3\,514 & 3\,514 & 3\,514 & 3\,514 & 3\,514 \\
+twolock5 & 1\,172 & 1\,150 & 1\,150 & 1\,150 & 1\,150 & 1\,150 & 1\,150 \\
+twolock6 & 4\,158 & 3\,898 & 3\,898 & 3\,898 & 3\,898 & 3\,898 & 3\,898 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\measured{} (expansions; $D$ is the parking budget)
+
+\textbf{Deferral saves exactly zero, at every budget, on every model.} The columns are not close;
+they are identical. Parking raised the number of re-queue operations from $0$ to $56\,224$ on
+\texttt{fischer6} and changed the expansion count by nothing at all.
+
+\begin{proposition}[The no-op is more general than (\ref{eq:nodelay}) suggests]
+\label{prop:uniform}
+A \emph{uniform} parking policy is a no-op under \textbf{any} schedule, not merely a
+level-synchronous one. Parking every popped node by the same budget $D$ applies the same shift to
+the retiree and to its retirer, so their relative order in the queue is unchanged and no
+supersession that was not already observed becomes observable. \proved{}, and \measured{} above on a
+barrier-free FIFO.
+\end{proposition}
+
+This is where the reformulation dies. ``Observe instead of predict'' silently reintroduced
+uniformity: waiting a fixed amount for \emph{every} node is a uniform delay by another name.
+Removing the barrier does not help, because the barrier was never what made
+(\ref{eq:nodelay}) true --- uniformity was.
+
+\subsection{Status of this axis}
+
+Both routes are now closed by measurement rather than by argument:
+
+\begin{itemize}
+  \item \textbf{Uniform deferral} --- no-op, Proposition~\ref{prop:uniform}, measured at six
+        budgets on four models.
+  \item \textbf{Selective deferral} --- requires a per-state oracle; no location-vector predictor
+        exists, and a zone-level one costs what it saves.
+\end{itemize}
+
+The causal-independence result stands and is worth recording, because it removes the objection that
+was thought to be fatal --- but removing that objection turns out not to be sufficient. The one
+genuinely encouraging number is incidental: the barrier-free FIFO expands $2.2\%$--$6.9\%$ fewer
+states than level-synchronous BFS ($1012 \to 990$, $3774 \to 3514$) while also storing fewer. That
+is a different effect from deferral, it is small, and the two searches compute different antichains
+so the comparison is not like-for-like. It is not claimed as a result.
+
+\paragraph{Consequence for the paper.} There is \textbf{one} algorithm here, not two.
+\S\ref{sec:liveness} is the contribution; this section is the negative that says the
+\texttt{explored} axis on \texttt{A[]} should not be funded further without a new idea about
+\emph{selectivity}, which is the only door (\ref{eq:nodelay}) leaves open.

@@ -1,0 +1,191 @@
+\section{Soundness, and the asymmetry that decides everything}
+\label{sec:soundness}
+
+This section does the work. It is short, but the direction of every inclusion matters, so nothing
+is compressed.
+
+\subsection{Notation}
+
+For a discrete state $v$ let
+\begin{align*}
+  \Reach(v) &= \{\nu : (v,\nu) \text{ is reachable from the initial state}\}, \\
+  \Omega(v) &= \{\nu \in \Reach(v) : \text{some maximal run from } (v,\nu) \text{ stays in } \lnot q \text{ forever}\},
+\end{align*}
+and let $\Zn_v$ be the zone Phase 1 stores at $v$, $W_v^\infty$ the value of $W_v$ at the fixpoint.
+The query is \textbf{violated} iff $\Omega(v) \neq \emptyset$ for some $v \models p \wedge \lnot q$.
+
+Two standing facts from \S\ref{sec:setting}: $\Reach(v) \subseteq \Zn_v$, because $\Extra$ is
+extensive (A1) and Phase 1 is an ordinary forward closure; and $\Extra$ is a simulation
+abstraction (A2).
+
+\begin{lemma}[Discrete predicates are preserved by simulation]
+\label{lem:disc-pred}
+If $\nu \simlu \nu'$ then any run from $(v,\nu)$ is matched, step for step, by a run from
+$(v,\nu')$ visiting the \emph{same sequence of discrete states}. Since $p$ and $q$ are functions of
+the discrete state alone, the matched run satisfies $\lnot q$ at exactly the same positions. \proved{}
+\end{lemma}
+
+This is where the restriction to discrete predicates earns its place. If $q$ could constrain clocks,
+the matched run could leave $\lnot q$ at a different point and the lemma would fail.
+
+\subsection{The direction that always holds}
+
+\begin{theorem}[Emptiness proves the property]
+\label{thm:sound-holds}
+$\Omega(v) \subseteq W_v^\infty$ for every $v$. Hence if $W_v^\infty = \emptyset$ for every
+$v \models p \wedge \lnot q$, then \texttt{p --> q} holds. \proved{}
+\end{theorem}
+
+\begin{proof}
+Let $F$ be the operator of Phase 3, $F(W)_v = \Zn_v \cap \mathrm{stop}(v) \cup \bigcup_e
+\Pre_e(W_{v'})$ restricted to $\lnot q$. The vector $\Omega$ is a post-fixpoint of $F$: if
+$\nu \in \Omega(v)$, the witnessing maximal run either continues with some transition $e$ into a
+state whose valuation is again in $\Omega(v')$ --- so $\nu \in \Pre_e(\Omega(v'))$ --- or it does
+not continue, in which case $v$ has no successors or time diverges at $v$, so
+$\nu \in \mathrm{stop}(v)$. Also $\Omega(v) \subseteq \Reach(v) \subseteq \Zn_v$. Therefore
+$\Omega \subseteq F(\Omega)$, and since $W^\infty$ is the greatest fixpoint of $F$ below $\Zn$,
+$\Omega \subseteq W^\infty$ by the Knaster--Tarski characterisation of the greatest fixpoint as the
+union of all post-fixpoints.
+\end{proof}
+
+Theorem~\ref{thm:sound-holds} is unconditional. It does not use (A2) and does not care that
+$\Zn_v$ over-approximates $\Reach(v)$, because an over-approximation only makes $W^\infty$ larger,
+which is the safe direction for concluding ``holds''. It is also why \textbf{subsumption edges are
+harmless}: an edge redirected from the true successor $S$ to a larger stored $W$ contributes
+$\Pre_e(W_{v'})$ where $W_{v'}$ is computed on the larger zone, which again only enlarges $C$.
+
+\subsection{The other direction, and where it breaks}
+\label{sec:soundness:asym}
+
+The converse --- $W_v^\infty \neq \emptyset$ implies a genuine violation --- is not free, because
+$W_v^\infty$ may be witnessed by a valuation in $\Zn_v \setminus \Reach(v)$ that $\Extra$ invented.
+This is where (A2) is used, and where it must be read in the correct direction.
+
+\begin{theorem}[The abstraction asymmetry]
+\label{thm:asym}
+Let $\nu \in \Zn_v$, so by (A2) there is a reachable $\nu' \in \Reach(v)$ with $\nu \simlu \nu'$
+--- the invented point is the one being \textbf{simulated}, hence it can do \textbf{at most} what
+$\nu'$ can do. Then:
+\begin{enumerate}
+  \item[(i)] \textbf{Continuation transfers.} If $\nu$ admits an infinite $\lnot q$ run, so does
+        $\nu'$, and $\nu'$ is reachable. So an infinite-run witness found at an invented point
+        implies a genuine violation. \proved{}
+  \item[(ii)] \textbf{Stuckness does not transfer.} If $\nu$ is stuck --- no transition enabled from
+        it, ever --- $\nu'$ need not be stuck, since $\nu'$ can do at least as much and possibly
+        more. So a stuck-point witness found at an invented point implies nothing. \proved{}
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+(i) is Lemma~\ref{lem:disc-pred} applied to the infinite run: every move of $\nu$ is matched by
+$\nu'$ along the same discrete states, so the matched run is an infinite $\lnot q$ run from a
+reachable valuation. (ii) is the same containment read the other way: $\nu \simlu \nu'$ bounds the
+behaviour of $\nu$ by that of $\nu'$ and says nothing about $\nu'$ having no behaviour.
+\end{proof}
+
+\begin{remark}[A correction, kept because it is instructive]
+\label{rem:correction}
+An earlier draft of this section claimed Theorem~\ref{thm:asym}(ii) had been \emph{observed}: the
+first implementation used a per-valuation stuck test, and \texttt{arbiter4} reported a violation of
+\texttt{C1.cs --> C1.idle} witnessed by $x_0,\dots,x_3 > 4$, which we attributed to $\Extra$
+inventing unreachable points. \textbf{That attribution was wrong.} The cause was the
+\emph{active-clock reduction}, an unrelated optimisation that pins clocks no guard will read again
+to $0$ with an upper bound. It makes the stored zone no longer delay-closed, and a backward test
+run on such a zone invents deadlocks. The engine's own \texttt{state\_has\_deadlock()} documents
+exactly this hazard and repairs it by rebuilding the delay closure before asking what is enabled.
+Once the reduction is inverted in $\Pre$ (\S\ref{sec:liveness:activeclock}) the per-valuation test
+behaves and the false violation disappears.
+
+Theorem~\ref{thm:asym}(ii) therefore stands as \proved{} but \textbf{not} as \measured{}: across the
+whole differential suite no disagreement has yet been traced to it. It remains a real hazard for any
+per-valuation stopping test and is the reason $\mathrm{stop}$ is defined conservatively, but this
+document should not claim an experimental instance of it, because it does not have one.
+\end{remark}
+
+Two consequences follow, and they pull in opposite directions.
+
+\begin{corollary}[The stopping term must be conservative]
+\label{cor:whole}
+Any per-valuation ``this point is stuck'' test used inside $\mathrm{stop}(v)$ must be justified
+independently of (A2), since (A2) does not transfer stuckness. In Algorithm~\ref{alg:gfp}
+$\mathrm{stop}(v)$ is therefore built from the whole-zone tests ``$v$ has no successors'' and
+``time diverges at $v$'', plus the engine's own exact partial-deadlock routine, whose result is
+used as a per-node flag rather than as a per-valuation set.
+\end{corollary}
+
+\begin{corollary}[$aLU$ subsumption in Phase 1 is legitimate]
+\label{cor:alu}
+When a newcomer $S$ at $v$ is discarded because a stored $W$ $LU$-simulates it, every behaviour of
+$S$ is a behaviour of $W$, and $W$ is itself a genuinely reachable symbolic state. By
+Theorem~\ref{thm:asym}(i), the fixpoint over $W$ finds an infinite $\lnot q$ run if and only if one
+exists from $S$ or from $W$: no witness is lost, and none is invented.
+\end{corollary}
+
+Corollary~\ref{cor:alu} is what buys the floor. With plain zone inclusion instead of $aLU$, Phase 1
+stores a much larger antichain --- measured at $11.33$ zones per discrete state on
+\texttt{arbiter4} and $45.29$ on \texttt{arbiter5}, which already beats the current engine
+$7.5\times$ and $13.4\times$ but is still $1.8$--$3.0\times$ \emph{worse} than \uppaal{}. Switching
+to $aLU$ lands on $1.00$ (\S\ref{sec:eval}).
+
+So the same asymmetry appears twice, used in the direction where it holds
+(Corollary~\ref{cor:alu}) and defended against in the direction where it fails
+(Corollary~\ref{cor:whole}).
+
+\subsection{The remaining gap: time-divergence}
+\label{sec:soundness:zeno}
+
+Theorem~\ref{thm:asym}(i) transfers an \emph{infinite} run. A maximal run must additionally be
+\textbf{time-divergent}: a Zeno run, in which infinitely many actions occur in bounded time, is not
+a witness. The $LU$ simulation is \emph{time-abstract} --- it matches actions but not durations ---
+so in principle a divergent run from $\nu$ could be matched by a convergent one from $\nu'$. This
+is the known reason liveness for timed automata is harder than reachability, and this document does
+not close it. \openq{}
+
+\subsubsection*{A discriminating experiment, and what it shows}
+
+The question was put to a purpose-built model rather than left open. \texttt{zeno.xml} has one
+process and one clock:
+\[
+  \texttt{Start} \xrightarrow{\;x:=0\;} \texttt{Loop},\qquad
+  \texttt{Loop}\ [\,x \le 1\,] \xrightarrow{\;x<1\;} \texttt{Loop},\qquad
+  \texttt{Loop} \xrightarrow{\;x \ge 1\;} \texttt{Done}.
+\]
+The self-loop has \textbf{no reset}, so it can fire infinitely often only in bounded time. There is
+no deadlock (at $x=1$ the exit to \texttt{Done} is enabled) and time cannot diverge in
+\texttt{Loop} (the invariant bounds $x$). Hence \textbf{every time-divergent maximal run reaches
+\texttt{Done}}, and the only runs that avoid it are Zeno. The query \texttt{Z.Start --> Z.Done} is
+therefore the sharpest available discriminator: a divergence-aware semantics must answer
+\emph{satisfied}, a Zeno-permissive one \emph{violated}.
+
+\begin{center}\small
+\begin{tabular}{ll}
+\toprule
+\verifyta{} \texttt{-u -S0} & NOT satisfied \\
+reference \texttt{leads\_to\_net} & NOT satisfied \\
+Algorithm~\ref{alg:gfp} & NOT satisfied \\
+\bottomrule
+\end{tabular}
+\end{center}
+\measured{}
+
+\textbf{All three agree, and all three are Zeno-permissive.} This changes the status of the gap. It
+is not a defect Algorithm~\ref{alg:gfp} introduces relative to its oracle: the semantics that
+\uppaal{} and the reference engine implement counts an infinite sequence of actions as a witness
+whether or not time diverges, and the algorithm reproduces that faithfully. The local
+``stay put forever'' case \emph{is} divergence-checked, by $\mathrm{stop}$; it is only the
+\emph{cycle} witness that is not, in all three tools alike.
+
+So:
+
+\begin{itemize}
+  \item Relative to the implemented semantics, Theorem~\ref{thm:asym}(i) is enough, and the 136
+        differential queries of \S\ref{sec:eval} plus this discriminator are consistent with that.
+        \measured{}
+  \item Relative to a \emph{divergence-aware} semantics, all three tools are equally wrong, and the
+        standard remedy --- a fresh clock forcing infinitely many segments of duration $\ge 1$ ---
+        would have to be applied to all of them. It is compatible with Algorithm~\ref{alg:gfp},
+        costing one clock in the forward phase. Not measured here. \openq{}
+  \item What is \emph{not} claimed: that Algorithm~\ref{alg:gfp} solves Zeno-ness. It does not. It
+        inherits exactly the semantics of the tool it is compared against, which is the honest
+        basis for the comparison but not a solution to the underlying problem.
+\end{itemize}

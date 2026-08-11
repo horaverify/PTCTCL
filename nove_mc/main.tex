@@ -1,0 +1,29 @@
+\documentclass[11pt]{article}
+\input{preamble}
+
+\title{Liveness at the reachability floor\\[4pt]
+\large Why zone subsumption is fatal forward and harmless backward,\\
+and a measured negative on the reachability side}
+\author{\tool{}}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\noindent
+Every claim in this document is marked \measured{} if a binary produced it, \proved{} if an
+argument produced it, or \openq{} if neither has settled it yet. Nothing is left unmarked. Runs
+that did not terminate are reported as such and are never counted as agreement.
+
+\tableofcontents
+
+\input{src/01-setting}
+\input{src/02-where-the-floor-is}
+\input{src/03-liveness-algorithm}
+\input{src/04-soundness}
+\input{src/05-deferral}
+\input{src/06-evaluation}
+\input{src/07-related}
+\input{src/08-limitations}
+
+\end{document}

@@ -1,0 +1,172 @@
+\section{Algorithm 1: liveness by a backward greatest fixpoint over the subsumed graph}
+\label{sec:liveness}
+
+\subsection{The idea in one paragraph}
+
+Every existing approach treats ``subsumption breaks cycle detection'' as something to \emph{repair}
+--- restrict which subsumption edges may witness a cycle, or abandon subsumption and store exact
+zones. Both cost states: the first is incomplete, the second is the $85$--$608\times$ blow-up of
+\S\ref{sec:floor:liveness}. We do neither. We keep the subsumed forward graph exactly as
+reachability builds it --- one zone per discrete state, on the floor --- and then run a
+\textbf{backward greatest fixpoint} over it. By Remark~\ref{rem:progress} the information
+subsumption destroyed is a monotone progress measure, and a greatest fixpoint is by definition the
+computation of ``from which valuations can this continue''. It reconstructs exactly what was lost.
+
+The reason this is allowed, stated once and proved in \S\ref{sec:soundness}:
+
+\begin{quote}
+A subsumption edge redirects to a zone that is \emph{larger} than the true successor. Forward, that
+manufactures cycles that do not exist. Backward, the target's value is only ever used as an
+\textbf{upper bound}, and over-approximating an upper bound preserves the containment
+$\Omega \subseteq W$ that soundness needs. \textbf{The same redirection that is fatal in one
+direction is harmless in the other.}
+\end{quote}
+
+\subsection{The algorithm}
+
+Fix a query \texttt{p --> q}. Write $\Disc_{\lnot q}$ for the reachable discrete states violating
+$q$.
+
+\begin{algorithm}[h]
+\caption{Backward-gfp leads-to. Returns \textsc{holds} or \textsc{violated}.}
+\label{alg:gfp}
+\begin{algorithmic}[1]
+\State \textbf{Phase 1 (forward).} Run the ordinary parallel reachability search with full $aLU$
+       subsumption. It yields a graph $G$ whose vertices are the stored symbolic states $(v, \Zn_v)$
+       --- one per reachable discrete state on the measured families --- and whose edges $v
+       \xrightarrow{e} v'$ are tagged with the edge $e$ that produced them, \emph{including}
+       subsumption edges.
+\State \textbf{Phase 2 (restrict).} $W_v \gets \Zn_v$ for $v \in \Disc_{\lnot q}$, and
+       $W_v \gets \emptyset$ otherwise. Each $W_v$ is a federation (finite union of zones).
+\State \textbf{Phase 3 (backward, chaotic).}
+\Repeat
+  \ForAll{$v$ with $W_v \neq \emptyset$ \textbf{in any order, concurrently}}
+     \State $C \gets \mathrm{stop}(v) \;\cup\; \bigcup_{v \xrightarrow{e} v',\, v' \in \Disc_{\lnot q}} \Pre_e(W_{v'})$
+     \State $W_v \gets W_v \cap C$
+  \EndFor
+\Until{no $W_v$ changed}
+\State \textbf{Phase 4 (verdict).} \Return \textsc{violated} if some $v \models p \wedge \lnot q$
+       has $W_v \neq \emptyset$; otherwise \textsc{holds}.
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{The backward operator $\Pre_e$.} For a transition $v \xrightarrow{e} v'$ and a zone $X$
+at $v'$, $\Pre_e(X)$ is the set of valuations at $v$ from which taking $e$ (after letting time pass
+if $v$ permits) can land in $X$. It inverts the forward step in reverse order:
+\[
+  \Pre_e(X) \;=\; \Big( \underbrace{\big(\,(X \cap I_{v'})^{\downarrow} \cap I_{v'}\big)}_{\text{undo the post-delay}}
+  \;\xrightarrow{\ \text{undo resets}\ }\;
+  \mathrm{free}_R\big(\,\cdot \cap \textstyle\bigwedge_{r \in R} x_r = 0\,\big)
+  \;\cap\; g_e \Big)^{\downarrow} \cap\, I_v ,
+\]
+where $I_v$ is $v$'s invariant, $(\cdot)^{\downarrow}$ is the time-past operator, $R$ is $e$'s reset
+set and $g_e$ its guard. All of these are single DBM operations.
+
+Two details are easy to get wrong and both were caught by differential testing
+(\S\ref{sec:eval:bugs}):
+
+\begin{itemize}
+  \item The \textbf{outer} $(\cdot)^{\downarrow}$ --- the delay \emph{before} the action --- is
+        required. A stored zone is delay-closed \emph{as a set}, which is why the forward operator
+        may write $\Zn \cap g_e$; but an individual valuation may have to let time pass before the
+        guard opens, and that predecessor is real.
+  \item $\Pre_e$ contains \textbf{no} $\Extra$ and no active-clock reset. It is the exact concrete
+        predecessor. The abstraction enters only through the ambient $W_v \subseteq \Zn_v$, and
+        \S\ref{sec:soundness} depends on that separation.
+\end{itemize}
+
+\paragraph{The stopping term $\mathrm{stop}(v)$.} A maximal $\lnot q$ run need not be a cycle. It can
+also (i) sit in $v$ and let time pass forever, or (ii) end where nothing is enabled. So
+\[
+  \mathrm{stop}(v) \;=\;
+  \begin{cases}
+    \Zn_v & \text{if } v \text{ has no successors, or time diverges at } v,\\
+    \emptyset & \text{otherwise,}
+  \end{cases}
+\]
+where ``time diverges at $v$'' is the whole-zone test: delay $\Zn_v$, re-apply the invariants, and
+require every clock to remain unbounded above.
+
+In the implementation $\mathrm{stop}(v)$ additionally fires when the engine's exact partial-deadlock
+routine reports that \emph{some} valuation of $v$ is stuck --- a time-lock trapping a sub-region of
+the zone, which the two whole-zone tests cannot see. Its result is used as a per-node flag. Omitting
+it lost real counterexamples: \measured{} on \texttt{grc4} \texttt{T0.near --> T0.in}.
+
+\subsection{One optimisation must be inverted, not ignored}
+\label{sec:liveness:activeclock}
+
+The forward search ends each step with the \emph{active-clock reduction}: clocks that no reachable
+guard will read again are reset to $0$. Forward this is free --- nothing reads them --- and it is
+worth a great deal, because it is what keeps zones sharable.
+
+Backward it is a trap, and it is the single subtlest point in the implementation. Those clocks are
+\textbf{not} in any edge's reset set, so a naive $\Pre$ never frees them and therefore silently
+demands that they also be $0$ at the \emph{source}. That over-constrains $\Pre$, and an
+over-constrained $\Pre$ makes the greatest fixpoint collapse to $\emptyset$ --- that is, it
+\textbf{misses violations}. Measured: it lost genuine counterexamples on \texttt{phil4} and
+\texttt{phil6} (\texttt{P0.Eat --> P0.\{Think,HoldL\}}), on \texttt{grc4}
+(\texttt{T0.in --> T0.near}) and on \texttt{arbiter4/5} (\texttt{C1.cs --> C1.want}), all confirmed
+against \verifyta{}.
+
+The fix is to apply the exact inverse at the top of $\Pre$: free every clock inactive at the target.
+This is sound precisely because those clocks are dead --- no guard or invariant reachable from there
+reads them.
+
+\begin{remark}[Why not simply disable the reduction]
+Because it costs the storage result. Disabling it also repairs completeness, but federation widths
+on \texttt{phil6} rose from $1.01$ (max $2$) to $10.07$ (max $257$), hitting the prototype's width
+cap and rendering that run unusable. \measured{}. Inverting the reduction keeps both properties:
+widths stay at $1.00$--$1.35$ and the counterexamples come back.
+\end{remark}
+
+\subsection{Termination}
+
+\begin{proposition}
+\label{prop:term}
+Phase 3 terminates. \proved{}
+\end{proposition}
+
+\begin{proof}
+The sequence of $W$-vectors is pointwise decreasing under $\subseteq$, because $W_v$ is only ever
+replaced by $W_v \cap C$. Every $W_v$ stays inside $\Zn_v$, which is a zone produced by $\Extra$ and
+therefore has all its finite constants bounded by the $L,U$ constants of the automaton. The
+sub-federations of a zone with bounded integer constants over finitely many clocks form a finite
+lattice. A decreasing sequence in a finite lattice stabilises.
+\end{proof}
+
+Note what this argument does \emph{not} need: it does not need the backward analysis to be confined
+by any reachability assumption beyond $W_v \subseteq \Zn_v$, and that confinement is free because
+Phase 1 already computed $\Zn_v$. This is the practical difference from classical backward TCTL
+model checking, which explores regions that no forward run reaches and is why backward analysis has
+a poor reputation in this setting.
+
+\subsection{Why parallelism is constitutive rather than bolted on}
+\label{sec:liveness:parallel}
+
+Phase 3 is a \textbf{monotone chaotic iteration}. The operator applied at each vertex is monotone,
+and the result of a chaotic iteration to a fixpoint is independent of the order in which vertices
+are updated, provided every vertex is updated infinitely often. Concretely this means:
+
+\begin{itemize}
+  \item Workers may take vertices in any order, with no barrier between rounds.
+  \item A worker may read a neighbour's $W_{v'}$ while another worker is writing it. Reading a
+        \emph{stale} (larger) $W_{v'}$ only makes $C$ larger, so $W_v$ is cut less this round; the
+        cut happens on a later round instead. The fixpoint is the same.
+  \item There is no stack, no ranking, no strongly-connected-component decomposition, and
+        \textbf{no depth-first search anywhere}.
+\end{itemize}
+
+That last point is the contrast worth stating. Every established on-the-fly liveness algorithm for
+this setting --- nested DFS, its multi-core variants, and parallel SCC decomposition --- is built on
+depth-first order, and DFS order is precisely what makes parallel liveness hard: it is
+P-complete to compute, and the multi-core versions spend their design effort on sharing colours
+safely between workers that are each running their own stack. Algorithm~\ref{alg:gfp} does not
+parallelise a DFS. It deletes the DFS.
+
+\begin{remark}[Honesty about the parallel claim]
+The prototype of \S\ref{sec:eval} implements Phase 3 \emph{sequentially}. The claim in this
+subsection is therefore an argument about the algorithm's shape, marked \proved{} for
+order-independence, and \openq{} as a speedup measurement. The state-count results in
+\S\ref{sec:eval} do not depend on it: they are properties of the fixpoint, which is the same
+whatever order computes it.
+\end{remark}

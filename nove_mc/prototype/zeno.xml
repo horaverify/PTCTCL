@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x;</declaration>
+<template><name>Z</name>
+<location id="z_start"><name>Start</name></location>
+<location id="z_loop"><name>Loop</name><label kind="invariant">x&lt;=1</label></location>
+<location id="z_done"><name>Done</name></location>
+<init ref="z_start"/>
+<transition><source ref="z_start"/><target ref="z_loop"/><label kind="assignment">x=0</label></transition>
+<transition><source ref="z_loop"/><target ref="z_loop"/><label kind="guard">x&lt;1</label></transition>
+<transition><source ref="z_loop"/><target ref="z_done"/><label kind="guard">x&gt;=1</label></transition>
+</template>
+<system>system Z;</system>
+</nta>

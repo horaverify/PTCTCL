@@ -1,0 +1,137 @@
+\section{Related work, and an honest narrowing of the claim}
+\label{sec:related}
+
+An adversarial prior-art search was run against this document's own claims. It killed most of the
+first draft's framing. This section records what it killed, because the surviving claim is much
+narrower and much more defensible than the one we started with.
+
+\subsection{What is not new, and must not be claimed}
+
+\paragraph{Greatest fixpoints for liveness.}
+$\mathsf{EG}$ as a greatest fixpoint, and fair-$\mathsf{EG}$ as a nested fixpoint, are Emerson and
+Lei (LICS 1986). The Emerson--Lei algorithm is the canonical \emph{SCC-hull} method for fair-cycle
+detection, and Somenzi, Ravi and Bloem (FMCAD 2002) prove it complexity-optimal among algorithms
+derivable from the Generalized SCC Hull. Ravi, Bloem and Somenzi (FMCAD 2000) is the comparative
+study. Nothing about ``use a greatest fixpoint'' is new.
+
+\paragraph{The leads-to encoding.}
+$\texttt{p --> q}$ is violated iff $\mathsf{EF}(p \wedge \mathsf{EG}\lnot q)$, by elementary CTL
+duality. This is how \uppaal{} defines the operator. Not new.
+
+\paragraph{Restricting the fixpoint to the reachable set.}
+This is the one that hurt most. Computing forward reachability first and then using it to restrict
+or simplify the CTL fixpoints --- including the greatest ones --- is not merely known, it is
+shipped behaviour: it is the \textbf{default} in VIS (\texttt{model\_check -d 1}, unreachable states
+as don't-cares), a first-class flag in NuSMV (\texttt{-f} / \texttt{compute\_reachable}), and the
+subject of Moon, Jang, Hachtel, Somenzi, Yuan and Pixley, \emph{Approximate Reachability Don't Cares
+for CTL Model Checking} (ICCAD 1998). Not new.
+
+\paragraph{Chaotic iteration as the route to parallelism.}
+Also not new, and with a precise attribution. Cousot's 1977 report on asynchronous iterative methods
+proves convergence for monotone equation systems over a complete lattice with no synchronisation
+between processes. Cohen, Namjoshi, Sa'ar, Zuck and Kisyova (HVC 2010) apply exactly this argument
+to parallelise a symbolic model-checking fixpoint, citing Cousot, and state that any fair schedule
+suffices so threads may run at different rates with very loose synchronisation. The complementary
+half --- that DFS is inherently sequential (Reif 1985), so linear-time LTL algorithms resist
+parallelisation and one should prefer BFS/fixpoint-shaped algorithms --- is the organising argument
+of the survey chapter by Barnat, Bloemen, Duret-Lutz, Laarman, Petrucci, van de Pol and Renault
+(\emph{Handbook of Parallel Constraint Reasoning}, 2018). \S\ref{sec:liveness:parallel} of this
+document should therefore be read as \emph{applying} that argument, not as making it.
+
+\paragraph{Reachability-then-shrinking-fixpoint, in parallel.}
+That is OWCTY (Fisler, Fraer, Kamhi, Vardi, Yang, TACAS 2001), whose presentation in the survey
+above initialises the state set with a forward reachability pass and then iterates elimination
+rounds restricted to it. Structurally the same shape as Algorithm~\ref{alg:gfp}. Not new.
+
+\subsection{What the timed literature does, and why it does not do this}
+
+The timed-automata side is a separate lineage and it is DFS-shaped throughout. Tripakis studied
+emptiness for timed B\"uchi automata; Herbreteau, Srivathsan and Walukiewicz developed better and
+lazy abstractions; Herbreteau, Srivathsan, Tran and Walukiewicz (FSTTCS 2016) is titled, in
+substance, \emph{why liveness for timed automata is hard}; and Laarman, Olesen, Dalsgaard, Larsen
+and van de Pol (CAV 2013) give multi-core emptiness checking of timed B\"uchi automata using
+inclusion abstraction. The engine measured here implements the last of these.
+
+The shared premise of that whole line is the one stated in \S\ref{sec:setting:subedge}:
+\textbf{zone subsumption is unsound for B\"uchi emptiness}, because redirected edges close cycles
+the concrete system cannot execute. The published responses are to \emph{weaken} subsumption until
+it is safe --- which the engine's own source records as sound but not complete, since an absorbed
+newcomer is never expanded --- or to \emph{abandon} it and store exact zones, which is the
+$32$--$608\times$ blow-up measured in \S\ref{sec:floor:liveness}.
+
+\subsection{Parallel backward analysis of timed automata is also not new: ZEUS}
+\label{sec:related:zeus}
+
+This one nearly took the paper with it, and it was surfaced by a note in the project's own records
+rather than by the literature search.
+
+\textbf{ZEUS} (Braberman, Olivero, Schapachnik) is a \emph{distributed} timed model checker built on
+Kronos which performs \textbf{backwards} computation over timed automata --- presented at the
+Workshop on Parallel and Distributed Model Checking (CONCUR 2002), with a later journal treatment of
+its practical limitations (\emph{Formal Methods in System Design}, 2006) and companion work on
+workload prediction and redistribution. It partitions the state space by assigning each automaton
+location to one processor. The Kronos lineage is explicit that the backward algorithm, not the
+forward one, is what supports arbitrary TCTL formulae and controller synthesis.
+
+So the sentence ``nobody has parallelised backward timed-automata search'' is \textbf{false}, and
+this document does not say it. Parallel backward zone analysis for timed automata is roughly
+twenty-five years old.
+
+What distinguishes Algorithm~\ref{alg:gfp} is not that it is backward, nor that it is parallel, but
+\emph{what graph it runs on}. Kronos-lineage backward analysis computes over the state space
+directly; it has no forward phase with an $LU$/$aLU$ simulation abstraction, because that machinery
+postdates it and belongs to the forward, \uppaal{}-lineage engines. The claim here is about the
+\emph{interaction} between that abstraction and the direction of the fixpoint --- which cannot arise
+in a tool that has no such abstraction.
+
+\begin{quote}
+\textbf{NOT ESTABLISHED IN SOURCES.} Whether ZEUS or its successors combine a forward reachability
+pass with the backward computation, and in particular whether any of them confine the backward
+fixpoint to a \emph{subsumption-closed} forward-reachable graph, could not be settled: the primary
+texts were behind paywalls or returned HTTP 403. Secondary summaries mention combining forward and
+backward analysis, but no retrieved source states that the confining set is subsumption-closed. This
+is the single most important open question about the novelty of \S\ref{sec:liveness} and it should be
+settled from the primary sources before publication.
+\end{quote}
+
+\subsection{The claim that survives}
+
+\begin{quote}
+The obstacle is an artefact of searching \textbf{forward}. In a backward greatest fixpoint the
+redirected edge is harmless, because the target's value enters only as an \emph{upper bound}, and
+over-approximating an upper bound preserves the containment soundness needs
+(Theorem~\ref{thm:sound-holds}). Consequently liveness can be decided on the \textbf{fully
+$aLU$-subsumed} zone graph --- at the reachability floor, $1.00$ zones per reachable discrete state
+--- rather than on an exact-zone or weakened-subsumption graph.
+\end{quote}
+
+This is what we claim, and only this. It is specific to timed automata: the untimed symbolic
+literature above has no notion of a subsumption edge at all, because BDD-based reachability does no
+zone subsumption, so the question this document answers cannot arise there. And the timed
+literature, which does have the notion, has approached liveness through DFS-shaped emptiness
+checking, where the answer is genuinely negative.
+
+The prior-art search found \textbf{no work combining} (a) zone-based timed liveness, (b) a
+chaotically iterated fixpoint, and (c) restriction to the already-\emph{subsumed}
+forward-reachable zone graph. Given \S\ref{sec:related:zeus}, the emphasis belongs entirely on
+(c) and on the asymmetry theorem that licenses it: backwardness and parallelism are both old, and
+the contribution is the observation that the abstraction which makes forward liveness unsound is
+exactly the one a backward fixpoint can keep.
+
+\subsection{Adjacent results worth positioning against}
+
+\begin{itemize}
+  \item \textbf{Emerson--Lei optimality} (Somenzi, Ravi, Bloem, FMCAD 2002). Algorithm~\ref{alg:gfp}
+        does not claim a better fixpoint schedule than EL; it claims a smaller \emph{graph} to run a
+        fixpoint over. Those are orthogonal, and the improvement here is entirely in the graph.
+  \item \textbf{OWCTY} achieves a similar shape by topological-sort elimination rather than
+        asynchronous relaxation, and on an unabstracted state space.
+  \item \textbf{Deterministic parallel fixpoint} (Kim, Venet, Thakur, POPL 2020) pushes the opposite
+        way --- towards deterministic schedules, because chaotic ones give schedule-dependent
+        \emph{intermediate} results. The fixpoint itself is schedule-independent, which is all
+        \S\ref{sec:liveness:parallel} uses.
+  \item A reviewer will ask, correctly, whether the benchmark suite exercises this at all, since all
+        eleven shipped queries are \texttt{A[]}. \S\ref{sec:floor:liveness} answers that: they do
+        not, which is why liveness was unmeasured, and the 164 differential queries of
+        \S\ref{sec:eval} were written for this document.
+\end{itemize}
