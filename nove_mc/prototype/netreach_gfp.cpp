@@ -4060,6 +4060,13 @@ void retire_causality(const Network& net) {
   std::vector<SymState> node;
   std::vector<int> parent, birth;
   std::vector<char> everExpanded, wasRetired;
+  // PREDICTOR STUDY. Selective deferral needs a signal, available AT POP TIME, that says
+  // "this state's zone will still grow". Two candidates the engine already has for free:
+  //   adds  = how many zone-arrivals this discrete state has absorbed so far (Slot.visits)
+  //   grew  = whether any of those arrivals ENLARGED the stored zone
+  // Recorded as of the moment the node is first expanded, then correlated with whether it is
+  // actually cross-level retired afterwards.
+  std::vector<int> adds, addsAtExpand; std::vector<char> grew, grewAtExpand, recorded;
   std::unordered_map<std::string, std::vector<int>> bucket;
   std::vector<std::int32_t> bL, bU;
 
@@ -4073,7 +4080,7 @@ void retire_causality(const Network& net) {
     for (int j : b) {
       const bool cov = use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU)
                                : node[j].zone.includes(s.zone);
-      if (cov) return j;
+      if (cov) { ++adds[j]; return j; }
     }
     for (std::size_t k = 0; k < b.size(); ++k) {
       const int j = b[k];
@@ -4096,6 +4103,7 @@ void retire_causality(const Network& net) {
         node[j].zone = s.zone;
         birth[j] = curLevel + 1;
         everExpanded[j] = 0;
+        ++adds[j]; grew[j] = 1;
         return j;
       }
     }
@@ -4105,6 +4113,8 @@ void retire_causality(const Network& net) {
     birth.push_back(curLevel + 1);
     everExpanded.push_back(0);
     wasRetired.push_back(0);
+    adds.push_back(1); addsAtExpand.push_back(0);
+    grew.push_back(0); grewAtExpand.push_back(0); recorded.push_back(0);
     b.push_back(id);
     return id;
   };
@@ -4134,6 +4144,10 @@ void retire_causality(const Network& net) {
     for (int u : frontier) {
       if (everExpanded[u]) continue;
       everExpanded[u] = 1;
+      // Record the predictor at the FIRST expansion ONLY. Overwriting it at every expansion
+      // makes the study circular: a retired node is re-expanded AFTER the enlargement that
+      // marks it retired, so the signal would be read post-hoc and score a spurious 1.000/1.000.
+      if (!recorded[u]) { recorded[u] = 1; addsAtExpand[u] = adds[u]; grewAtExpand[u] = grew[u]; }
       ++expansions;
       curParent = u;
       std::vector<SymState> succ; std::vector<GfpTag> tags;
@@ -4184,6 +4198,23 @@ void retire_causality(const Network& net) {
     for (std::size_t i = 0; i < node.size(); ++i) if (wasRetired[i]) ++totalRetired;
     std::printf("nodes cross-level retired at least once: %ld / %zu (%.1f%%)\n",
                 totalRetired, node.size(), 100.0 * double(totalRetired) / double(node.size()));
+    // 2x2 contingency for each candidate predictor
+    auto table = [&](const char* name, auto pred) {
+      long tp = 0, fp = 0, fn = 0, tn = 0;
+      for (std::size_t i = 0; i < node.size(); ++i) {
+        const bool p = pred(i), r = wasRetired[i] != 0;
+        if (p && r) ++tp; else if (p && !r) ++fp; else if (!p && r) ++fn; else ++tn;
+      }
+      const double prec = tp + fp ? double(tp) / double(tp + fp) : 0.0;
+      const double rec  = tp + fn ? double(tp) / double(tp + fn) : 0.0;
+      std::printf("  predictor %-22s TP=%-7ld FP=%-7ld FN=%-7ld TN=%-7ld  precision=%.3f recall=%.3f"
+                  "  -> would defer %ld nodes to save %ld expansions\n",
+                  name, tp, fp, fn, tn, prec, rec, tp + fp, tp);
+    };
+    table("adds>1 at pop",   [&](std::size_t i) { return addsAtExpand[i] > 1; });
+    table("adds>2 at pop",   [&](std::size_t i) { return addsAtExpand[i] > 2; });
+    table("grew before pop", [&](std::size_t i) { return grewAtExpand[i] != 0; });
+    table("NOT grown at pop",[&](std::size_t i) { return grewAtExpand[i] == 0; });
     std::printf("per-(process,location) retirement rate  [rate  retired/total  name]:\n");
     for (int pr = 0; pr < net.nprocs(); ++pr)
       for (std::size_t l = 0; l < tot[pr].size(); ++l) {
@@ -4497,8 +4528,23 @@ void gen_profile(const Network& net) {
 // once and the DBM half is what the memo elides.
 // ============================================================================
 
+
+// Combine the participating edges' CONTENT signatures into one transition signature.
+// Participants are unordered, so the ids are sorted; almost every transition has 1 or 2 parts,
+// which is why this is a fixed-size loop and not a hash of a heap-allocated key.
+template <class F>
+static inline std::uint64_t sig_of_tag_cached(const Network&, const GfpTag& t, F&& sig_of_edge) {
+  int a[8]; int n = 0;
+  for (const auto& pe : t.parts) { if (n < 8) a[n++] = sig_of_edge(pe.first, pe.second); }
+  for (int i = 1; i < n; ++i) { const int v = a[i]; int j = i - 1;
+    while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; --j; } a[j + 1] = v; }
+  std::uint64_t h = 1469598103934665603ull;
+  for (int i = 0; i < n; ++i) { h ^= (std::uint64_t)(std::uint32_t)a[i]; h *= 1099511628211ull; }
+  return h;
+}
+
 struct MemoKey {
-  int z, t, l;
+  int z; std::uint64_t t; int l;
   bool operator==(const MemoKey& o) const { return z == o.z && t == o.t && l == o.l; }
 };
 struct MemoKeyHash {
@@ -4645,82 +4691,82 @@ void memo_search(const Network& net, bool use_memo) {
     L2[0] = U2[0] = 0;
   };
   const bool use_alu = !network_has_diagonal(net);
+  // TWO-LEVEL ADAPTIVITY, because one global threshold trades families against each other:
+  // T=2 gives viking12 2.06x but re-opens the gate on arbiter (multiplicity 6.3) and costs 13%;
+  // T=16 fixes arbiter but drops viking to 1.26x. So:
+  //   (1) ADMISSION -- a LOW per-zone multiplicity gate. Cheap, per-state, no warm-up.
+  //   (2) CIRCUIT BREAKER -- after a bounded sample of lookups, if the observed hit rate is
+  //       below kMinHit, disable the memo for good and release the table. Bounded loss on the
+  //       families with no reuse, full gain on the ones with it, and no threshold to tune.
+  const int THRESH = std::getenv("PTCTLMC_MEMOTHRESH")
+                       ? std::atoi(std::getenv("PTCTLMC_MEMOTHRESH")) : 2;
+  const long kSample = std::getenv("PTCTLMC_MEMOSAMPLE")
+                       ? std::atol(std::getenv("PTCTLMC_MEMOSAMPLE")) : 200000;
+  const double kMinHit = 0.30;
+  bool memo_on = use_memo;
+  long lookups = 0, breaker_at = -1;
 
-  std::unordered_map<std::string, int> zid;  std::vector<Dbm> zval;
+  // ---- zone interning, with a MULTIPLICITY counter --------------------------------------
+  // The counter is the adaptive signal and it is free: the interner has to hash the zone
+  // anyway on a miss. A zone seen >= THRESH times is "hot"; only hot SOURCE zones consult or
+  // populate the memo. Measured multiplicities: viking12 2014, phil12 64, vs arbiter15 1.00,
+  // fischer10 1.27 -- three orders of magnitude apart, with nothing in between, so the gate is
+  // not a tuned threshold, it is a separator.
+  std::unordered_map<std::string, int> zmap;
+  std::vector<Dbm> zval;
+  std::vector<int> zcount;
   auto intern_zone = [&](const Dbm& z) -> int {
     const auto& d = z.data();
     std::string k(reinterpret_cast<const char*>(d.data()), d.size() * sizeof(raw_t));
-    auto it = zid.find(k);
-    if (it != zid.end()) return it->second;
+    auto it = zmap.find(k);
+    if (it != zmap.end()) { ++zcount[it->second]; return it->second; }
     const int id = static_cast<int>(zval.size());
-    zval.push_back(z); zid.emplace(std::move(k), id);
+    zval.push_back(z); zcount.push_back(1); zmap.emplace(std::move(k), id);
     return id;
   };
-  // TRANSITION SIGNATURE BY CONTENT, not by edge identity. Post reads a participating edge only
-  // through its clock guard and its reset set, so two edges of two SYMMETRIC processes with the
-  // same guard/resets are interchangeable and must share a memo entry. Keying on (proc, edge index)
-  // instead leaves a factor on the table -- measured 293x rather than the 561x the content key
-  // achieves on viking10. Signatures are cached per (proc, edge) so the cost is one small hash.
-  std::unordered_map<std::string, int> tsig;                 // content signature -> id
-  std::unordered_map<long long, int> edgesig;                // (proc,edge) -> content sig id
-  auto intern_tag = [&](const GfpTag& t) -> int {
+
+  // ---- transition signature by CONTENT, cached per (proc,edge) --------------------------
+  std::unordered_map<std::string, int> esigmap;
+  std::vector<int> edge_sig(0);
+  std::unordered_map<long long, int> edge_sig_of;
+  auto sig_of_edge = [&](int pr, int ei) -> int {
+    const long long ek = (long long)pr * 1000003 + ei;
+    auto it = edge_sig_of.find(ek);
+    if (it != edge_sig_of.end()) return it->second;
+    const NEdge& e = net.procs[pr].edges[ei];
     std::string k;
     auto enc = [&k](long v) { for (int b = 0; b < 8; ++b) k += char((v >> (8 * b)) & 0xff); };
-    std::vector<int> partsigs;
-    for (const auto& pe : t.parts) {
-      const long long ek = (long long)pe.first * 1000003 + pe.second;
-      auto eit = edgesig.find(ek);
-      int esid;
-      if (eit != edgesig.end()) esid = eit->second;
-      else {
-        const NEdge& e = net.procs[pe.first].edges[pe.second];
-        std::string ek2;
-        auto enc2 = [&ek2](long v) { for (int b = 0; b < 8; ++b) ek2 += char((v >> (8 * b)) & 0xff); };
-        std::vector<Constraint> g = e.clock_guard;
-        std::sort(g.begin(), g.end(), [](const Constraint& a, const Constraint& b) {
-          return a.i != b.i ? a.i < b.i : (a.j != b.j ? a.j < b.j : a.bound < b.bound); });
-        for (const auto& c : g) { enc2(c.i); enc2(c.j); enc2(c.bound); }
-        ek2 += ';';
-        std::vector<int> r = e.clock_resets; std::sort(r.begin(), r.end());
-        for (int x : r) enc2(x);
-        auto sit = tsig.find(ek2);
-        if (sit != tsig.end()) esid = sit->second;
-        else { esid = static_cast<int>(tsig.size()); tsig.emplace(std::move(ek2), esid); }
-        edgesig.emplace(ek, esid);
-      }
-      partsigs.push_back(esid);
+    std::vector<Constraint> g = e.clock_guard;
+    std::sort(g.begin(), g.end(), [](const Constraint& x, const Constraint& y) {
+      return x.i != y.i ? x.i < y.i : (x.j != y.j ? x.j < y.j : x.bound < y.bound); });
+    for (const auto& c : g) { enc(c.i); enc(c.j); enc(c.bound); }
+    k += ';';
+    std::vector<int> r = e.clock_resets; std::sort(r.begin(), r.end());
+    for (int x : r) enc(x);
+    int id;
+    auto sit = esigmap.find(k);
+    if (sit != esigmap.end()) id = sit->second;
+    else { id = static_cast<int>(esigmap.size()); esigmap.emplace(std::move(k), id); }
+    edge_sig_of.emplace(ek, id);
+    return id;
+  };
+
+  // ---- TARGET signature: short, allocation-light, NO per-location-vector cache ----------
+  // Post reads the target locations only through the combined invariant, the frozen flags and
+  // the active-clock mask. Processes sitting in an invariant-free location contribute nothing,
+  // so the signature is usually a handful of bytes -- far cheaper to hash than the 676-1024 byte
+  // zone that interning hashes today. Caching this per location vector (the first version) cost
+  // 20-67 MB and bought nothing; recomputing it is cheaper than storing it.
+  std::unordered_map<std::string, int> lsigmap;
+  std::string lk;
+  auto sig_of_locs = [&](const LocVec& l) -> int {
+    lk.clear();
+    auto enc = [&](long v) { for (int b = 0; b < 8; ++b) lk += char((v >> (8 * b)) & 0xff); };
+    for (int pr = 0; pr < net.nprocs(); ++pr) {
+      const Location& loc = net.procs[pr].locations[l[pr]];
+      if (!loc.invariant.empty()) { enc(pr); enc(l[pr]); }         // only invariant-bearing procs
+      if (loc.urgent || loc.committed) { enc(-pr - 1); }
     }
-    std::sort(partsigs.begin(), partsigs.end());   // participants are unordered
-    for (int x : partsigs) enc(x);
-    static std::unordered_map<std::string, int> combo;
-    auto cit = combo.find(k);
-    if (cit != combo.end()) return cit->second;
-    const int id = static_cast<int>(combo.size());
-    combo.emplace(std::move(k), id);
-    return id;
-  };
-  // TARGET SIGNATURE, not target identity. Post reads the target location vector only through
-  // (i) its combined invariant, (ii) its urgent/committed flags, (iii) its active-clock mask.
-  // Keying on the target's discrete ID instead makes every key unique and destroys all reuse --
-  // measured: 0 hits on every family. Many location vectors share one signature, which is exactly
-  // why the reuse factor is 561x on viking. Signatures are cached per location vector, so the
-  // per-successor cost is a hash of nprocs ints, not an invariant walk.
-  std::unordered_map<std::string, int> sigid;      // signature string -> id
-  std::unordered_map<std::string, int> locsig;     // location vector  -> signature id
-  std::vector<Constraint> sinv;
-  auto intern_sig = [&](const LocVec& l) -> int {
-    std::string lk(reinterpret_cast<const char*>(l.data()), l.size() * sizeof(int));
-    auto lit = locsig.find(lk);
-    if (lit != locsig.end()) return lit->second;
-    std::string k;
-    auto enc = [&k](long v) { for (int b = 0; b < 8; ++b) k += char((v >> (8 * b)) & 0xff); };
-    all_invariants(net, l, sinv);
-    std::sort(sinv.begin(), sinv.end(), [](const Constraint& a, const Constraint& b) {
-      return a.i != b.i ? a.i < b.i : (a.j != b.j ? a.j < b.j : a.bound < b.bound); });
-    for (const auto& c : sinv) { enc(c.i); enc(c.j); enc(c.bound); }
-    k += '|';
-    bool nc, nu; frozen_flags(net, l, &nc, &nu);
-    k += char('0' + (int)nc); k += char('0' + (int)nu); k += '|';
     if (!net.active_mask.empty()) {
       std::uint64_t a = 0;
       for (int pr = 0; pr < net.nprocs(); ++pr) a |= net.active_mask[pr][l[pr]];
@@ -4729,39 +4775,42 @@ void memo_search(const Network& net, bool use_memo) {
       for (int c = 1; c <= net.nclocks; ++c) {
         bool live = false;
         for (int pr = 0; pr < net.nprocs() && !live; ++pr) if (net.active[pr][l[pr]][c]) live = true;
-        k += char('0' + (int)live);
+        if (live) enc(c);
       }
     }
-    auto sit = sigid.find(k);
-    int id;
-    if (sit != sigid.end()) id = sit->second;
-    else { id = static_cast<int>(sigid.size()); sigid.emplace(std::move(k), id); }
-    locsig.emplace(std::move(lk), id);
+    auto it = lsigmap.find(lk);
+    if (it != lsigmap.end()) return it->second;
+    const int id = static_cast<int>(lsigmap.size());
+    lsigmap.emplace(lk, id);
     return id;
   };
 
-  std::unordered_map<MemoKey, int, MemoKeyHash> memo;   // -> zone id, or -1 for "empty"
-  long generated = 0, posts = 0, hits = 0;
+  std::unordered_map<MemoKey, int, MemoKeyHash> memo;    // -> target zone id, or -1 for empty
+  long generated = 0, posts = 0, hits = 0, gated_out = 0;
 
-  std::vector<SymState> node;
+  // ---- passed set: nodes store a zone ID -------------------------------------------------
+  struct MNode { LocVec locs; IntVec ints; int zid; };
+  std::vector<MNode> node;
   std::unordered_map<std::string, std::vector<int>> bucket;
   std::vector<std::int32_t> bL, bU;
-  auto intern_state = [&](SymState&& s) -> int {
-    auto& b = bucket[disc_key(s.locs, s.ints)];
-    if (use_alu) state_bounds(s.locs.data(), bL, bU);
+  long idhits = 0;                                        // subsumption decided by integer compare
+  auto intern_state = [&](const LocVec& l, const IntVec& iv, int zid) -> int {
+    auto& b = bucket[disc_key(l, iv)];
+    if (use_alu && !b.empty()) state_bounds(l.data(), bL, bU);
     for (int j : b) {
-      const bool cov = use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU)
-                               : node[j].zone.includes(s.zone);
+      if (node[j].zid == zid) { ++idhits; return -1; }     // identical zone: covered, no DBM work
+      const bool cov = use_alu ? zval[zid].alu_subsumed_by(zval[node[j].zid], bL, bU)
+                               : zval[node[j].zid].includes(zval[zid]);
       if (cov) return -1;
     }
     for (std::size_t k = 0; k < b.size(); ++k) {
       const int j = b[k];
-      const bool covers = use_alu ? node[j].zone.alu_subsumed_by(s.zone, bL, bU)
-                                  : s.zone.includes(node[j].zone);
-      if (covers) { node[j].zone = s.zone; return j; }
+      const bool covers = use_alu ? zval[node[j].zid].alu_subsumed_by(zval[zid], bL, bU)
+                                  : zval[zid].includes(zval[node[j].zid]);
+      if (covers) { node[j].zid = zid; return j; }
     }
     const int id = static_cast<int>(node.size());
-    node.push_back(std::move(s)); b.push_back(id);
+    node.push_back(MNode{l, iv, zid}); b.push_back(id);
     return id;
   };
 
@@ -4778,46 +4827,53 @@ void memo_search(const Network& net, bool use_memo) {
     reset_inactive(net, s0.locs, s0.zone, qmask);
     if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
     else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U); }
-  const int root = intern_state(std::move(s0));
+  const int root = intern_state(s0.locs, s0.ints, intern_zone(s0.zone));
 
   std::vector<char> expanded;
   std::vector<int> frontier{root};
   std::vector<Cand> cands;
-  std::size_t max_level = 1, level_no = 0, peak_level_no = 0;
+  SymState cur; cur.locs.resize(net.nprocs()); cur.ints.resize(net.intvars.size());
   while (!frontier.empty()) {
-    if (frontier.size() > max_level) { max_level = frontier.size(); peak_level_no = level_no; }
-    ++level_no;
     std::vector<int> next;
     for (int u : frontier) {
       if (expanded.size() < node.size()) expanded.resize(node.size(), 0);
       if (expanded[u]) continue;
       expanded[u] = 1;
-      const int zsrc = use_memo ? intern_zone(node[u].zone) : -1;
+      const int zsrc = node[u].zid;
+      cur.locs = node[u].locs; cur.ints = node[u].ints; cur.zone = zval[zsrc];
+      const bool hot = memo_on && zcount[zsrc] >= THRESH;      // THE GATE: one array compare
       cands.clear();
-      memo_enumerate(net, node[u], cands);
+      memo_enumerate(net, cur, cands);
       for (auto& c : cands) {
         ++generated;
-        Dbm z;
-        bool ok;
-        if (use_memo) {
-          const MemoKey mk{zsrc, intern_tag(c.tag), intern_sig(c.locs)};
+        int tzid;
+        if (hot) {
+          ++lookups;
+          if (lookups == kSample && double(hits) / double(lookups) < kMinHit) {
+            memo_on = false; breaker_at = lookups;
+            std::unordered_map<MemoKey, int, MemoKeyHash>().swap(memo);   // release, not just clear
+          }
+          const MemoKey mk{zsrc, sig_of_tag_cached(net, c.tag, sig_of_edge), sig_of_locs(c.locs)};
           auto it = memo.find(mk);
           if (it != memo.end()) {
             ++hits;
-            if (it->second < 0) continue;              // memoised: empty, drop
-            z = zval[it->second]; ok = true;
+            tzid = it->second;
+            if (tzid < 0) continue;                            // memoised empty
           } else {
             ++posts;
-            ok = memo_apply_zone(net, c, node[u].zone, L, U, qmask, emode, z);
-            memo.emplace(mk, ok ? intern_zone(z) : -1);
+            Dbm z;
+            const bool ok = memo_apply_zone(net, c, cur.zone, L, U, qmask, emode, z);
+            tzid = ok ? intern_zone(z) : -1;
+            memo.emplace(mk, tzid);
+            if (!ok) continue;
           }
         } else {
-          ++posts;
-          ok = memo_apply_zone(net, c, node[u].zone, L, U, qmask, emode, z);
+          ++gated_out; ++posts;
+          Dbm z;
+          if (!memo_apply_zone(net, c, cur.zone, L, U, qmask, emode, z)) continue;
+          tzid = intern_zone(z);
         }
-        if (!ok) continue;
-        SymState ns; ns.locs = c.locs; ns.ints = c.ints; ns.zone = std::move(z);
-        const int v = intern_state(std::move(ns));
+        const int v = intern_state(c.locs, c.ints, tzid);
         if (v < 0) continue;
         if (expanded.size() < node.size()) expanded.resize(node.size(), 0);
         if (!expanded[v]) next.push_back(v);
@@ -4828,36 +4884,18 @@ void memo_search(const Network& net, bool use_memo) {
 
   const double ms = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - t_start).count();
-  // Peak RSS for the whole process. Meaningful only when BASE and MEMO run in SEPARATE
-  // processes (ru_maxrss is a high-water mark and never falls), which is why --memo takes a
-  // 0/1 argument selecting exactly one of them.
   struct rusage ru; getrusage(RUSAGE_SELF, &ru);
 #ifdef __APPLE__
-  const double rss_mb = double(ru.ru_maxrss) / (1024.0 * 1024.0);   // bytes on macOS
+  const double rss_mb = double(ru.ru_maxrss) / (1024.0 * 1024.0);
 #else
-  const double rss_mb = double(ru.ru_maxrss) / 1024.0;              // KiB on Linux
+  const double rss_mb = double(ru.ru_maxrss) / 1024.0;
 #endif
-  std::size_t memo_bytes = memo.size() * (sizeof(MemoKey) + sizeof(int) + 32);
-  std::size_t locsig_bytes = 0;
-  for (const auto& kv : locsig) locsig_bytes += kv.first.size() + sizeof(int) + 32;
-  std::size_t zone_bytes = 0;
-  for (const auto& z : zval) zone_bytes += z.data().size() * sizeof(raw_t);
-  std::printf("%-5s stored=%-8zu gen=%-9ld POSTS=%-9ld hit=%5.1f%% red=%7.2fx wall=%8.1f ms | peakRSS=%7.1f MB  side-tables: memo=%.2f MB locsig=%.2f MB zones=%.2f MB (%zu distinct)\n",
+  std::printf("%-5s stored=%-8zu gen=%-9ld POSTS=%-9ld hit=%5.1f%% gated-out=%-9ld id-subsume=%-9ld "
+              "wall=%8.1f ms peakRSS=%7.1f MB  memo=%zu zones=%zu breaker=%s\n",
               use_memo ? "MEMO" : "BASE", node.size(), generated, posts,
-              100.0 * double(hits) / double(generated),
-              double(generated) / double(posts ? posts : 1), ms, rss_mb,
-              memo_bytes / 1048576.0, locsig_bytes / 1048576.0, zone_bytes / 1048576.0, zval.size());
-  {
-    const std::size_t dim = net.nclocks + 1;
-    const std::size_t zbytes = dim * dim * sizeof(raw_t);
-    const std::size_t per_state = zbytes + net.nprocs() * sizeof(int) +
-                                  net.intvars.size() * sizeof(long) + 3 * 24;
-    std::printf("      widest BFS level = %zu states @level %zu | SymState = %zu B (zone %zu B, dim %zu)"
-                " -> live frontier ~ %.1f MB   [16-bit zone entries would save ~%.1f MB]\n",
-                max_level, peak_level_no, per_state, zbytes, dim,
-                double(max_level) * double(per_state) / 1048576.0,
-                double(max_level) * double(zbytes / 2) / 1048576.0);
-  }
+              100.0 * double(hits) / double(generated ? generated : 1), gated_out, idhits,
+              ms, rss_mb, memo.size(), zval.size(),
+              breaker_at >= 0 ? "TRIPPED(memo off)" : (use_memo ? "no" : "-"));
 }
 
 }  // namespace ptctlmc

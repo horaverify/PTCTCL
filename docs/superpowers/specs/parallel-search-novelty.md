@@ -840,6 +840,83 @@ near-zero extra memory, and nothing (turned off) elsewhere.
 
 ---
 
+## 4decies. Memoisation v2: gated + id-returning. Same memory, ~2x faster.
+
+v1 was a global on/off switch after a warm-up sample. That was wrong three ways: global (a mixed
+model loses), it pays during warm-up, and it does not bound memory (+130-176% on the cold families).
+v2 fixes all three.
+
+**Three design changes, each measured:**
+
+1. **The memo returns a zone ID, not a zone.** On a hit, `Post` is skipped *and* interning is
+   skipped -- interning hashes 676-1024 bytes per successor, which was a large part of the other
+   half of `expand`. Subsumption also gets an integer fast path: identical zone ids means covered
+   without any DBM test (measured 2.17M such decisions on viking15).
+2. **No per-location-vector cache.** v1 cached the target signature per location vector: 20-67 MB,
+   and it was the dominant memory cost. v2 recomputes a *short* signature (only invariant-bearing
+   processes + active mask + frozen bits) -- cheaper to hash than the zone it replaces, and zero
+   resident cost.
+3. **Two-level adaptivity.** One global threshold trades families against each other: T=2 gives
+   viking12 2.06x but re-opens the gate on arbiter (multiplicity 6.3) for a 13% loss; T=16 fixes
+   arbiter and drops viking to 1.26x. So: a LOW per-zone multiplicity gate for admission, plus a
+   **circuit breaker** -- after 5000 lookups, if the hit rate is under 30%, disable the memo and
+   release the table. No threshold to tune.
+
+### Result (THRESH=2, SAMPLE=5000, minHit=0.30). `stored` bit-identical to baseline everywhere.
+
+| model | base | memo | speed | peak RSS | memo entries | breaker |
+|---|---|---|---|---|---|---|
+| phil10   | 899.9 ms | 372.5 ms | **2.42x** | 35.7 -> 36.6 MB | 4 121 | no |
+| viking12 | 735.0 ms | 359.4 ms | **2.05x** | 81.8 -> 83.5 MB | 131 | no |
+| **viking15 (2.77M states)** | **10 405 ms** | **5 836 ms** | **1.78x** | **1016.8 -> 1018.1 MB (+0.13%)** | **220** | no |
+| arbiter15 | 6309.6 ms | 6392.8 ms | 0.99x | 713.8 MB | 0 | **tripped** |
+| fischer10 | 1520.0 ms | 1525.5 ms | 1.00x | 891.5 MB | 0 | **tripped** |
+| csma8 | 24.7 ms | 25.1 ms | 0.98x | 19.5 MB | 0 | no |
+
+viking15 does 8 355 840 Posts without the memo and **111 787** with it (74.7x), at 98.7% hit rate,
+from a table of **220 entries**. Memory moves by 0.13%.
+
+**Honest limits.** The gain is 1.78x-2.42x on the zone-degenerate families and ~1.00x elsewhere, so
+"2x" is the phil/viking figure, not a universal one. Small models (fischer7, twolock7, ~20 ms runs)
+still pay 10% because the 5000-lookup sample is a large fraction of their whole search. And
+`viking20` could NOT be measured: the prototype stores locs/ints per node without the engine's
+packing, so viking15's 2.77M states already need 1 GB; viking17 is 13.6M states. The technique has
+to go into the engine to be proven at viking20 scale.
+
+---
+
+## 4undecies. `explored`/`stored`: a predictor exists, but it is mediocre -- and one correction
+
+`grew before pop` first scored precision 1.000 / recall 1.000, which was **circular**: the flag was
+recorded at *every* expansion, so for a retired node it was read at the re-expansion that happens
+*after* the enlargement which marks it retired. Recording it at the FIRST expansion only inverts the
+result to precision 0.000. Corrected numbers:
+
+| predictor | fischer6 recall | fischer7 recall | precision |
+|---|---|---|---|
+| `adds > 1 at pop` | **0.583** | **0.691** | ~0.5 |
+| `adds > 2 at pop` | 0.194 | 0.317 | ~0.44 |
+| `grew before pop` | 0.000 | 0.000 | 0.000 |
+| `NOT grown at pop` | 1.000 | 1.000 | 0.40 (= defer everything = the proved no-op) |
+
+**Precision does not matter here, only recall**: a false-positive deferral costs latency, not
+expansions -- the node is expanded later either way. So `adds>1` would cut `explored` by
+**16.7% (fischer6) to 20.8% (fischer7)** against a 41.7% ceiling.
+
+This escapes the uniform-delay theorem because it is selective: the retirer typically has
+`adds == 1` and is therefore NOT deferred while the retiree waits, and the 100% causal-independence
+result says the retirer's discovery path does not run through the parked state.
+
+**Caveat, and it is material:** this is an oracle study on the *baseline* trace. Deferring changes
+the search order, which changes the retirement structure itself, so the closed-loop figure could
+differ in either direction. It is not yet a measured speedup.
+
+**And note where it cannot be shown:** viking has NO `explored` tax at all -- viking10, viking12 and
+viking17 all have `explored == stored == |disc|` exactly (viking17: 13 631 486 on all three). The tax
+exists only on fischer (1.71x), twolock (1.69x) and phil (1.39x).
+
+---
+
 ## 5. Final position
 
 | | C1 (liveness) | C2 (reachability `explored`) |
