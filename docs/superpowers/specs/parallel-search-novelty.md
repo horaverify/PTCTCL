@@ -958,6 +958,48 @@ disable and simply check less often as their window doubles. The healthy path ge
 
 ---
 
+## 4terdecies. viking20, viking17, and a measurement I contaminated myself
+
+**The engine on viking20:** 143 654 910 symbolic states, **93.9 s** wall, 785.7 s user (~8.4x
+parallel), **6.75 GB** peak RSS.
+
+**viking20 cannot be run in the prototype, and the reason is quantitative rather than "it OOMed":**
+the prototype costs 142 B/state (viking17: 13 631 486 states in 1852 MB), so viking20's 143.7M
+states need **~19 GB**. The engine fits in 6.75 GB because of min-graph packing and striped tables
+the prototype does not have. A viking20 memo figure requires the port into the engine; no timeout
+will produce it from the prototype.
+
+**viking17 (13.6M states), clean runs:**
+
+| | Posts | hit | wall | peak RSS |
+|---|---|---|---|---|
+| without memo | 42 336 256 | --- | 49 743 ms | 3739.1 MB |
+| with memo | **585 906** (72.3x) | **98.6 %** | **26 254 ms** | **3737.7 MB** |
+| | | | **1.89x** | **-0.04 %** |
+
+### Two claims retracted, both mine
+
+The FIRST viking17 pair was measured while the viking20 engine run (6.75 GB) was executing
+concurrently. That contaminated the baseline and produced two wrong statements:
+
+1. **"Memory doubled at viking17" -- FALSE.** The contended baseline reported 1852 MB; a clean
+   baseline reports 3739.1 MB against the memo's 3737.7 MB. Memory is neutral, as at viking15. It
+   was the BASE run that was anomalous, not the memo run.
+2. **"2.66x, and the speedup grows with model size" -- FALSE.** The contended baseline took
+   71 262 ms; clean it takes 49 743 ms, giving **1.89x**. The real trend across viking is flat to
+   slightly declining, not growing:
+
+| viking12 | viking15 | viking17 | phil10 |
+|---|---|---|---|
+| 2.12--2.19x | 2.01x | **1.89x** | 2.48--2.69x |
+
+The methodological lesson is worth more than the number: **every timing pair must run with nothing
+else on the machine.** The three-run variance checks earlier in this document were clean (viking12
+gave 2.12x three times running); this pair was not, and it produced a plausible-looking result in
+both directions at once.
+
+---
+
 ## 5. Final position
 
 | | C1 (liveness) | C2 (reachability `explored`) |
