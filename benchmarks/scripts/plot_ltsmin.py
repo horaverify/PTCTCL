@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # benchmarks/
 FIGS = os.path.abspath(os.path.join(HERE, "..", "docs", "paper-openmp", "figs"))
 os.makedirs(FIGS, exist_ok=True)
 

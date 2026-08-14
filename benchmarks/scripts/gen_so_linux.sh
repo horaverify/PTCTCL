@@ -17,7 +17,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 
 
-LTS="$(cd "$HERE/../../LTStest" && pwd)"
+LTS="$(cd "$HERE/../../../LTStest" && pwd)"
 
 
 

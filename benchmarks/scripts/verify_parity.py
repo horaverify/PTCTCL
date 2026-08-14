@@ -33,7 +33,7 @@ Usage:
 """
 import argparse, csv, os, re, subprocess, sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # PTCTCL/
 MODELS = os.path.join(ROOT, "benchmarks", "models")
 QUERIES = os.path.join(ROOT, "benchmarks", "queries")
 BIN = os.environ.get("PTCTLMC_BIN", os.path.join(ROOT, "build-mostopt", "ptctlmc"))

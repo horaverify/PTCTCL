@@ -32,7 +32,7 @@ import argparse, csv, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bench_run import BENCH, BIN, VERIFYTA, gen_model, peak_rss_gb  # noqa: E402
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # PTCTCL/
 STRESS_CSV = os.path.join(ROOT, "benchmarks", "results_stress.csv")
 
 

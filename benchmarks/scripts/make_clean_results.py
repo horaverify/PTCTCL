@@ -45,7 +45,7 @@ import sys
 from collections import OrderedDict
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent  # benchmarks/
 
 # Statuses that mean "this cell produced a real, usable measurement".
 OK_STATUS = {"OK"}

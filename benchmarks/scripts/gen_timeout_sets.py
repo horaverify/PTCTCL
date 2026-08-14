@@ -22,7 +22,7 @@ for the harness's dedicated flags ('-' when empty). Regenerating is safe and ide
 """
 import csv, glob, os, re, sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # benchmarks/
 RES = os.path.join(HERE, "results")
 OUT = os.path.join(RES, "timeout2h")
 

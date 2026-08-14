@@ -14,7 +14,7 @@
 #   OPAAL_PY=$(conda run -n opaal27 which python) ./gen_so_macos.sh m.xml m.so
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LTS="$(cd "$HERE/../../LTStest" && pwd)"
+LTS="$(cd "$HERE/../../../LTStest" && pwd)"
 XML="$1"; OUT="$2"; CPP="${OUT%.so}.cpp"
 OPAAL_PY="${OPAAL_PY:-/opt/anaconda3/envs/opaal27/bin/python}"
 

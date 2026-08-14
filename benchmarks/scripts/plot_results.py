@@ -17,7 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # PTCTCL/
 CSV = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "benchmarks", "results_full.csv")
 OUT = os.path.join(ROOT, "benchmarks", "plots"); os.makedirs(OUT, exist_ok=True)
 
