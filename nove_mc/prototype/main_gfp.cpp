@@ -23,6 +23,7 @@ struct GfpStats {
   bool capped = false;
   std::size_t expanded_nodes = 0, passes = 0, pre_calls = 0;
   bool early = false;
+  bool inconclusive = false;
   const char* mode = "gfp";
 };
 bool leads_to_gfp(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs);
@@ -116,7 +117,9 @@ int main(int argc, char** argv) {
     // A capped fixpoint has NOT converged, so its value is neither an over- nor an
   // under-approximation and the verdict must be discarded rather than printed.
   std::printf("  prototype leads_to_gfp : %s\n",
-              gs.capped ? "UNUSABLE (federation cap hit)" : (gfp ? "SATISFIED" : "NOT satisfied"));
+              gs.capped ? "UNUSABLE (federation cap hit)"
+                        : gs.inconclusive ? "INCONCLUSIVE (one-sided mode)"
+                                          : (gfp ? "SATISFIED" : "NOT satisfied"));
     std::printf("  gfp storage: nodes=%zu disc-keys=%zu zones/dk=%.2f edges=%zu\n",
                 gs.fwd_nodes, gs.disc_keys,
                 gs.disc_keys ? double(gs.fwd_nodes) / double(gs.disc_keys) : 0.0, gs.fwd_edges);
@@ -139,7 +142,9 @@ int main(int argc, char** argv) {
   // A capped fixpoint has NOT converged, so its value is neither an over- nor an
   // under-approximation and the verdict must be discarded rather than printed.
   std::printf("  prototype leads_to_gfp : %s\n",
-              gs.capped ? "UNUSABLE (federation cap hit)" : (gfp ? "SATISFIED" : "NOT satisfied"));
+              gs.capped ? "UNUSABLE (federation cap hit)"
+                        : gs.inconclusive ? "INCONCLUSIVE (one-sided mode)"
+                                          : (gfp ? "SATISFIED" : "NOT satisfied"));
   std::printf("  AGREE=%s\n", ref == gfp ? "YES" : "*** NO ***");
   std::printf("  gfp storage: nodes=%zu disc-keys=%zu zones/dk=%.2f edges=%zu\n",
               gs.fwd_nodes, gs.disc_keys,

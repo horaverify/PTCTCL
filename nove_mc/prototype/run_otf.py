@@ -12,7 +12,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 BIN = os.path.join(HERE, "build", "gfp_proto")
 MODELS = os.path.join(REPO, "benchmarks", "models")
 
-VERDICT = re.compile(r"prototype leads_to_gfp\s*:\s*(UNUSABLE|SATISFIED|NOT)")
+VERDICT = re.compile(r"prototype leads_to_gfp\s*:\s*(UNUSABLE|INCONCLUSIVE|SATISFIED|NOT)")
 STORAGE = re.compile(r"nodes=(\d+) disc-keys=(\d+) zones/dk=([\d.]+) edges=(\d+)")
 FIX = re.compile(r"rounds=(\d+) nonempty-nodes=(\d+) fed-width avg=([\d.]+) max=(\d+) capped=(\S+)")
 EXPANDED = re.compile(r"expanded=(\d+) passes=(\d+) pre-calls=(\d+) early=(\S+)")

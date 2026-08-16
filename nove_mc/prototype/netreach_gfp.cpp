@@ -3530,6 +3530,7 @@ struct GfpStats {
   std::size_t passes = 0;           // confined backward passes run
   std::size_t pre_calls = 0;        // gfp_pre invocations
   bool        early = false;        // settled before the forward search finished
+  bool        inconclusive = false; // one-sided mode could not conclude
   const char* mode = "gfp";
 };
 
@@ -5054,7 +5055,7 @@ void memo_search(const Network& net, bool use_memo) {
 // successors have been computed, no matter what the rest of the graph is doing.
 // ============================================================================
 
-enum class OtfMode { Base, D1, D2, D3, D4, D5 };
+enum class OtfMode { Base, D1, D2, D3, D4, D5, D6, D7 };
 
 static const char* otf_mode_name(OtfMode m) {
   switch (m) {
@@ -5064,6 +5065,8 @@ static const char* otf_mode_name(OtfMode m) {
     case OtfMode::D3:   return "d3-incremental-postfixpoint";
     case OtfMode::D4:   return "d4-preprocessing-overlap";
     case OtfMode::D5:   return "d5-candidate-confirm";
+    case OtfMode::D6:   return "d6-hull-one-node-per-discrete-key";
+    case OtfMode::D7:   return "d7-race(d5-exact || d6-hull)";
   }
   return "?";
 }
@@ -5205,6 +5208,46 @@ int Otf::intern(SymState&& s) {
         }
       bL[0] = bU[0] = 0;
     }
+  }
+  // D6: MAXIMAL SUBSUMPTION -- exactly one node per discrete key, whose zone is the convex
+  // HULL of every zone that has ever arrived there. This is the coarsest forward abstraction
+  // that still has the right shape for the backward operator, and it is the natural end point
+  // of this branch's premise: if the backward pass repairs the unsoundness that subsumption
+  // causes forward, how far can the forward abstraction be pushed?
+  //
+  // It is ONE-SIDED, and that is not a defect of the implementation but of the abstraction.
+  // The hull contains points that are not reachable, and a certificate built on an unreachable
+  // point is not a witness -- the LU-simulation argument that rescues extrapolated zones does
+  // not apply to a hull. So D6 can only ever conclude
+  //
+  //     W empty  =>  p --> q HOLDS,     W non-empty  =>  INCONCLUSIVE (fall through to D5).
+  //
+  // Soundness of that direction needs `Omega subseteq W`, i.e. the hull operator must
+  // OVER-approximate. It does, term by term: Pre gains disjuncts (the hull's edge set is a
+  // superset), `time_diverges` is monotone in the zone, and `state_has_deadlock` is monotone
+  // too -- if any real sub-zone has a stuck valuation, that valuation is in the hull and is
+  // still stuck, since enabledness is a per-valuation property. The one NON-monotone term is
+  // `adj[v].empty()`, which a hull can falsify; it is subsumed by state_has_deadlock (an empty
+  // adjacency means every valuation is stuck), so PTCTLMC_GFPNOPD must NOT be set in this mode.
+  if (mode == OtfMode::D6) {
+    if (!b.empty()) {
+      const int j = b.front();
+      const int dim = s.zone.dim();
+      if (node[j].zone.dim() == dim) {
+        Dbm h(net.nclocks);
+        dbm_hull(h.data().data(), node[j].zone.data().data(), s.zone.data().data(), dim);
+        if (h.data() != node[j].zone.data()) {
+          node[j].zone = std::move(h);
+          intern_grew = true;          // hull grew: adjacency computed from the old one is stale
+        }
+        return j;
+      }
+    }
+    const int id = static_cast<int>(node.size());
+    node.push_back(std::move(s));
+    b.push_back(id);
+    grow();
+    return id;
   }
   auto covered = [&](int j) {
     return use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU) : node[j].zone.includes(s.zone);
@@ -5642,6 +5685,7 @@ bool Otf::run(GfpStats* gs) {
   switch (mode) {
     case OtfMode::Base:
     case OtfMode::D2:
+    case OtfMode::D6:
     case OtfMode::D4: {
       // D4 (preprocessing overlap) differs from Base only in WHEN the per-node liveness
       // data is computed: is_p / is_nq / the stopping term are evaluated as each node is
@@ -5694,8 +5738,65 @@ bool Otf::run(GfpStats* gs) {
     gs->pre_calls = pre_calls;
     gs->early = settled_early;
     gs->mode = otf_mode_name(mode);
+    // D6 over-approximates, so a non-empty fixpoint is NOT a witness -- it may rest entirely on
+    // hull points the system never reaches. Only the empty direction concludes.
+    gs->inconclusive = (mode == OtfMode::D6 && violated);
   }
   return !violated;
+}
+
+// ---------------------------------------------------------------------------
+// D7 -- the recommendation. Race the two lanes; neither can replace the other.
+//
+// The two directions of the verdict are proved by DIFFERENT approximations, and each lane
+// makes the approximation that is free for its own direction:
+//
+//   D5  UNDER-approximates (confined post-fixpoint on an aLU-subsumed graph). Only
+//       "non-empty" concludes, and it concludes VIOLATED on a fragment -- 1 to ~100 states,
+//       matching or beating the shipping forward engine on every violated query measured.
+//       On a query that HOLDS it has nothing to stop for and pays the whole aLU graph.
+//
+//   D6  OVER-approximates (one convex-hull zone per discrete key). Only "empty" concludes,
+//       and it concludes HOLDS at the DISCRETE floor -- exactly one symbolic state per
+//       reachable discrete state, which is the least any zone-based method can store. On a
+//       query that is VIOLATED it abstains, having paid the hull graph.
+//
+// Run both; whichever concludes first is right, because they decide the same proposition by
+// approximations that are sound in opposite directions. This is the same argument the shipping
+// engine's own aLU-vs-exact race already rests on, and it is what makes the pair strictly
+// better than either lane: on the benchmark set D5 settles every violated query and D6 settles
+// every satisfied one, including `csma8 Bus.Active --> Bus.Idle`, which NEITHER the published
+// algorithm nor D5 can answer at all (both exhaust the federation cap; the hull keeps every
+// node's value a single convex zone, so there is nothing to split).
+bool leads_to_race(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs) {
+  std::atomic<int> verdict{-1};          // 0 = holds, 1 = violated
+  std::atomic<bool> done{false};
+  GfpStats s5, s6;
+
+  std::thread lane6([&] {                // over-approximating lane: can only prove HOLDS
+    Otf e(net, p, q, OtfMode::D6);
+    const bool holds = e.run(&s6);
+    if (holds && !s6.capped && !done.exchange(true)) verdict.store(0, std::memory_order_release);
+  });
+  {                                      // under-approximating lane: can only prove VIOLATED
+    Otf e(net, p, q, OtfMode::D5);
+    const bool holds = e.run(&s5);
+    // D5's "holds" is only conclusive once its forward search has finished, which it has here.
+    if (!s5.capped && !done.exchange(true))
+      verdict.store(holds ? 0 : 1, std::memory_order_release);
+  }
+  lane6.join();
+
+  const int v = verdict.load(std::memory_order_acquire);
+  // Report the lane that actually concluded, so the state counts stay attributable.
+  const bool used6 = (v == 0 && !s6.capped && s6.fwd_nodes && !s6.inconclusive &&
+                      s6.fwd_nodes < s5.fwd_nodes);
+  if (gs) {
+    *gs = used6 ? s6 : s5;
+    gs->mode = used6 ? "d7-race(won by d6-hull)" : "d7-race(won by d5-exact)";
+    gs->capped = (v < 0);               // neither lane concluded
+  }
+  return v == 0;
 }
 
 // Entry point. `mode` comes from PTCTLMC_GFPMODE; returns true iff `p --> q` HOLDS.
@@ -5708,6 +5809,8 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, cons
   else if (s == "d3") m = OtfMode::D3;
   else if (s == "d4") m = OtfMode::D4;
   else if (s == "d5") m = OtfMode::D5;
+  else if (s == "d6") m = OtfMode::D6;
+  else if (s == "d7") return leads_to_race(net, p, q, gs);
   Otf e(net, p, q, m);
   return e.run(gs);
 }

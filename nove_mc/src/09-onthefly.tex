@@ -1,0 +1,208 @@
+\section{Algorithm 2: making the greatest fixpoint on-the-fly}
+\label{sec:otf}
+
+Algorithm~\ref{alg:gfp} has one structural defect, and it is not a constant factor. Phase~1 runs to
+completion before Phase~3 begins, so the cost of deciding \texttt{p --> q} is a function of the
+\emph{model} and never of the \emph{query}. A leads-to property violated three transitions from the
+initial state still pays for every reachable symbolic state. This section removes that defect
+without weakening anything proved in \S\ref{sec:soundness}.
+
+\subsection{Why this looks harder than it is}
+
+$EG$ is a \emph{greatest} fixpoint, so the standard iteration starts at $\top$ and descends. An
+intermediate iterate satisfies $W \supseteq F(W)$ --- it is a \textbf{pre}-fixpoint, an
+over-approximation --- and therefore says nothing: ``$W_v \neq \emptyset$'' cannot settle a
+violation, so there is no early exit. Worse, the moment the graph underneath grows, the values stop
+descending, and the natural reading is that an incremental version needs a new convergence
+argument.
+
+It does not, because a violation never needed the fixpoint. It needs a \emph{certificate}, and by
+Knaster--Tarski the certificates of a greatest fixpoint are exactly its \textbf{post}-fixpoints.
+This is the same instrument already used once, in the proof of Theorem~\ref{thm:sound-holds}; here
+it is used in the other role.
+
+\begin{theorem}[A pass over a fragment is a certificate]
+\label{thm:fragment}
+Let $G$ be any subgraph explored so far and let $S$ be any set of \textbf{expanded} $\lnot q$
+vertices of $G$. Define $F_S$ exactly as $F$ but with $W_u$ pinned to $\emptyset$ for every
+$u \notin S$, and let $\nu F_S$ be its greatest fixpoint. Then
+\[
+   \nu F_S \;\subseteq\; \nu F \;=\; W^\infty ,
+\]
+where $F$ is the operator on the \emph{finished} graph. Consequently $\nu F_S(v) \neq \emptyset$
+at some $v \models p \wedge \lnot q$ settles the query as \textsc{violated}, with exactly the
+verdict Algorithm~\ref{alg:gfp} would have produced. \proved{}
+\end{theorem}
+
+\begin{proof}
+$F_S$ is obtained from $F$ by deleting disjuncts: every $\Pre_e(W_{v'})$ with $v' \notin S$ is
+replaced by $\Pre_e(\emptyset) = \emptyset$, and no term is added. Hence $F_S(X) \subseteq F(X)$
+pointwise for every $X$. Both operators are monotone, so $\nu F_S \subseteq \nu F$ by
+Knaster--Tarski: $\nu F_S$ is a post-fixpoint of $F_S$, hence of $F$, hence below the greatest
+post-fixpoint of $F$.
+\end{proof}
+
+Two consequences, and they are the whole design.
+
+\begin{itemize}
+  \item A confined pass over a \emph{fragment} of the graph produces a sound under-approximation of
+        the answer on the graph that has not been built yet. Non-empty settles \textsc{violated}
+        immediately; the rest of the state space is never constructed.
+  \item Taking $S$ to be every expanded $\lnot q$ vertex of the \emph{finished} graph gives
+        $F_S = F$, so the final pass \emph{is} Algorithm~\ref{alg:gfp}. Nothing is given up when
+        the property holds.
+\end{itemize}
+
+No value has to descend across passes: each pass is a self-contained certificate search, restarted
+from $\top$ on its own carrier, and monotonicity in the graph is free.
+
+\begin{remark}[The one restriction, and it is the only one]
+\label{rem:expanded}
+A vertex may enter $S$ only once it has been \textbf{expanded}. The stopping term $\mathrm{stop}(v)$
+reads the \emph{absence} of successors ($\mathrm{adj}(v) = \emptyset$), and an unexpanded vertex has
+an empty adjacency for the wrong reason; admitting one would add a disjunct rather than delete one
+and break the inclusion of Theorem~\ref{thm:fragment}. Every other term survives a partial graph
+untouched, because the $\Pre$ disjuncts only ever need edges that \emph{exist}, never the absence of
+one. That asymmetry --- absence of edges is dangerous, presence is not --- is what makes backward
+work on a half-built graph legitimate at all.
+\end{remark}
+
+\begin{remark}[A capped pass proves nothing]
+\label{rem:capped}
+Theorem~\ref{thm:fragment} is about the \emph{limit} $\nu F_S$. An iterate stopped early --- by the
+federation-width cap of \S\ref{sec:eval:cap} or an iteration bound --- is a pre-fixpoint of $F_S$
+and is therefore neither an over- nor an under-approximation of anything. Reading such a value as
+``no certificate found'' silently converts an exhausted budget into a \textsc{holds} verdict. The
+implementation reports \textsc{unusable} instead, and the differential harness scores it as the
+absence of a verdict rather than as agreement. \measured{}
+\end{remark}
+
+\subsection{The design space}
+\label{sec:otf:space}
+
+Five schemes were implemented behind one switch and measured against Algorithm~\ref{alg:gfp} on the
+same graphs. They are reported together, including the three that lost, because which of them loses
+is not predictable from the outside.
+
+\paragraph{D1, pipelined-conservative.} Begin backward work only on vertices provably \emph{frozen}
+--- expanded, and unable to reach an unexpanded vertex, computed by a reverse sweep from the
+unexpanded set. For those, $F_S = F$ already holds, so their values are final rather than merely
+certificates.
+
+\paragraph{D2, append-only.} Refuse the in-place enlargement that Phase~1 performs when a newcomer
+covers a stored zone ($\Zn_j \gets \Zn_{\text{new}}$), storing the newcomer beside the old vertex so
+every stored vertex is immutable from birth.
+
+\paragraph{D3, fully incremental.} Run a confined pass over the whole accepting closure after every
+BFS level, relying on Theorem~\ref{thm:fragment} for each.
+
+\paragraph{D4, preprocessing overlap.} Compute the per-vertex liveness data ($p$, $\lnot q$, the
+stopping term) during expansion rather than in a post-pass, leaving the $EG$ iteration itself for
+the frozen graph.
+
+\paragraph{D5, candidate-confirm.} A forward DFS on the fully subsumed graph acts as a
+\emph{candidate generator} --- it follows \textbf{every} edge, including subsumption edges --- and
+each candidate ($\lnot q$ cycle, or stopping vertex) is confirmed by an exact confined pass over the
+DFS stack. A confirmed candidate is a certificate; a refuted one costs one small pass.
+
+\begin{remark}[D1 requires D2, and that is the difficulty of D1]
+\label{rem:d1-needs-d2}
+With in-place enlargement, ``this vertex will never change'' is not establishable before the forward
+phase terminates: an enlargement invalidates the adjacency the backward operator has just read.
+Making it establishable means refusing enlargement --- that is, adopting D2 --- and refusing
+enlargement is precisely what costs states (\S\ref{sec:otf:eval}). The conjecture that a
+conservative freeze criterion would be hard to establish is confirmed, and the obstruction is the
+antichain-collapsing enlargement, not the shape of the graph. \measured{}
+\end{remark}
+
+\subsection{Why D5 can follow subsumption edges when the forward engine cannot}
+\label{sec:otf:d5}
+
+The shipping forward engine is already on-the-fly: a lazy Tarjan with eager escape over the $\lnot
+q$ subgraph. But it must \emph{refuse} subsumption edges whenever it argues that a run continues
+forever, because a redirected edge closes cycles the concrete system cannot execute --- the failure
+of \S\ref{sec:liveness}. That refusal is not free: the search walks further before it can conclude.
+
+D5 has no such constraint. It uses the forward search only to \emph{propose}, and every proposal is
+adjudicated by the exact backward operator, whose soundness under redirection is
+\S\ref{sec:soundness:asym}. So D5 keeps the fully subsumed graph forward \emph{and} exactness
+backward. Neither half has both alone, and the measured gap appears exactly where predicted: on the
+violated queries whose witness is a \emph{cycle} rather than a stopping vertex
+(\S\ref{sec:otf:eval}).
+
+\subsection{Algorithm 3: the hull lane}
+\label{sec:otf:d6}
+
+D1--D5 all decide both directions of the verdict with one graph, so all of them need that graph to
+be precise enough for the \emph{harder} direction. Theorem~\ref{thm:sound-holds} says this is
+unnecessary, and says it in a stronger form than \S\ref{sec:soundness} used:
+
+\begin{quote}
+$\Omega \subseteq W^\infty$ is \textbf{unconditional}. It does not use (A2), and it does not care
+how badly $\Zn_v$ over-approximates $\Reach(v)$, because an over-approximation only enlarges
+$W^\infty$, which is the safe direction for concluding \textsc{holds}.
+\end{quote}
+
+If the forward abstraction may be arbitrarily coarse and still prove \textsc{holds}, then take it to
+the limit. \textbf{Algorithm 3} stores exactly \textbf{one vertex per reachable discrete state},
+whose zone is the convex hull of every zone that ever arrives there:
+\[
+   \Zn_v \;\gets\; \mathrm{hull}(\Zn_v, \Zn_{\text{new}})
+   \qquad\text{(entrywise max of canonical DBMs, itself canonical).}
+\]
+This is the coarsest zone abstraction there is, and it puts the forward graph on the
+\textbf{discrete floor}: one symbolic state per reachable discrete state is the least any zone-based
+method can store.
+
+\begin{proposition}[Algorithm 3 is one-sided, and sound in the direction it claims]
+\label{prop:hull}
+Let $\Zn^{h}$ be the hull graph and $W^{h}$ its greatest fixpoint. Then
+$\Omega \subseteq W^{h}$, so $W^{h}_v = \emptyset$ for all $v \models p \wedge \lnot q$ implies
+\texttt{p --> q} \textsc{holds}. The converse fails, so a non-empty $W^h$ concludes nothing and the
+algorithm must \textsc{abstain}. \proved{}
+\end{proposition}
+
+\begin{proof}
+By Theorem~\ref{thm:sound-holds} it suffices that $F^h$ over-approximate $F$ termwise.
+$\Reach(v) \subseteq \Zn_v \subseteq \Zn^h_v$ since the hull is extensive. The edge set of the hull
+vertex is a superset of the edge set of each merged zone, because an edge is kept when its guard
+meets the zone and the hull contains each of them, so every $\Pre_e$ disjunct survives and more may
+appear. For $\mathrm{stop}$: $\mathrm{time\text{-}diverges}$ is monotone in the zone (delay and
+invariant intersection are), and \texttt{state\_has\_deadlock} is monotone too, since enabledness is
+a per-valuation property, so a valuation stuck in a merged zone is still stuck in the hull. The
+converse fails because a certificate may rest entirely on hull points outside $\Reach(v)$, and the
+simulation argument of Theorem~\ref{thm:asym} does not apply: an arbitrary hull point need not be
+$\simlu$-simulated by a reachable one.
+\end{proof}
+
+\begin{remark}[The one non-monotone term, and why it is harmless]
+\label{rem:hull-adj}
+$\mathrm{adj}(v) = \emptyset$ is \emph{not} monotone --- a hull can acquire successors that no
+merged zone had --- so it could shrink $\mathrm{stop}$ and break Proposition~\ref{prop:hull}. It is
+subsumed by \texttt{state\_has\_deadlock}: an empty adjacency means every valuation of the zone is
+stuck, which that per-valuation test reports. The partial-deadlock term must therefore \textbf{not}
+be disabled in this mode. \proved{}
+\end{remark}
+
+\subsection{Algorithm 4: racing the two lanes}
+\label{sec:otf:d7}
+
+The two directions of the verdict are proved by approximations that are sound in \emph{opposite}
+directions, and each lane may therefore make the approximation that is free for its own direction:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+lane & approximates & may conclude \\
+\midrule
+D5 (Algorithm 2) & \textbf{under} --- confined post-fixpoint, $aLU$ graph & \textsc{violated}, on a fragment \\
+D6 (Algorithm 3) & \textbf{over} --- one hull zone per discrete state & \textsc{holds}, at the discrete floor \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Run both and take whichever concludes first. This is sound because they decide the same proposition
+by approximations that cannot both be wrong in the same direction, and it is the same argument the
+engine's existing $aLU$-versus-exact race already rests on. It is strictly stronger than either
+lane: \S\ref{sec:otf:eval} exhibits a query that \emph{neither} Algorithm~\ref{alg:gfp} nor D5 can
+answer at all and that D6 settles.

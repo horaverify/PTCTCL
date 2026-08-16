@@ -1,0 +1,236 @@
+\section{Evaluation of the on-the-fly algorithms}
+\label{sec:otf:eval}
+
+Baseline throughout is Algorithm~\ref{alg:gfp}, the three-phase version, on the same models with the
+same $aLU$ subsumption. The metric is \textbf{symbolic states stored at the moment the verdict is
+produced}. Two query sets: 48 queries over
+\texttt{arbiter4/5}, \texttt{fischer4/5}, \texttt{csma4/5}, \texttt{phil4}, \texttt{twolock4},
+\texttt{viking4}, \texttt{grc4}; and 32 queries over the larger members of the same families.
+Ratios are geometric means of the per-query ratio.
+
+\subsection{The design space, measured}
+
+\begin{center}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+ & & \multicolumn{2}{c}{violated} & \multicolumn{2}{c}{satisfied} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+ & direction & small (39) & large (23) & small (9) & large (6) \\
+\midrule
+D4 & preprocessing overlap        & $1.00\times$  & ---            & $1.00\times$ & --- \\
+D2 & append-only                  & $0.84\times$  & ---            & $0.89\times$ & --- \\
+D1 & pipelined-conservative       & $0.85\times$  & ---            & $0.89\times$ & --- \\
+D3 & fully incremental            & $11.3\times$  & $109.7\times$  & $1.00\times$ & $1.00\times$ \\
+D5 & candidate-confirm            & $\mathbf{12.6\times}$ & $\mathbf{145.0\times}$ & $1.01\times$ & $0.96\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three of the five directions lose, and it is worth being explicit about why. \measured{}
+
+\begin{itemize}
+  \item \textbf{D4 is exactly $1.00\times$ by construction}: it does not change the search, only
+        when three predicate evaluations per vertex happen, against a successor computation that
+        costs a delay, a constrain, a reset set, a canonicalisation and an extrapolation.
+  \item \textbf{D1 and D2 lose $11$--$16\%$ on average and up to $2.5\times$} (\texttt{grc4}
+        $2345 \to 5215$, \texttt{fischer5} $762 \to 1126$). Append-only buys immutable vertices and
+        pays the antichain for them, and by Remark~\ref{rem:d1-needs-d2} D1 cannot avoid that price.
+  \item \textbf{D5 dominates D3} wherever the witness is deep, because D3's trigger is ``after every
+        BFS level'' while D5's is ``a candidate actually appeared'':
+        \texttt{fischer8 P0.req} $165 \to 46$, \texttt{csma8 S0.Send} $277 \to 82$,
+        \texttt{fischer5 P0.req} $56 \to 22$.
+\end{itemize}
+
+The saving grows with the model, which is the property that matters:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+query & Alg.~\ref{alg:gfp} & D3 & D5 \\
+\midrule
+\texttt{fischer8 P0.idle --> P0.cs}   & 36202 & 9   & \textbf{9} \\
+\texttt{fischer8 P0.req --> P0.cs}    & 36202 & 165 & \textbf{46} \\
+\texttt{arbiter10 C0.idle --> C0.cs}  & 6144  & 11  & \textbf{11} \\
+\texttt{phil8 P0.Think --> P0.Eat}    & 8486  & 9   & \textbf{9} \\
+\texttt{grc4 G.up --> G.low}          & 2345  & 5   & \textbf{5} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Against the shipping forward engine}
+\label{sec:otf:vsfwd}
+
+Algorithm~\ref{alg:gfp} is the right baseline for the fixpoint, but the tool a user actually has is
+the lazy forward Tarjan, which is \emph{already} on-the-fly. The like-for-like metric is D5's
+expansions against that engine's \texttt{explored}. Verdict agreement is $47/48$; the $48^{\text{th}}$
+is a \emph{timeout of the forward engine}, not a disagreement. \measured{}
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+ & geo-mean & extremes \\
+\midrule
+violated (39)  & $1.18\times$ fewer & $1.00\times$ -- $5.4\times$ \\
+satisfied (8)  & $179\times$ fewer  & $8.1\times$ -- $1216\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+D5 is \emph{never} worse on a violated query, and $31$ of $39$ are dead on $1.00\times$: two correct
+on-the-fly searches stopping at the same state, which is what should happen when the witness is
+shallow. The gaps are exactly the queries whose witness is a \textbf{cycle} --- \texttt{grc4
+T0.near --> T0.in} $9379 \to 1722$, \texttt{fischer5 P0.cs --> P0.idle} $116 \to 56$,
+\texttt{twolock4 P0.waitB --> P0.cs} $125 \to 64$ --- which is \S\ref{sec:otf:d5} being paid out:
+the forward engine must refuse subsumption edges to argue that a run is infinite, and walks further
+for it.
+
+\begin{remark}[A truncation in the forward engine, found by this comparison]
+\label{rem:truncation}
+The forward engine's outer BFS skipped a frontier vertex that was already expanded. That
+\texttt{continue} also skipped \emph{publishing the vertex's successors}, and the inner Tarjan
+expands whole regions before the outer search reaches them, so those regions never entered the
+frontier. Against the discrete counts of \texttt{benchmarks/parity.csv}, which are verified against
+\verifyta{}: \texttt{csma4} reached $21$ of $104$ reachable discrete states and answered
+\textsc{holds} from that fifth of the graph; \texttt{fischer4} reached $217$ of $220$;
+\texttt{arbiter4} was unaffected. This is \textbf{soundness-relevant}, not a performance artefact: a
+$p \wedge \lnot q$ state may be reachable \emph{only through} $q$ states, which the inner search
+never enters, so the outer BFS is the only thing that can find it. No wrong verdict is exhibited on
+the current benchmark set. \measured{}
+
+An earlier revision of this section, written before the repair, reported \texttt{csma4}/\texttt{csma5}
+as satisfied-query \emph{losses} for D5 ($128$ vs $42$, $352$ vs $62$). Those baselines were the
+truncated search. Repaired they are $6682$ and $120542$, so D5 wins by $52\times$ and $342\times$,
+and no satisfied query in the set is a loss. The earlier claim is \textbf{retracted}.
+\end{remark}
+
+\subsection{The hull lane}
+\label{sec:otf:eval:hull}
+
+Algorithm~3 was scored as the one-sided procedure it is: the only failure that matters is claiming
+\textsc{holds} when the query is violated.
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+outcome over 48 queries & count \\
+\midrule
+unsound (claimed a verdict it may not) & \textbf{0} \\
+proved \textsc{holds} (the useful outcome) & 9 of 9 \\
+abstained on a violated query (correct) & 39 of 39 \\
+abstained on a satisfied query (sound, useless) & 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+It never abstained on a query that holds --- the coarsest zone abstraction available is
+\emph{still} precise enough to prove every satisfied liveness property in this set --- and it stores
+exactly one symbolic state per reachable discrete state:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+satisfied query & D5 & D6 & factor \\
+\midrule
+\texttt{grc4 T0.in --> T0.far}          & 2058 & \textbf{128} & $16.1\times$ \\
+\texttt{csma5 Bus.Active --> Bus.Idle}  & 352  & \textbf{272} & $1.3\times$ \\
+\texttt{csma4 Bus.Active --> Bus.Idle}  & 128  & \textbf{104} & $1.2\times$ \\
+\texttt{fischer4 P0.req --> P0.wait}    & 222  & \textbf{220} & $1.0\times$ \\
+\texttt{arbiter5 C1.cs --> C1.idle}     & 112  & 112          & $1.0\times$ \\
+\midrule
+total                                    & 3128 & \textbf{1092} & $2.9\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The factor is $1.0$ wherever the $aLU$ graph was already at one zone per discrete state --- six of
+the seven families --- and $16\times$ on \texttt{grc4}, the one family where it was not
+($18.32$ zones per discrete state). \measured{}
+
+\subsection{The query nothing else can answer}
+\label{sec:eval:cap}
+
+\texttt{csma8 Bus.Active --> Bus.Idle} exhausts the federation-width cap in every exact lane. It is
+reported \textsc{unusable} under Remark~\ref{rem:capped}, and raising the cap does not rescue it: at
+$2\times 10^{6}$ it had not converged after ten minutes.
+
+\begin{center}
+\begin{tabular}{@{}llrl@{}}
+\toprule
+algorithm & verdict & states & zones/disc.\ state \\
+\midrule
+Alg.~\ref{alg:gfp} & \textsc{unusable} (cap) & 5888 & 1.44 \\
+D5                 & \textsc{unusable} (cap) & 5888 & 1.44 \\
+D6 (hull)          & \textbf{\textsc{holds}} & 4096 & \textbf{1.00} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The hull does not merely store fewer states, it \textbf{removes the failure mode}: each vertex's
+value stays a single convex zone, so the federation has nothing to split. Federation explosion, not
+state count, is the exact backward operator's real limit, and the coarse lane is immune to it by
+construction. \measured{}
+
+Two further \texttt{csma8} queries are \textsc{unusable} for Algorithm~\ref{alg:gfp} and settled
+exactly by D3 and D5, in $1$ and $12$ expansions respectively --- matching the forward engine's own
+expansion counts --- because the certificate lives on a fragment where the fixpoint is trivial while
+the full-graph fixpoint explodes. \measured{}
+
+\subsection{Where the hull lane fails}
+\label{sec:otf:eval:hullfail}
+
+Algorithm~3 is not a replacement, and the failure is not marginal. On \texttt{fischer} it is both
+imprecise and expensive:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+query & Alg.~\ref{alg:gfp} & D5 & D6 \\
+\midrule
+\texttt{fischer6 P0.req --> P0.wait} (holds)     & 2694 / 0.04\,s & 2939 / 0.03\,s & 2378 / 0.71\,s \\
+\texttt{fischer7 P0.req --> P0.wait} (holds)     & 9798 / 0.20\,s & 11598 / 0.50\,s & 7737 / \textbf{35.5\,s} \\
+\texttt{fischer7 P0.idle --> P0.cs} (violated)   & 9798 / 0.31\,s & 8 / 0.00\,s & abstain, 7737 / 16.7\,s \\
+\texttt{fischer8 P0.idle --> P0.cs} (violated)   & 36202 / 1.65\,s & 9 / 0.00\,s & \textbf{timeout} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two distinct problems. \emph{Precision}: \texttt{fischer}'s satisfied proof rests on a correlation
+between clocks that the hull discards, so the fixpoint has to work much harder to reach $\emptyset$.
+\emph{Cost}: on a violated query the lane pays the whole hull graph before abstaining, which is
+pure loss. This is why Algorithm~4 races the lanes rather than sequencing them, and it identifies
+the open problem: an abstraction strictly between $aLU$ and the hull --- coarse enough to collapse
+\texttt{grc4}'s $18.32$ zones per discrete state, precise enough to keep \texttt{fischer}'s
+correlations. \openq{}
+
+\subsection{Differential validation}
+
+\begin{itemize}
+  \item 48 queries $\times$ 7 modes and 32 queries $\times$ 3 modes: \textbf{0 disagreements} among
+        runs that converged. \measured{}
+  \item Mode \texttt{base} reproduces Algorithm~\ref{alg:gfp}'s stored count on \emph{every} query
+        in both sets, which is what licenses reading the other columns as differences of algorithm
+        rather than of reimplementation. \measured{}
+  \item Both \texttt{csma8} certificates were checked against the shipping engine independently.
+\end{itemize}
+
+Two defects in the on-the-fly code were found by this harness and are recorded because both are
+easy to reintroduce. First, D5's outer BFS skipped vertices the inner DFS had already expanded and
+therefore failed to publish their successors --- the same defect as
+Remark~\ref{rem:truncation}, independently committed --- which produced plausible \textsc{holds}
+verdicts on fewer states. Second, a capped pass was read as ``no certificate'', converting an
+exhausted budget into a silent \textsc{holds}; see Remark~\ref{rem:capped}.
+
+\subsection{Two orthogonal improvements}
+
+\textbf{Accepting-closure restriction.} $F$ is defined per vertex from its own successors, so the
+value at an accepting vertex depends only on the $\lnot q$-forward-closure of the accepting set.
+Restricting the pass to that closure is \emph{exact}, not an approximation, and applies to
+Algorithm~\ref{alg:gfp} unchanged: \texttt{grc4 T0.in --> T0.far} $5.87\,\text{s} \to
+2.03\,\text{s}$, \texttt{grc4 G.up --> G.low} $0.13\,\text{s} \to 0.02\,\text{s}$. \measured{}
+
+\textbf{Refutation budget.} On every violated query measured, D5 confirms its certificate on the
+\emph{first} candidate (one pass, one to three $\Pre$ calls, including \texttt{grc4 T0.near -->
+T0.in} where the DFS first walks 1722 states). Only queries that hold refute repeatedly. Spending a
+fixed budget and then abandoning early exit cannot change a verdict --- it defers the answer to the
+exact final pass --- and cut \texttt{grc4 T0.in --> T0.far} from $9.31\,\text{s}$ / 22 passes to
+$3.43\,\text{s}$ / 9 passes. \measured{}
