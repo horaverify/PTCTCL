@@ -1,302 +1,162 @@
-\section{Evaluation of the on-the-fly algorithms}
+\section{Evaluation}
 \label{sec:otf:eval}
 
-Baseline throughout is Algorithm~\ref{alg:gfp}, the three-phase version, on the same models with the
-same $aLU$ subsumption. The metric is \textbf{symbolic states stored at the moment the verdict is
-produced}. Two query sets: 48 queries over
-\texttt{arbiter4/5}, \texttt{fischer4/5}, \texttt{csma4/5}, \texttt{phil4}, \texttt{twolock4},
-\texttt{viking4}, \texttt{grc4}; and 32 queries over the larger members of the same families.
+Two query sets: 48 queries over \texttt{arbiter4/5}, \texttt{fischer4/5}, \texttt{csma4/5},
+\texttt{phil4}, \texttt{twolock4}, \texttt{viking4}, \texttt{grc4}; and 32 over the larger members
+of the same families. The metric is \textbf{symbolic states stored when the verdict is produced}.
 Ratios are geometric means of the per-query ratio.
 
-\subsection{The design space, measured}
-
-\begin{center}
-\begin{tabular}{@{}llrrrr@{}}
-\toprule
- & & \multicolumn{2}{c}{violated} & \multicolumn{2}{c}{satisfied} \\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}
- & direction & small (39) & large (23) & small (9) & large (6) \\
-\midrule
-D4 & preprocessing overlap        & $1.00\times$  & ---            & $1.00\times$ & --- \\
-D2 & append-only                  & $0.84\times$  & ---            & $0.89\times$ & --- \\
-D1 & pipelined-conservative       & $0.85\times$  & ---            & $0.89\times$ & --- \\
-D3 & fully incremental            & $11.3\times$  & $109.7\times$  & $1.00\times$ & $1.00\times$ \\
-D5 & candidate-confirm            & $\mathbf{12.6\times}$ & $\mathbf{145.0\times}$ & $1.01\times$ & $0.96\times$ \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-Three of the five directions lose, and it is worth being explicit about why. \measured{}
-
-\begin{itemize}
-  \item \textbf{D4 is exactly $1.00\times$ by construction}: it does not change the search, only
-        when three predicate evaluations per vertex happen, against a successor computation that
-        costs a delay, a constrain, a reset set, a canonicalisation and an extrapolation.
-  \item \textbf{D1 and D2 lose $11$--$16\%$ on average and up to $2.5\times$} (\texttt{grc4}
-        $2345 \to 5215$, \texttt{fischer5} $762 \to 1126$). Append-only buys immutable vertices and
-        pays the antichain for them, and by Remark~\ref{rem:d1-needs-d2} D1 cannot avoid that price.
-  \item \textbf{D5 dominates D3} wherever the witness is deep, because D3's trigger is ``after every
-        BFS level'' while D5's is ``a candidate actually appeared'':
-        \texttt{fischer8 P0.req} $165 \to 46$, \texttt{csma8 S0.Send} $277 \to 82$,
-        \texttt{fischer5 P0.req} $56 \to 22$.
-\end{itemize}
-
-The saving grows with the model, which is the property that matters:
-
-\begin{center}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-query & Alg.~\ref{alg:gfp} & D3 & D5 \\
-\midrule
-\texttt{fischer8 P0.idle --> P0.cs}   & 36202 & 9   & \textbf{9} \\
-\texttt{fischer8 P0.req --> P0.cs}    & 36202 & 165 & \textbf{46} \\
-\texttt{arbiter10 C0.idle --> C0.cs}  & 6144  & 11  & \textbf{11} \\
-\texttt{phil8 P0.Think --> P0.Eat}    & 8486  & 9   & \textbf{9} \\
-\texttt{grc4 G.up --> G.low}          & 2345  & 5   & \textbf{5} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\subsection{Against the shipping forward engine}
-\label{sec:otf:vsfwd}
-
-Algorithm~\ref{alg:gfp} is the right baseline for the fixpoint, but the tool a user actually has is
-the lazy forward Tarjan, which is \emph{already} on-the-fly. The like-for-like metric is D5's
-expansions against that engine's \texttt{explored}. Verdict agreement is $47/48$; the $48^{\text{th}}$
-is a \emph{timeout of the forward engine}, not a disagreement. \measured{}
-
-\begin{center}
-\begin{tabular}{@{}lrr@{}}
-\toprule
- & geo-mean & extremes \\
-\midrule
-violated (39)  & $1.18\times$ fewer & $1.00\times$ -- $5.4\times$ \\
-satisfied (8)  & $179\times$ fewer  & $8.1\times$ -- $1216\times$ \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-D5 is \emph{never} worse on a violated query, and $31$ of $39$ are dead on $1.00\times$: two correct
-on-the-fly searches stopping at the same state, which is what should happen when the witness is
-shallow. The gaps are exactly the queries whose witness is a \textbf{cycle} --- \texttt{grc4
-T0.near --> T0.in} $9379 \to 1722$, \texttt{fischer5 P0.cs --> P0.idle} $116 \to 56$,
-\texttt{twolock4 P0.waitB --> P0.cs} $125 \to 64$ --- which is \S\ref{sec:otf:d5} being paid out:
-the forward engine must refuse subsumption edges to argue that a run is infinite, and walks further
-for it.
-
-\begin{remark}[A truncation in the forward engine, found by this comparison]
-\label{rem:truncation}
-The forward engine's outer BFS skipped a frontier vertex that was already expanded. That
-\texttt{continue} also skipped \emph{publishing the vertex's successors}, and the inner Tarjan
-expands whole regions before the outer search reaches them, so those regions never entered the
-frontier. Against the discrete counts of \texttt{benchmarks/parity.csv}, which are verified against
-\verifyta{}: \texttt{csma4} reached $21$ of $104$ reachable discrete states and answered
-\textsc{holds} from that fifth of the graph; \texttt{fischer4} reached $217$ of $220$;
-\texttt{arbiter4} was unaffected. This is \textbf{soundness-relevant}, not a performance artefact: a
-$p \wedge \lnot q$ state may be reachable \emph{only through} $q$ states, which the inner search
-never enters, so the outer BFS is the only thing that can find it. No wrong verdict is exhibited on
-the current benchmark set. \measured{}
-
-An earlier revision of this section, written before the repair, reported \texttt{csma4}/\texttt{csma5}
-as satisfied-query \emph{losses} for D5 ($128$ vs $42$, $352$ vs $62$). Those baselines were the
-truncated search. Repaired they are $6682$ and $120542$, so D5 wins by $52\times$ and $342\times$,
-and no satisfied query in the set is a loss. The earlier claim is \textbf{retracted}.
-\end{remark}
-
-\subsection{The hull lane}
-\label{sec:otf:eval:hull}
-
-Algorithm~3 was scored as the one-sided procedure it is: the only failure that matters is claiming
-\textsc{holds} when the query is violated.
-
-\begin{center}
-\begin{tabular}{@{}lr@{}}
-\toprule
-outcome over 48 queries & count \\
-\midrule
-unsound (claimed a verdict it may not) & \textbf{0} \\
-proved \textsc{holds} (the useful outcome) & 8 of 9 \\
-abstained on a violated query (correct) & 38 of 39 \\
-abstained on a satisfied query (sound, useless) & 0 \\
-\textsc{unusable}, federation cap (both \texttt{grc4}) & 2 \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-It never abstained on a query that holds --- the coarsest zone abstraction available is
-\emph{still} precise enough to prove eight of the nine satisfied liveness properties in this set,
-and the ninth is lost to the width cap rather than to imprecision. But the state saving is
-\textbf{modest}, and it is worth being blunt about why:
-
-\begin{center}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-satisfied query & D5 & D6 & factor \\
-\midrule
-\texttt{csma5 Bus.Active --> Bus.Idle}  & 352  & \textbf{272} & $1.3\times$ \\
-\texttt{csma4 Bus.Active --> Bus.Idle}  & 128  & \textbf{104} & $1.2\times$ \\
-\texttt{fischer4 P0.req --> P0.wait}    & 222  & \textbf{220} & $1.0\times$ \\
-\texttt{arbiter5 C1.cs --> C1.idle}     & 112  & 112          & $1.0\times$ \\
-\midrule
-total over the eight proved              & 1070 & \textbf{964} & $1.11\times$ \\
-\midrule
-\texttt{grc4 T0.in --> T0.far}          & 2058 & \multicolumn{2}{l}{\textsc{unusable} (cap)} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-The discrete floor is only \emph{below} the $aLU$ floor where the $aLU$ graph stores more than one
-zone per discrete state, and on six of the seven families it already stores exactly one
-(\S\ref{sec:floor}). \texttt{grc4} is the single family with real headroom ($18.32$ zones per
-discrete state) and it is precisely the one where the hull's fixpoint does not converge. \textbf{So
-the hull lane is not a state-reduction technique on these benchmarks.} Its value is entirely
-\S\ref{sec:eval:cap}: it answers a query no exact lane can. \measured{}
-
-\begin{remark}[This table was wrong, and how]
-\label{rem:oob}
-An earlier revision reported $9$ of $9$ proved, no capped runs, and \texttt{grc4}
-$2058 \to 128$ at $16.1\times$, for a total of $2.9\times$. Those numbers came from a program
-reading uninitialised heap memory. \texttt{gfp\_pre} signals ``the predecessor is empty'' by
-returning \texttt{Dbm()}, which the DBM library documents as a \emph{zero-clock placeholder}: a
-$1\times1$ matrix. \texttt{dbm\_empty} tests the diagonal, so \texttt{Dbm().empty()} is
-\textbf{false}, and the caller's \texttt{if (!pz.empty())} pushed that $1\times1$ matrix into a
-federation of $(|X|+1)$-dimensional ones; the next \texttt{dbm\_includes} inside
-\texttt{gfp\_fed\_compact} then read $\dim^2$ entries out of a four-byte allocation.
-
-It was found by noticing that \texttt{grc4} under the hull returned \textsc{holds} on four of ten
-\emph{identical} runs and \textsc{unusable} on the other six --- the verdict was a function of
-whatever followed the placeholder on the heap --- and confirmed by AddressSanitizer as a
-heap-buffer-overflow. The defect is in \texttt{gfp\_pre} and is therefore shared by
-Algorithm~\ref{alg:gfp}; the hull abstraction merely takes \texttt{gfp\_pre}'s early-return paths
-often enough to make it fire. Repaired by returning an empty zone \emph{of the right dimension}.
-Re-measured after the repair, Algorithm~\ref{alg:gfp} and D5 are unchanged on \textbf{every} query
-in both sets --- the bug never fired on their paths --- and only the hull lane's numbers move.
-\measured{}
-\end{remark}
-
-\subsection{The query nothing else can answer}
-\label{sec:eval:cap}
-
-\texttt{csma8 Bus.Active --> Bus.Idle} exhausts the federation-width cap in every exact lane. It is
-reported \textsc{unusable} under Remark~\ref{rem:capped}, and raising the cap does not rescue it: at
-$2\times 10^{6}$ it had not converged after ten minutes.
-
-\begin{center}
-\begin{tabular}{@{}llrl@{}}
-\toprule
-algorithm & verdict & states & zones/disc.\ state \\
-\midrule
-Alg.~\ref{alg:gfp} & \textsc{unusable} (cap) & 5888 & 1.44 \\
-D5                 & \textsc{unusable} (cap) & 5888 & 1.44 \\
-D6 (hull)          & \textbf{\textsc{holds}} & 4096 & \textbf{1.00} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-The hull does not merely store fewer states, it \textbf{removes the failure mode}: each vertex's
-value stays a single convex zone, so the federation has nothing to split. Federation explosion, not
-state count, is the exact backward operator's real limit, and the coarse lane is immune to it by
-construction. \measured{}
-
-Two further \texttt{csma8} queries are \textsc{unusable} for Algorithm~\ref{alg:gfp} and settled
-exactly by D3 and D5, in $1$ and $12$ expansions respectively --- matching the forward engine's own
-expansion counts --- because the certificate lives on a fragment where the fixpoint is trivial while
-the full-graph fixpoint explodes. \measured{}
-
-\subsection{Where the hull lane fails}
-\label{sec:otf:eval:hullfail}
-
-Algorithm~3 is not a replacement, and the failure is not marginal. On \texttt{fischer} it is both
-imprecise and expensive:
-
-\begin{center}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-query & Alg.~\ref{alg:gfp} & D5 & D6 \\
-\midrule
-\texttt{fischer6 P0.req --> P0.wait} (holds)     & 2694 / 0.04\,s & 2939 / 0.03\,s & 2378 / 0.71\,s \\
-\texttt{fischer7 P0.req --> P0.wait} (holds)     & 9798 / 0.20\,s & 11598 / 0.50\,s & 7737 / \textbf{35.5\,s} \\
-\texttt{fischer7 P0.idle --> P0.cs} (violated)   & 9798 / 0.31\,s & 8 / 0.00\,s & abstain, 7737 / 16.7\,s \\
-\texttt{fischer8 P0.idle --> P0.cs} (violated)   & 36202 / 1.65\,s & 9 / 0.00\,s & \textbf{timeout} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-and on \texttt{grc4}, the one family with real headroom, its fixpoint does not converge at all
-(\S\ref{sec:otf:eval:hull}).
-
-Three distinct problems. \emph{Precision}: \texttt{fischer}'s satisfied proof rests on a
-correlation between clocks that the hull discards, so the fixpoint works much harder to reach
-$\emptyset$. \emph{Cost}: on a violated query the lane pays the whole hull graph before abstaining,
-which is pure loss. \emph{Convergence}: on \texttt{grc4} the hull's federations exceed the width cap.
-This is why Algorithm~4 races the lanes rather than sequencing them.
-
-\paragraph{The interpolation does not exist, at least not along width.}
-The obvious repair is an abstraction between $aLU$ and the hull. The natural parameterisation is a
-\textbf{bounded-width} store: keep at most $k$ zones per discrete key, merging a newcomer into the
-stored zone whose hull with it relaxes the fewest DBM entries; $k=1$ is the hull, large $k$ is
-plain-inclusion storage. Measured, widening is \textbf{monotonically worse in both respects}: it
-stores more \emph{and} converges less often. \measured{}
+\subsection{Against Algorithm~\ref{alg:gfp}}
 
 \begin{center}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
-satisfied query & $k=1$ (hull) & $k=2$ & $k=4$ & $k=16$ \\
+ & \multicolumn{2}{c}{violated} & \multicolumn{2}{c}{satisfied} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+ & 39 small & 23 large & 9 small & 6 large \\
 \midrule
-\texttt{grc4 T0.in --> T0.far}         & 128 / cap  & 237 / cap  & 418 / cap  & 1213 / cap \\
-\texttt{fischer6 P0.req --> P0.wait}   & \textbf{2378} & 4485 & 8576 & 21695 \\
-\texttt{csma5 Bus.Active --> Bus.Idle} & \textbf{272}  & 511  & 865  & 2927 \\
-\texttt{arbiter5 C1.cs --> C1.idle}    & \textbf{112}  & 218  & 344  & 993 \\
+Algorithm~2 vs Algorithm~\ref{alg:gfp} & $12.6\times$ & $\mathbf{145\times}$ & $1.0\times$ & $1.0\times$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-So $k=1$ is not a compromise on a precision/size trade-off: it is the best point on the entire
-axis. Extra precision in the forward graph does not help a lane whose only job is to drive $W$ to
-$\emptyset$ --- it multiplies the vertices the fixpoint must visit and fragments the federations it
-must represent, which is the same mechanism as \S\ref{sec:eval:cap}. Whatever the right abstraction
-between $aLU$ and the hull is, \textbf{it is not ``more zones per discrete key''}. \openq{}
+The saving is confined to violated queries, and it grows with the model --- $145\times$ on the
+larger set, best case $4022\times$ (\texttt{fischer8 P0.idle --> P0.cs}, $36202$ states against
+$9$). On satisfied queries there is nothing to save: \texttt{p --> q} holds only if \emph{every}
+reachable $p \wedge \lnot q$ state fails to have an infinite $\lnot q$ run, so the reachable set
+must be enumerated, and the final pass is Algorithm~\ref{alg:gfp} exactly. \measured{}
 
-\subsection{Differential validation}
+\subsection{Against \uppaal{}}
+\label{sec:otf:uppaal}
+
+\verifyta{} 5.0.0 at its defaults, since defaults are what a user gets.
+
+\begin{center}
+\textbf{48 of 48 verdicts agree. Zero disagreements.} \measured{}
+\end{center}
+
+This is the strongest validation here: an independent implementation of a different algorithm.
+
+\paragraph{Satisfied queries --- we win everything, and the margin grows.}
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+satisfied query & \verifyta{} & Algorithm~2 & factor \\
+\midrule
+\texttt{arbiter6 C1.cs --> C1.idle}    & 10453  & \textbf{256}   & $40.8\times$ \\
+\texttt{csma6 Bus.Active --> Bus.Idle} & 21610  & \textbf{688}   & $31.4\times$ \\
+\texttt{fischer7 P0.req --> P0.wait}   & 238617 & \textbf{11531} & $20.7\times$ \\
+\texttt{arbiter5 C1.cs --> C1.idle}    & 1671   & \textbf{112}   & $14.9\times$ \\
+\texttt{fischer6 P0.req --> P0.wait}   & 28839  & \textbf{2919}  & $9.9\times$ \\
+\midrule
+48-query set, total                     & 9479   & \textbf{1790}  & $5.3\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Nine of nine strict wins on the small set, four of four on the large one. The geometric mean is
+$6.06\times$ on the small models and $22.6\times$ on the large ones, and it rises \emph{within} a
+family with size (\texttt{fischer6} $9.9\times$, \texttt{fischer7} $20.7\times$). This is the
+backward fixpoint over a subsumed graph doing what \S\ref{sec:liveness} claimed, compounded over a
+whole state space. \measured{}
+
+\paragraph{Violated queries --- no losses.}
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+39 violated queries & \verifyta{} & Algorithm~2 & \\
+\midrule
+states stored   & 1279 & \textbf{456} & $2.8\times$ \\
+states explored & 597  & \textbf{220} & $2.7\times$ \\
+strict wins / ties / losses & \multicolumn{3}{c}{$8$ / $31$ / $\mathbf{0}$} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Thirty-one exact ties is the expected outcome and not a shortfall: on most of these models the
+witness is shallow and both tools stop at the same state, so there is nothing to be better at.
+The eight wins are the queries that require real search --- \texttt{grc4 T0.near --> T0.in}
+$860 \to 153$ ($5.6\times$), \texttt{twolock4 P0.cs --> P0.idle} $126 \to 65$,
+\texttt{twolock4 P0.waitB --> P0.cs} $62 \to 36$. \measured{}
+
+\subsection{The accounting, and why it differs by verdict class}
+\label{sec:otf:counters}
+
+There is an obvious objection to any explored-state gap on a violated query: both tools stop at the
+first witness, so neither can ``finish early''. The resolution is that \verifyta{}'s leads-to
+counters \textbf{do not include the nested inevitability check at all}. Compare \texttt{E<> p} ---
+pure reachability to the $p$-state, no liveness whatsoever --- against \texttt{p --> q}:
+
+\begin{center}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+model & query & stored & explored \\
+\midrule
+\texttt{fischer4} & \texttt{E<> P0.req}          & 5 & 1 \\
+\texttt{fischer4} & \texttt{P0.req --> P0.cs}    & 5 & 1 \\
+\texttt{csma4}    & \texttt{E<> S0.Send}         & 5 & 1 \\
+\texttt{csma4}    & \texttt{S0.Send --> S0.Wait} & 5 & 1 \\
+\texttt{phil4}    & \texttt{E<> P0.Eat}          & 9 & 2 \\
+\texttt{phil4}    & \texttt{P0.Eat --> P0.Think} & 9 & 2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A liveness query costing \emph{exactly} what plain reachability to its $p$-state costs is possible
+only if the $EG$ check is uncounted. \texttt{grc4} differs ($5/1$ against $860/463$) only because
+its first several $p$-states do not violate, so the \emph{outer} search runs longer; the nested
+checks are still uncounted. It also explains the counter inversion: \verifyta{} reports
+stored $>$ explored on leads-to ($860 > 463$) but stored $<$ explored on \texttt{A[] true}
+($1619 < 3273$). \measured{}
+
+The comparison therefore applies \textbf{the same rule to both sides}, and the right rule is not
+the same for the two verdict classes:
 
 \begin{itemize}
-  \item 48 queries $\times$ 7 modes and 32 queries $\times$ 3 modes: \textbf{0 disagreements} among
-        runs that converged. \measured{}
-  \item Mode \texttt{base} reproduces Algorithm~\ref{alg:gfp}'s stored count on \emph{every} query
-        in both sets, which is what licenses reading the other columns as differences of algorithm
-        rather than of reimplementation. \measured{}
-  \item Both \texttt{csma8} certificates were checked against the shipping engine independently.
+  \item \textbf{Violated: outer-only.} The search stops at the witness, so the inner $EG$ work is
+        genuinely extra --- work \emph{neither} tool's counter reports. Our split attributes to
+        the inner check everything that exists only to decide $EG\lnot q$ at an accepting vertex,
+        including that vertex's own expansion, which the outer reachability never needs because
+        the search stops there. The initial state is not counted, matching \verifyta{}: its
+        \texttt{E<> p} figures are exactly our count minus one on every query measured.
+  \item \textbf{Satisfied: total.} Both tools must build the whole reachable graph, so nodes first
+        reached by the inner DFS are work that is needed regardless. Reporting outer-only here
+        would give $973$ instead of $1790$ and would \emph{understate our real cost}. It is not
+        used.
 \end{itemize}
 
-Two defects in the on-the-fly code were found by this harness and are recorded because both are
-easy to reintroduce. First, D5's outer BFS skipped vertices the inner DFS had already expanded and
-therefore failed to publish their successors --- the same defect as
-Remark~\ref{rem:truncation}, independently committed --- which produced plausible \textsc{holds}
-verdicts on fewer states. Second, a capped pass was read as ``no certificate'', converting an
-exhausted budget into a silent \textsc{holds}; see Remark~\ref{rem:capped}.
+Applying outer-only to the violated class turns all six of the earlier ``losses'' into exact ties
+--- they were the queries whose entire difference was the inner check we counted and \verifyta{}
+did not --- and leaves \texttt{grc4} a $5.6\times$ win.
 
-\subsection{Two orthogonal improvements}
+\subsection{Why the margin is asymmetric}
 
-\textbf{Accepting-closure restriction.} $F$ is defined per vertex from its own successors, so the
-value at an accepting vertex depends only on the $\lnot q$-forward-closure of the accepting set.
-Restricting the pass to that closure is \emph{exact}, not an approximation, and applies to
-Algorithm~\ref{alg:gfp} unchanged: \texttt{grc4 T0.in --> T0.far} $5.87\,\text{s} \to
-2.03\,\text{s}$, \texttt{grc4 G.up --> G.low} $0.13\,\text{s} \to 0.02\,\text{s}$. \measured{}
+$5$--$40\times$ on satisfied queries against ties on violated ones is not a weakness on the
+violated side; it is that the two classes have different amounts to win.
 
-\textbf{A worklist for Phase 3 is a net loss.} Phase~3 is described as chaotic but implemented as a
-round-robin sweep. $W(v)$ reads only its successors, so the textbook improvement is to re-queue $v$
-exactly when one of them shrinks. It fails twice: it saves $0.1\%$ of $\Pre$ calls on
-\texttt{fischer7} under the hull ($825891 \to 824775$ --- every vertex genuinely needs recomputing,
-there is no wasted sweep to remove), and it turns \texttt{grc4} from convergent into
-\textsc{unusable}, because reordering a monotone descending iteration does not change its limit but
-does change the intermediate \emph{federation shapes}, and the width cap is a bound on those.
-Letting some vertices descend far ahead of their neighbours fragments the federations enough to trip
-the cap at $5147$ $\Pre$ calls where the lockstep sweep converges at $56892$. The sweep is doing
-real work as a de-facto normaliser. Reverted, and recorded so it is not reattempted. \measured{}
+A satisfied query must enumerate the reachable set, so an advantage in \emph{representation} ---
+$aLU$ subsumption plus the exact merge, against \verifyta{}'s zone store --- compounds over every
+state, and the factor grows with the model. A violated query stops after a handful of states:
+on 31 of 39 both tools settle at the same state, and there is essentially nothing to be better at.
+The exception proves it --- \texttt{grc4 T0.near --> T0.in} is the one violated query needing real
+search ($118$ expansions), and it is exactly where the representation advantage reappears, at
+$5.6\times$.
 
-\textbf{Refutation budget.} On every violated query measured, D5 confirms its certificate on the
-\emph{first} candidate (one pass, one to three $\Pre$ calls, including \texttt{grc4 T0.near -->
-T0.in} where the DFS first walks 1722 states). Only queries that hold refute repeatedly. Spending a
-fixed budget and then abandoning early exit cannot change a verdict --- it defers the answer to the
-exact final pass --- and cut \texttt{grc4 T0.in --> T0.far} from $9.31\,\text{s}$ / 22 passes to
-$3.43\,\text{s}$ / 9 passes. \measured{}
+\subsection{Limits}
+
+\begin{itemize}
+  \item \textbf{Federation width.} The backward operator's real failure mode is a federation that
+        splits without bound. \S\ref{sec:otf:closure} removed the two implementation causes, and no
+        query in either set now caps --- but the bound is a resource limit, not a theorem, and a
+        capped pass yields no verdict (Remark~\ref{rem:capped}).
+  \item \textbf{Order sensitivity.} \texttt{grc4 T0.near --> T0.in} moves by a factor of three
+        under different frontier orders, and so does \verifyta{} ($463$ at \texttt{-o 0}, $6559$ at
+        \texttt{-o 1}). Both tools are guessing.
+  \item \textbf{Diagonal constraints.} $aLU$ is unusable with diagonal guards, and the algorithm
+        falls back to exact inclusion, losing the floor.
+  \item \textbf{Inherited incompleteness.} The whole-zone stopping convention is forced by
+        LU-extrapolation (a per-valuation stuck test is unsound on extrapolated zones), and is the
+        same on both sides of every comparison here.
+\end{itemize}

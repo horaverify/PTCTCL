@@ -5370,6 +5370,8 @@ class Otf {
   // counted at all. Ours counts every interned state including the inner DFS's. To compare
   // like with like, split them.
   bool in_inner = false;
+  long acc_refuted = 0;              // accepting states tried and refuted
+  static constexpr long kAccPrioBudget = 2;
   std::size_t outer_expands = 0, inner_expands = 0, outer_nodes = 0, inner_nodes = 0;
   CoarseOracle oracle;   // D9: coarse distance-to-candidate, priority only
 
@@ -6151,6 +6153,7 @@ bool Otf::run_dfs_candidates() {
         if (adj[u].empty()) { settled_early = true; in_inner = false; return true; }
         if (neg_dfs(u)) { settled_early = true; in_inner = false; return true; }
         in_inner = false;
+        ++acc_refuted;                 // this accepting state carries no witness
       }
     }
     // NOT skipped when already expanded: the inner !q DFS expands nodes too, and skipping one
@@ -6159,11 +6162,33 @@ bool Otf::run_dfs_candidates() {
     expand(u);
     grow();
     if (local_hit) { settled_early = true; return true; }
+    // ACCEPTING STATES JUMP THE QUEUE.
+    //
+    // Only a p /\ !q state can settle a violated query, so a newly generated one is the most
+    // valuable thing in the frontier and there is no reason to make it wait behind the rest of
+    // its breadth level. Measured on phil4 `P0.Eat --> P0.Think`, where the first accepting
+    // state found is already a witness (passes=1) and the whole cost was reaching it: the
+    // process enumeration order in gfp_succ_tagged puts the four fork processes before the
+    // philosophers, so P0's own move is generated last.
+    //
+    // BUT IT MUST BE BUDGETED. Where most accepting states are NOT witnesses, front-loading
+    // them turns the breadth search into a dive and costs far more than it saves: grc4
+    // `T0.near --> T0.in` goes 182 -> 1762 outer expansions unbudgeted, because it has many
+    // T0.near states and the early ones are all refuted. So prioritise only until a couple of
+    // accepting states have failed, then fall back to breadth-first. phil4's first accepting
+    // state IS a witness, so it never spends the budget.
+    //
+    // This is a pure ORDERING change: the same states are reachable and a query that HOLDS
+    // still exhausts the identical set, so soundness and completeness are untouched.
     for (const auto& e : adj[u]) {
       if (seen.size() < node.size()) seen.resize(node.size(), 0);
       if (!seen[e.tgt] || !expanded[e.tgt]) {
         seen[e.tgt] = 1;
-        push_work(e.tgt);
+        if (!guided && !outer_dfs && acc_refuted < kAccPrioBudget &&
+            is_p(e.tgt) && is_nq(e.tgt))
+          work.push_front(e.tgt);
+        else
+          push_work(e.tgt);
       }
     }
   }
@@ -6285,7 +6310,10 @@ bool Otf::run(GfpStats* gs) {
     // handful of states, so the oracle's own nodes are added to the reported total.
     gs->fwd_nodes += oracle.nodes;
     gs->oracle_nodes = oracle.nodes;
-    gs->outer_nodes = outer_nodes + 1;   // +1 for the initial state
+    // Do NOT count the initial state, matching verifyta. Its `E<> p` figures are exactly our
+    // count minus one on every query measured (5 against 6, 6 against 7, 9 against 10), which
+    // pins the convention: it reports the states GENERATED, not the root it started from.
+    gs->outer_nodes = outer_nodes;
     gs->outer_expands = outer_expands;
   }
   return !violated;

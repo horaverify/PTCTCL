@@ -16,6 +16,11 @@ VERDICT = re.compile(r"prototype leads_to_gfp\s*:\s*(UNUSABLE|INCONCLUSIVE|SATIS
 STORAGE = re.compile(r"nodes=(\d+) disc-keys=(\d+) zones/dk=([\d.]+) edges=(\d+)")
 FIX = re.compile(r"rounds=(\d+) nonempty-nodes=(\d+) fed-width avg=([\d.]+) max=(\d+) capped=(\S+)")
 EXPANDED = re.compile(r"expanded=(\d+) passes=(\d+) pre-calls=(\d+) early=(\S+)")
+# verifyta's leads-to counters cover only the OUTER reachability up to the first violating
+# p-state, excluding the nested inevitability check (proved by `E<> p` being byte-identical
+# to `p --> q` on fischer4/csma4/phil4). Applying the SAME rule to both sides is the
+# like-for-like comparison; our-total against their-outer is the unfair one.
+OUTER = re.compile(r"outer-only \(like-for-like with verifyta\): stored=(\d+) explored=(\d+)")
 # "NOT satisfied" is two words, so `(\S+)` silently matched only the SATISFIED lines and the
 # shipping engine's state count went missing on exactly the queries it mattered for.
 REFV = re.compile(r"reference leads_to_net\s*:\s*(SATISFIED|NOT satisfied)\s*\(explored=(\d+)\)")
@@ -54,6 +59,7 @@ def run(model, p, q, mode, timeout, with_ref):
     e = EXPANDED.search(o)
     fx = FIX.search(o)
     ref = REFV.search(o)
+    ou = OUTER.search(o)
     return {
         "verdict": v.group(1) if v else "ERR",
         "ref": ref.group(1) if ref else None,
@@ -62,6 +68,8 @@ def run(model, p, q, mode, timeout, with_ref):
         "disc": int(s.group(2)) if s else None,
         "edges": int(s.group(4)) if s else None,
         "expanded": int(e.group(1)) if e else None,
+        "outer_nodes": int(ou.group(1)) if ou else None,
+        "outer_expanded": int(ou.group(2)) if ou else None,
         "rounds": int(fx.group(1)) if fx else None,
         "capped": fx.group(5) if fx else None,
         "secs": dt,
