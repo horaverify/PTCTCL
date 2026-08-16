@@ -3695,6 +3695,26 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
 //
 // No extrapolation and no reset_inactive appear in the forward direction here: this is the exact
 // concrete Pre. The abstraction enters only through the caller's confinement W_v subseteq Z_v.
+// An EMPTY zone OF THE RIGHT DIMENSION.
+//
+// `Dbm()` is documented as "a zero-clock placeholder, so a Dbm can live in a container": it is
+// a 1x1 matrix holding kZeroLe, and `dbm_empty` tests the DIAGONAL for a negative entry, so
+// `Dbm().empty()` is FALSE. Returning it from gfp_pre to mean "the predecessor is empty"
+// therefore hands the caller a non-empty 1x1 DBM, which `if (!pz.empty())` duly pushes into a
+// federation of (nclocks+1)-dimensional ones. The next `dbm_includes` inside gfp_fed_compact
+// reads dim*dim entries out of a 4-byte allocation.
+//
+// Caught by AddressSanitizer as a heap-buffer-overflow, after `PTCTLMC_GFPMODE=d6` on grc4
+// returned SATISFIED on 4 of 10 identical runs and UNUSABLE on the other 6: the verdict was a
+// function of whatever heap garbage followed the placeholder. The bug is in gfp_pre and is
+// therefore shared by the published leads_to_gfp, not introduced by the on-the-fly work; the
+// hull abstraction merely takes the early-return paths often enough to make it fire.
+static Dbm gfp_empty(int nclocks) {
+  Dbm z(nclocks);
+  z.set(0, 0, lt(0));      // 0 - 0 < 0 is unsatisfiable, so dbm_empty() is true
+  return z;
+}
+
 static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, const SymState& tgt,
                    const Dbm& X) {
   Dbm Y = X;
@@ -3715,21 +3735,21 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
   std::vector<Constraint> inv;
   all_invariants(net, tgt.locs, inv);
   bool nc, nu; frozen_flags(net, tgt.locs, &nc, &nu);
-  if (!apply_all(Y, inv)) return Dbm();
-  if (!nc && !nu) { Y.down(); if (!apply_all(Y, inv)) return Dbm(); }
+  if (!apply_all(Y, inv)) return gfp_empty(net.nclocks);
+  if (!nc && !nu) { Y.down(); if (!apply_all(Y, inv)) return gfp_empty(net.nclocks); }
 
   // Undo every participant's resets: a reset clock reads 0 after the step, and its value before
   // the step is unconstrained by the step itself.
   for (const auto& pe : t.parts)
     for (int r : net.procs[pe.first].edges[pe.second].clock_resets) {
-      if (!Y.constrain(r, 0, le(0))) return Dbm();
-      if (!Y.constrain(0, r, le(0))) return Dbm();
+      if (!Y.constrain(r, 0, le(0))) return gfp_empty(net.nclocks);
+      if (!Y.constrain(0, r, le(0))) return gfp_empty(net.nclocks);
     }
   for (const auto& pe : t.parts)
     for (int r : net.procs[pe.first].edges[pe.second].clock_resets) Y.free(r);
 
   for (const auto& pe : t.parts)
-    if (!apply_all(Y, net.procs[pe.first].edges[pe.second].clock_guard)) return Dbm();
+    if (!apply_all(Y, net.procs[pe.first].edges[pe.second].clock_guard)) return gfp_empty(net.nclocks);
 
   // Delay BEFORE the action. A stored zone is delay-closed as a SET, which is why the forward
   // operator may write `Z /\ g`; a single valuation may still have to let time pass first.
@@ -3737,7 +3757,7 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
   all_invariants(net, src.locs, sinv);
   bool sc, su; frozen_flags(net, src.locs, &sc, &su);
   if (!sc && !su) { Y.down(); }
-  if (!apply_all(Y, sinv)) return Dbm();
+  if (!apply_all(Y, sinv)) return gfp_empty(net.nclocks);
   return Y;
 }
 
@@ -5055,7 +5075,7 @@ void memo_search(const Network& net, bool use_memo) {
 // successors have been computed, no matter what the rest of the graph is doing.
 // ============================================================================
 
-enum class OtfMode { Base, D1, D2, D3, D4, D5, D6, D7 };
+enum class OtfMode { Base, D1, D2, D3, D4, D5, D6, D7, D8 };
 
 static const char* otf_mode_name(OtfMode m) {
   switch (m) {
@@ -5067,6 +5087,7 @@ static const char* otf_mode_name(OtfMode m) {
     case OtfMode::D5:   return "d5-candidate-confirm";
     case OtfMode::D6:   return "d6-hull-one-node-per-discrete-key";
     case OtfMode::D7:   return "d7-race(d5-exact || d6-hull)";
+    case OtfMode::D8:   return "d8-bounded-width-hull";
   }
   return "?";
 }
@@ -5096,6 +5117,7 @@ class Otf {
   bool use_alu = false;
   bool append_only = false;          // D1/D2: never enlarge a stored node
   std::size_t fedcap = 4096;
+  std::size_t hull_width = 4;   // D8: zones kept per discrete key before merging
   bool capped = false;
   std::size_t passes = 0, gfp_iters = 0, expand_calls = 0, pre_calls = 0;
   std::size_t fed_max = 0, nonempty = 0;
@@ -5148,6 +5170,8 @@ void Otf::setup() {
   use_alu = std::getenv("PTCTLMC_GFPALU") != nullptr && !network_has_diagonal(net);
   append_only = (mode == OtfMode::D1 || mode == OtfMode::D2);
   if (const char* c = std::getenv("PTCTLMC_GFPFEDCAP")) fedcap = std::strtoul(c, nullptr, 10);
+  if (const char* c = std::getenv("PTCTLMC_OTFWIDTH")) hull_width = std::strtoul(c, nullptr, 10);
+  if (hull_width < 1) hull_width = 1;
 }
 
 bool Otf::holds(const DiscPred& pr, const SymState& s) const {
@@ -5229,25 +5253,43 @@ int Otf::intern(SymState&& s) {
   // still stuck, since enabledness is a per-valuation property. The one NON-monotone term is
   // `adj[v].empty()`, which a hull can falsify; it is subsumed by state_has_deadlock (an empty
   // adjacency means every valuation is stuck), so PTCTLMC_GFPNOPD must NOT be set in this mode.
-  if (mode == OtfMode::D6) {
-    if (!b.empty()) {
-      const int j = b.front();
-      const int dim = s.zone.dim();
-      if (node[j].zone.dim() == dim) {
-        Dbm h(net.nclocks);
-        dbm_hull(h.data().data(), node[j].zone.data().data(), s.zone.data().data(), dim);
-        if (h.data() != node[j].zone.data()) {
-          node[j].zone = std::move(h);
-          intern_grew = true;          // hull grew: adjacency computed from the old one is stale
-        }
-        return j;
-      }
+  // D8: BOUNDED-WIDTH HULL -- the abstraction strictly between aLU and the hull that D6's
+  // failure on `fischer` asks for. Keep at most `width` zones per discrete key; a newcomer
+  // already covered is dropped, a newcomer that fits under the bound is stored exactly, and
+  // only once the bound is reached is anything merged -- into the stored zone whose hull with
+  // the newcomer LOSES THE LEAST, measured as the number of DBM entries the hull has to
+  // relax. D8 with width 1 IS D6; with width large it is plain-inclusion storage. Being an
+  // over-approximation for every width, it is sound in exactly D6's direction and no other
+  // (Proposition: hull is extensive, so widening any member only enlarges the carrier).
+  if (mode == OtfMode::D6 || mode == OtfMode::D8) {
+    const std::size_t width = (mode == OtfMode::D6) ? 1 : hull_width;
+    const int dim = s.zone.dim();
+    for (int j : b)                                   // already covered: nothing to do
+      if (node[j].zone.dim() == dim && node[j].zone.includes(s.zone)) return j;
+    if (b.size() < width) {
+      const int id = static_cast<int>(node.size());
+      node.push_back(std::move(s));
+      b.push_back(id);
+      grow();
+      return id;
     }
-    const int id = static_cast<int>(node.size());
-    node.push_back(std::move(s));
-    b.push_back(id);
-    grow();
-    return id;
+    int best = b.front();
+    long best_cost = -1;
+    Dbm best_h(net.nclocks);
+    for (int j : b) {
+      if (node[j].zone.dim() != dim) continue;
+      Dbm h(net.nclocks);
+      dbm_hull(h.data().data(), node[j].zone.data().data(), s.zone.data().data(), dim);
+      long cost = 0;                                  // entries the hull had to relax
+      for (int k2 = 0; k2 < dim * dim; ++k2)
+        if (h.data()[k2] != node[j].zone.data()[k2]) ++cost;
+      if (best_cost < 0 || cost < best_cost) { best_cost = cost; best = j; best_h = h; }
+    }
+    if (best_cost > 0) {
+      node[best].zone = std::move(best_h);
+      intern_grew = true;              // widened: adjacency computed from the old zone is stale
+    }
+    return best;
   }
   auto covered = [&](int j) {
     return use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU) : node[j].zone.includes(s.zone);
@@ -5342,6 +5384,22 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     W[v].push_back(node[v].zone);
     if (stop_term(v)) nosucc[v].push_back(node[v].zone);
   }
+  // ROUND-ROBIN, and it is not an oversight -- a worklist was tried and REVERTED.
+  //
+  // The obvious optimisation is a true chaotic worklist: W(v) reads only its successors, so
+  // re-queue v exactly when one of them shrinks (`pred` is maintained for it). Measured, that
+  // is a NET LOSS twice over:
+  //   * it saves nothing where it should. `fischer7 P0.req --> P0.wait` under the hull goes
+  //     825891 -> 824775 Pre calls, 0.1%. Every node genuinely needs recomputing, because the
+  //     values do propagate: there is no wasted sweep to remove.
+  //   * it REGRESSES grc4 `T0.in --> T0.far` from SATISFIED (128 states) to UNUSABLE. Changing
+  //     the order does not change the limit of a monotone descending iteration, but it does
+  //     change the intermediate FEDERATION SHAPES, and the width cap is a resource bound on
+  //     those. Letting some nodes descend far ahead of their neighbours fragments the
+  //     federations enough to trip the cap at 5147 Pre calls where the lockstep sweep converges
+  //     at 56892.
+  // The lockstep sweep is doing real work as a de-facto widening-free normaliser. Do not
+  // "optimise" it again without measuring the cap.
   bool changed = true;
   std::size_t it = 0;
   while (changed && !capped) {
@@ -5686,6 +5744,7 @@ bool Otf::run(GfpStats* gs) {
     case OtfMode::Base:
     case OtfMode::D2:
     case OtfMode::D6:
+    case OtfMode::D8:
     case OtfMode::D4: {
       // D4 (preprocessing overlap) differs from Base only in WHEN the per-node liveness
       // data is computed: is_p / is_nq / the stopping term are evaluated as each node is
@@ -5740,7 +5799,7 @@ bool Otf::run(GfpStats* gs) {
     gs->mode = otf_mode_name(mode);
     // D6 over-approximates, so a non-empty fixpoint is NOT a witness -- it may rest entirely on
     // hull points the system never reaches. Only the empty direction concludes.
-    gs->inconclusive = (mode == OtfMode::D6 && violated);
+    gs->inconclusive = ((mode == OtfMode::D6 || mode == OtfMode::D8) && violated);
   }
   return !violated;
 }
@@ -5810,6 +5869,7 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, cons
   else if (s == "d4") m = OtfMode::D4;
   else if (s == "d5") m = OtfMode::D5;
   else if (s == "d6") m = OtfMode::D6;
+  else if (s == "d8") m = OtfMode::D8;
   else if (s == "d7") return leads_to_race(net, p, q, gs);
   Otf e(net, p, q, m);
   return e.run(gs);

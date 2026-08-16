@@ -115,36 +115,64 @@ Algorithm~3 was scored as the one-sided procedure it is: the only failure that m
 outcome over 48 queries & count \\
 \midrule
 unsound (claimed a verdict it may not) & \textbf{0} \\
-proved \textsc{holds} (the useful outcome) & 9 of 9 \\
-abstained on a violated query (correct) & 39 of 39 \\
+proved \textsc{holds} (the useful outcome) & 8 of 9 \\
+abstained on a violated query (correct) & 38 of 39 \\
 abstained on a satisfied query (sound, useless) & 0 \\
+\textsc{unusable}, federation cap (both \texttt{grc4}) & 2 \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 It never abstained on a query that holds --- the coarsest zone abstraction available is
-\emph{still} precise enough to prove every satisfied liveness property in this set --- and it stores
-exactly one symbolic state per reachable discrete state:
+\emph{still} precise enough to prove eight of the nine satisfied liveness properties in this set,
+and the ninth is lost to the width cap rather than to imprecision. But the state saving is
+\textbf{modest}, and it is worth being blunt about why:
 
 \begin{center}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
 satisfied query & D5 & D6 & factor \\
 \midrule
-\texttt{grc4 T0.in --> T0.far}          & 2058 & \textbf{128} & $16.1\times$ \\
 \texttt{csma5 Bus.Active --> Bus.Idle}  & 352  & \textbf{272} & $1.3\times$ \\
 \texttt{csma4 Bus.Active --> Bus.Idle}  & 128  & \textbf{104} & $1.2\times$ \\
 \texttt{fischer4 P0.req --> P0.wait}    & 222  & \textbf{220} & $1.0\times$ \\
 \texttt{arbiter5 C1.cs --> C1.idle}     & 112  & 112          & $1.0\times$ \\
 \midrule
-total                                    & 3128 & \textbf{1092} & $2.9\times$ \\
+total over the eight proved              & 1070 & \textbf{964} & $1.11\times$ \\
+\midrule
+\texttt{grc4 T0.in --> T0.far}          & 2058 & \multicolumn{2}{l}{\textsc{unusable} (cap)} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The factor is $1.0$ wherever the $aLU$ graph was already at one zone per discrete state --- six of
-the seven families --- and $16\times$ on \texttt{grc4}, the one family where it was not
-($18.32$ zones per discrete state). \measured{}
+The discrete floor is only \emph{below} the $aLU$ floor where the $aLU$ graph stores more than one
+zone per discrete state, and on six of the seven families it already stores exactly one
+(\S\ref{sec:floor}). \texttt{grc4} is the single family with real headroom ($18.32$ zones per
+discrete state) and it is precisely the one where the hull's fixpoint does not converge. \textbf{So
+the hull lane is not a state-reduction technique on these benchmarks.} Its value is entirely
+\S\ref{sec:eval:cap}: it answers a query no exact lane can. \measured{}
+
+\begin{remark}[This table was wrong, and how]
+\label{rem:oob}
+An earlier revision reported $9$ of $9$ proved, no capped runs, and \texttt{grc4}
+$2058 \to 128$ at $16.1\times$, for a total of $2.9\times$. Those numbers came from a program
+reading uninitialised heap memory. \texttt{gfp\_pre} signals ``the predecessor is empty'' by
+returning \texttt{Dbm()}, which the DBM library documents as a \emph{zero-clock placeholder}: a
+$1\times1$ matrix. \texttt{dbm\_empty} tests the diagonal, so \texttt{Dbm().empty()} is
+\textbf{false}, and the caller's \texttt{if (!pz.empty())} pushed that $1\times1$ matrix into a
+federation of $(|X|+1)$-dimensional ones; the next \texttt{dbm\_includes} inside
+\texttt{gfp\_fed\_compact} then read $\dim^2$ entries out of a four-byte allocation.
+
+It was found by noticing that \texttt{grc4} under the hull returned \textsc{holds} on four of ten
+\emph{identical} runs and \textsc{unusable} on the other six --- the verdict was a function of
+whatever followed the placeholder on the heap --- and confirmed by AddressSanitizer as a
+heap-buffer-overflow. The defect is in \texttt{gfp\_pre} and is therefore shared by
+Algorithm~\ref{alg:gfp}; the hull abstraction merely takes \texttt{gfp\_pre}'s early-return paths
+often enough to make it fire. Repaired by returning an empty zone \emph{of the right dimension}.
+Re-measured after the repair, Algorithm~\ref{alg:gfp} and D5 are unchanged on \textbf{every} query
+in both sets --- the bug never fired on their paths --- and only the hull lane's numbers move.
+\measured{}
+\end{remark}
 
 \subsection{The query nothing else can answer}
 \label{sec:eval:cap}
@@ -194,13 +222,40 @@ query & Alg.~\ref{alg:gfp} & D5 & D6 \\
 \end{tabular}
 \end{center}
 
-Two distinct problems. \emph{Precision}: \texttt{fischer}'s satisfied proof rests on a correlation
-between clocks that the hull discards, so the fixpoint has to work much harder to reach $\emptyset$.
-\emph{Cost}: on a violated query the lane pays the whole hull graph before abstaining, which is
-pure loss. This is why Algorithm~4 races the lanes rather than sequencing them, and it identifies
-the open problem: an abstraction strictly between $aLU$ and the hull --- coarse enough to collapse
-\texttt{grc4}'s $18.32$ zones per discrete state, precise enough to keep \texttt{fischer}'s
-correlations. \openq{}
+and on \texttt{grc4}, the one family with real headroom, its fixpoint does not converge at all
+(\S\ref{sec:otf:eval:hull}).
+
+Three distinct problems. \emph{Precision}: \texttt{fischer}'s satisfied proof rests on a
+correlation between clocks that the hull discards, so the fixpoint works much harder to reach
+$\emptyset$. \emph{Cost}: on a violated query the lane pays the whole hull graph before abstaining,
+which is pure loss. \emph{Convergence}: on \texttt{grc4} the hull's federations exceed the width cap.
+This is why Algorithm~4 races the lanes rather than sequencing them.
+
+\paragraph{The interpolation does not exist, at least not along width.}
+The obvious repair is an abstraction between $aLU$ and the hull. The natural parameterisation is a
+\textbf{bounded-width} store: keep at most $k$ zones per discrete key, merging a newcomer into the
+stored zone whose hull with it relaxes the fewest DBM entries; $k=1$ is the hull, large $k$ is
+plain-inclusion storage. Measured, widening is \textbf{monotonically worse in both respects}: it
+stores more \emph{and} converges less often. \measured{}
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+satisfied query & $k=1$ (hull) & $k=2$ & $k=4$ & $k=16$ \\
+\midrule
+\texttt{grc4 T0.in --> T0.far}         & 128 / cap  & 237 / cap  & 418 / cap  & 1213 / cap \\
+\texttt{fischer6 P0.req --> P0.wait}   & \textbf{2378} & 4485 & 8576 & 21695 \\
+\texttt{csma5 Bus.Active --> Bus.Idle} & \textbf{272}  & 511  & 865  & 2927 \\
+\texttt{arbiter5 C1.cs --> C1.idle}    & \textbf{112}  & 218  & 344  & 993 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+So $k=1$ is not a compromise on a precision/size trade-off: it is the best point on the entire
+axis. Extra precision in the forward graph does not help a lane whose only job is to drive $W$ to
+$\emptyset$ --- it multiplies the vertices the fixpoint must visit and fragments the federations it
+must represent, which is the same mechanism as \S\ref{sec:eval:cap}. Whatever the right abstraction
+between $aLU$ and the hull is, \textbf{it is not ``more zones per discrete key''}. \openq{}
 
 \subsection{Differential validation}
 
@@ -227,6 +282,17 @@ value at an accepting vertex depends only on the $\lnot q$-forward-closure of th
 Restricting the pass to that closure is \emph{exact}, not an approximation, and applies to
 Algorithm~\ref{alg:gfp} unchanged: \texttt{grc4 T0.in --> T0.far} $5.87\,\text{s} \to
 2.03\,\text{s}$, \texttt{grc4 G.up --> G.low} $0.13\,\text{s} \to 0.02\,\text{s}$. \measured{}
+
+\textbf{A worklist for Phase 3 is a net loss.} Phase~3 is described as chaotic but implemented as a
+round-robin sweep. $W(v)$ reads only its successors, so the textbook improvement is to re-queue $v$
+exactly when one of them shrinks. It fails twice: it saves $0.1\%$ of $\Pre$ calls on
+\texttt{fischer7} under the hull ($825891 \to 824775$ --- every vertex genuinely needs recomputing,
+there is no wasted sweep to remove), and it turns \texttt{grc4} from convergent into
+\textsc{unusable}, because reordering a monotone descending iteration does not change its limit but
+does change the intermediate \emph{federation shapes}, and the width cap is a bound on those.
+Letting some vertices descend far ahead of their neighbours fragments the federations enough to trip
+the cap at $5147$ $\Pre$ calls where the lockstep sweep converges at $56892$. The sweep is doing
+real work as a de-facto normaliser. Reverted, and recorded so it is not reattempted. \measured{}
 
 \textbf{Refutation budget.} On every violated query measured, D5 confirms its certificate on the
 \emph{first} candidate (one pass, one to three $\Pre$ calls, including \texttt{grc4 T0.near -->
