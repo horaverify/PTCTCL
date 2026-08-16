@@ -186,6 +186,52 @@ robust.
 
 ---
 
+## 4b. Against the shipping forward engine
+
+The published gfp is the right baseline for *this branch*, but the tool the user actually has is
+`src/netreach.cpp`'s `leads_to_net` — a lazy forward Tarjan with eager escape, which is already
+on-the-fly. The question that decides whether D5 is worth shipping is whether it dominates
+**both**. Like-for-like metric: D5's `expanded` (successor computations performed) against
+`leads_to_net`'s `stats.explored`. `run_otf.py --ref`, 48 queries.
+
+**Verdict agreement: 47/48; the 48th is a timeout of the shipping engine, not a disagreement.**
+
+**Violated queries (39).** D5 never expands more, and expands up to 5.5× fewer:
+
+```
+shipping-explored / D5-expanded :  geo-mean 1.18x   min 1.00x   max 5.52x
+```
+
+31 of 39 are dead-on 1.00× — both engines stop at the same state, which is what should happen
+when two correct on-the-fly searches find the same shallow witness. The gaps are where the
+witness needs a cycle: `grc4 T0.near --> T0.in` 9505 → **1722**, `fischer5 P0.cs --> P0.idle`
+116 → **56**, `twolock4 P0.waitB --> P0.cs` 125 → **64**. That is the subsumption asymmetry
+paying off: the shipping engine has to refuse subsumption edges when arguing that a run goes on
+forever (`exact_edge`), and walks further because of it; D5 follows every edge and lets the
+backward pass arbitrate.
+
+**Satisfied queries (9).** This is where the backward gfp was already known to win, and D5
+inherits it intact:
+
+| query | D5 expanded | shipping explored |
+|---|---:|---:|
+| `arbiter5 C1.cs --> C1.idle` | **112** | 136204 |
+| `arbiter4 C1.cs --> C1.idle` | **48** | 8192 |
+| `fischer4 P0.req --> P0.wait` | **270** | 1468 |
+| `grc4 T0.in --> T0.far` | **2681** (3.85 s) | *timeout at 240 s* |
+| `csma4 Bus.Active --> Bus.Idle` | 128 | **42** |
+| `csma5 Bus.Active --> Bus.Idle` | 352 | **62** |
+
+Two honest caveats on this half of the table. (i) `leads_to_net` settles a satisfied query by
+*racing* an aLU search against an exact-inclusion search and a deadlock gate; `stats.explored`
+sums the two searches and omits the gate, so it is indicative rather than a clean count.
+(ii) `csma` is a genuine loss — the shipping engine's race settles those two in 42 and 62
+states, an order of magnitude under the gfp. So D5 dominates on violated queries and on most
+satisfied ones, but **not everywhere**, and the sensible production shape is the race the
+engine already uses, with D5 as one of the lanes.
+
+---
+
 ## 5. Differential validation
 
 * `queries.txt`, 7 modes × 48 queries: **0 disagreements**, 0 capped.
@@ -236,6 +282,11 @@ and it cut `grc4 T0.in --> T0.far` from 9.31 s / 22 passes to 3.43 s / 9 passes.
 Ship **D5** (`PTCTLMC_GFPMODE=d5`) as the liveness path, with the accepting-closure restriction
 and the refutation budget on by default. It is the published algorithm plus an early exit that
 is free when the property holds, and it is the only variant that also rescues capped queries.
+Keep it as a **lane** in the race `leads_to_net` already runs rather than as a replacement:
+`csma` satisfied queries are settled an order of magnitude faster by the existing forward race
+(42 and 62 states against 128 and 352), and `grc4 T0.in --> T0.far` is settled only by D5 (the
+forward engine times out at 240 s). Neither lane dominates, and which one wins is not
+predictable — the same argument, and the same conclusion, as the existing aLU-vs-exact race.
 
 Do **not** pursue D1, D2 or D4 further: D1/D2 pay a measured 11–16 % average and up to 2.5 %
 worst-case state penalty for a pipelining benefit that D3/D5 obtain without it, and D4 is
