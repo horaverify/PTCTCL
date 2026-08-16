@@ -3307,7 +3307,34 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       for (long fi = 0; fi < static_cast<long>(frontier.size()); ++fi) {
         const int u = frontier[fi];
         SymState cur;
-        { std::lock_guard<std::mutex> lk(gmtx); cur = node[u]; if (expanded[u]) continue; }
+        // A NODE THAT IS ALREADY EXPANDED STILL HAS TO PUBLISH ITS SUCCESSORS.
+        //
+        // `continue` here used to skip the whole iteration, and that skips the frontier
+        // publication at the bottom of the loop, not just the successor computation. neg_scc
+        // calls expand() on entire regions while settling a level's accepting nodes, so by the
+        // time the outer BFS reaches those nodes they are already expanded -- and their
+        // successors then never entered `next`. The outer search stopped short of the reachable
+        // set: measured against benchmarks/parity.csv, whose discrete counts are verified
+        // against verifyta, csma4 `Bus.Active --> Bus.Idle` answered SATISFIED having visited
+        // 21 of the model's 104 reachable discrete states, and fischer4 reached 217 of 220.
+        //
+        // This is soundness-relevant rather than a performance artefact: a p /\ !q state may be
+        // reachable ONLY through q states, which neg_scc never enters, so the outer BFS is the
+        // only thing that can find it. No wrong verdict is exhibited on the current benchmark
+        // set, but the mechanism can miss a violation.
+        {
+          std::lock_guard<std::mutex> lk(gmtx);
+          cur = node[u];
+          if (expanded[u]) {                       // publish, do not recompute
+            for (std::size_t k = 0; k < adj[u].size(); ++k) {
+              const int v = resolve(edge_id(adj[u][k]));
+              if (seen.size() < node.size()) seen.resize(node.size(), 0);
+              if (!seen[v]) { seen[v] = 1; loc_next.push_back(v); }
+            }
+            if (is_p(u) && !is_q(u)) loc_acc.push_back(u);
+            continue;
+          }
+        }
         succ.clear();
         successors_net(net, cur, cur.zone, L, U, qmask, emode, succ);   // the expensive part
         // Cheapest witness, checked WITHOUT the lock: this state alone satisfies p, violates q,
@@ -3376,9 +3403,12 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       std::vector<SymState> succ;
       for (std::size_t fi = 0; fi < frontier.size(); ++fi) {
         const int u = frontier[fi];
-        if (expanded[u]) continue;
-        expand(u);
-        if (is_p(u) && !is_q(u)) accepting.push_back(u);
+        // NOT `if (expanded[u]) continue;` -- see the note in the OpenMP branch above. Skipping
+        // an already-expanded node also skips publishing its successors, and neg_scc expands
+        // whole regions before the outer BFS reaches them, so the reachable set is truncated.
+        const bool was_expanded = expanded[u];
+        expand(u);                                    // no-op when already expanded
+        if (!was_expanded && is_p(u) && !is_q(u)) accepting.push_back(u);
         for (std::size_t k = 0; k < adj[u].size(); ++k) {
           const int v = resolve(edge_id(adj[u][k]));
           if (seen.size() < node.size()) seen.resize(node.size(), 0);
