@@ -365,3 +365,39 @@ python3 summarise_otf.py otf_results.json
 | `PTCTLMC_GFPALU` | aLU subsumption in the forward phase — required to be at the floor |
 | `PTCTLMC_GFPFEDCAP` | federation-width cap, default 4096; a run that hits it prints `UNUSABLE` |
 | `PTCTLMC_OTFREFUTE` | D5 refutation budget, default 8; `0` disables early confirmation entirely |
+
+
+---
+
+## 8. Why does verifyta explore fewer states on a violated query?
+
+It is a fair objection: on a violated query both tools stop at the first witness, so neither
+should be able to "finish early". Measured on `grc4 T0.near --> T0.in`, the 860-vs-1768 gap
+decomposes into two independent factors, and neither is an algorithmic advantage in the
+liveness procedure.
+
+**1. Search-order luck, worth about 1.4x.** verifyta's own numbers swing wildly with `-o`:
+
+| verifyta search order | states stored | states explored |
+|---|---:|---:|
+| `-o 0` breadth-first (**default**) | **860** | **463** |
+| `-o 1` depth-first | 1433 | 6559 |
+| `-o 2` | 1433 | 3068 |
+
+Its default order happens to walk into the witness early on this query. Our D5 stores 1768 and
+expands 1535 — within 1.23x of verifyta's *own* worst stored figure, and **3–4x better than
+verifyta on states explored** under its non-default orders. The same experiment on our side
+(`PTCTLMC_OTFORDER=dfs`) moves us 1768 → 1466 stored / 1535 → 1956 expanded. Both tools are
+order-sensitive on this query; verifyta's default is the lucky one.
+
+**2. Zone representation, worth about 1.45x, and query-independent.** For the *whole* grc4
+state space verifyta stores 1619 (`A[] true`) where our liveness graph stores 2345. That factor
+is present before any query is asked, and it is the same 14.5-zones-per-discrete-key phenomenon
+of §10.6. It is the only part of the gap that is really ours to fix.
+
+`1.45 x 1.42 ~ 2.06`, which is the observed `1768 / 860`.
+
+So the honest reading is: there is no early-stopping advantage to explain. There is a modest
+representation deficit on one model, multiplied by a lucky default search order on one query.
+Every other violated query in the set is already at or below verifyta (32 of 39 win or tie;
+355 against 418 in total excluding this one).
