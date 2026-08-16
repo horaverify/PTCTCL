@@ -390,12 +390,32 @@ verifyta on states explored** under its non-default orders. The same experiment 
 (`PTCTLMC_OTFORDER=dfs`) moves us 1768 → 1466 stored / 1535 → 1956 expanded. Both tools are
 order-sensitive on this query; verifyta's default is the lucky one.
 
-**2. Zone representation, worth about 1.45x, and query-independent.** For the *whole* grc4
-state space verifyta stores 1619 (`A[] true`) where our liveness graph stores 2345. That factor
-is present before any query is asked, and it is the same 14.5-zones-per-discrete-key phenomenon
-of §10.6. It is the only part of the gap that is really ours to fix.
+**2. Zone representation — RETRACTED.** This section originally claimed a 1.45x representation
+deficit, from comparing verifyta's 1619 (`A[] true`, a *reachability* graph) against our 2345
+(a *liveness* graph). Two different objects, and our liveness graph was additionally running
+with the exact convex-union merge switched OFF, which our own reachability engine has ON by
+default — `benchmarks/parity.csv` already recorded that our reachability engine explores 576 on
+grc4 where verifyta stores 2502.
 
-`1.45 x 1.42 ~ 2.06`, which is the observed `1768 / 860`.
+With the merge enabled in `Otf::intern` the grc4 numbers become:
+
+| | before | after |
+|---|---:|---:|
+| whole state space | 2345 | **883** |
+| zones per discrete key | 18.32 | **6.90** |
+| `T0.near --> T0.in` stored | 1768 | **833** |
+| `T0.near --> T0.in` expanded | 1535 | **789** |
+
+verifyta needs 860 stored / 463 explored on that query and 1619 on the whole space, so we are
+now ahead on both. **There was no representation deficit; there was a disabled optimisation.**
+The 14.5 zones per discrete key was never intrinsic to grc4 — it was an antichain full of zones
+whose pairwise unions are exactly convex.
+
+The merge is safe in the *under*-approximating lane, unlike the hull: `dbm_try_union` succeeds
+only when the union really is one zone, so the stored zone denotes exactly the set the two it
+replaced denoted. Nothing is added, so no certificate can be invented.
+
+What survives of this section is only factor 1, the search-order sensitivity.
 
 So the honest reading is: there is no early-stopping advantage to explain. There is a modest
 representation deficit on one model, multiplied by a lucky default search order on one query.
