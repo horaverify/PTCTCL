@@ -5143,6 +5143,9 @@ class Otf {
   std::size_t fed_max = 0, nonempty = 0;
   double fed_avg = 0;
   bool settled_early = false;
+  bool eager_local = false;      // D5: test the expansion-free witness at GENERATION time
+  bool local_hit = false;        // set when that test fires
+  std::vector<char> acc_checked;
 
   std::vector<SymState> node;
   std::vector<std::vector<OtfEdge>> adj;
@@ -5354,6 +5357,24 @@ void Otf::expand(int u) {
     grow();
     adj[u].push_back(OtfEdge{v, tags[k]});
     pred[v].push_back(u);
+    // WITNESS AT GENERATION, not at expansion.
+    //
+    // The two expansion-free stopping disjuncts depend only on v's own zone and the model, so
+    // they can be tested the instant v is interned -- there is no reason to wait until v is
+    // popped from the frontier and expanded. On a violated query whose witness is a single
+    // state this is the difference between settling when the state is FOUND and settling when
+    // the search happens to get round to it. Measured on grc4 `T0.near --> T0.in`, where 1768
+    // stored zones sit on only 122 discrete keys, so the same witness is generated long before
+    // it is expanded.
+    if (eager_local && !local_hit) {
+      if (acc_checked.size() < node.size()) acc_checked.resize(node.size(), 0);
+      if (!acc_checked[v]) {
+        acc_checked[v] = 1;
+        if (is_p(v) && is_nq(v) &&
+            (time_diverges(node[v]) || state_has_deadlock(net, node[v])))
+          local_hit = true;
+      }
+    }
     // In-place enlargement invalidates the enlarged node's adjacency (it was computed from
     // the smaller zone). Off under append_only, where it cannot happen.
     if (intern_grew) {
@@ -5625,7 +5646,12 @@ bool Otf::run_bfs_incremental() {
 // 1.0-1.3 zones per discrete state) while keeping the exactness of the backward operator.
 // Neither half can do that alone.
 bool Otf::run_dfs_candidates() {
+  eager_local = true;
   if (!build_all()) return false;
+  { grow();
+    if (is_p(0) && is_nq(0) &&
+        (time_diverges(node[0]) || state_has_deadlock(net, node[0])))
+      { settled_early = true; return true; } }
   std::unordered_set<long long> tried;            // (root, target) candidates already refuted
   std::vector<char> onstk;
   std::vector<int> visit;                         // dfs discovery order marker, -1 = unvisited
@@ -5704,43 +5730,59 @@ bool Otf::run_dfs_candidates() {
     return false;
   };
 
-  std::vector<int> frontier{0};
+  // OUTER SEARCH ORDER. The outer search exists to FIND a reachable p /\ !q state; the inner
+  // DFS and the backward pass then settle it. Which state it finds first is therefore the whole
+  // cost on a violated query, and breadth-first is not obviously right: a witness that lives
+  // deep costs the entire shallow shell before it is even looked at. PTCTLMC_OTFORDER=dfs
+  // takes the frontier LIFO instead. Neither order changes the verdict -- both enumerate the
+  // same reachable set -- so this is purely which one settles sooner.
+  static const bool outer_dfs = [] {
+    const char* c = std::getenv("PTCTLMC_OTFORDER");
+    return c && std::string(c) == "dfs";
+  }();
+  std::deque<int> work;
+  work.push_back(0);
   std::vector<char> seen(1, 1), acc_done;
-  while (!frontier.empty()) {
-    std::vector<int> next, accepting;
-    for (int u : frontier) {
-      grow();
-      // NOT `if (expanded[u]) continue;`. The inner !q DFS expands nodes too, so a frontier
-      // node may already carry an adjacency -- and skipping it would skip PUBLISHING its
-      // successors to the outer frontier, which silently truncates the reachable set. The
-      // outer search must cover every reachable state (a p /\ !q state may only be
-      // reachable THROUGH q states, which the inner DFS never enters), so scan adj[u]
-      // unconditionally and let expand() no-op when there is nothing to do.
-      expand(u);
-      grow();
-      if (acc_done.size() < node.size()) acc_done.resize(node.size(), 0);
-      if (!acc_done[u]) {
-        acc_done[u] = 1;
-        if (is_p(u) && is_nq(u)) accepting.push_back(u);
-      }
-      for (const auto& e : adj[u]) {
-        if (seen.size() < node.size()) seen.resize(node.size(), 0);
-        if (!seen[e.tgt] || !expanded[e.tgt]) {
-          seen[e.tgt] = 1;
-          next.push_back(e.tgt);
+  while (!work.empty()) {
+    int u;
+    if (outer_dfs) { u = work.back(); work.pop_back(); }
+    else           { u = work.front(); work.pop_front(); }
+    grow();
+    if (acc_done.size() < node.size()) acc_done.resize(node.size(), 0);
+    // ACCEPTING NODES ARE SETTLED BEFORE THEY ARE EXPANDED, AND EAGERLY.
+    //
+    // Two of the three stopping disjuncts need NO ADJACENCY: `time_diverges` and
+    // `state_has_deadlock` are computed from the zone and the model alone, and only
+    // `adj(u) = empty` needs u expanded. If either holds at an accepting u then
+    // Z_u subseteq stop(u), so W_u = Z_u is already a post-fixpoint on S = {u} and the query
+    // is settled with ZERO expansions and no fixpoint iteration. Expanding first threw that
+    // away: it interned |succ(u)| nodes to learn something that did not depend on them.
+    if (!acc_done[u]) {
+      acc_done[u] = 1;
+      if (is_p(u) && is_nq(u)) {
+        if (time_diverges(node[u]) || state_has_deadlock(net, node[u])) {
+          settled_early = true;
+          return true;
         }
+        expand(u);
+        grow();
+        if (adj[u].empty()) { settled_early = true; return true; }
+        if (neg_dfs(u)) { settled_early = true; return true; }
       }
     }
-    for (int u : accepting) {
-      // Cheapest certificate first: this state alone already stays in !q forever.
-      grow();
-      if (expanded[u] && stop_term(u)) {
-        std::vector<int> S{u};
-        if (certificate_in(S)) { settled_early = true; return true; }
+    // NOT skipped when already expanded: the inner !q DFS expands nodes too, and skipping one
+    // would skip PUBLISHING its successors, which silently truncates the reachable set. A
+    // p /\ !q state may be reachable ONLY through q states, which the inner DFS never enters.
+    expand(u);
+    grow();
+    if (local_hit) { settled_early = true; return true; }
+    for (const auto& e : adj[u]) {
+      if (seen.size() < node.size()) seen.resize(node.size(), 0);
+      if (!seen[e.tgt] || !expanded[e.tgt]) {
+        seen[e.tgt] = 1;
+        work.push_back(e.tgt);
       }
-      if (neg_dfs(u)) { settled_early = true; return true; }
     }
-    frontier.swap(next);
   }
   return final_verdict_violated();
 }
