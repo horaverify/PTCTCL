@@ -5390,7 +5390,91 @@ class Otf {
   bool run_bfs_incremental();                  // D1/D3
   bool run_dfs_candidates();                   // D5
   bool final_verdict_violated();               // one exact pass over the finished graph
+ public:
+  void zdbg();                                 // PTCTLMC_OTFZDBG: antichain-width diagnostic
 };
+
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC ONLY (env PTCTLMC_OTFZDBG). Not used by any algorithm; it answers
+// "why are there 14.5 zones per discrete key on grc4 and 1.0 everywhere else?".
+// For every discrete key it reports the antichain width and, for the widest keys,
+// the actual zones and WHICH constraint separates them.
+static std::string dbg_bound(raw_t r) {
+  if (r >= kInf) return "inf";
+  char b[32];
+  std::snprintf(b, sizeof b, "%s%d", (r & 1) ? "<=" : "<", raw_bound(r));
+  return b;
+}
+void Otf::zdbg() {
+  const int topn = std::getenv("PTCTLMC_OTFZTOP")
+      ? (int)std::strtol(std::getenv("PTCTLMC_OTFZTOP"), nullptr, 10) : 3;
+  std::vector<std::pair<std::size_t, const std::vector<int>*>> keys;
+  for (const auto& kv : bucket) keys.push_back({kv.second.size(), &kv.second});
+  std::sort(keys.begin(), keys.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+  std::map<std::size_t, int> hist;
+  for (const auto& k : keys) hist[k.first]++;
+  std::fprintf(stderr, "[zdbg] keys=%zu nodes=%zu  width-histogram:", bucket.size(), node.size());
+  for (const auto& h : hist) std::fprintf(stderr, " w%zu:%d", h.first, h.second);
+  std::fprintf(stderr, "\n");
+  // How much of the width would each stronger merge rule remove?
+  std::size_t n_incl = 0, n_alu_glob = 0, n_alu_loc = 0, n_convex = 0, n_pairs = 0;
+  std::vector<std::int32_t> gL = L, gU = U;
+  gL[0] = gU[0] = 0;
+  for (const auto& kv : bucket) {
+    const auto& b = *(&kv.second);
+    for (std::size_t a = 0; a < b.size(); ++a)
+      for (std::size_t c = 0; c < b.size(); ++c) {
+        if (a == c) continue;
+        ++n_pairs;
+        const SymState& A = node[b[a]];
+        const SymState& C = node[b[c]];
+        if (A.zone.dim() != C.zone.dim()) continue;
+        if (C.zone.includes(A.zone)) ++n_incl;
+        if (A.zone.alu_subsumed_by(C.zone, gL, gU)) ++n_alu_glob;
+        std::vector<std::int32_t> lL(net.nclocks + 1, kAluNegInf), lU(net.nclocks + 1, kAluNegInf);
+        if (!net.lbound_loc.empty()) {
+          for (int pr = 0; pr < net.nprocs(); ++pr)
+            for (int cc = 1; cc <= net.nclocks; ++cc) {
+              lL[cc] = std::max(lL[cc], net.lbound_loc[pr][A.locs[pr]][cc]);
+              lU[cc] = std::max(lU[cc], net.ubound_loc[pr][A.locs[pr]][cc]);
+            }
+        } else { lL = gL; lU = gU; }
+        lL[0] = lU[0] = 0;
+        if (A.zone.alu_subsumed_by(C.zone, lL, lU)) ++n_alu_loc;
+        if (a < c) { Dbm h = A.zone; if (h.try_union(C.zone)) ++n_convex; }
+      }
+  }
+  std::fprintf(stderr,
+      "[zdbg] ordered pairs=%zu  covered-by-inclusion=%zu  aLU(global)=%zu  aLU(per-loc)=%zu"
+      "  convex-unionable(unordered)=%zu\n",
+      n_pairs, n_incl, n_alu_glob, n_alu_loc, n_convex);
+  for (int t = 0; t < topn && t < (int)keys.size(); ++t) {
+    const auto& b = *keys[t].second;
+    if (b.empty()) continue;
+    const SymState& s0 = node[b[0]];
+    std::fprintf(stderr, "[zdbg] --- key width=%zu  locs=", b.size());
+    for (int pr = 0; pr < net.nprocs(); ++pr)
+      std::fprintf(stderr, "%s.%s ", net.procs[pr].name.c_str(),
+                   net.procs[pr].locations[s0.locs[pr]].name.c_str());
+    std::fprintf(stderr, "\n");
+    for (std::size_t i = 0; i < b.size(); ++i) {
+      const Dbm& z = node[b[i]].zone;
+      std::string line;
+      for (int r = 0; r < z.dim(); ++r)
+        for (int c2 = 0; c2 < z.dim(); ++c2) {
+          if (r == c2) continue;
+          const raw_t e = z.get(r, c2);
+          if (e >= kInf) continue;
+          if (r == 0 && e == kZeroLe) continue;          // x_c >= 0, trivial
+          const std::string rn = r == 0 ? "0" : net.clock_names[r];
+          const std::string cn = c2 == 0 ? "0" : net.clock_names[c2];
+          line += rn + "-" + cn + dbg_bound(e) + " ";
+        }
+      std::fprintf(stderr, "[zdbg]   z%02zu id=%d: %s\n", i, b[i], line.c_str());
+    }
+  }
+}
 
 void Otf::setup() {
   L = net.lbound;
@@ -5540,6 +5624,7 @@ int Otf::intern(SymState&& s) {
     }
     return best;
   }
+  const int dim2 = s.zone.dim();
   auto covered = [&](int j) {
     return use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU) : node[j].zone.includes(s.zone);
   };
@@ -5555,6 +5640,32 @@ int Otf::intern(SymState&& s) {
         intern_grew = true;
         return b[k];
       }
+  // EXACT CONVEX-UNION MERGE, on by default (PTCTLMC_OTFNOMERGE disables).
+  //
+  // The liveness graph inherited "no merge" from leads_to_net, where it is opt-in and was
+  // measured a net loss -- but that measurement was made on an EXACT-ZONE graph, not on this
+  // aLU-subsumed one, and the reachability engine has the merge ON by default precisely
+  // because it collapses antichains. grc4 stores 14.5 zones per discrete key here against
+  // 1.00-1.44 on every other family, which is exactly the shape of an antichain full of zones
+  // whose union happens to be convex.
+  //
+  // dbm_try_union succeeds ONLY when the union of the two zones really is a single zone, so
+  // the stored zone afterwards denotes exactly the same set of valuations as the two it
+  // replaced: no point is added and none is removed. That is what makes it usable in the
+  // UNDER-approximating lane as well -- unlike the hull, it is not an over-approximation, so
+  // it cannot invent a certificate.
+  static const bool no_merge = std::getenv("PTCTLMC_OTFNOMERGE") != nullptr;
+  if (!no_merge) {
+    for (int j : b) {
+      if (node[j].zone.dim() != dim2) continue;
+      Dbm t = node[j].zone;
+      if (t.try_union(s.zone)) {          // union is exactly convex: absorb, no approximation
+        node[j].zone = std::move(t);
+        intern_grew = true;
+        return j;
+      }
+    }
+  }
   const int id = static_cast<int>(node.size());
   node.push_back(std::move(s));
   b.push_back(id);
@@ -6129,6 +6240,7 @@ bool Otf::run(GfpStats* gs) {
       violated = run_dfs_candidates();
       break;
   }
+  if (std::getenv("PTCTLMC_OTFZDBG")) zdbg();
   if (gs) {
     gs->fwd_nodes = node.size();
     gs->disc_keys = bucket.size();
