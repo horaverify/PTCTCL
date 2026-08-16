@@ -20,6 +20,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
+#include <queue>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -3531,6 +3533,7 @@ struct GfpStats {
   std::size_t pre_calls = 0;        // gfp_pre invocations
   bool        early = false;        // settled before the forward search finished
   bool        inconclusive = false; // one-sided mode could not conclude
+  std::size_t oracle_nodes = 0;     // D9: coarse graph built before the exact search
   const char* mode = "gfp";
 };
 
@@ -5095,7 +5098,220 @@ void memo_search(const Network& net, bool use_memo) {
 // successors have been computed, no matter what the rest of the graph is doing.
 // ============================================================================
 
-enum class OtfMode { Base, D1, D2, D3, D4, D5, D6, D7, D8 };
+
+// ============================================================================
+// COARSE-LOCATE / EXACT-CONFIRM.
+//
+// The remaining deficit against verifyta on violated queries was one model: grc4 stores 1768
+// aLU zones on only 122 discrete keys, so the exact search walks 1535 expansions before it
+// happens to reach a state that witnesses the violation. The cost is not the number of
+// discrete states -- it is that the search has no idea which of them is worth reaching.
+//
+// The hull graph knows. It has ONE node per discrete key (122 for grc4, built in
+// milliseconds) and it OVER-approximates: every zone the exact search can reach at key k is
+// contained in the hull zone at k, and every transition the exact search can take exists in
+// the hull graph. Therefore
+//
+//     every genuine witness lives at a discrete key that the coarse analysis flags,
+//
+// and the flagged set is a SUPERSET of the useful keys. That makes it a sound oracle: it can
+// name keys that turn out to be useless, but it can never omit a key that carries a witness.
+//
+// What is emphatically NOT done here is to conclude anything from the coarse graph. A
+// certificate built on a hull zone may rest entirely on unreachable points (that is exactly
+// why the hull lane is one-sided). The coarse graph only supplies a PRIORITY. The verdict is
+// still decided by the exact lane on exact zones, so soundness and completeness are untouched:
+// reordering a search changes which witness is found first and nothing else.
+//
+// Prior art, stated plainly: this is abstraction-guided / directed model checking -- a
+// distance-to-goal heuristic read off a coarser abstraction to order a concrete search
+// (Edelkamp, Leue and Lluch-Lafuente on directed explicit-state MC; Draeger, Finkbeiner and
+// Podelski, and Kupferschmid et al. on pattern-database and abstraction heuristics for timed
+// systems). The only thing specific to this setting is WHICH abstraction is used: the hull
+// graph already exists here as the over-approximating lane, and its soundness direction is
+// exactly the one a witness-locating oracle needs.
+// ============================================================================
+
+// Per discrete key: how many coarse transitions away is the nearest key that could carry a
+// witness. kNoCand means no candidate is reachable from it at all -- the exact search may
+// deprioritise such keys, but must still explore them, because completeness on a query that
+// HOLDS needs the whole reachable set.
+static constexpr int kNoCand = 1 << 28;
+
+struct CoarseOracle {
+  std::unordered_map<std::string, int> dist;   // discrete key -> distance to nearest candidate
+  std::size_t nodes = 0, candidates = 0;
+  bool usable = false;
+};
+
+// Build the hull graph and run the standard escape analysis on its !q subgraph.
+static CoarseOracle build_coarse_oracle(const Network& net, const DiscPred& p, const DiscPred& q,
+                                        const std::vector<std::int32_t>& L,
+                                        const std::vector<std::int32_t>& U, int emode,
+                                        const std::vector<char>& qmask, std::size_t budget) {
+  CoarseOracle o;
+  auto holds = [&](const DiscPred& pr, const SymState& s) {
+    for (const auto& r : pr.locs) { const bool eq = (s.locs[r.proc] == r.loc); if (eq != r.equal) return false; }
+    return int_ok(pr.ints, s.ints);
+  };
+
+  std::vector<SymState> node;
+  std::vector<std::vector<int>> adj, pred;
+  std::vector<std::string> keys;
+  std::unordered_map<std::string, int> id;
+  std::vector<char> expanded;
+
+  SymState s0;
+  s0.locs.resize(net.nprocs());
+  for (int pr = 0; pr < net.nprocs(); ++pr) s0.locs[pr] = net.procs[pr].initial;
+  s0.ints.resize(net.intvars.size());
+  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
+  s0.zone = Dbm(net.nclocks);
+  {
+    std::vector<Constraint> inv;
+    all_invariants(net, s0.locs, inv);
+    if (!apply_all(s0.zone, inv)) return o;            // unreachable init: no oracle, no harm
+    bool c, u; frozen_flags(net, s0.locs, &c, &u);
+    if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
+    reset_inactive(net, s0.locs, s0.zone, qmask);
+    if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
+    else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U);
+  }
+
+  // intern: one node per discrete key, zone = running convex hull.
+  auto intern = [&](SymState&& s, bool* grew) -> int {
+    *grew = false;
+    const std::string k = disc_key(s.locs, s.ints);
+    auto it = id.find(k);
+    if (it == id.end()) {
+      const int n = static_cast<int>(node.size());
+      id.emplace(k, n);
+      keys.push_back(k);
+      node.push_back(std::move(s));
+      adj.emplace_back();
+      pred.emplace_back();
+      expanded.push_back(0);
+      *grew = true;
+      return n;
+    }
+    const int j = it->second;
+    const int dim = s.zone.dim();
+    if (node[j].zone.dim() == dim) {
+      Dbm h(net.nclocks);
+      dbm_hull(h.data().data(), node[j].zone.data().data(), s.zone.data().data(), dim);
+      if (h.data() != node[j].zone.data()) {
+        node[j].zone = std::move(h);
+        expanded[j] = 0;                                // widened: recompute its successors
+        for (int t : adj[j]) {
+          auto& pt = pred[t];
+          pt.erase(std::remove(pt.begin(), pt.end(), j), pt.end());
+        }
+        adj[j].clear();
+        *grew = true;
+      }
+    }
+    return j;
+  };
+
+  bool dummy = false;
+  intern(std::move(s0), &dummy);
+  std::deque<int> work;
+  std::vector<char> inq(1, 1);
+  work.push_back(0);
+  while (!work.empty()) {
+    const int u = work.front();
+    work.pop_front();
+    if (inq.size() < node.size()) inq.resize(node.size(), 0);
+    inq[u] = 0;
+    if (expanded[u]) continue;
+    expanded[u] = 1;
+    if (node.size() > budget) return o;                 // oracle not worth its own cost
+    std::vector<SymState> succ;
+    std::vector<GfpTag> tags;
+    gfp_succ_tagged(net, node[u], L, U, qmask, emode, succ, tags);
+    for (auto& ns : succ) {
+      bool grew = false;
+      const int v = intern(std::move(ns), &grew);
+      if (inq.size() < node.size()) inq.resize(node.size(), 0);
+      if (expanded.size() < node.size()) expanded.resize(node.size(), 0);
+      adj[u].push_back(v);
+      pred[v].push_back(u);
+      if (!expanded[v] && !inq[v]) { inq[v] = 1; work.push_back(v); }
+    }
+  }
+
+  const int N = static_cast<int>(node.size());
+  o.nodes = static_cast<std::size_t>(N);
+
+  auto time_div = [&](const SymState& s) {
+    if (net.nclocks == 0) return false;
+    Dbm z = s.zone; z.delay();
+    std::vector<Constraint> inv; all_invariants(net, s.locs, inv); apply_all(z, inv);
+    if (z.empty()) return false;
+    for (int i = 1; i <= net.nclocks; ++i) if (z.get(i, 0) != kInf) return false;
+    return true;
+  };
+
+  std::vector<char> isp(N, 0), isnq(N, 0), stop(N, 0);
+  for (int i = 0; i < N; ++i) {
+    isp[i] = holds(p, node[i]) ? 1 : 0;
+    isnq[i] = holds(q, node[i]) ? 0 : 1;
+    if (isnq[i])
+      stop[i] = (adj[i].empty() || time_div(node[i]) || state_has_deadlock(net, node[i])) ? 1 : 0;
+  }
+
+  // ESCAPE on the !q subgraph: a node escapes if a maximal !q run can start there and never
+  // leave -- it stops, or it sits on a cycle, or it reaches a node that escapes. Computed as a
+  // least fixpoint by backward propagation from the stop nodes and the non-trivial SCCs. Over
+  // the HULL graph this over-approximates the exact escape set, which is the direction wanted.
+  std::vector<char> esc(N, 0);
+  std::deque<int> bw;
+  for (int i = 0; i < N; ++i) if (isnq[i] && stop[i]) { esc[i] = 1; bw.push_back(i); }
+  // any !q node with a !q self-loop or inside a !q cycle: detect cycles by Kahn peeling
+  {
+    std::vector<int> outdeg(N, 0);
+    std::vector<int> peel;
+    for (int i = 0; i < N; ++i) {
+      if (!isnq[i]) continue;
+      for (int t : adj[i]) if (isnq[t]) ++outdeg[i];
+      if (outdeg[i] == 0) peel.push_back(i);
+    }
+    std::vector<char> removed(N, 0);
+    while (!peel.empty()) {
+      const int v = peel.back(); peel.pop_back();
+      if (removed[v]) continue;
+      removed[v] = 1;
+      for (int u2 : pred[v]) {
+        if (!isnq[u2] || removed[u2]) continue;
+        if (--outdeg[u2] == 0) peel.push_back(u2);
+      }
+    }
+    for (int i = 0; i < N; ++i)                        // survivors sit on a !q cycle
+      if (isnq[i] && !removed[i] && !esc[i]) { esc[i] = 1; bw.push_back(i); }
+  }
+  while (!bw.empty()) {
+    const int v = bw.front(); bw.pop_front();
+    for (int u2 : pred[v])
+      if (isnq[u2] && !esc[u2]) { esc[u2] = 1; bw.push_back(u2); }
+  }
+
+  std::deque<int> q2;
+  std::vector<int> d(N, kNoCand);
+  for (int i = 0; i < N; ++i)
+    if (isp[i] && isnq[i] && esc[i]) { d[i] = 0; q2.push_back(i); ++o.candidates; }
+  while (!q2.empty()) {                                 // BFS backwards over coarse edges
+    const int v = q2.front(); q2.pop_front();
+    for (int u2 : pred[v])
+      if (d[u2] == kNoCand) { d[u2] = d[v] + 1; q2.push_back(u2); }
+  }
+
+  if (o.candidates == 0) return o;                      // nothing to steer towards
+  for (int i = 0; i < N; ++i) o.dist.emplace(keys[i], d[i]);
+  o.usable = true;
+  return o;
+}
+
+enum class OtfMode { Base, D1, D2, D3, D4, D5, D6, D7, D8, D9 };
 
 static const char* otf_mode_name(OtfMode m) {
   switch (m) {
@@ -5108,6 +5324,7 @@ static const char* otf_mode_name(OtfMode m) {
     case OtfMode::D6:   return "d6-hull-one-node-per-discrete-key";
     case OtfMode::D7:   return "d7-race(d5-exact || d6-hull)";
     case OtfMode::D8:   return "d8-bounded-width-hull";
+    case OtfMode::D9:   return "d9-coarse-locate-exact-confirm";
   }
   return "?";
 }
@@ -5146,6 +5363,7 @@ class Otf {
   bool eager_local = false;      // D5: test the expansion-free witness at GENERATION time
   bool local_hit = false;        // set when that test fires
   std::vector<char> acc_checked;
+  CoarseOracle oracle;   // D9: coarse distance-to-candidate, priority only
 
   std::vector<SymState> node;
   std::vector<std::vector<OtfEdge>> adj;
@@ -5647,6 +5865,23 @@ bool Otf::run_bfs_incremental() {
 // Neither half can do that alone.
 bool Otf::run_dfs_candidates() {
   eager_local = true;
+  // D9: build the coarse oracle first. It is a PRIORITY ONLY -- no verdict is ever read
+  // from it -- so an oracle that is unusable (no candidates, or over budget) simply
+  // leaves the search in its default breadth-first order.
+  if (mode == OtfMode::D9) {
+    const std::size_t budget = std::getenv("PTCTLMC_OTFORACLE")
+        ? std::strtoul(std::getenv("PTCTLMC_OTFORACLE"), nullptr, 10) : 200000;
+    oracle = build_coarse_oracle(net, p, q, L, U, emode, qmask, budget);
+    if (std::getenv("PTCTLMC_OTFORACLEDBG")) {
+      std::map<int,int> hist;
+      for (const auto& kv : oracle.dist) hist[kv.second >= kNoCand ? -1 : kv.second]++;
+      std::fprintf(stderr, "[oracle] coarse-nodes=%zu candidates=%zu usable=%d  dist-histogram:",
+                   oracle.nodes, oracle.candidates, (int)oracle.usable);
+      for (const auto& kv : hist)
+        std::fprintf(stderr, " %s:%d", kv.first < 0 ? "unreachable" : std::to_string(kv.first).c_str(), kv.second);
+      std::fprintf(stderr, "\n");
+    }
+  }
   if (!build_all()) return false;
   { grow();
     if (is_p(0) && is_nq(0) &&
@@ -5740,13 +5975,30 @@ bool Otf::run_dfs_candidates() {
     const char* c = std::getenv("PTCTLMC_OTFORDER");
     return c && std::string(c) == "dfs";
   }();
+  // The frontier is a plain deque unless the coarse oracle is usable, in which case it is a
+  // min-heap on "coarse distance from this node's discrete key to the nearest key that could
+  // carry a witness", tie-broken by insertion order so it degrades to BFS within a tier.
   std::deque<int> work;
-  work.push_back(0);
+  using PQ = std::priority_queue<std::pair<long long, int>, std::vector<std::pair<long long, int>>,
+                                 std::greater<std::pair<long long, int>>>;
+  PQ pq;
+  long long seq = 0;
+  const bool guided = oracle.usable;
+  auto key_dist = [&](int v) -> long long {
+    auto it = oracle.dist.find(disc_key(node[v].locs, node[v].ints));
+    return it == oracle.dist.end() ? kNoCand : it->second;
+  };
+  auto push_work = [&](int v) {
+    if (guided) pq.push({key_dist(v) * 4000000000LL + (seq++), v});
+    else work.push_back(v);
+  };
+  push_work(0);
   std::vector<char> seen(1, 1), acc_done;
-  while (!work.empty()) {
+  while (guided ? !pq.empty() : !work.empty()) {
     int u;
-    if (outer_dfs) { u = work.back(); work.pop_back(); }
-    else           { u = work.front(); work.pop_front(); }
+    if (guided) { u = pq.top().second; pq.pop(); }
+    else if (outer_dfs) { u = work.back(); work.pop_back(); }
+    else { u = work.front(); work.pop_front(); }
     grow();
     if (acc_done.size() < node.size()) acc_done.resize(node.size(), 0);
     // ACCEPTING NODES ARE SETTLED BEFORE THEY ARE EXPANDED, AND EAGERLY.
@@ -5780,7 +6032,7 @@ bool Otf::run_dfs_candidates() {
       if (seen.size() < node.size()) seen.resize(node.size(), 0);
       if (!seen[e.tgt] || !expanded[e.tgt]) {
         seen[e.tgt] = 1;
-        work.push_back(e.tgt);
+        push_work(e.tgt);
       }
     }
   }
@@ -5873,6 +6125,7 @@ bool Otf::run(GfpStats* gs) {
       violated = run_bfs_incremental();
       break;
     case OtfMode::D5:
+    case OtfMode::D9:
       violated = run_dfs_candidates();
       break;
   }
@@ -5894,6 +6147,12 @@ bool Otf::run(GfpStats* gs) {
     // D6 over-approximates, so a non-empty fixpoint is NOT a witness -- it may rest entirely on
     // hull points the system never reaches. Only the empty direction concludes.
     gs->inconclusive = ((mode == OtfMode::D6 || mode == OtfMode::D8) && violated);
+    // The coarse oracle is a FULL forward closure of the hull graph -- one node per
+    // reachable discrete key -- and it is paid before the exact search starts. Counting
+    // only the exact graph would flatter D9 badly on queries the exact lane settles in a
+    // handful of states, so the oracle's own nodes are added to the reported total.
+    gs->fwd_nodes += oracle.nodes;
+    gs->oracle_nodes = oracle.nodes;
   }
   return !violated;
 }
@@ -5964,6 +6223,7 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, cons
   else if (s == "d5") m = OtfMode::D5;
   else if (s == "d6") m = OtfMode::D6;
   else if (s == "d8") m = OtfMode::D8;
+  else if (s == "d9") m = OtfMode::D9;
   else if (s == "d7") return leads_to_race(net, p, q, gs);
   Otf e(net, p, q, m);
   return e.run(gs);
