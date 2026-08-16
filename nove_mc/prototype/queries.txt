@@ -1,0 +1,53 @@
+# model  p  q      -- differential query set for the on-the-fly liveness experiment.
+# Chosen to contain BOTH satisfied and violated instances: an on-the-fly algorithm can
+# only save states on the violated ones, so a set of only-satisfied queries would hide
+# the entire effect (this is the mistake recorded in
+# memory/ptctlmc-workload-blocks-search-algorithms.md, where every benchmark query was A[]).
+arbiter4 C0.want C0.cs
+arbiter4 C0.cs C0.idle
+arbiter4 C0.want C0.idle
+arbiter4 C1.cs C1.idle
+arbiter4 C0.idle C0.cs
+arbiter4 C0.idle C0.want
+arbiter4 Arb.Busy Arb.Free
+arbiter4 Arb.Free Arb.Busy
+arbiter5 C0.want C0.cs
+arbiter5 C1.cs C1.idle
+arbiter5 C0.idle C0.cs
+arbiter5 Arb.Busy Arb.Free
+fischer4 P0.req P0.cs
+fischer4 P0.wait P0.cs
+fischer4 P0.cs P0.idle
+fischer4 P0.idle P0.cs
+fischer4 P1.wait P1.idle
+fischer4 P0.req P0.wait
+fischer5 P0.wait P0.cs
+fischer5 P0.cs P0.idle
+fischer5 P0.idle P0.cs
+fischer5 P0.req P0.cs
+csma4 S0.Send S0.Wait
+csma4 S0.Wait S0.Send
+csma4 S0.Retry S0.Send
+csma4 Bus.Active Bus.Idle
+csma4 Bus.Idle Bus.Active
+csma5 S0.Send S0.Wait
+csma5 S0.Wait S0.Send
+csma5 Bus.Active Bus.Idle
+phil4 P0.HoldL P0.Eat
+phil4 P0.Eat P0.Think
+phil4 P0.Think P0.Eat
+phil4 P0.HoldL P0.Think
+phil4 F0.Used F0.Free
+twolock4 P0.reqA P0.cs
+twolock4 P0.cs P0.idle
+twolock4 P0.waitA P0.cs
+twolock4 P0.idle P0.cs
+twolock4 P0.waitB P0.cs
+viking4 Viking1.unsafe Viking1.safe
+viking4 Viking1.safe Viking1.unsafe
+viking4 Torch.two Torch.free
+grc4 T0.near T0.in
+grc4 T0.in T0.far
+grc4 T0.far T0.near
+grc4 Ctl.up Ctl.low_1
+grc4 G.up G.low

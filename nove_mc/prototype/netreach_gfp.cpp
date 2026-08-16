@@ -3499,6 +3499,12 @@ struct GfpStats {
   double      fed_avg = 0;
   std::size_t nonempty = 0;
   bool        capped = false;
+  // on-the-fly experiment (branch `liveness-on-the-fly`)
+  std::size_t expanded_nodes = 0;   // successor computations actually performed
+  std::size_t passes = 0;           // confined backward passes run
+  std::size_t pre_calls = 0;        // gfp_pre invocations
+  bool        early = false;        // settled before the forward search finished
+  const char* mode = "gfp";
 };
 
 // Tagged successor generation. Mirrors successors_net for LOCAL edges, BINARY synchronisation
@@ -4970,6 +4976,714 @@ void memo_search(const Network& net, bool use_memo) {
               breaker_at >= 0 ? "TRIPPED" : (use_memo ? "no" : "-"));
   if (use_memo) std::printf("      breaker: disables=%ld re-probes=%ld final-backoff=%ld window=%ld\n", disables, probes, backoff, kWindow);
   std::printf("      packed-key=%s\n", packable ? "YES (uint64, like the engine)" : "no (string fallback)");
+}
+
+
+// ============================================================================
+// ON-THE-FLY LIVENESS  (branch `liveness-on-the-fly`).
+//
+// `leads_to_gfp` above is three strictly sequential phases: build the whole aLU-subsumed
+// reachable graph, restrict to !q, then run a chaotic backward greatest fixpoint over it.
+// Its cost is a function of the MODEL and never of the QUERY -- a `p --> q` violated three
+// transitions from the initial state still pays for every reachable symbolic state.
+//
+// WHY THIS LOOKS HARD, AND WHY IT IS NOT.
+//
+// EG is a GREATEST fixpoint, so the textbook iteration starts at TOP and DESCENDS, and an
+// intermediate iterate is only a PRE-fixpoint (W >= F(W)). A pre-fixpoint is an
+// over-approximation and therefore says nothing: "W(v) is non-empty" cannot settle a
+// violation, so there is no early exit and no obvious way to interleave with construction.
+// That is the real content of "the values are no longer necessarily descending, and you
+// need a substantially different convergence/correctness proof".
+//
+// But a violation never needed the fixpoint. It needs a CERTIFICATE, and by Knaster-Tarski
+// the certificates of a greatest fixpoint are exactly its POST-fixpoints:
+//
+//        X  subseteq  F(X)        ==>        X  subseteq  nu F.                        (*)
+//
+// So take ANY set S of nodes explored so far, pin every node outside S to EMPTY, and run
+// the ordinary descending iteration confined to S. Its limit nu F_S is the exact greatest
+// fixpoint of the restricted operator. Restricting only DELETES disjuncts, so F_S <= F
+// pointwise, and monotonicity gives nu F_S subseteq nu F: the limit of a pass over a
+// FRAGMENT is a post-fixpoint of the operator on the FINISHED graph. By (*) it is a sound
+// under-approximation of the final answer, computed without ever seeing the final graph.
+//
+// Two consequences, and they are the entire design:
+//
+//   * nu F_S(v) non-empty at a p /\ !q node v  =>  the query is VIOLATED, with exactly the
+//     verdict the finished graph would have produced. Stop, and never build the rest.
+//   * S = every expanded !q node of the FINISHED graph gives F_S = F, so the last pass IS
+//     the published algorithm. Nothing is given up when the property holds.
+//
+// Under (*) no value has to descend across passes: each pass is a self-contained
+// certificate search, and monotonicity in the graph comes for free. The four directions
+// below are implemented against that yardstick and measured against each other.
+//
+// THE ONE RESTRICTION, and it is the only one. A node may enter S only if it is EXPANDED.
+// The stopping term of the backward operator needs the ABSENCE of successors
+// (`adj[v].empty()`), and an unexpanded node has an empty adjacency for the wrong reason.
+// Everything else survives a partial graph untouched: the Pre disjuncts only ever need
+// edges that EXIST, never the absence of one. This is what makes the scheme on-the-fly at
+// all -- backward work on a half-built graph is legitimate for every node whose own
+// successors have been computed, no matter what the rest of the graph is doing.
+// ============================================================================
+
+enum class OtfMode { Base, D1, D2, D3, D4, D5 };
+
+static const char* otf_mode_name(OtfMode m) {
+  switch (m) {
+    case OtfMode::Base: return "base";
+    case OtfMode::D1:   return "d1-pipelined-conservative";
+    case OtfMode::D2:   return "d2-append-only";
+    case OtfMode::D3:   return "d3-incremental-postfixpoint";
+    case OtfMode::D4:   return "d4-preprocessing-overlap";
+    case OtfMode::D5:   return "d5-candidate-confirm";
+  }
+  return "?";
+}
+
+struct OtfEdge {
+  int tgt;
+  GfpTag tag;
+};
+
+class Otf {
+ public:
+  Otf(const Network& n, const DiscPred& pp, const DiscPred& qq, OtfMode m)
+      : net(n), p(pp), q(qq), mode(m) {}
+
+  // Returns true iff `p --> q` HOLDS.
+  bool run(GfpStats* gs);
+
+ private:
+  const Network& net;
+  const DiscPred& p;
+  const DiscPred& q;
+  OtfMode mode;
+
+  std::vector<std::int32_t> L, U, aL, aU, bL, bU;
+  int emode = 0;
+  std::vector<char> qmask;
+  bool use_alu = false;
+  bool append_only = false;          // D1/D2: never enlarge a stored node
+  std::size_t fedcap = 4096;
+  bool capped = false;
+  std::size_t passes = 0, gfp_iters = 0, expand_calls = 0, pre_calls = 0;
+  std::size_t fed_max = 0, nonempty = 0;
+  double fed_avg = 0;
+  bool settled_early = false;
+
+  std::vector<SymState> node;
+  std::vector<std::vector<OtfEdge>> adj;
+  std::vector<std::vector<int>> pred;          // maintained for D1's closure test
+  std::unordered_map<std::string, std::vector<int>> bucket;
+  std::vector<char> expanded;
+  std::vector<char> pc, qc;                    // p/q caches, 2 = unknown
+  bool intern_grew = false;
+
+  void setup();
+  bool holds(const DiscPred& pr, const SymState& s) const;
+  bool is_p(int i);
+  bool is_nq(int i);
+  void grow();
+  int intern(SymState&& s);
+  void expand(int u);
+  bool time_diverges(const SymState& s) const;
+  bool stop_term(int u);                       // whole-zone NoSucc; needs expanded[u]
+  void gfp_on(const std::vector<int>& S, std::vector<Federation>& W);
+  bool certificate_in(const std::vector<int>& S);
+  std::vector<int> accepting_closure();
+
+  bool build_all();                            // full forward BFS; true if a certificate fired
+  bool run_bfs_incremental();                  // D1/D3
+  bool run_dfs_candidates();                   // D5
+  bool final_verdict_violated();               // one exact pass over the finished graph
+};
+
+void Otf::setup() {
+  L = net.lbound;
+  U = net.ubound;
+  emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;
+  // qmask is the set of clocks the QUERY forces to stay live; a leads-to predicate has no
+  // clock constraints, so it is all-zero and the active-clock reduction runs in FULL.
+  // (leads_to_gfp above carries a comment claiming this disables the reduction. It does the
+  // opposite -- reset_inactive treats qmask as "additionally keep alive", so all-zero is
+  // maximal reduction. What actually makes the reduction safe for a BACKWARD analysis is the
+  // repair inside gfp_pre: it FREES every clock that is dead at the target before undoing
+  // the step. Without that, Pre silently demands the dead clocks be 0 at the SOURCE too --
+  // an over-constrained Pre that collapses the fixpoint and MISSES violations.)
+  qmask.assign(net.nclocks + 1, 0);
+  aL = net.lbound;
+  aU = net.ubound;
+  aL[0] = aU[0] = 0;
+  use_alu = std::getenv("PTCTLMC_GFPALU") != nullptr && !network_has_diagonal(net);
+  append_only = (mode == OtfMode::D1 || mode == OtfMode::D2);
+  if (const char* c = std::getenv("PTCTLMC_GFPFEDCAP")) fedcap = std::strtoul(c, nullptr, 10);
+}
+
+bool Otf::holds(const DiscPred& pr, const SymState& s) const {
+  for (const auto& r : pr.locs) {
+    const bool eq = (s.locs[r.proc] == r.loc);
+    if (eq != r.equal) return false;
+  }
+  return int_ok(pr.ints, s.ints);
+}
+
+void Otf::grow() {
+  const std::size_t n = node.size();
+  if (expanded.size() < n) expanded.resize(n, 0);
+  if (pc.size() < n) pc.resize(n, 2);
+  if (qc.size() < n) qc.resize(n, 2);
+  if (adj.size() < n) adj.resize(n);
+  if (pred.size() < n) pred.resize(n);
+}
+
+bool Otf::is_p(int i) {
+  grow();
+  if (pc[i] == 2) pc[i] = holds(p, node[i]) ? 1 : 0;
+  return pc[i] != 0;
+}
+
+bool Otf::is_nq(int i) {
+  grow();
+  if (qc[i] == 2) qc[i] = holds(q, node[i]) ? 1 : 0;
+  return qc[i] == 0;
+}
+
+// aLU subsumption, exactly as leads_to_gfp's phase 1, plus the APPEND-ONLY switch.
+//
+// APPEND-ONLY (D1, D2). The published intern ENLARGES a stored node in place when a
+// newcomer covers it -- `node[j].zone = s.zone` -- and that silently invalidates work:
+// adj[j] was computed from the smaller zone, so j has to be re-expanded and any backward
+// value already computed for j refers to a zone that no longer exists. Append-only refuses
+// the enlargement and stores the newcomer as a separate node. Every stored node is then
+// immutable from birth, which is exactly the property "start backward work only on
+// vertices known not to change" needs -- and it is why D1 cannot be implemented WITHOUT
+// D2's append-only rule: with in-place enlargement, "this node will never change" is not
+// establishable before the forward phase terminates. The price is the antichain: the
+// bucket keeps zones the published version would have collapsed.
+int Otf::intern(SymState&& s) {
+  intern_grew = false;
+  auto& b = bucket[disc_key(s.locs, s.ints)];
+  if (use_alu) {
+    bL.assign(net.nclocks + 1, kAluNegInf);
+    bU.assign(net.nclocks + 1, kAluNegInf);
+    if (net.lbound_loc.empty()) {
+      bL = aL;
+      bU = aU;
+    } else {
+      for (int pr = 0; pr < net.nprocs(); ++pr)
+        for (int c = 1; c <= net.nclocks; ++c) {
+          bL[c] = std::max(bL[c], net.lbound_loc[pr][s.locs[pr]][c]);
+          bU[c] = std::max(bU[c], net.ubound_loc[pr][s.locs[pr]][c]);
+        }
+      bL[0] = bU[0] = 0;
+    }
+  }
+  auto covered = [&](int j) {
+    return use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU) : node[j].zone.includes(s.zone);
+  };
+  auto covers = [&](int j) {
+    return use_alu ? node[j].zone.alu_subsumed_by(s.zone, bL, bU) : s.zone.includes(node[j].zone);
+  };
+  for (int j : b)
+    if (covered(j)) return j;
+  if (!append_only)
+    for (std::size_t k = 0; k < b.size(); ++k)
+      if (covers(b[k])) {
+        node[b[k]].zone = s.zone;
+        intern_grew = true;
+        return b[k];
+      }
+  const int id = static_cast<int>(node.size());
+  node.push_back(std::move(s));
+  b.push_back(id);
+  grow();
+  return id;
+}
+
+void Otf::expand(int u) {
+  grow();
+  if (expanded[u]) return;
+  expanded[u] = 1;
+  ++expand_calls;
+  std::vector<SymState> succ;
+  std::vector<GfpTag> tags;
+  gfp_succ_tagged(net, node[u], L, U, qmask, emode, succ, tags);
+  for (std::size_t k = 0; k < succ.size(); ++k) {
+    const int v = intern(std::move(succ[k]));
+    grow();
+    adj[u].push_back(OtfEdge{v, tags[k]});
+    pred[v].push_back(u);
+    // In-place enlargement invalidates the enlarged node's adjacency (it was computed from
+    // the smaller zone). Off under append_only, where it cannot happen.
+    if (intern_grew) {
+      if (v != u) {
+        expanded[v] = 0;
+        for (const auto& e : adj[v]) {
+          auto& pv = pred[e.tgt];
+          pv.erase(std::remove(pv.begin(), pv.end(), v), pv.end());
+        }
+        adj[v].clear();
+      } else {
+        expanded[u] = 0;
+      }
+    }
+  }
+}
+
+bool Otf::time_diverges(const SymState& s) const {
+  if (net.nclocks == 0) return false;
+  Dbm z = s.zone;
+  z.delay();
+  std::vector<Constraint> inv;
+  all_invariants(net, s.locs, inv);
+  apply_all(z, inv);
+  if (z.empty()) return false;
+  for (int i = 1; i <= net.nclocks; ++i)
+    if (z.get(i, 0) != kInf) return false;
+  return true;
+}
+
+// The END-OF-RUN term, whole-zone by necessity, not by laziness -- identical to
+// leads_to_gfp's. Stored zones are LU-extrapolated, so they contain points the system
+// never reaches; each is LU-SIMULATED BY a reachable one, so "this point has an infinite
+// !q run" transfers to the reachable point (sound) while "this point is STUCK" does not
+// (unsound). Hence the whole-zone convention, inherited from the shipping engine, together
+// with its known incompleteness on partial deadlocks.
+//
+// `adj[u].empty()` is only meaningful once u is EXPANDED. Callers guarantee that.
+bool Otf::stop_term(int u) {
+  static const bool no_pd = std::getenv("PTCTLMC_GFPNOPD") != nullptr;
+  return adj[u].empty() || time_diverges(node[u]) ||
+         (!no_pd && state_has_deadlock(net, node[u]));
+}
+
+// Descending greatest-fixpoint iteration CONFINED TO S. Nodes outside S are pinned to
+// empty, which is what makes the limit a post-fixpoint of the full operator rather than
+// merely of this one. S must contain only EXPANDED !q nodes.
+void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
+  ++passes;
+  const std::size_t N = node.size();
+  std::vector<char> inS(N, 0);
+  for (int v : S) inS[v] = 1;
+  W.assign(N, Federation{});
+  std::vector<Federation> nosucc(N);
+  for (int v : S) {
+    W[v].push_back(node[v].zone);
+    if (stop_term(v)) nosucc[v].push_back(node[v].zone);
+  }
+  bool changed = true;
+  std::size_t it = 0;
+  while (changed && !capped) {
+    changed = false;
+    ++it;
+    for (int v : S) {
+      if (gfp_fed_empty(W[v])) continue;
+      Federation cand = nosucc[v];
+      for (const auto& e : adj[v]) {
+        const int j = e.tgt;
+        if (!inS[j] || gfp_fed_empty(W[j])) continue;
+        for (const auto& Y : W[j]) {
+          ++pre_calls;
+          Dbm pz = gfp_pre(net, e.tag, node[v], node[j], Y);
+          if (!pz.empty()) cand.push_back(std::move(pz));
+        }
+      }
+      gfp_fed_compact(cand, fedcap, &capped);
+      Federation nw;
+      for (const auto& z : W[v]) {
+        Federation inside = fed_subtract(z, fed_subtract(z, cand));   // z /\ cand
+        for (auto& piece : inside)
+          if (!piece.empty()) nw.push_back(std::move(piece));
+      }
+      gfp_fed_compact(nw, fedcap, &capped);
+      if (!gfp_fed_subset(W[v], nw)) changed = true;
+      W[v].swap(nw);
+      if (capped) break;
+    }
+    if (it > 100000) break;
+  }
+  gfp_iters += it;
+}
+
+// A certificate over S: some p /\ !q node in S keeps a non-empty value once the confined
+// iteration has CONVERGED. Intermediate iterates are pre-fixpoints and say nothing, so the
+// test may only be applied to the limit -- which is why gfp_on runs to fixpoint before
+// this looks at anything.
+//
+// A CAPPED pass has not converged, so it proves nothing IN EITHER DIRECTION. Returning
+// `false` here would launder "I ran out of federation budget" into "no certificate", i.e.
+// into a silent SATISFIED -- the worst possible failure mode for a verification tool. The
+// `capped` flag is therefore sticky and the caller must report UNUSABLE rather than a
+// verdict; see Otf::run and the printout in main_gfp.cpp.
+bool Otf::certificate_in(const std::vector<int>& S) {
+  if (S.empty()) return false;
+  std::vector<Federation> W;
+  gfp_on(S, W);
+  std::size_t tot = 0, ne = 0;
+  for (int v : S) {
+    if (gfp_fed_empty(W[v])) continue;
+    ++ne;
+    tot += W[v].size();
+    if (W[v].size() > fed_max) fed_max = W[v].size();
+  }
+  nonempty = ne;
+  fed_avg = ne ? double(tot) / double(ne) : 0.0;
+  if (capped) return false;                      // caller checks `capped` before believing this
+  for (int v : S)
+    if (is_p(v) && !gfp_fed_empty(W[v])) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Forward construction, shared. Level-synchronous BFS, the same shape as leads_to_gfp's
+// phase 1. `trigger` is called after every level and may settle the query.
+bool Otf::build_all() {
+  SymState s0;
+  s0.locs.resize(net.nprocs());
+  for (int pr = 0; pr < net.nprocs(); ++pr) s0.locs[pr] = net.procs[pr].initial;
+  s0.ints.resize(net.intvars.size());
+  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
+  s0.zone = Dbm(net.nclocks);
+  {
+    std::vector<Constraint> inv;
+    all_invariants(net, s0.locs, inv);
+    if (!apply_all(s0.zone, inv)) return false;     // unreachable init: caller sees no nodes
+    bool c, u;
+    frozen_flags(net, s0.locs, &c, &u);
+    if (!c && !u) {
+      s0.zone.delay();
+      apply_all(s0.zone, inv);
+    }
+    reset_inactive(net, s0.locs, s0.zone, qmask);
+    if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
+    else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U);
+  }
+  intern(std::move(s0));
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// D1 (pipelined conservative) and D3 (fully incremental).
+//
+// D3 runs a confined pass over EVERY expanded !q node after each BFS level. By the
+// argument at the top of this section its limit is a post-fixpoint of the finished
+// operator, so a non-empty value at a p /\ !q node settles the query on the spot. Values
+// are recomputed from TOP each pass and are therefore not descending across passes -- and
+// under (*) they do not have to be.
+//
+// D1 is the conservative variant: it runs the pass only over nodes that are FROZEN, i.e.
+// expanded and unable to reach any unexpanded node. For those the confined operator
+// already equals the full one, so the values are not merely a certificate but FINAL, and
+// they are never recomputed. What D1 buys over D3 is that its work is never thrown away;
+// what it costs is that a frozen region may not exist until very late -- on a strongly
+// connected model, not until the forward phase is finished, which is precisely the
+// difficulty the direction was expected to have.
+bool Otf::run_bfs_incremental() {
+  if (!build_all()) return false;
+  std::vector<int> frontier{0};
+  std::vector<char> seen(1, 1);
+  std::vector<char> frozen_done;                 // D1: value already final for this node
+  while (!frontier.empty()) {
+    std::vector<int> next;
+    for (int u : frontier) {
+      grow();
+      // expand() no-ops when u already has an adjacency; scanning adj[u] unconditionally
+      // keeps the frontier correct when in-place enlargement has RESET a node that was
+      // already published (its edges were cleared, so its successors must be re-published).
+      expand(u);
+      grow();
+      for (const auto& e : adj[u]) {
+        if (seen.size() < node.size()) seen.resize(node.size(), 0);
+        if (!seen[e.tgt] || !expanded[e.tgt]) {
+          seen[e.tgt] = 1;
+          next.push_back(e.tgt);
+        }
+      }
+    }
+    grow();
+    // --- the on-the-fly check ------------------------------------------------
+    std::vector<int> S;
+    if (mode == OtfMode::D3) {
+      S = accepting_closure();
+    } else {   // D1: only the frozen part
+      // OPEN = can reach an unexpanded node. Computed by a reverse sweep from the
+      // unexpanded set over `pred`; the complement is frozen. Sound only because
+      // append_only keeps every stored zone and adjacency immutable once written.
+      const std::size_t N = node.size();
+      std::vector<char> open(N, 0);
+      std::vector<int> stk;
+      for (std::size_t v = 0; v < N; ++v)
+        if (!expanded[v]) { open[v] = 1; stk.push_back((int)v); }
+      while (!stk.empty()) {
+        const int v = stk.back();
+        stk.pop_back();
+        for (int w : pred[v])
+          if (!open[w]) { open[w] = 1; stk.push_back(w); }
+      }
+      if (frozen_done.size() < N) frozen_done.resize(N, 0);
+      for (std::size_t v = 0; v < N; ++v)
+        if (!open[v] && !frozen_done[v] && is_nq((int)v)) S.push_back((int)v);
+      // A frozen region is self-contained, so its values are final -- but only if the
+      // whole region is passed together (a frozen node may point at another frozen node).
+      // Include the already-settled frozen nodes as context, then mark the new ones done.
+      if (!S.empty()) {
+        for (std::size_t v = 0; v < N; ++v)
+          if (!open[v] && frozen_done[v] && is_nq((int)v)) S.push_back((int)v);
+        for (std::size_t v = 0; v < N; ++v)
+          if (!open[v]) frozen_done[v] = 1;
+      }
+    }
+    if (!S.empty() && certificate_in(S)) { settled_early = true; return true; }
+    frontier.swap(next);
+  }
+  return final_verdict_violated();
+}
+
+// ---------------------------------------------------------------------------
+// D5 (candidate-confirm) -- the variant this branch recommends.
+//
+// The shipping forward engine (src/netreach.cpp, leads_to_net) settles a VIOLATED query in
+// a handful of states with a lazy Tarjan over the !q subgraph, but it has to REFUSE every
+// subsumption edge (`exact_edge`) because a redirected edge closes cycles the concrete
+// system cannot run -- the wrong verdict written up in liveness-subsumption-bug.md. The
+// backward operator has no such problem. So: let the forward DFS follow EVERY edge,
+// including subsumption edges, and use it only as a CANDIDATE GENERATOR; then confirm each
+// candidate exactly with a confined backward pass over the DFS stack.
+//
+//   * a candidate that survives is a genuine certificate -- by (*), with exactly the
+//     verdict the finished graph would give;
+//   * a candidate that dies costs one small pass over a path, and the search continues.
+//
+// The forward search therefore runs on the FULLY SUBSUMED graph (the reachability floor,
+// 1.0-1.3 zones per discrete state) while keeping the exactness of the backward operator.
+// Neither half can do that alone.
+bool Otf::run_dfs_candidates() {
+  if (!build_all()) return false;
+  std::unordered_set<long long> tried;            // (root, target) candidates already refuted
+  std::vector<char> onstk;
+  std::vector<int> visit;                         // dfs discovery order marker, -1 = unvisited
+
+  // REFUTATION BUDGET. A confirmation costs one confined pass over the DFS stack -- cheap,
+  // but not free, and on a query that HOLDS every candidate is spurious by definition, so an
+  // unbounded policy pays for a pass per back-edge and buys nothing. Measured: on every
+  // violated query in the set the certificate is confirmed on the FIRST candidate (passes=1,
+  // 1-3 Pre calls, including grc4 where the DFS first walks 1722 states); the only run that
+  // refutes repeatedly is grc4 `T0.in --> T0.far`, which HOLDS and burned 22 passes and 320k
+  // Pre calls to learn that. So spend a small fixed number of refutations and then stop
+  // looking. This cannot change a verdict -- abandoning the early exit only defers the answer
+  // to the exact final pass -- it only gives up the chance of an early one.
+  const long refute_budget =
+      std::getenv("PTCTLMC_OTFREFUTE") ? std::strtol(std::getenv("PTCTLMC_OTFREFUTE"), nullptr, 10)
+                                       : 8;
+  long refuted = 0;
+
+  // Inner !q DFS from an accepting node. Returns true when a candidate is CONFIRMED.
+  auto neg_dfs = [&](int root) -> bool {
+    grow();
+    if (visit.size() < node.size()) visit.resize(node.size(), -1);
+    if (onstk.size() < node.size()) onstk.resize(node.size(), 0);
+    struct Frame { int u; std::size_t i; };
+    std::vector<Frame> fs;
+    std::vector<int> stack_nodes;
+    auto confirm = [&](int tgt) -> bool {
+      if (refuted >= refute_budget) return false;
+      const long long k = (long long)root * 1000000007LL + tgt;
+      if (!tried.insert(k).second) return false;
+      std::vector<int> S;
+      for (int v : stack_nodes)
+        if (expanded[v] && is_nq(v)) S.push_back(v);
+      if (S.empty()) return false;
+      if (certificate_in(S)) return true;
+      ++refuted;
+      return false;
+    };
+    visit[root] = 1;
+    onstk[root] = 1;
+    fs.push_back({root, 0});
+    stack_nodes.push_back(root);
+    while (!fs.empty()) {
+      const int u = fs.back().u;
+      grow();
+      if (visit.size() < node.size()) visit.resize(node.size(), -1);
+      if (onstk.size() < node.size()) onstk.resize(node.size(), 0);
+      expand(u);
+      grow();
+      if (visit.size() < node.size()) visit.resize(node.size(), -1);
+      if (onstk.size() < node.size()) onstk.resize(node.size(), 0);
+      // Candidate kind 1: a maximal !q run can END here.
+      if (fs.back().i == 0 && stop_term(u) && confirm(u)) return true;
+      bool descended = false;
+      while (fs.back().i < adj[u].size()) {
+        const int v = adj[u][fs.back().i++].tgt;
+        if (!is_nq(v)) continue;                  // !q subgraph only
+        if (onstk[v]) {                           // candidate kind 2: a !q cycle
+          if (confirm(v)) return true;
+          continue;
+        }
+        if (visit[v] == -1) {
+          visit[v] = 1;
+          onstk[v] = 1;
+          fs.push_back({v, 0});
+          stack_nodes.push_back(v);
+          descended = true;
+          break;
+        }
+      }
+      if (descended) continue;
+      onstk[u] = 0;
+      stack_nodes.pop_back();
+      fs.pop_back();
+    }
+    return false;
+  };
+
+  std::vector<int> frontier{0};
+  std::vector<char> seen(1, 1), acc_done;
+  while (!frontier.empty()) {
+    std::vector<int> next, accepting;
+    for (int u : frontier) {
+      grow();
+      // NOT `if (expanded[u]) continue;`. The inner !q DFS expands nodes too, so a frontier
+      // node may already carry an adjacency -- and skipping it would skip PUBLISHING its
+      // successors to the outer frontier, which silently truncates the reachable set. The
+      // outer search must cover every reachable state (a p /\ !q state may only be
+      // reachable THROUGH q states, which the inner DFS never enters), so scan adj[u]
+      // unconditionally and let expand() no-op when there is nothing to do.
+      expand(u);
+      grow();
+      if (acc_done.size() < node.size()) acc_done.resize(node.size(), 0);
+      if (!acc_done[u]) {
+        acc_done[u] = 1;
+        if (is_p(u) && is_nq(u)) accepting.push_back(u);
+      }
+      for (const auto& e : adj[u]) {
+        if (seen.size() < node.size()) seen.resize(node.size(), 0);
+        if (!seen[e.tgt] || !expanded[e.tgt]) {
+          seen[e.tgt] = 1;
+          next.push_back(e.tgt);
+        }
+      }
+    }
+    for (int u : accepting) {
+      // Cheapest certificate first: this state alone already stays in !q forever.
+      grow();
+      if (expanded[u] && stop_term(u)) {
+        std::vector<int> S{u};
+        if (certificate_in(S)) { settled_early = true; return true; }
+      }
+      if (neg_dfs(u)) { settled_early = true; return true; }
+    }
+    frontier.swap(next);
+  }
+  return final_verdict_violated();
+}
+
+// The !q nodes that can actually influence the verdict: those forward-reachable, THROUGH !q
+// EDGES ONLY, from a p /\ !q node. F is defined per node from its own successors, so the
+// value at an accepting node depends on exactly this set and on nothing else -- restricting
+// to it is EXACT, not an approximation, and it is what keeps the final pass from iterating
+// over !q states no accepting state can ever reach. (`p --> q` is decided by the accepting
+// nodes alone, so nothing outside the closure is ever read.)
+std::vector<int> Otf::accepting_closure() {
+  grow();
+  const std::size_t N = node.size();
+  std::vector<char> in(N, 0);
+  std::vector<int> stk, out;
+  for (std::size_t v = 0; v < N; ++v)
+    if (expanded[v] && is_nq((int)v) && is_p((int)v)) { in[v] = 1; stk.push_back((int)v); }
+  while (!stk.empty()) {
+    const int v = stk.back();
+    stk.pop_back();
+    out.push_back(v);
+    for (const auto& e : adj[v])
+      if (!in[e.tgt] && expanded[e.tgt] && is_nq(e.tgt)) { in[e.tgt] = 1; stk.push_back(e.tgt); }
+  }
+  return out;
+}
+
+// One exact pass over the FINISHED graph: S = the accepting closure, on which F_S = F at
+// every accepting node, so the limit is the true greatest fixpoint where it is read. This is
+// the published algorithm, and every mode falls back to it when no certificate fired early.
+bool Otf::final_verdict_violated() {
+  return certificate_in(accepting_closure());
+}
+
+bool Otf::run(GfpStats* gs) {
+  setup();
+  bool violated = false;
+  switch (mode) {
+    case OtfMode::Base:
+    case OtfMode::D2:
+    case OtfMode::D4: {
+      // D4 (preprocessing overlap) differs from Base only in WHEN the per-node liveness
+      // data is computed: is_p / is_nq / the stopping term are evaluated as each node is
+      // expanded rather than in a post-pass. It cannot change the state count by
+      // construction -- it does not change the search at all -- and is included to measure
+      // exactly that.
+      if (!build_all()) { violated = false; break; }
+      std::vector<int> frontier{0};
+      std::vector<char> seen(1, 1);
+      while (!frontier.empty()) {
+        std::vector<int> next;
+        for (int u : frontier) {
+          grow();
+          expand(u);
+          grow();
+          if (mode == OtfMode::D4) { is_p(u); is_nq(u); }       // overlap the preprocessing
+          for (const auto& e : adj[u]) {
+            if (seen.size() < node.size()) seen.resize(node.size(), 0);
+            if (!seen[e.tgt] || !expanded[e.tgt]) {
+              seen[e.tgt] = 1;
+              next.push_back(e.tgt);
+            }
+          }
+        }
+        frontier.swap(next);
+      }
+      violated = final_verdict_violated();
+      break;
+    }
+    case OtfMode::D1:
+    case OtfMode::D3:
+      violated = run_bfs_incremental();
+      break;
+    case OtfMode::D5:
+      violated = run_dfs_candidates();
+      break;
+  }
+  if (gs) {
+    gs->fwd_nodes = node.size();
+    gs->disc_keys = bucket.size();
+    gs->fwd_edges = 0;
+    for (const auto& a : adj) gs->fwd_edges += a.size();
+    gs->iters = gfp_iters;
+    gs->capped = capped;
+    gs->fed_max = fed_max;
+    gs->fed_avg = fed_avg;
+    gs->nonempty = nonempty;
+    gs->expanded_nodes = expand_calls;
+    gs->passes = passes;
+    gs->pre_calls = pre_calls;
+    gs->early = settled_early;
+    gs->mode = otf_mode_name(mode);
+  }
+  return !violated;
+}
+
+// Entry point. `mode` comes from PTCTLMC_GFPMODE; returns true iff `p --> q` HOLDS.
+bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, const char* mode_s,
+                  GfpStats* gs) {
+  OtfMode m = OtfMode::Base;
+  const std::string s = mode_s ? mode_s : "base";
+  if (s == "d1") m = OtfMode::D1;
+  else if (s == "d2") m = OtfMode::D2;
+  else if (s == "d3") m = OtfMode::D3;
+  else if (s == "d4") m = OtfMode::D4;
+  else if (s == "d5") m = OtfMode::D5;
+  Otf e(net, p, q, m);
+  return e.run(gs);
 }
 
 }  // namespace ptctlmc
