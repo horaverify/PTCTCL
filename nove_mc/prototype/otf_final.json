@@ -1,0 +1,1442 @@
+{
+ "arbiter4 C0.want-->C0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.003648042678833008,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 5,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0027420520782470703,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.cs-->C0.idle": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.003058910369873047,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 48,
+   "rounds": 3,
+   "capped": "no",
+   "secs": 0.002721071243286133,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.want-->C0.idle": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.0034749507904052734,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 5,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0028553009033203125,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C1.cs-->C1.idle": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.0031659603118896484,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 48,
+   "rounds": 3,
+   "capped": "no",
+   "secs": 0.0029222965240478516,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.idle-->C0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.0035762786865234375,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0027971267700195312,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.idle-->C0.want": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.002952098846435547,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0023550987243652344,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 Arb.Busy-->Arb.Free": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.0027642250061035156,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 48,
+   "rounds": 3,
+   "capped": "no",
+   "secs": 0.002880096435546875,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 Arb.Free-->Arb.Busy": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 48,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 0,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.002402067184448242,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0028820037841796875,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 C0.want-->C0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 112,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.0036029815673828125,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 6,
+   "disc": 6,
+   "edges": 5,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0023469924926757812,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 C1.cs-->C1.idle": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 112,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 0,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.003548860549926758,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 112,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 112,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.0024492740631103516,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 C0.idle-->C0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 112,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.0031020641326904297,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019378662109375,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 Arb.Busy-->Arb.Free": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 112,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 0,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.002827882766723633,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 112,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 112,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.0028400421142578125,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.req-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 222,
+   "disc": 220,
+   "edges": 652,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.003885030746459961,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 10,
+   "disc": 10,
+   "edges": 9,
+   "expanded": 3,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.0019271373748779297,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.wait-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 222,
+   "disc": 220,
+   "edges": 652,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.0037801265716552734,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 9,
+   "disc": 9,
+   "edges": 8,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0020427703857421875,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.cs-->P0.idle": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 222,
+   "disc": 220,
+   "edges": 652,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.0030879974365234375,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 16,
+   "disc": 16,
+   "edges": 21,
+   "expanded": 6,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019073486328125,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.idle-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 222,
+   "disc": 220,
+   "edges": 652,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.003740072250366211,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0021491050720214844,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P1.wait-->P1.idle": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 222,
+   "disc": 220,
+   "edges": 652,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.0033540725708007812,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 12,
+   "disc": 12,
+   "edges": 12,
+   "expanded": 3,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019838809967041016,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.req-->P0.wait": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 222,
+   "disc": 220,
+   "edges": 652,
+   "expanded": 0,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.003256082534790039,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 220,
+   "disc": 220,
+   "edges": 648,
+   "expanded": 268,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.0026040077209472656,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.wait-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 762,
+   "disc": 727,
+   "edges": 2709,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.01293635368347168,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 11,
+   "disc": 11,
+   "edges": 10,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002020120620727539,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.cs-->P0.idle": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 762,
+   "disc": 727,
+   "edges": 2709,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.008285999298095703,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 22,
+   "disc": 22,
+   "edges": 31,
+   "expanded": 7,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0020406246185302734,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.idle-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 762,
+   "disc": 727,
+   "edges": 2709,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.013041257858276367,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0020248889923095703,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.req-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 762,
+   "disc": 727,
+   "edges": 2709,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.012897014617919922,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 12,
+   "disc": 12,
+   "edges": 11,
+   "expanded": 3,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.002026081085205078,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 S0.Send-->S0.Wait": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 128,
+   "disc": 104,
+   "edges": 368,
+   "expanded": 0,
+   "rounds": 3,
+   "capped": "no",
+   "secs": 0.0030460357666015625,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 14,
+   "disc": 14,
+   "edges": 14,
+   "expanded": 5,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.0019478797912597656,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 S0.Wait-->S0.Send": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 128,
+   "disc": 104,
+   "edges": 368,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.0027267932891845703,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0018999576568603516,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 S0.Retry-->S0.Send": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 128,
+   "disc": 104,
+   "edges": 368,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.002679109573364258,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 16,
+   "disc": 16,
+   "edges": 22,
+   "expanded": 7,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019497871398925781,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 Bus.Active-->Bus.Idle": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 128,
+   "disc": 104,
+   "edges": 368,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.002972841262817383,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 104,
+   "disc": 104,
+   "edges": 320,
+   "expanded": 128,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.0027360916137695312,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 Bus.Idle-->Bus.Active": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 128,
+   "disc": 104,
+   "edges": 368,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.00292205810546875,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.001909017562866211,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma5 S0.Send-->S0.Wait": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 352,
+   "disc": 272,
+   "edges": 1200,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.00802302360534668,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 17,
+   "disc": 17,
+   "edges": 17,
+   "expanded": 5,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.001995086669921875,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma5 S0.Wait-->S0.Send": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 352,
+   "disc": 272,
+   "edges": 1200,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.006165981292724609,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019257068634033203,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma5 Bus.Active-->Bus.Idle": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 352,
+   "disc": 272,
+   "edges": 1200,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.007478952407836914,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 272,
+   "disc": 272,
+   "edges": 1000,
+   "expanded": 352,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.005135059356689453,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.HoldL-->P0.Eat": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 82,
+   "disc": 80,
+   "edges": 216,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.002398967742919922,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 5,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019659996032714844,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.Eat-->P0.Think": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 82,
+   "disc": 80,
+   "edges": 216,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.002187013626098633,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 14,
+   "disc": 14,
+   "edges": 14,
+   "expanded": 4,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.002000093460083008,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.Think-->P0.Eat": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 82,
+   "disc": 80,
+   "edges": 216,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.0023469924926757812,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019261837005615234,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.HoldL-->P0.Think": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 82,
+   "disc": 80,
+   "edges": 216,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.0023009777069091797,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 5,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.001970052719116211,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 F0.Used-->F0.Free": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 82,
+   "disc": 80,
+   "edges": 216,
+   "expanded": 0,
+   "rounds": 11,
+   "capped": "no",
+   "secs": 0.0026979446411132812,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 5,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0018391609191894531,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.reqA-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 286,
+   "disc": 284,
+   "edges": 812,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.004217863082885742,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 10,
+   "disc": 10,
+   "edges": 9,
+   "expanded": 3,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.001984834671020508,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.cs-->P0.idle": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 286,
+   "disc": 284,
+   "edges": 812,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.0034313201904296875,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 65,
+   "disc": 65,
+   "edges": 81,
+   "expanded": 36,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0020248889923095703,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.waitA-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 286,
+   "disc": 284,
+   "edges": 812,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.00425410270690918,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 9,
+   "disc": 9,
+   "edges": 8,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019268989562988281,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.idle-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 286,
+   "disc": 284,
+   "edges": 812,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.004299163818359375,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019550323486328125,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.waitB-->P0.cs": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 286,
+   "disc": 284,
+   "edges": 812,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.004175901412963867,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 36,
+   "disc": 36,
+   "edges": 49,
+   "expanded": 16,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0019922256469726562,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "viking4 Viking1.unsafe-->Viking1.safe": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 206,
+   "disc": 206,
+   "edges": 384,
+   "expanded": 0,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.002306699752807617,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0018448829650878906,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "viking4 Viking1.safe-->Viking1.unsafe": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 206,
+   "disc": 206,
+   "edges": 384,
+   "expanded": 0,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.002267122268676758,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 16,
+   "disc": 16,
+   "edges": 21,
+   "expanded": 6,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0018768310546875,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "viking4 Torch.two-->Torch.free": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 206,
+   "disc": 206,
+   "edges": 384,
+   "expanded": 0,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.0023651123046875,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 9,
+   "disc": 9,
+   "edges": 8,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0024580955505371094,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 T0.near-->T0.in": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 2345,
+   "disc": 128,
+   "edges": 8160,
+   "expanded": 0,
+   "rounds": 10,
+   "capped": "no",
+   "secs": 0.1196432113647461,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 649,
+   "disc": 119,
+   "edges": 924,
+   "expanded": 591,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.006806612014770508,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 T0.in-->T0.far": {
+  "gfp": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 2345,
+   "disc": 128,
+   "edges": 8160,
+   "expanded": 0,
+   "rounds": 19,
+   "capped": "no",
+   "secs": 0.47499608993530273,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 826,
+   "disc": 128,
+   "edges": 2866,
+   "expanded": 1092,
+   "rounds": 129,
+   "capped": "no",
+   "secs": 0.06992697715759277,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 T0.far-->T0.near": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 2345,
+   "disc": 128,
+   "edges": 8160,
+   "expanded": 0,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.04378318786621094,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002164125442504883,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 Ctl.up-->Ctl.low_1": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 2345,
+   "disc": 128,
+   "edges": 8160,
+   "expanded": 0,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.04816412925720215,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0025031566619873047,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 G.up-->G.low": {
+  "gfp": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 2345,
+   "disc": 128,
+   "edges": 8160,
+   "expanded": 0,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.08632206916809082,
+   "stderr": "",
+   "rc": 0
+  },
+  "d5": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0021538734436035156,
+   "stderr": "",
+   "rc": 0
+  }
+ }
+}

@@ -1,0 +1,770 @@
+{
+ "arbiter4 C0.want-->C0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 53,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 1.0598187446594238,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.cs-->C0.idle": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 96,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 48,
+   "rounds": 3,
+   "capped": "no",
+   "secs": 0.005380868911743164,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.want-->C0.idle": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 53,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0038919448852539062,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C1.cs-->C1.idle": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 96,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 48,
+   "rounds": 3,
+   "capped": "no",
+   "secs": 0.004541873931884766,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.idle-->C0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 49,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.003704071044921875,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 C0.idle-->C0.want": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 49,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0035920143127441406,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 Arb.Busy-->Arb.Free": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 96,
+   "disc": 48,
+   "edges": 144,
+   "expanded": 48,
+   "rounds": 3,
+   "capped": "no",
+   "secs": 0.0035369396209716797,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter4 Arb.Free-->Arb.Busy": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 49,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0031359195709228516,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 C0.want-->C0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 118,
+   "disc": 6,
+   "edges": 5,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.003899812698364258,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 C1.cs-->C1.idle": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 224,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 112,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.004740238189697266,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 C0.idle-->C0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 113,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0033850669860839844,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "arbiter5 Arb.Busy-->Arb.Free": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 224,
+   "disc": 112,
+   "edges": 400,
+   "expanded": 112,
+   "rounds": 4,
+   "capped": "no",
+   "secs": 0.00472712516784668,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.req-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 230,
+   "disc": 10,
+   "edges": 9,
+   "expanded": 3,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.003607034683227539,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.wait-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 229,
+   "disc": 9,
+   "edges": 8,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0037660598754882812,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.cs-->P0.idle": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 230,
+   "disc": 10,
+   "edges": 9,
+   "expanded": 3,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0032052993774414062,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.idle-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 221,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0034270286560058594,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P1.wait-->P1.idle": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 229,
+   "disc": 9,
+   "edges": 8,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0031442642211914062,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer4 P0.req-->P0.wait": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 442,
+   "disc": 220,
+   "edges": 652,
+   "expanded": 270,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.003687143325805664,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.wait-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 738,
+   "disc": 11,
+   "edges": 10,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.00561213493347168,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.cs-->P0.idle": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 739,
+   "disc": 12,
+   "edges": 11,
+   "expanded": 3,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.005075931549072266,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.idle-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 728,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.005276918411254883,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "fischer5 P0.req-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 739,
+   "disc": 12,
+   "edges": 11,
+   "expanded": 3,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.005568981170654297,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 S0.Send-->S0.Wait": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 118,
+   "disc": 14,
+   "edges": 14,
+   "expanded": 5,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.0028579235076904297,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 S0.Wait-->S0.Send": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 105,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0028471946716308594,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 S0.Retry-->S0.Send": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 114,
+   "disc": 10,
+   "edges": 9,
+   "expanded": 3,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002488851547241211,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 Bus.Active-->Bus.Idle": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 232,
+   "disc": 104,
+   "edges": 368,
+   "expanded": 128,
+   "rounds": 5,
+   "capped": "no",
+   "secs": 0.0034079551696777344,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma4 Bus.Idle-->Bus.Active": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 105,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0025331974029541016,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma5 S0.Send-->S0.Wait": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 289,
+   "disc": 17,
+   "edges": 17,
+   "expanded": 5,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.0032503604888916016,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma5 S0.Wait-->S0.Send": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 273,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.003470182418823242,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "csma5 Bus.Active-->Bus.Idle": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 624,
+   "disc": 272,
+   "edges": 1200,
+   "expanded": 352,
+   "rounds": 6,
+   "capped": "no",
+   "secs": 0.007146120071411133,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.HoldL-->P0.Eat": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 85,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0025649070739746094,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.Eat-->P0.Think": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 94,
+   "disc": 14,
+   "edges": 14,
+   "expanded": 4,
+   "rounds": 2,
+   "capped": "no",
+   "secs": 0.0022449493408203125,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.Think-->P0.Eat": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 81,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0024869441986083984,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 P0.HoldL-->P0.Think": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 85,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002556324005126953,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "phil4 F0.Used-->F0.Free": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 85,
+   "disc": 5,
+   "edges": 4,
+   "expanded": 1,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002201080322265625,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.reqA-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 294,
+   "disc": 10,
+   "edges": 9,
+   "expanded": 3,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.0027778148651123047,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.cs-->P0.idle": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 296,
+   "disc": 12,
+   "edges": 11,
+   "expanded": 5,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.003204822540283203,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.waitA-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 293,
+   "disc": 9,
+   "edges": 8,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002682924270629883,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.idle-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 285,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0027778148651123047,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "twolock4 P0.waitB-->P0.cs": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 295,
+   "disc": 11,
+   "edges": 10,
+   "expanded": 4,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0030078887939453125,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "viking4 Viking1.unsafe-->Viking1.safe": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 207,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0022389888763427734,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "viking4 Viking1.safe-->Viking1.unsafe": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 216,
+   "disc": 10,
+   "edges": 9,
+   "expanded": 3,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002485990524291992,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "viking4 Torch.two-->Torch.free": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 215,
+   "disc": 9,
+   "edges": 8,
+   "expanded": 2,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.0029599666595458984,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 T0.near-->T0.in": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 2224,
+   "disc": 123,
+   "edges": 6545,
+   "expanded": 3258,
+   "rounds": 1,
+   "capped": "no",
+   "secs": 0.023982763290405273,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 T0.in-->T0.far": {
+  "d9": {
+   "verdict": "SATISFIED",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 1284,
+   "disc": 128,
+   "edges": 3762,
+   "expanded": 1894,
+   "rounds": 115,
+   "capped": "no",
+   "secs": 0.031162261962890625,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 T0.far-->T0.near": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 129,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.003381013870239258,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 Ctl.up-->Ctl.low_1": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 129,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.002875089645385742,
+   "stderr": "",
+   "rc": 0
+  }
+ },
+ "grc4 G.up-->G.low": {
+  "d9": {
+   "verdict": "NOT",
+   "ref": null,
+   "ref_explored": null,
+   "nodes": 129,
+   "disc": 1,
+   "edges": 0,
+   "expanded": 0,
+   "rounds": 0,
+   "capped": "no",
+   "secs": 0.003120899200439453,
+   "stderr": "",
+   "rc": 0
+  }
+ }
+}

@@ -1,0 +1,165 @@
+\section{Algorithm 2: on-the-fly liveness}
+\label{sec:otf}
+
+Algorithm~\ref{alg:gfp} has one structural defect, and it is not a constant factor. Phase~1 runs
+to completion before Phase~3 begins, so the cost of deciding \texttt{p --> q} is a function of the
+\emph{model} and never of the \emph{query}: a leads-to property violated three transitions from the
+initial state still pays for every reachable symbolic state. This section removes that defect
+without weakening anything proved in \S\ref{sec:soundness}.
+
+\subsection{Why this looks harder than it is}
+
+$EG$ is a \emph{greatest} fixpoint, so the textbook iteration starts at $\top$ and descends, and an
+intermediate iterate satisfies $W \supseteq F(W)$ --- it is a \textbf{pre}-fixpoint, an
+over-approximation, and therefore says nothing. ``$W_v \neq \emptyset$'' cannot settle a violation,
+so there is no early exit; and the moment the graph underneath grows, the values stop descending.
+
+But a violation never needed the fixpoint. It needs a \emph{certificate}, and by Knaster--Tarski
+the certificates of a greatest fixpoint are exactly its \textbf{post}-fixpoints --- the same
+instrument used once already, in the proof of Theorem~\ref{thm:sound-holds}, here in the other role.
+
+\begin{theorem}[A pass over a fragment is a certificate]
+\label{thm:fragment}
+Let $G$ be any subgraph explored so far and $S$ any set of \textbf{expanded} $\lnot q$ vertices of
+$G$. Define $F_S$ exactly as $F$ but with $W_u$ pinned to $\emptyset$ for $u \notin S$. Then
+\[
+   \nu F_S \;\subseteq\; \nu F \;=\; W^\infty,
+\]
+where $F$ is the operator on the \emph{finished} graph. Consequently $\nu F_S(v) \neq \emptyset$ at
+some $v \models p \wedge \lnot q$ settles the query as \textsc{violated}, with exactly the verdict
+Algorithm~\ref{alg:gfp} would have produced. \proved{}
+\end{theorem}
+
+\begin{proof}
+$F_S$ is obtained from $F$ by deleting disjuncts: every $\Pre_e(W_{v'})$ with $v' \notin S$ becomes
+$\Pre_e(\emptyset) = \emptyset$, and no term is added. So $F_S(X) \subseteq F(X)$ pointwise. Both
+are monotone, hence $\nu F_S \subseteq \nu F$: $\nu F_S$ is a post-fixpoint of $F_S$, hence of $F$,
+hence below the greatest post-fixpoint of $F$.
+\end{proof}
+
+Taking $S$ to be every expanded $\lnot q$ vertex of the \emph{finished} graph gives $F_S = F$, so
+the final pass \emph{is} Algorithm~\ref{alg:gfp}: nothing is given up when the property holds. No
+value has to descend across passes, because each pass is a self-contained certificate search.
+
+\begin{remark}[The one restriction]
+\label{rem:expanded}
+A vertex may enter $S$ only once \textbf{expanded}. The stopping term reads the \emph{absence} of
+successors ($\mathrm{adj}(v) = \emptyset$), and an unexpanded vertex has an empty adjacency for the
+wrong reason; admitting one would \emph{add} a disjunct rather than delete one. Every other term
+survives a partial graph untouched, because the $\Pre$ disjuncts only ever need edges that
+\textbf{exist}, never the absence of one. Absence of edges is dangerous, presence is not --- that
+asymmetry is what makes backward work on a half-built graph legitimate at all.
+\end{remark}
+
+\begin{remark}[A capped pass proves nothing]
+\label{rem:capped}
+Theorem~\ref{thm:fragment} is about the \emph{limit}. An iterate stopped early --- by a
+federation-width cap or an iteration bound --- is a pre-fixpoint and is neither an over- nor an
+under-approximation. Reading such a value as ``no certificate found'' converts an exhausted budget
+into a silent \textsc{holds}. The implementation reports \textsc{unusable} instead, and the
+differential harness scores it as the absence of a verdict.
+\end{remark}
+
+\subsection{The algorithm}
+\label{sec:otf:alg}
+
+The forward search is a \textbf{candidate generator}; the backward operator is the \textbf{judge}.
+That division is what lets the search run on the fully subsumed graph and still be exact. The
+shipping forward engine cannot do this: it must \emph{refuse} subsumption edges whenever it argues
+that a run continues forever, because a redirected edge closes cycles the concrete system cannot
+execute (\S\ref{sec:liveness}). Algorithm~2 follows \textbf{every} edge and lets an exact confined
+pass adjudicate.
+
+\begin{algorithm}[h]
+\caption{On-the-fly leads-to. Returns \textsc{holds} or \textsc{violated}.}
+\label{alg:otf}
+\begin{algorithmic}[1]
+\State \textbf{Forward store.} $aLU$ subsumption, plus an \emph{exact} convex-union merge: a
+       newcomer is absorbed into a stored zone whenever their union is exactly one zone
+       (\S\ref{sec:otf:merge}).
+\State \textbf{Frontier.} Breadth-first, except that a newly generated $p \wedge \lnot q$ state
+       jumps the queue --- until \textsc{AccBudget} of them have been refuted, after which the
+       order reverts to breadth-first (\S\ref{sec:otf:order}).
+\State \textbf{At generation.} When a state $v$ is interned, if $v \models p \wedge \lnot q$ and
+       $\mathrm{timeDiverges}(v)$ or $\mathrm{hasDeadlock}(v)$, report \textsc{violated}
+       immediately (\S\ref{sec:otf:local}).
+\State \textbf{At an accepting vertex} $u$ popped from the frontier: expand $u$; if
+       $\mathrm{adj}(u) = \emptyset$ report \textsc{violated}; otherwise run a $\lnot q$ DFS from
+       $u$ following \emph{every} edge. On reaching a stopping vertex or a vertex on the DFS
+       stack, \textbf{confirm}: run the confined descending iteration of
+       Theorem~\ref{thm:fragment} over the stack. Non-empty at $u$ $\Rightarrow$
+       \textsc{violated}. Refuted $\Rightarrow$ continue, up to \textsc{RefuteBudget}
+       confirmations.
+\State \textbf{On exhaustion} of the frontier: one exact pass over the accepting closure
+       (\S\ref{sec:otf:closure}). Empty everywhere $\Rightarrow$ \textsc{holds}.
+\end{algorithmic}
+\end{algorithm}
+
+Steps 2, 3 and the budgets are pure \emph{ordering and early-exit} devices: they change which
+witness is found first and how soon, never which states are reachable, so
+Theorem~\ref{thm:fragment} and \S\ref{sec:soundness} carry over unchanged. Step 5 is what makes
+the algorithm complete.
+
+\subsection{The forward store: subsumption plus an exact merge}
+\label{sec:otf:merge}
+
+The graph is stored under $aLU$ subsumption, and additionally a newcomer is merged into a stored
+zone whenever \texttt{dbm\_try\_union} succeeds --- that is, whenever the union of the two zones
+\emph{really is a single zone}. The stored zone then denotes exactly the set the two it replaced
+denoted: no valuation is added and none removed.
+
+That exactness is what makes it usable here. An over-approximating merge (a convex hull, say) would
+be sound only for concluding \textsc{holds}, because a certificate could then rest on valuations
+the system never reaches. \texttt{try\_union} adds nothing, so it cannot invent a certificate and
+the \textsc{violated} direction survives.
+
+This matters more than it sounds. On \texttt{grc4} the $aLU$ antichain alone stores $18.32$ zones
+per reachable discrete state, against $1.00$--$1.44$ on every other family; with the merge it
+stores $6.90$, and the whole state space drops from $2345$ to $883$ symbolic states.
+\measured{} The $14.5$--$18$ zones per key were never intrinsic to the model: they were an
+antichain full of zones whose pairwise unions happen to be convex.
+
+\subsection{Local witnesses, tested at generation}
+\label{sec:otf:local}
+
+Two of the three stopping disjuncts need \emph{no adjacency}: $\mathrm{timeDiverges}$ and
+$\mathrm{hasDeadlock}$ are functions of a vertex's own zone and the model. Only
+$\mathrm{adj}(v) = \emptyset$ needs $v$ expanded. So if either holds at an accepting $v$, then
+$\Zn_v \subseteq \mathrm{stop}(v)$ and $W_v = \Zn_v$ is \emph{already} a post-fixpoint on
+$S = \{v\}$: the query is settled with zero expansions and no fixpoint iteration.
+
+They are therefore tested the instant a vertex is interned, not when it is eventually popped. On a
+violated query whose witness is a single state, that is the difference between settling when the
+state is \emph{found} and settling when the search gets round to it.
+
+\subsection{Accepting states jump the queue, on a budget}
+\label{sec:otf:order}
+
+Only a $p \wedge \lnot q$ state can settle a violated query, so a newly generated one is the most
+valuable thing in the frontier and need not wait behind the rest of its breadth level. The effect
+is large where the first accepting state is already a witness: \texttt{phil4 P0.Eat --> P0.Think}
+goes from $5$ outer expansions to $2$, because the process enumeration order puts the four fork
+processes before the philosophers, so \texttt{P0}'s own move is generated last. \measured{}
+
+Unbudgeted it is a trap. Where most accepting states are \emph{not} witnesses, front-loading them
+turns the breadth search into a dive: \texttt{grc4 T0.near --> T0.in} goes from $182$ outer
+expansions to $1762$. Prioritising only until two accepting states have been refuted keeps the
+\texttt{phil4} gain (whose first accepting state never spends the budget) and restores the
+\texttt{grc4} behaviour --- in fact improves it, to $118$. \measured{}
+
+\subsection{Two exact restrictions}
+\label{sec:otf:closure}
+
+\textbf{The accepting closure.} $F$ is defined per vertex from its own successors, so the value at
+an accepting vertex depends only on the $\lnot q$-forward-closure of the accepting set. Restricting
+the final pass to that closure is \emph{exact}, not an approximation.
+
+\textbf{The federation algebra.} $W_v \cap \mathrm{cand}$ was computed as a double complement,
+$\mathrm{fed\_subtract}(z, \mathrm{fed\_subtract}(z, \mathrm{cand}))$. That denotes the right set,
+but the inner subtraction peels $z$ by every constraint of every member of $\mathrm{cand}$ and
+returns an \emph{arrangement} whose size is not bounded by $|\mathrm{cand}|$. The intersection of
+two zones is a single zone, so the direct form needs exactly $|\mathrm{cand}|$ pieces. Compaction
+additionally merges any pair whose union is exactly convex. Together these are the difference
+between a federation that grows without bound and one that does not: \texttt{csma8 Bus.Active -->
+Bus.Idle}, which did not converge at a cap of $2 \times 10^6$ in ten minutes, is settled in
+$0.20$\,s with maximum federation width $1$. \measured{}

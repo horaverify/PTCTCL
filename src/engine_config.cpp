@@ -153,6 +153,8 @@ void set_chunking(bool on, int states) {
   detail::options().chunk_states = states > 0 ? states : 0;
 }
 void set_chunk_budget(std::size_t bytes) { detail::options().chunk_budget = bytes; }
+void set_memo(bool on) { detail::options().memo = on; }
+bool memo_on() { return detail::options().memo; }
 bool chunking() { return detail::options().chunking; }
 void set_symmetry(bool on) { detail::options().symmetry = on; }
 bool symmetry_on() { return detail::options().symmetry; }

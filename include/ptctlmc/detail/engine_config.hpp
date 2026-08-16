@@ -103,6 +103,7 @@ struct EngineOptions {
   bool narrow_ranges = false;    ///< pack dk from inferred integer ranges, not declared ones
   bool slice = false;            ///< canonicalise dead integer cells before the discrete key
   bool gsim = false;             ///< subsume with the G-simulation instead of a_LU
+  bool memo = false;             ///< memoise the successor-zone pipeline (see gen_succ_reuse)
 };
 
 /// @brief The process-wide options block.

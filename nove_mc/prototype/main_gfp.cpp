@@ -21,8 +21,16 @@ struct GfpStats {
   double fed_avg = 0;
   std::size_t nonempty = 0;
   bool capped = false;
+  std::size_t expanded_nodes = 0, passes = 0, pre_calls = 0;
+  bool early = false;
+  bool inconclusive = false;
+  std::size_t oracle_nodes = 0;
+  std::size_t outer_nodes = 0, outer_expands = 0;
+  const char* mode = "gfp";
 };
 bool leads_to_gfp(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs);
+bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, const char* mode,
+                  GfpStats* gs);
 void retire_causality(const Network& net);
 void defer_probe(const Network& net, int D);
 void gen_profile(const Network& net);
@@ -98,30 +106,56 @@ int main(int argc, char** argv) {
   DiscPred p, q;
   if (!parse_pred(net, argv[2], &p) || !parse_pred(net, argv[3], &q)) return 2;
 
+  // PTCTLMC_GFPMODE selects the algorithm: "gfp" (the published three-phase version) or
+  // one of the on-the-fly variants base/d1/d2/d3/d4/d5 implemented on this branch.
+  const char* modes = std::getenv("PTCTLMC_GFPMODE");
+  const std::string mode = modes ? modes : "gfp";
   GfpStats gs;
-  const bool gfp = leads_to_gfp(net, p, q, &gs);
+  const bool gfp = (mode == "gfp") ? leads_to_gfp(net, p, q, &gs)
+                                   : leads_to_otf(net, p, q, mode.c_str(), &gs);
   const bool noref = std::getenv("PROTO_NOREF") != nullptr;
   if (noref) {
-    std::printf("model=%s  query=%s --> %s\n", argv[1], argv[2], argv[3]);
-    std::printf("  prototype leads_to_gfp : %s\n", gfp ? "SATISFIED" : "NOT satisfied");
+    std::printf("model=%s  query=%s --> %s  mode=%s\n", argv[1], argv[2], argv[3], gs.mode);
+    // A capped fixpoint has NOT converged, so its value is neither an over- nor an
+  // under-approximation and the verdict must be discarded rather than printed.
+  std::printf("  prototype leads_to_gfp : %s\n",
+              gs.capped ? "UNUSABLE (federation cap hit)"
+                        : gs.inconclusive ? "INCONCLUSIVE (one-sided mode)"
+                                          : (gfp ? "SATISFIED" : "NOT satisfied"));
     std::printf("  gfp storage: nodes=%zu disc-keys=%zu zones/dk=%.2f edges=%zu\n",
                 gs.fwd_nodes, gs.disc_keys,
                 gs.disc_keys ? double(gs.fwd_nodes) / double(gs.disc_keys) : 0.0, gs.fwd_edges);
     std::printf("  gfp fixpoint: rounds=%zu nonempty-nodes=%zu fed-width avg=%.2f max=%zu capped=%s\n",
                 gs.iters, gs.nonempty, gs.fed_avg, gs.fed_max, gs.capped ? "YES(UNUSABLE)" : "no");
+    std::printf("  otf: expanded=%zu passes=%zu pre-calls=%zu early=%s\n",
+                gs.expanded_nodes, gs.passes, gs.pre_calls, gs.early ? "YES" : "no");
+    std::printf("  outer-only (like-for-like with verifyta): stored=%zu explored=%zu\n", gs.outer_nodes, gs.outer_expands);
+    if (gs.oracle_nodes) std::printf("  oracle: coarse-nodes=%zu (included in nodes=)\n", gs.oracle_nodes);
     std::fflush(stdout);
     return 0;
   }
-  const bool ref = leads_to_net(net, p, q, Backend::Seq, nullptr);
+  // The shipping engine's own state count is the like-for-like on-the-fly baseline: it is a
+  // lazy forward Tarjan, so `explored` is how many symbolic states IT had to expand before
+  // settling the same query. That is the number the on-the-fly gfp has to beat.
+  ReachStats rs;
+  const bool ref = leads_to_net(net, p, q, Backend::Seq, &rs);
 
-  std::printf("model=%s  query=%s --> %s\n", argv[1], argv[2], argv[3]);
-  std::printf("  reference leads_to_net : %s\n", ref ? "SATISFIED" : "NOT satisfied");
-  std::printf("  prototype leads_to_gfp : %s\n", gfp ? "SATISFIED" : "NOT satisfied");
+  std::printf("model=%s  query=%s --> %s  mode=%s\n", argv[1], argv[2], argv[3], gs.mode);
+  std::printf("  reference leads_to_net : %s  (explored=%zu)\n",
+              ref ? "SATISFIED" : "NOT satisfied", (std::size_t)rs.explored);
+  // A capped fixpoint has NOT converged, so its value is neither an over- nor an
+  // under-approximation and the verdict must be discarded rather than printed.
+  std::printf("  prototype leads_to_gfp : %s\n",
+              gs.capped ? "UNUSABLE (federation cap hit)"
+                        : gs.inconclusive ? "INCONCLUSIVE (one-sided mode)"
+                                          : (gfp ? "SATISFIED" : "NOT satisfied"));
   std::printf("  AGREE=%s\n", ref == gfp ? "YES" : "*** NO ***");
   std::printf("  gfp storage: nodes=%zu disc-keys=%zu zones/dk=%.2f edges=%zu\n",
               gs.fwd_nodes, gs.disc_keys,
               gs.disc_keys ? double(gs.fwd_nodes) / double(gs.disc_keys) : 0.0, gs.fwd_edges);
   std::printf("  gfp fixpoint: rounds=%zu nonempty-nodes=%zu fed-width avg=%.2f max=%zu capped=%s\n",
               gs.iters, gs.nonempty, gs.fed_avg, gs.fed_max, gs.capped ? "YES(UNUSABLE)" : "no");
+  std::printf("  otf: expanded=%zu passes=%zu pre-calls=%zu early=%s\n",
+              gs.expanded_nodes, gs.passes, gs.pre_calls, gs.early ? "YES" : "no");
   return ref == gfp ? 0 : 1;
 }

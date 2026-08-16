@@ -1000,6 +1000,53 @@ both directions at once.
 
 ---
 
+## 4quaterdecies. THE PORT: the prototype's 2x did NOT transfer to the engine
+
+The memo is now in the engine behind `--memo` / `PTCTLMC_MEMO=1` (off by default), thread-local so
+there are no locks, with the same interned target-location signature and windowed breaker. Verified
+semantically neutral: single-threaded, `stored`/`explored` are bit-identical with and without the
+flag on fischer8, twolock8, arbiter10, viking10, csma8, and `--selftest` passes. (phil differs
+run-to-run *with the flag off too* -- it is the one family whose convex merge is order-sensitive,
+documented at 0.2%; at one thread it is identical both ways: 62030/71476.)
+
+### Measured, sequential on an idle machine, 3 runs each
+
+| model | base | memo | result | memo hit rate |
+|---|---|---|---|---|
+| viking15 | 1.06 s | 0.95 s | 1.12x | 99.9 % |
+| viking17 | 5.69 s | 5.20 s | 1.09x | 99.9 % |
+| **phil12** | 1.04 s | 1.39 s | **0.75x -- 33 % SLOWER** | 78.1 % |
+| arbiter15 | 0.35 s | 0.40 s | 0.88x | 0 % (breaker trips) |
+| fischer10 | 0.80 s | 0.79 s | 1.01x | 0 % (breaker trips) |
+
+**The 1.89x-2.7x measured in the prototype does not exist in the engine.** Best case 1.12x, and a
+net LOSS on phil (0.75x) and arbiter (0.88x).
+
+### Why, and it invalidates an earlier inference
+
+The engine does viking15 in **1.06 s** where the prototype needs **10 s** -- about 10x less work per
+successor, from min-graph packed zones, striped tables, packed discrete keys and slot reuse.
+`Post` was roughly half of the PROTOTYPE's expand; in the engine it is a much smaller share. The
+direct measurement: eliminating 99.9 % of `Post` on viking15 buys 1.12x, so **`Post` is at most
+~11 % of the engine's runtime there** -- against the "~48 % of expand" this document inferred
+earlier from prototype timings. That inference was about the prototype, and should not have been
+carried over to the engine.
+
+phil12 is the sharpest lesson: a 78.1 % hit rate and still 33 % slower, because the table holds
+117 629 entries *per thread* (x12 threads). The lookup and memory-pressure cost exceeds the `Post`
+it saves, and the breaker does not fire because 78 % is far above its 30 % floor -- the breaker
+guards against *no reuse*, not against *reuse that is not worth its own bookkeeping*.
+
+### Status
+
+`--memo` stays OFF by default and this work stays on a branch. It is a **measured negative**: the
+redundancy is real (59-84 % of Posts are recomputations, and the hit rates confirm it), but the
+engine is already efficient enough per successor that removing that recomputation does not pay.
+Anyone revisiting this should attack the ~89 % of engine time that is NOT `Post` -- the passed-set
+probe, one per generated successor -- rather than `Post` itself.
+
+---
+
 ## 5. Final position
 
 | | C1 (liveness) | C2 (reachability `explored`) |

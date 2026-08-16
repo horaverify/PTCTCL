@@ -72,6 +72,13 @@ bool slice_on();
 void set_gsim(bool on);
 bool gsim_on();
 
+// Memoise the successor-zone pipeline. The successor zone is a function of
+// (source zone, edge, target-location data); on models with few distinct zones the same
+// O(dim^3) computation is repeated enormous numbers of times. Adaptive: a sliding window
+// disables it automatically when the hit rate is low, so it is free where it does not pay.
+void set_memo(bool on);
+bool memo_on();
+
 // ---- general modelling-language guard/update -------------------------------
 // The `var OP const` / `var := const` fast paths live in NEdge::int_guard and
 // NEdge::int_updates; anything richer (arithmetic, arrays, calls) is compiled

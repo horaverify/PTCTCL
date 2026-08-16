@@ -245,6 +245,8 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(false);
     } else if (a == "--gpu-intern") {   // GPU passed set: deduplicate zones (memory over speed)
       ptctlmc::set_gpu_intern(true);
+    } else if (a == "--memo") {        // memoise the successor-zone pipeline (adaptive; off by default)
+      ptctlmc::set_memo(true);
     } else if (a == "--symmetry") {     // explore one representative per automorphism orbit
       ptctlmc::set_symmetry(true);
     } else if (a == "--narrow") {       // pack dk from inferred integer ranges, not declared ones

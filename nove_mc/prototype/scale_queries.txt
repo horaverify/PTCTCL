@@ -1,0 +1,36 @@
+# Scaling set. One VIOLATED and one SATISFIED query per family, run at growing sizes, so the
+# question "does the on-the-fly saving grow with the model?" has an answer rather than an
+# anecdote. The satisfied queries are the control: no on-the-fly scheme can beat the full
+# reachable graph on those, and they are here to show that it is not being beaten.
+fischer6 P0.idle P0.cs
+fischer6 P0.req P0.cs
+fischer6 P0.req P0.wait
+fischer7 P0.idle P0.cs
+fischer7 P0.req P0.cs
+fischer7 P0.req P0.wait
+fischer8 P0.idle P0.cs
+fischer8 P0.req P0.cs
+arbiter6 C0.idle C0.cs
+arbiter6 C0.want C0.cs
+arbiter6 C1.cs C1.idle
+arbiter8 C0.idle C0.cs
+arbiter8 C0.want C0.cs
+arbiter8 C1.cs C1.idle
+arbiter10 C0.idle C0.cs
+arbiter10 C1.cs C1.idle
+csma6 S0.Wait S0.Send
+csma6 S0.Send S0.Wait
+csma6 Bus.Active Bus.Idle
+csma8 S0.Wait S0.Send
+csma8 S0.Send S0.Wait
+csma8 Bus.Active Bus.Idle
+twolock5 P0.idle P0.cs
+twolock5 P0.reqA P0.cs
+twolock6 P0.idle P0.cs
+twolock6 P0.reqA P0.cs
+phil6 P0.Think P0.Eat
+phil6 P0.HoldL P0.Eat
+phil8 P0.Think P0.Eat
+phil8 P0.HoldL P0.Eat
+viking6 Viking1.unsafe Viking1.safe
+viking6 Torch.two Torch.free

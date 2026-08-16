@@ -1,0 +1,162 @@
+\section{Evaluation}
+\label{sec:otf:eval}
+
+Two query sets: 48 queries over \texttt{arbiter4/5}, \texttt{fischer4/5}, \texttt{csma4/5},
+\texttt{phil4}, \texttt{twolock4}, \texttt{viking4}, \texttt{grc4}; and 32 over the larger members
+of the same families. The metric is \textbf{symbolic states stored when the verdict is produced}.
+Ratios are geometric means of the per-query ratio.
+
+\subsection{Against Algorithm~\ref{alg:gfp}}
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{violated} & \multicolumn{2}{c}{satisfied} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+ & 39 small & 23 large & 9 small & 6 large \\
+\midrule
+Algorithm~2 vs Algorithm~\ref{alg:gfp} & $12.6\times$ & $\mathbf{145\times}$ & $1.0\times$ & $1.0\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The saving is confined to violated queries, and it grows with the model --- $145\times$ on the
+larger set, best case $4022\times$ (\texttt{fischer8 P0.idle --> P0.cs}, $36202$ states against
+$9$). On satisfied queries there is nothing to save: \texttt{p --> q} holds only if \emph{every}
+reachable $p \wedge \lnot q$ state fails to have an infinite $\lnot q$ run, so the reachable set
+must be enumerated, and the final pass is Algorithm~\ref{alg:gfp} exactly. \measured{}
+
+\subsection{Against \uppaal{}}
+\label{sec:otf:uppaal}
+
+\verifyta{} 5.0.0 at its defaults, since defaults are what a user gets.
+
+\begin{center}
+\textbf{48 of 48 verdicts agree. Zero disagreements.} \measured{}
+\end{center}
+
+This is the strongest validation here: an independent implementation of a different algorithm.
+
+\paragraph{Satisfied queries --- we win everything, and the margin grows.}
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+satisfied query & \verifyta{} & Algorithm~2 & factor \\
+\midrule
+\texttt{arbiter6 C1.cs --> C1.idle}    & 10453  & \textbf{256}   & $40.8\times$ \\
+\texttt{csma6 Bus.Active --> Bus.Idle} & 21610  & \textbf{688}   & $31.4\times$ \\
+\texttt{fischer7 P0.req --> P0.wait}   & 238617 & \textbf{11531} & $20.7\times$ \\
+\texttt{arbiter5 C1.cs --> C1.idle}    & 1671   & \textbf{112}   & $14.9\times$ \\
+\texttt{fischer6 P0.req --> P0.wait}   & 28839  & \textbf{2919}  & $9.9\times$ \\
+\midrule
+48-query set, total                     & 9479   & \textbf{1790}  & $5.3\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Nine of nine strict wins on the small set, four of four on the large one. The geometric mean is
+$6.06\times$ on the small models and $22.6\times$ on the large ones, and it rises \emph{within} a
+family with size (\texttt{fischer6} $9.9\times$, \texttt{fischer7} $20.7\times$). This is the
+backward fixpoint over a subsumed graph doing what \S\ref{sec:liveness} claimed, compounded over a
+whole state space. \measured{}
+
+\paragraph{Violated queries --- no losses.}
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+39 violated queries & \verifyta{} & Algorithm~2 & \\
+\midrule
+states stored   & 1279 & \textbf{456} & $2.8\times$ \\
+states explored & 597  & \textbf{220} & $2.7\times$ \\
+strict wins / ties / losses & \multicolumn{3}{c}{$8$ / $31$ / $\mathbf{0}$} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Thirty-one exact ties is the expected outcome and not a shortfall: on most of these models the
+witness is shallow and both tools stop at the same state, so there is nothing to be better at.
+The eight wins are the queries that require real search --- \texttt{grc4 T0.near --> T0.in}
+$860 \to 153$ ($5.6\times$), \texttt{twolock4 P0.cs --> P0.idle} $126 \to 65$,
+\texttt{twolock4 P0.waitB --> P0.cs} $62 \to 36$. \measured{}
+
+\subsection{The accounting, and why it differs by verdict class}
+\label{sec:otf:counters}
+
+There is an obvious objection to any explored-state gap on a violated query: both tools stop at the
+first witness, so neither can ``finish early''. The resolution is that \verifyta{}'s leads-to
+counters \textbf{do not include the nested inevitability check at all}. Compare \texttt{E<> p} ---
+pure reachability to the $p$-state, no liveness whatsoever --- against \texttt{p --> q}:
+
+\begin{center}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+model & query & stored & explored \\
+\midrule
+\texttt{fischer4} & \texttt{E<> P0.req}          & 5 & 1 \\
+\texttt{fischer4} & \texttt{P0.req --> P0.cs}    & 5 & 1 \\
+\texttt{csma4}    & \texttt{E<> S0.Send}         & 5 & 1 \\
+\texttt{csma4}    & \texttt{S0.Send --> S0.Wait} & 5 & 1 \\
+\texttt{phil4}    & \texttt{E<> P0.Eat}          & 9 & 2 \\
+\texttt{phil4}    & \texttt{P0.Eat --> P0.Think} & 9 & 2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A liveness query costing \emph{exactly} what plain reachability to its $p$-state costs is possible
+only if the $EG$ check is uncounted. \texttt{grc4} differs ($5/1$ against $860/463$) only because
+its first several $p$-states do not violate, so the \emph{outer} search runs longer; the nested
+checks are still uncounted. It also explains the counter inversion: \verifyta{} reports
+stored $>$ explored on leads-to ($860 > 463$) but stored $<$ explored on \texttt{A[] true}
+($1619 < 3273$). \measured{}
+
+The comparison therefore applies \textbf{the same rule to both sides}, and the right rule is not
+the same for the two verdict classes:
+
+\begin{itemize}
+  \item \textbf{Violated: outer-only.} The search stops at the witness, so the inner $EG$ work is
+        genuinely extra --- work \emph{neither} tool's counter reports. Our split attributes to
+        the inner check everything that exists only to decide $EG\lnot q$ at an accepting vertex,
+        including that vertex's own expansion, which the outer reachability never needs because
+        the search stops there. The initial state is not counted, matching \verifyta{}: its
+        \texttt{E<> p} figures are exactly our count minus one on every query measured.
+  \item \textbf{Satisfied: total.} Both tools must build the whole reachable graph, so nodes first
+        reached by the inner DFS are work that is needed regardless. Reporting outer-only here
+        would give $973$ instead of $1790$ and would \emph{understate our real cost}. It is not
+        used.
+\end{itemize}
+
+Applying outer-only to the violated class turns all six of the earlier ``losses'' into exact ties
+--- they were the queries whose entire difference was the inner check we counted and \verifyta{}
+did not --- and leaves \texttt{grc4} a $5.6\times$ win.
+
+\subsection{Why the margin is asymmetric}
+
+$5$--$40\times$ on satisfied queries against ties on violated ones is not a weakness on the
+violated side; it is that the two classes have different amounts to win.
+
+A satisfied query must enumerate the reachable set, so an advantage in \emph{representation} ---
+$aLU$ subsumption plus the exact merge, against \verifyta{}'s zone store --- compounds over every
+state, and the factor grows with the model. A violated query stops after a handful of states:
+on 31 of 39 both tools settle at the same state, and there is essentially nothing to be better at.
+The exception proves it --- \texttt{grc4 T0.near --> T0.in} is the one violated query needing real
+search ($118$ expansions), and it is exactly where the representation advantage reappears, at
+$5.6\times$.
+
+\subsection{Limits}
+
+\begin{itemize}
+  \item \textbf{Federation width.} The backward operator's real failure mode is a federation that
+        splits without bound. \S\ref{sec:otf:closure} removed the two implementation causes, and no
+        query in either set now caps --- but the bound is a resource limit, not a theorem, and a
+        capped pass yields no verdict (Remark~\ref{rem:capped}).
+  \item \textbf{Order sensitivity.} \texttt{grc4 T0.near --> T0.in} moves by a factor of three
+        under different frontier orders, and so does \verifyta{} ($463$ at \texttt{-o 0}, $6559$ at
+        \texttt{-o 1}). Both tools are guessing.
+  \item \textbf{Diagonal constraints.} $aLU$ is unusable with diagonal guards, and the algorithm
+        falls back to exact inclusion, losing the floor.
+  \item \textbf{Inherited incompleteness.} The whole-zone stopping convention is forced by
+        LU-extrapolation (a per-valuation stuck test is unsound on extrapolated zones), and is the
+        same on both sides of every comparison here.
+\end{itemize}
