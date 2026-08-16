@@ -3085,6 +3085,11 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   // level are examined once the level closes, which is early enough -- violations sit near the
   // initial state -- while letting the whole level expand concurrently.
   const bool ltdbg = std::getenv("PTCTLMC_LTDEBUG") != nullptr;
+  // The outer-BFS truncation described at the frontier loop below. ON by default now that
+  // it is measured: without it csma4 `Bus.Active --> Bus.Idle` answers SATISFIED from 21 of
+  // the model's 104 reachable discrete states. PTCTLMC_LTNOFIXBFS restores the old
+  // behaviour for A/B.
+  static const bool lt_fix_bfs = std::getenv("PTCTLMC_LTNOFIXBFS") == nullptr;
   std::vector<char> seen;
   std::vector<int> frontier{0};
   seen.assign(node.size(), 0);
@@ -3109,7 +3114,25 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       for (long fi = 0; fi < static_cast<long>(frontier.size()); ++fi) {
         const int u = frontier[fi];
         SymState cur;
-        { std::lock_guard<std::mutex> lk(gmtx); cur = node[u]; if (expanded[u]) continue; }
+        // PTCTLMC_LTFIXBFS: `continue` on an already-expanded node also skips PUBLISHING its
+        // successors into the next frontier -- and neg_scc (the inner !q Tarjan) calls
+        // expand() on whole regions, so those regions' successors never enter the outer
+        // search. A p /\ !q state may be reachable ONLY through q states, which neg_scc never
+        // enters, so the outer BFS is the only thing that can find it: truncating it can
+        // MISS A VIOLATION. Measured on csma4 `Bus.Active --> Bus.Idle`: 21 of the 104
+        // reachable discrete states, and a SATISFIED verdict from that fifth of the graph.
+        { std::lock_guard<std::mutex> lk(gmtx); cur = node[u];
+          if (!lt_fix_bfs && expanded[u]) continue;
+          if (lt_fix_bfs && expanded[u]) {          // publish, do not re-expand
+            for (std::size_t k = 0; k < adj[u].size(); ++k) {
+              const int v = resolve(edge_id(adj[u][k]));
+              if (seen.size() < node.size()) seen.resize(node.size(), 0);
+              if (!seen[v]) { seen[v] = 1; loc_next.push_back(v); }
+            }
+            if (is_p(u) && !is_q(u)) loc_acc.push_back(u);
+            continue;
+          }
+        }
         succ.clear();
         successors_net(net, cur, cur.zone, L, U, qmask, emode, succ);   // the expensive part
         // Cheapest witness, checked WITHOUT the lock: this state alone satisfies p, violates q,
@@ -3178,8 +3201,11 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
       std::vector<SymState> succ;
       for (std::size_t fi = 0; fi < frontier.size(); ++fi) {
         const int u = frontier[fi];
-        if (expanded[u]) continue;
-        expand(u);
+        // PTCTLMC_LTFIXBFS: see the note at the OpenMP branch above. `continue` here skips
+        // PUBLISHING u's successors, and neg_scc has already expanded whole regions, so the
+        // outer BFS silently stops short of the reachable set.
+        if (!lt_fix_bfs && expanded[u]) continue;
+        expand(u);                                  // no-op when already expanded
         if (is_p(u) && !is_q(u)) accepting.push_back(u);
         for (std::size_t k = 0; k < adj[u].size(); ++k) {
           const int v = resolve(edge_id(adj[u][k]));

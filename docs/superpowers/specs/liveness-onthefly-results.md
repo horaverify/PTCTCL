@@ -219,16 +219,59 @@ inherits it intact:
 | `arbiter4 C1.cs --> C1.idle` | **48** | 8192 |
 | `fischer4 P0.req --> P0.wait` | **270** | 1468 |
 | `grc4 T0.in --> T0.far` | **2681** (3.85 s) | *timeout at 240 s* |
-| `csma4 Bus.Active --> Bus.Idle` | 128 | **42** |
-| `csma5 Bus.Active --> Bus.Idle` | 352 | **62** |
+| `csma4 Bus.Active --> Bus.Idle` | **128** | 3341 |
+| `csma5 Bus.Active --> Bus.Idle` | **352** | 60271 |
 
-Two honest caveats on this half of the table. (i) `leads_to_net` settles a satisfied query by
-*racing* an aLU search against an exact-inclusion search and a deadlock gate; `stats.explored`
-sums the two searches and omits the gate, so it is indicative rather than a clean count.
-(ii) `csma` is a genuine loss — the shipping engine's race settles those two in 42 and 62
-states, an order of magnitude under the gfp. So D5 dominates on violated queries and on most
-satisfied ones, but **not everywhere**, and the sensible production shape is the race the
-engine already uses, with D5 as one of the lanes.
+Caveat: `leads_to_net` settles a satisfied query by *racing* an aLU search against an
+exact-inclusion search and a deadlock gate; `stats.explored` sums the two searches and omits
+the gate, so it is indicative rather than a clean count. The direction is not in doubt, though
+— the shipping engine keeps node identity at **exact zone equality** by default, which on these
+queries is 32 zones per discrete state on `csma4`, 222 on `csma5` and 5514 on `grc4`, against
+the gfp's 1.23/1.35/18.32.
+
+> **Retracted.** An earlier revision of this section reported `csma4`/`csma5` as a *loss*
+> for D5 (128 vs 42, 352 vs 62) and recommended keeping D5 merely as one lane of a race. Those
+> two shipping-engine numbers were measured against a **truncated** search — see §4c. With the
+> truncation repaired they are 3341 and 60271, i.e. D5 wins by 26× and 171×, and no satisfied
+> query in the set is a loss. The lane recommendation stands on the *general* grounds that
+> neither strategy is predictable, not on the csma evidence, which was an artefact.
+
+---
+
+## 4c. A truncation bug in the shipping engine, found by this comparison
+
+`leads_to_net`'s outer BFS skips a frontier node that is already expanded:
+
+```cpp
+{ std::lock_guard<std::mutex> lk(gmtx); cur = node[u]; if (expanded[u]) continue; }
+```
+
+`continue` skips the node's **successor publication**, not just its expansion — and the inner
+`neg_scc` Tarjan calls `expand()` on whole regions before the outer BFS gets to them. Those
+regions' successors therefore never enter the outer frontier and the reachable set is
+truncated. Measured against `benchmarks/parity.csv`, whose discrete counts are verified against
+UPPAAL:
+
+| model | reachable discrete states | `leads_to_net` reaches | repaired |
+|---|---:|---:|---:|
+| `csma4` | 104 | **21** | 104 |
+| `fischer4` | 220 | **217** | 220 |
+| `arbiter4` | 48 | 48 | 48 |
+
+On `csma4 Bus.Active --> Bus.Idle` the engine returns SATISFIED having examined **21 of 104**
+reachable discrete states. This is **soundness-relevant, not merely a performance artefact**: a
+`p ∧ ¬q` state may be reachable *only through `q` states*, which `neg_scc` never enters, so the
+outer BFS is the only thing that can find it. No wrong verdict is exhibited on the current
+benchmark set — every query still agrees — but the mechanism can miss a violation.
+
+This is the *same bug class* as the one D5 hit on day one of this branch (§5.1), which is how
+it was noticed: D5's outer search was truncating for exactly the same reason, and checking
+whether the shipping engine did the same turned out to be the most valuable thing in this
+comparison.
+
+The repair is in the prototype copy only (`PTCTLMC_LTNOFIXBFS` restores the old behaviour for
+A/B); **`src/netreach.cpp` is still unpatched** and should be fixed separately, with its own
+differential run, because it is the shipping path.
 
 ---
 
@@ -282,11 +325,15 @@ and it cut `grc4 T0.in --> T0.far` from 9.31 s / 22 passes to 3.43 s / 9 passes.
 Ship **D5** (`PTCTLMC_GFPMODE=d5`) as the liveness path, with the accepting-closure restriction
 and the refutation budget on by default. It is the published algorithm plus an early exit that
 is free when the property holds, and it is the only variant that also rescues capped queries.
-Keep it as a **lane** in the race `leads_to_net` already runs rather than as a replacement:
-`csma` satisfied queries are settled an order of magnitude faster by the existing forward race
-(42 and 62 states against 128 and 352), and `grc4 T0.in --> T0.far` is settled only by D5 (the
-forward engine times out at 240 s). Neither lane dominates, and which one wins is not
-predictable — the same argument, and the same conclusion, as the existing aLU-vs-exact race.
+Keep it as a **lane** in the race `leads_to_net` already runs rather than as a replacement —
+not because any satisfied query in the set favours the forward engine (none does, once §4c's
+truncation is repaired), but because the forward engine settles 31 of 39 violated queries at
+exactly the same state and is far cheaper per state, while D5 is the only thing that finishes
+`grc4 T0.in --> T0.far` at all. Which lane wins is not predictable, which is the same argument
+the existing aLU-vs-exact race already rests on.
+
+**Fix §4c in `src/netreach.cpp` first.** It is a soundness-relevant truncation on the shipping
+path and it is independent of everything else here.
 
 Do **not** pursue D1, D2 or D4 further: D1/D2 pay a measured 11–16 % average and up to 2.5 %
 worst-case state penalty for a pipelining benefit that D3/D5 obtain without it, and D4 is
