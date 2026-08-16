@@ -3534,6 +3534,7 @@ struct GfpStats {
   bool        early = false;        // settled before the forward search finished
   bool        inconclusive = false; // one-sided mode could not conclude
   std::size_t oracle_nodes = 0;     // D9: coarse graph built before the exact search
+  std::size_t outer_nodes = 0, outer_expands = 0;   // like-for-like with verifyta
   const char* mode = "gfp";
 };
 
@@ -5363,6 +5364,13 @@ class Otf {
   bool eager_local = false;      // D5: test the expansion-free witness at GENERATION time
   bool local_hit = false;        // set when that test fires
   std::vector<char> acc_checked;
+  // OUTER vs INNER accounting. verifyta's leads-to counters report only the OUTER
+  // reachability up to the first violating p-state -- measured: on fischer4/csma4/phil4 the
+  // `p --> q` figures are byte-identical to `E<> p`, so the nested inevitability check is not
+  // counted at all. Ours counts every interned state including the inner DFS's. To compare
+  // like with like, split them.
+  bool in_inner = false;
+  std::size_t outer_expands = 0, inner_expands = 0, outer_nodes = 0, inner_nodes = 0;
   CoarseOracle oracle;   // D9: coarse distance-to-candidate, priority only
 
   std::vector<SymState> node;
@@ -5669,6 +5677,7 @@ int Otf::intern(SymState&& s) {
   const int id = static_cast<int>(node.size());
   node.push_back(std::move(s));
   b.push_back(id);
+  if (in_inner) ++inner_nodes; else ++outer_nodes;
   grow();
   return id;
 }
@@ -5678,6 +5687,7 @@ void Otf::expand(int u) {
   if (expanded[u]) return;
   expanded[u] = 1;
   ++expand_calls;
+  if (in_inner) ++inner_expands; else ++outer_expands;
   std::vector<SymState> succ;
   std::vector<GfpTag> tags;
   gfp_succ_tagged(net, node[u], L, U, qmask, emode, succ, tags);
@@ -6018,6 +6028,8 @@ bool Otf::run_dfs_candidates() {
 
   // Inner !q DFS from an accepting node. Returns true when a candidate is CONFIRMED.
   auto neg_dfs = [&](int root) -> bool {
+    in_inner = true;
+    struct InnerGuard { bool* f; ~InnerGuard(){ *f = false; } } ig{&in_inner};
     grow();
     if (visit.size() < node.size()) visit.resize(node.size(), -1);
     if (onstk.size() < node.size()) onstk.resize(node.size(), 0);
@@ -6127,10 +6139,18 @@ bool Otf::run_dfs_candidates() {
           settled_early = true;
           return true;
         }
+        // From here on the work exists ONLY to decide EG!q at u -- the outer reachability did
+        // not need u expanded, and on a violated query it never will, because we stop. So this
+        // expansion is INNER work, and attributing it to the outer count would compare our
+        // liveness check against verifyta's reachability-only counter. (verifyta's `p --> q`
+        // figures are byte-identical to `E<> p` on fischer4/csma4/phil4, which is what
+        // establishes that its counter stops exactly here.)
+        in_inner = true;
         expand(u);
         grow();
-        if (adj[u].empty()) { settled_early = true; return true; }
-        if (neg_dfs(u)) { settled_early = true; return true; }
+        if (adj[u].empty()) { settled_early = true; in_inner = false; return true; }
+        if (neg_dfs(u)) { settled_early = true; in_inner = false; return true; }
+        in_inner = false;
       }
     }
     // NOT skipped when already expanded: the inner !q DFS expands nodes too, and skipping one
@@ -6265,6 +6285,8 @@ bool Otf::run(GfpStats* gs) {
     // handful of states, so the oracle's own nodes are added to the reported total.
     gs->fwd_nodes += oracle.nodes;
     gs->oracle_nodes = oracle.nodes;
+    gs->outer_nodes = outer_nodes + 1;   // +1 for the initial state
+    gs->outer_expands = outer_expands;
   }
   return !violated;
 }

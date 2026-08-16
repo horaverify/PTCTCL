@@ -25,6 +25,7 @@ struct GfpStats {
   bool early = false;
   bool inconclusive = false;
   std::size_t oracle_nodes = 0;
+  std::size_t outer_nodes = 0, outer_expands = 0;
   const char* mode = "gfp";
 };
 bool leads_to_gfp(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs);
@@ -128,6 +129,7 @@ int main(int argc, char** argv) {
                 gs.iters, gs.nonempty, gs.fed_avg, gs.fed_max, gs.capped ? "YES(UNUSABLE)" : "no");
     std::printf("  otf: expanded=%zu passes=%zu pre-calls=%zu early=%s\n",
                 gs.expanded_nodes, gs.passes, gs.pre_calls, gs.early ? "YES" : "no");
+    std::printf("  outer-only (like-for-like with verifyta): stored=%zu explored=%zu\n", gs.outer_nodes, gs.outer_expands);
     if (gs.oracle_nodes) std::printf("  oracle: coarse-nodes=%zu (included in nodes=)\n", gs.oracle_nodes);
     std::fflush(stdout);
     return 0;
