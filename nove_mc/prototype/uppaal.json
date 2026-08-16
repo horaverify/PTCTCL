@@ -1,0 +1,338 @@
+{
+ "arbiter4 C0.want-->C0.cs": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.052039146423339844,
+  "raw": ""
+ },
+ "arbiter4 C0.cs-->C0.idle": {
+  "verdict": "SATISFIED",
+  "stored": 297,
+  "explored": 506,
+  "secs": 0.0497589111328125,
+  "raw": ""
+ },
+ "arbiter4 C0.want-->C0.idle": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.04668116569519043,
+  "raw": ""
+ },
+ "arbiter4 C1.cs-->C1.idle": {
+  "verdict": "SATISFIED",
+  "stored": 297,
+  "explored": 506,
+  "secs": 0.04963994026184082,
+  "raw": ""
+ },
+ "arbiter4 C0.idle-->C0.cs": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04906797409057617,
+  "raw": ""
+ },
+ "arbiter4 C0.idle-->C0.want": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.049852848052978516,
+  "raw": ""
+ },
+ "arbiter4 Arb.Busy-->Arb.Free": {
+  "verdict": "SATISFIED",
+  "stored": 297,
+  "explored": 506,
+  "secs": 0.05075883865356445,
+  "raw": ""
+ },
+ "arbiter4 Arb.Free-->Arb.Busy": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04755401611328125,
+  "raw": ""
+ },
+ "arbiter5 C0.want-->C0.cs": {
+  "verdict": "NOT",
+  "stored": 6,
+  "explored": 1,
+  "secs": 0.04850506782531738,
+  "raw": ""
+ },
+ "arbiter5 C1.cs-->C1.idle": {
+  "verdict": "SATISFIED",
+  "stored": 1671,
+  "explored": 2767,
+  "secs": 0.07026791572570801,
+  "raw": ""
+ },
+ "arbiter5 C0.idle-->C0.cs": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04782700538635254,
+  "raw": ""
+ },
+ "arbiter5 Arb.Busy-->Arb.Free": {
+  "verdict": "SATISFIED",
+  "stored": 1671,
+  "explored": 2767,
+  "secs": 0.08256888389587402,
+  "raw": ""
+ },
+ "fischer4 P0.req-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.048197031021118164,
+  "raw": ""
+ },
+ "fischer4 P0.wait-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 9,
+  "explored": 2,
+  "secs": 0.0484471321105957,
+  "raw": ""
+ },
+ "fischer4 P0.cs-->P0.idle": {
+  "verdict": "NOT",
+  "stored": 22,
+  "explored": 6,
+  "secs": 0.048915863037109375,
+  "raw": ""
+ },
+ "fischer4 P0.idle-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04800081253051758,
+  "raw": ""
+ },
+ "fischer4 P1.wait-->P1.idle": {
+  "verdict": "NOT",
+  "stored": 13,
+  "explored": 3,
+  "secs": 0.04823899269104004,
+  "raw": ""
+ },
+ "fischer4 P0.req-->P0.wait": {
+  "verdict": "SATISFIED",
+  "stored": 615,
+  "explored": 867,
+  "secs": 0.05164813995361328,
+  "raw": ""
+ },
+ "fischer5 P0.wait-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 11,
+  "explored": 2,
+  "secs": 0.048445940017700195,
+  "raw": ""
+ },
+ "fischer5 P0.cs-->P0.idle": {
+  "verdict": "NOT",
+  "stored": 32,
+  "explored": 7,
+  "secs": 0.04903721809387207,
+  "raw": ""
+ },
+ "fischer5 P0.idle-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04884696006774902,
+  "raw": ""
+ },
+ "fischer5 P0.req-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 6,
+  "explored": 1,
+  "secs": 0.048679351806640625,
+  "raw": ""
+ },
+ "csma4 S0.Send-->S0.Wait": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.04849576950073242,
+  "raw": ""
+ },
+ "csma4 S0.Wait-->S0.Send": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.048497915267944336,
+  "raw": ""
+ },
+ "csma4 S0.Retry-->S0.Send": {
+  "verdict": "NOT",
+  "stored": 22,
+  "explored": 7,
+  "secs": 0.05118918418884277,
+  "raw": ""
+ },
+ "csma4 Bus.Active-->Bus.Idle": {
+  "verdict": "SATISFIED",
+  "stored": 401,
+  "explored": 437,
+  "secs": 0.05297684669494629,
+  "raw": ""
+ },
+ "csma4 Bus.Idle-->Bus.Active": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04967021942138672,
+  "raw": ""
+ },
+ "csma5 S0.Send-->S0.Wait": {
+  "verdict": "NOT",
+  "stored": 6,
+  "explored": 1,
+  "secs": 0.04817318916320801,
+  "raw": ""
+ },
+ "csma5 S0.Wait-->S0.Send": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04725503921508789,
+  "raw": ""
+ },
+ "csma5 Bus.Active-->Bus.Idle": {
+  "verdict": "SATISFIED",
+  "stored": 2491,
+  "explored": 2691,
+  "secs": 0.08194494247436523,
+  "raw": ""
+ },
+ "phil4 P0.HoldL-->P0.Eat": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.04882526397705078,
+  "raw": ""
+ },
+ "phil4 P0.Eat-->P0.Think": {
+  "verdict": "NOT",
+  "stored": 9,
+  "explored": 2,
+  "secs": 0.04683184623718262,
+  "raw": ""
+ },
+ "phil4 P0.Think-->P0.Eat": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04700517654418945,
+  "raw": ""
+ },
+ "phil4 P0.HoldL-->P0.Think": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.047118186950683594,
+  "raw": ""
+ },
+ "phil4 F0.Used-->F0.Free": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.04799699783325195,
+  "raw": ""
+ },
+ "twolock4 P0.reqA-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 5,
+  "explored": 1,
+  "secs": 0.04755592346191406,
+  "raw": ""
+ },
+ "twolock4 P0.cs-->P0.idle": {
+  "verdict": "NOT",
+  "stored": 126,
+  "explored": 62,
+  "secs": 0.04854106903076172,
+  "raw": ""
+ },
+ "twolock4 P0.waitA-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 9,
+  "explored": 2,
+  "secs": 0.048615217208862305,
+  "raw": ""
+ },
+ "twolock4 P0.idle-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.048422813415527344,
+  "raw": ""
+ },
+ "twolock4 P0.waitB-->P0.cs": {
+  "verdict": "NOT",
+  "stored": 62,
+  "explored": 22,
+  "secs": 0.04851412773132324,
+  "raw": ""
+ },
+ "viking4 Viking1.unsafe-->Viking1.safe": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04900789260864258,
+  "raw": ""
+ },
+ "viking4 Viking1.safe-->Viking1.unsafe": {
+  "verdict": "NOT",
+  "stored": 22,
+  "explored": 6,
+  "secs": 0.048131704330444336,
+  "raw": ""
+ },
+ "viking4 Torch.two-->Torch.free": {
+  "verdict": "NOT",
+  "stored": 9,
+  "explored": 2,
+  "secs": 0.04860210418701172,
+  "raw": ""
+ },
+ "grc4 T0.near-->T0.in": {
+  "verdict": "NOT",
+  "stored": 860,
+  "explored": 463,
+  "secs": 0.07451605796813965,
+  "raw": ""
+ },
+ "grc4 T0.in-->T0.far": {
+  "verdict": "SATISFIED",
+  "stored": 1739,
+  "explored": 4815,
+  "secs": 0.3424069881439209,
+  "raw": ""
+ },
+ "grc4 T0.far-->T0.near": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04806995391845703,
+  "raw": ""
+ },
+ "grc4 Ctl.up-->Ctl.low_1": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04785490036010742,
+  "raw": ""
+ },
+ "grc4 G.up-->G.low": {
+  "verdict": "NOT",
+  "stored": 1,
+  "explored": 0,
+  "secs": 0.04957389831542969,
+  "raw": ""
+ }
+}

@@ -3774,18 +3774,38 @@ static bool gfp_fed_subset(const Federation& a, const Federation& b) {
   }
   return true;
 }
-// Drop empties and members already covered by the rest; keeps widths honest.
+// Drop empties, drop members covered by one already kept, and MERGE any pair whose union is
+// exactly convex. The convex-union merge is the important part and it is free of charge in
+// both directions: dbm_try_union succeeds only when the union really is a single zone, so it
+// adds no point and removes none. Without it the federations grow monotonically with every
+// Pre and the width cap becomes the binding constraint on the whole algorithm.
+//
+// (The published version also built a `rest` federation per member and then discarded it
+// without reading it -- quadratic work for nothing. Removed.)
 static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
-  Federation keep;
-  for (auto& z : f) if (!z.empty()) keep.push_back(std::move(z));
   Federation out;
-  for (std::size_t i = 0; i < keep.size(); ++i) {
-    Federation rest;
-    for (std::size_t j = 0; j < keep.size(); ++j) if (j != i && (j > i || !out.empty())) rest.push_back(keep[j]);
-    bool covered = false;
-    for (const auto& o : out) if (o.includes(keep[i])) { covered = true; break; }
-    if (!covered) out.push_back(keep[i]);
+  for (auto& z : f) {
+    if (z.empty()) continue;
+    bool absorbed = false;
+    for (auto& o : out) {
+      if (o.includes(z)) { absorbed = true; break; }          // already covered
+      if (o.try_union(z)) { absorbed = true; break; }         // exactly convex union: merge
+    }
+    if (!absorbed) out.push_back(std::move(z));
     if (out.size() > cap) { *capped = true; break; }
+  }
+  // One settling pass: a merge can make an earlier member redundant against a later one.
+  if (!*capped && out.size() > 1) {
+    Federation settled;
+    for (auto& z : out) {
+      bool absorbed = false;
+      for (auto& o : settled) {
+        if (o.includes(z)) { absorbed = true; break; }
+        if (o.try_union(z)) { absorbed = true; break; }
+      }
+      if (!absorbed) settled.push_back(std::move(z));
+    }
+    out.swap(settled);
   }
   f.swap(out);
 }
@@ -5264,8 +5284,16 @@ int Otf::intern(SymState&& s) {
   if (mode == OtfMode::D6 || mode == OtfMode::D8) {
     const std::size_t width = (mode == OtfMode::D6) ? 1 : hull_width;
     const int dim = s.zone.dim();
-    for (int j : b)                                   // already covered: nothing to do
-      if (node[j].zone.dim() == dim && node[j].zone.includes(s.zone)) return j;
+    // Rung 1 must be the aLU SIMULATION, not plain inclusion. Plain inclusion is a strictly
+    // weaker covered-test, so it lets newcomers through that aLU would have absorbed, and the
+    // bounded store then spends its width budget on zones the reachability engine would never
+    // have kept -- measured worse than D5 on states.
+    for (int j : b) {                                 // already covered: nothing to do
+      if (node[j].zone.dim() != dim) continue;
+      const bool cov = use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU)
+                               : node[j].zone.includes(s.zone);
+      if (cov) return j;
+    }
     if (b.size() < width) {
       const int id = static_cast<int>(node.size());
       node.push_back(std::move(s));
@@ -5418,11 +5446,21 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
         }
       }
       gfp_fed_compact(cand, fedcap, &capped);
+      // z /\ cand, DIRECTLY.
+      //
+      // The published form is `fed_subtract(z, fed_subtract(z, cand))`, which denotes the same
+      // set but computes it as a double complement: the inner subtraction peels z by every
+      // constraint of every member of cand, so its output is an ARRANGEMENT of |cand| zones --
+      // its size is not bounded by |cand| at all -- and the outer subtraction then peels z by
+      // all of those. The intersection of two zones is a single zone (dbm_intersect is
+      // elementwise min plus a close), so `z /\ cand` needs exactly |cand| pieces:
       Federation nw;
       for (const auto& z : W[v]) {
-        Federation inside = fed_subtract(z, fed_subtract(z, cand));   // z /\ cand
-        for (auto& piece : inside)
-          if (!piece.empty()) nw.push_back(std::move(piece));
+        for (const auto& c : cand) {
+          Dbm t = z;
+          t.intersect(c);
+          if (!t.empty()) nw.push_back(std::move(t));
+        }
       }
       gfp_fed_compact(nw, fedcap, &capped);
       if (!gfp_fed_subset(W[v], nw)) changed = true;
@@ -5752,24 +5790,38 @@ bool Otf::run(GfpStats* gs) {
       // construction -- it does not change the search at all -- and is included to measure
       // exactly that.
       if (!build_all()) { violated = false; break; }
-      std::vector<int> frontier{0};
-      std::vector<char> seen(1, 1);
-      while (!frontier.empty()) {
-        std::vector<int> next;
-        for (int u : frontier) {
-          grow();
-          expand(u);
-          grow();
-          if (mode == OtfMode::D4) { is_p(u); is_nq(u); }       // overlap the preprocessing
-          for (const auto& e : adj[u]) {
-            if (seen.size() < node.size()) seen.resize(node.size(), 0);
-            if (!seen[e.tgt] || !expanded[e.tgt]) {
-              seen[e.tgt] = 1;
-              next.push_back(e.tgt);
-            }
-          }
-        }
-        frontier.swap(next);
+      // DEDUPLICATED WORKLIST, not a level-synchronous frontier.
+      //
+      // The level-synchronous form pushes a successor whenever `!seen[v] || !expanded[v]`, with
+      // no dedup WITHIN a level. That is harmless while `intern` only ever appends, because
+      // `expanded` then goes 0 -> 1 once per node. It is quadratic as soon as `intern` MERGES:
+      // every enlargement resets `expanded[v]` to 0, so v is re-queued once per in-edge, every
+      // level, and the frontier fills with duplicates of the same handful of nodes. That, and
+      // not the abstraction, is most of what made the hull lane slow on `fischer`.
+      //
+      // An `inq` flag makes each node resident at most once. Nothing about WHAT is explored
+      // changes -- the closure is the same, so stored-state counts are unaffected -- only how
+      // many times it is queued.
+      std::deque<int> work;
+      std::vector<char> inq;
+      auto push = [&](int v) {
+        if (inq.size() < node.size()) inq.resize(node.size(), 0);
+        if (!inq[v]) { inq[v] = 1; work.push_back(v); }
+      };
+      push(0);
+      while (!work.empty()) {
+        const int u = work.front();
+        work.pop_front();
+        grow();
+        if (inq.size() < node.size()) inq.resize(node.size(), 0);
+        inq[u] = 0;
+        expand(u);                                  // no-op if still expanded
+        grow();
+        if (mode == OtfMode::D4) { is_p(u); is_nq(u); }       // overlap the preprocessing
+        // A successor needs work exactly when it has no adjacency of its own: brand new, or
+        // reset because a merge enlarged it.
+        for (const auto& e : adj[u])
+          if (!expanded[e.tgt]) push(e.tgt);
       }
       violated = final_verdict_violated();
       break;

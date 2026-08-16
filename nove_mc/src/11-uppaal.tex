@@ -1,0 +1,104 @@
+\section{Against \uppaal{}}
+\label{sec:otf:uppaal}
+
+Algorithm~\ref{alg:gfp} and the shipping forward engine are the right baselines for isolating
+\emph{what changed}, but neither answers the question a user asks. This section runs the same 48
+queries through \verifyta{} 5.0.0 at its defaults --- breadth-first, conservative space
+optimisation, minimal constraint systems --- because defaults are what a user gets. \verifyta{}
+reports \texttt{States stored} and \texttt{States explored}, which are the like-for-like
+counterparts of our stored symbolic states and our expansions.
+
+\subsection{Verdicts}
+
+\begin{center}
+\textbf{48 of 48 queries agree with \verifyta{}. Zero disagreements.} \measured{}
+\end{center}
+
+This is the strongest validation in this document, because \verifyta{} is an independent
+implementation of a different algorithm. It covers Algorithm~\ref{alg:gfp}, D5, and every
+\textsc{holds} that Algorithm~3 claimed.
+
+\subsection{States, and the honest split}
+
+The result splits cleanly by verdict class, and it does not go one way.
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{violated (39)} & \multicolumn{2}{c}{satisfied (9)} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+ & stored & explored & stored & explored \\
+\midrule
+\verifyta{} 5.0.0            & \textbf{1279} & \textbf{597}  & 9479 & 15862 \\
+D5 (this work)               & 2926 & 2222 & \textbf{3128} & \textbf{3799} \\
+Algorithm~\ref{alg:gfp}      & 17676 & --- & 3415 & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Satisfied queries: we win, by $5$--$8\times$.}
+Geometric mean of \verifyta{}'s stored states over ours is $5.19\times$, and of explored states
+$7.73\times$. The per-query figures reproduce the numbers of \S\ref{sec:eval} exactly:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+satisfied query & \verifyta{} stored & D5 stored & factor \\
+\midrule
+\texttt{arbiter5 C1.cs --> C1.idle}    & 1671 & \textbf{112} & $14.9\times$ \\
+\texttt{csma5 Bus.Active --> Bus.Idle} & 2491 & \textbf{352} & $7.1\times$ \\
+\texttt{arbiter4 C1.cs --> C1.idle}    & 297  & \textbf{48}  & $6.2\times$ \\
+\texttt{csma4 Bus.Active --> Bus.Idle} & 401  & \textbf{128} & $3.1\times$ \\
+\texttt{fischer4 P0.req --> P0.wait}   & 615  & \textbf{222} & $2.8\times$ \\
+\texttt{grc4 T0.in --> T0.far}         & \textbf{1739} & 2058 & $0.8\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{grc4} is the single satisfied query where \verifyta{} stores fewer --- and even there it
+\emph{explores} $4815$ states against our $2681$, so the two tools are trading storage against
+work rather than one dominating. \measured{}
+
+\paragraph{Violated queries: \verifyta{} wins, and this is the result to take seriously.}
+\verifyta{} stores fewer on \textbf{every one} of the 39 violated queries; the ratio never reaches
+$1$ (best case for us $0.88\times$ on \texttt{twolock4 P0.cs --> P0.idle}, worst $0.16\times$).
+Geometric mean $3.7\times$ in \verifyta{}'s favour on stored states, $3.0\times$ on explored.
+
+It is worth being precise about what the on-the-fly work did and did not achieve here:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+violated queries, total stored & states & vs \verifyta{} \\
+\midrule
+Algorithm~\ref{alg:gfp} (three-phase) & 17676 & $13.8\times$ worse \\
+D5 (on-the-fly)                       & 2926  & $2.3\times$ worse \\
+\verifyta{} 5.0.0                     & 1279  & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+So the certificate construction of \S\ref{sec:otf} closed the gap from $13.8\times$ to
+$2.3\times$ --- it removed the \emph{structural} penalty of building the whole graph before
+asking the question --- but it did \textbf{not} overtake \verifyta{} on this class. The
+$13.8\times$ figure is the one recorded in \S\ref{sec:floor:liveness} as the reason liveness
+looked hopeless here; it is now $2.3\times$, and the residue is a constant factor rather than a
+different asymptotic. \measured{}
+
+The residue has a plausible and testable explanation: on a violated query \verifyta{} stops at the
+first counterexample and its \texttt{States stored} counts only what its own liveness search
+retained, whereas our figure counts \emph{every} interned node including the $q$-states the outer
+BFS must traverse to find the accepting state at all. On the shallowest queries the comparison is
+$1$ against $5$, which is at the scale where the two counters are not measuring quite the same
+thing. On the deepest, \texttt{grc4 T0.near --> T0.in}, it is $860$ against $1903$ --- a real
+$2.2\times$, not a counting artefact. \openq{}
+
+\subsection{What this changes about the recommendation}
+
+Nothing about soundness, and one thing about scope. The backward greatest fixpoint is the right
+algorithm for \textbf{satisfied} liveness queries, where it is $5$--$8\times$ below \verifyta{} and
+the margin grows with the model; it is \emph{not} the right algorithm for violated ones, where a
+well-implemented forward on-the-fly search remains ahead even after the certificate construction
+removes the structural penalty. That is an argument for the race of \S\ref{sec:otf:d7} extended by
+one lane --- forward on-the-fly, backward exact, backward hull --- and against presenting any of
+them as a replacement for the others.
