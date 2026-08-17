@@ -2505,7 +2505,11 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
 // Exact per-valuation deadlock test, defined below and used by `E<> deadlock`. Declared here
 // because leads_to_net needs the same notion: a maximal run can end inside a state whose zone is
 // only PARTIALLY stuck, and the whole-zone test `adj[u].empty()` cannot see that.
-static bool state_has_deadlock(const Network& net, const SymState& s);
+// `stuck`, when non-null, receives the EXACT set of valuations of s.zone from which no
+// transition is ever enabled -- the quantity this routine already computes internally and
+// then discards. It is what an exact `stop` term needs; see Otf::stop_set.
+static bool state_has_deadlock(const Network& net, const SymState& s,
+                               Federation* stuck = nullptr);
 
 bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Backend backend,
                   ReachStats* stats) {
@@ -3322,7 +3326,8 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
 // there is no down()). Anything in `s.zone` left over after subtracting that union is a set
 // of deadlock states. Enabledness is invariant under LU-extrapolation, so working on the
 // extrapolated zone is sound -- the same assumption the rest of the engine already relies on.
-static bool state_has_deadlock(const Network& net, const SymState& s) {
+static bool state_has_deadlock(const Network& net, const SymState& s,
+                               Federation* stuck) {
   if (s.zone.empty()) return false;
   bool src_committed, src_urgent;
   frozen_flags(net, s.locs, &src_committed, &src_urgent);
@@ -3461,7 +3466,9 @@ static bool state_has_deadlock(const Network& net, const SymState& s) {
   // region. Subtract that from the zone; a non-empty remainder is a set of deadlock states.
   if (!frozen)
     for (auto& W : live) W.down();
-  return !fed_subtract(Z, live).empty();
+  Federation d = fed_subtract(Z, live);      // exactly the valuations with nothing enabled
+  if (stuck) *stuck = d;
+  return !d.empty();
 }
 
 // E<> deadlock. Same search as reachable_net -- reachability with subsumption -- so it runs on
@@ -5174,6 +5181,7 @@ class Otf {
   void expand(int u);
   bool time_diverges(const SymState& s) const;
   bool stop_term(int u);                       // whole-zone NoSucc; needs expanded[u]
+  Federation stop_set(int u);                  // EXACT NoSucc; needs expanded[u]
   void gfp_on(const std::vector<int>& S, std::vector<Federation>& W);
   bool certificate_in(const std::vector<int>& S);
   std::vector<int> accepting_closure();
@@ -5466,6 +5474,32 @@ bool Otf::time_diverges(const SymState& s) const {
 // (unsound). Hence the whole-zone convention, inherited from the shipping engine, together
 // with its known incompleteness on partial deadlocks.
 //
+// The EXACT stop set: the valuations of Z_v from which no transition is ever enabled, or
+// from which time diverges. PTCTLMC_OTFEXACTSTOP selects it over the whole-zone convention.
+//
+// The whole-zone form admits all of Z_v as soon as ONE valuation is stuck, which
+// over-approximates and leaves the "non-empty fixpoint implies a witness" direction
+// conditional. The exact set is already computed inside state_has_deadlock -- it subtracts
+// the union of the enabled source regions from the delay-closure of Z_v -- and merely
+// discarded. The two whole-zone cases stay exact: an empty adjacency means every valuation
+// is stuck, and time_diverges is a property of the delay-closed zone as a whole.
+//
+// Historical note, because the naive version of this WAS measured wrong: a per-valuation
+// stuck test on the STORED zone reported a false violation of arbiter4 `C1.cs --> C1.idle`,
+// witnessed by x0..x3 > 4 -- points Extra_LU+ invents (U = 4). That failure was traced to the
+// active-clock reduction leaving the stored zone not delay-closed, which state_has_deadlock
+// now repairs before testing. This uses the repaired routine.
+Federation Otf::stop_set(int u) {
+  static const bool no_pd = std::getenv("PTCTLMC_GFPNOPD") != nullptr;
+  Federation f;
+  if (adj[u].empty() || time_diverges(node[u])) { f.push_back(node[u].zone); return f; }
+  if (!no_pd) {
+    Federation d;
+    if (state_has_deadlock(net, node[u], &d)) f.swap(d);
+  }
+  return f;
+}
+
 // `adj[u].empty()` is only meaningful once u is EXPANDED. Callers guarantee that.
 bool Otf::stop_term(int u) {
   static const bool no_pd = std::getenv("PTCTLMC_GFPNOPD") != nullptr;
@@ -5485,7 +5519,10 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   std::vector<Federation> nosucc(N);
   for (int v : S) {
     W[v].push_back(node[v].zone);
-    if (stop_term(v)) nosucc[v].push_back(node[v].zone);
+    // Exact by default; PTCTLMC_OTFWHOLEZONESTOP restores the old convention for A/B.
+    static const bool whole_zone = std::getenv("PTCTLMC_OTFWHOLEZONESTOP") != nullptr;
+    if (!whole_zone) nosucc[v] = stop_set(v);
+    else if (stop_term(v)) nosucc[v].push_back(node[v].zone);
   }
   // ROUND-ROBIN, and it is not an oversight -- a worklist was tried and REVERTED.
   //
