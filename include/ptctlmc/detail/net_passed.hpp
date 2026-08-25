@@ -44,9 +44,6 @@ inline bool sim_le(const raw_t* Z, const raw_t* Zp, int dim,
   if (detail::options().gsim && !Ur.empty()) {
 #ifndef NDEBUG
 #endif
-    static std::atomic<long> nG{0};
-    if (std::getenv("PTCTLMC_STATS") && nG.fetch_add(1, std::memory_order_relaxed) == 0)
-      std::fprintf(stderr, "[gsim] G-simulation test ACTIVE\n");
     return dbm_is_g_le(Z, Zp, dim, Lr.data(), Ur.data());
   }
   return dbm_is_alu_le(Z, Zp, dim, L.data(), U.data());
@@ -79,11 +76,6 @@ struct NetPassed {
   // meant compaction almost never fired at the moment waste actually peaked. Tracking it
   // incrementally makes the trigger O(1), so it can be evaluated every level.
   std::size_t deadCount = 0;
-  std::size_t deadBySubsume = 0, deadByMerge = 0;   // PTCTLMC_STATS attribution
-  // [RDAE PROBE, temporary] histogram of (retirement level - insertion level). Bucket 0 = the
-  // node died inside its OWN level, i.e. it was never emitted into a frontier and cost nothing.
-  // Bucket g>=1 = it was emitted and expanded g levels before the covering zone showed up.
-  std::uint64_t gapHist[66] = {0};
   ZoneIntern* zi = nullptr;   // shared distinct-zone table (set before first add)
 
   // DENSE MIRROR of a long chain.
@@ -307,10 +299,6 @@ struct NetPassed {
     }
     const raw_t* sz = s.zone.data().data();
     auto retire = [&](std::size_t k) {
-      {   // [RDAE PROBE, temporary]
-        const int g = level - arena[cidx[live[k]]].level;
-        ++gapHist[g < 0 ? 0 : (g > 64 ? 65 : g)];
-      }
       arena[cidx[live[k]]].dead = true; ++deadCount;
       if (hc && hpos[live[k]] != kCold) { hc->node[hpos[live[k]]] = -1; ++hc->ndead; }
     };
@@ -324,7 +312,6 @@ struct NetPassed {
       const raw_t* ez = zp[live[k]];
       if (exact_sub ? dbm_includes(sz, ez, dim)
                     : sim_le(ez, sz, dim, Ls, Us, Lr, Ur)) {
-        ++deadBySubsume;
         retire(k);
         live.erase(live.begin() + k);
       } else ++k;
@@ -345,7 +332,6 @@ struct NetPassed {
       for (std::size_t k = 0; k < std::min(live.size(), mscan); ++k) {
         if (detail::engine_legacy() ? dbm_try_union_legacy(s.zone.data().data(), zp[live[k]], dim)
                             : dbm_try_union(s.zone.data().data(), zp[live[k]], dim)) {
-          ++deadByMerge;
           retire(k);
           live.erase(live.begin() + k);
           merged = true;
@@ -483,52 +469,11 @@ struct NetPassed {
   // adaptive abstraction switch reads at each level (see reach_engine): it says whether this
   // model's zones are collapsing into one antichain entry per discrete state or piling up as
   // mutually incomparable alternatives.
-  void retire_causes(std::size_t& sub, std::size_t& mrg) const {
-    sub += deadBySubsume; mrg += deadByMerge;
-  }
-
-  // [RDAE PROBE, temporary]
-  void gap_hist(std::uint64_t* out) const { for (int i = 0; i < 66; ++i) out[i] += gapHist[i]; }
-
   void counts(std::size_t& live, std::size_t& disc) const {
     live += arena.size() - deadCount;
     disc += used;
   }
 
-  void stats(std::size_t& disc, std::size_t& zones) const {
-    disc += used;
-    for (const auto& n : arena)
-      if (!n.dead) ++zones;
-  }
-  // Byte accounting (PTCTLMC_STATS): arena nodes (incl. dead tombstones) + slot table.
-  void account(std::size_t& arenaNodes, std::size_t& deadNodes, std::size_t& arenaB,
-               std::size_t& tabB) const {
-    arenaNodes += arena.size();
-    for (const auto& n : arena) if (n.dead) ++deadNodes;
-    arenaB += arena.size() * sizeof(Node);
-    tabB += tab.capacity() * sizeof(Slot);
-  }
-  // Probe (PTCTLMC_STATS): visit every live zone, to measure distinct-zone sharing.
-  template <class F>
-  void for_each_live_zone(F&& f) const {
-    for (const auto& nd : arena)
-      if (!nd.dead) f(zi->get(nd.zidx));
-  }
-
-  // Probe (PTCTLMC_FEDPROBE, measurement only): visit each discrete state's live antichain as a
-  // vector of zones, so an offline pass can ask how many members a NON-convex (federation) union
-  // would let it drop. Never called on any search path.
-  template <class F>
-  void for_each_antichain(F&& f) const {
-    std::vector<Dbm> zs;
-    for (const auto& s : tab) {
-      if (s.head == -1) continue;
-      zs.clear();
-      for (int n = s.head; n != -1; n = arena[static_cast<std::size_t>(n)].next)
-        if (!arena[static_cast<std::size_t>(n)].dead) zs.push_back(zi->get(arena[static_cast<std::size_t>(n)].zidx));
-      if (!zs.empty()) f(zs);
-    }
-  }
 };
 
 }  // namespace detail

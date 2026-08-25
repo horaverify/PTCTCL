@@ -244,9 +244,8 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
     return true;
   };
 
-  const bool dbg = std::getenv("PTCTLMC_SYMDEBUG") != nullptr;
-  if (sig[0] != sig[q]) { if (dbg) std::fprintf(stderr, "[sym] seed 0->%d: signature differs\n", q); return false; }
-  if (!bind_proc(0, q)) { if (dbg) std::fprintf(stderr, "[sym] seed 0->%d: bind failed\n", q); return false; }
+  if (sig[0] != sig[q]) return false;
+  if (!bind_proc(0, q)) return false;
 
   // Propagate on PARTIAL information: an unmapped process is narrowed by whichever of its clocks
   // and channels already have images, and is fixed as soon as one candidate survives. Requiring
@@ -325,7 +324,7 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
         }
         if (ok) pick = r;
       }
-      if (pick < 0) { if (dbg) std::fprintf(stderr, "[sym] seed 0->%d: no image for proc %d\n", q, p); return false; }
+      if (pick < 0) return false;
       if (!bind_proc(p, pick)) return false;
       taken[pick] = 1;
       done = false;
@@ -378,8 +377,7 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
     }
     if (moved) a.ival[v] = vmap[v];   // leave empty when the variable is pointwise fixed
   }
-  if (!verify(net, a)) { if (dbg) std::fprintf(stderr, "[sym] seed 0->%d: VERIFY failed\n", q); return false; }
-  if (dbg) std::fprintf(stderr, "[sym] seed 0->%d: accepted\n", q);
+  if (!verify(net, a)) return false;
   out = std::move(a);
   return true;
 }

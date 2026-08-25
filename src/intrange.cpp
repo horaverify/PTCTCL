@@ -317,13 +317,7 @@ bool narrow_int_ranges(Network& net) {
   }
   // Did not settle inside the budget: fall back to the declarations wholesale rather than ship a
   // half-converged (and therefore possibly unsound) result.
-  const bool dbg = std::getenv("PTCTLMC_STATS") != nullptr;
-  if (round == kRounds) {
-    if (dbg) std::fprintf(stderr, "[narrow] no fixpoint in %d rounds -- keeping declared ranges\n", kRounds);
-    return false;
-  }
-  if (dbg) std::fprintf(stderr, "[narrow] fixpoint in %d rounds%s\n", round,
-                        a.loop_widened ? " (a loop widened)" : "");
+  if (round == kRounds) return false;
 
   bool narrowed = false;
   for (std::size_t v = 0; v < net.intvars.size(); ++v) {
@@ -333,8 +327,6 @@ bool narrow_int_ranges(Network& net) {
     const long lo = std::max(iv.lo, std::min(r.lo, iv.init));
     const long hi = std::min(iv.hi, std::max(r.hi, iv.init));
     if (lo > hi || (lo == iv.lo && hi == iv.hi)) continue;
-    if (dbg)
-      std::fprintf(stderr, "[narrow] %s: [%ld,%ld] -> [%ld,%ld]\n", iv.name.c_str(), iv.lo, iv.hi, lo, hi);
     iv.lo = lo;
     iv.hi = hi;
     narrowed = true;

@@ -435,7 +435,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
 // Slot-reusing successor generation for the shared-passed hot path. Semantically
 
 // ---------------------------------------------------------------------------------------
-// TRANSITION MEMO (opt-in: --memo, or PTCTLMC_MEMO=1).
+// TRANSITION MEMO (opt-in: --memo).
 //
 // The successor zone is a function of (source zone, edge, target-location data), and on some
 // models very few DISTINCT zones exist -- viking stores 13.6M states drawn from 120 zones -- so
@@ -472,9 +472,6 @@ struct MemoKeyHash {
     return (std::size_t)h;
   }
 };
-struct MemoStat { long hits = 0, lookups = 0, disables = 0; std::size_t entries = 0; };
-inline std::vector<MemoStat>& memo_stats() { static std::vector<MemoStat> v; return v; }
-inline std::mutex& memo_stats_mtx() { static std::mutex m; return m; }
 struct SuccMemo {
   std::unordered_map<MemoKey, Dbm, MemoKeyHash> m;   // an EMPTY Dbm means "this transition dies"
   std::unordered_map<std::string, std::uint32_t> lsig;
@@ -482,7 +479,7 @@ struct SuccMemo {
   long winLookups = 0, winHits = 0;
   long window = 512, backoff = 512, skipped = 0;
   bool on = true;
-  long hits = 0, lookups = 0, disables = 0;
+  long lookups = 0;
   static constexpr long kWindowMax = 65536;
   static constexpr long kMaxBackoff = 1L << 22;
   static constexpr double kMinHit = 0.30;
@@ -491,7 +488,7 @@ struct SuccMemo {
 inline SuccMemo& tls_succ_memo() { static thread_local SuccMemo sm; return sm; }
 
 inline bool memo_enabled() {
-  static const bool v = detail::options().memo || std::getenv("PTCTLMC_MEMO") != nullptr;
+  static const bool v = detail::options().memo;
   return v;
 }
 
@@ -542,7 +539,7 @@ inline bool memo_tick(SuccMemo& sm) {
     const double density = sm.m.empty() ? 0.0 : double(sm.lookups) / double(sm.m.size());
     const bool thin = sm.m.size() > 4096 && density < SuccMemo::kMinDensity;
     if (thin || double(sm.winHits) / double(sm.winLookups) < SuccMemo::kMinHit) {
-      sm.on = false; ++sm.disables;
+      sm.on = false;
       sm.backoff = sm.backoff < SuccMemo::kMaxBackoff ? sm.backoff * 2 : SuccMemo::kMaxBackoff;
       sm.window = 512;
       if (sm.backoff >= SuccMemo::kMaxBackoff) {
@@ -600,7 +597,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
         ++sm.lookups; ++sm.winLookups;
         auto mit = sm.m.find(mk);
         if (mit != sm.m.end()) {
-          ++sm.hits; ++sm.winHits;
+          ++sm.winHits;
           if (mit->second.empty()) continue;             // memoised: this transition dies
           ns.zone = mit->second;
           ++on;
@@ -671,7 +668,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
             ++sm.lookups; ++sm.winLookups;
             auto mit = sm.m.find(mk);
             if (mit != sm.m.end()) {
-              ++sm.hits; ++sm.winHits;
+              ++sm.winHits;
               if (mit->second.empty()) continue;
               ns.zone = mit->second; ++on; continue;
             }
@@ -1216,48 +1213,18 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     std::vector<long> fi(s0.ints.begin(), s0.ints.end());
     std::vector<int> fz(1, zi.intern(s0.zone.data().data()));
     passed[disc_key(s0.locs, s0.ints)].assign(1, fz[0]);
-    // Optional phase profiler (PTCTLMC_MTLPROF): host-side timing of the two synchronous GPU
-    // calls (expand/merge, which block until the kernel finishes since outputs are read in place)
-    // vs. the host marshaling/rebuild. Zero overhead when the env var is unset.
-    const bool mtlprof = std::getenv("PTCTLMC_MTLPROF") != nullptr;
-    // Memory accounting (PTCTLMC_MEMPROF): where the resident bytes actually go — the passed list
-    // (live zone bytes vs vector CAPACITY, i.e. growth slack), the duplicated frontier copy, and the
-    // transient per-level pools the GPU buffers are sized to. Zero cost when unset.
-    const bool memprof = std::getenv("PTCTLMC_MEMPROF") != nullptr;
     // CPU-expand / GPU-merge hybrid (PTCTLMC_HYBRID=1): each phase on the hardware the
     // measurements say it wins on. Zero-copy via unified memory.
     const bool hybrid = std::getenv("PTCTLMC_HYBRID") != nullptr;
     int hyb_threads = 1;
     std::size_t hyb_ratio = 8;   // successors staged per frontier state (adapts per level)
-    int hyb_prev_nb = 1024;      // previous level's distinct-bucket count (sizes the bucket table)
 #ifdef PTCTLMC_HAVE_OPENMP
     hyb_threads = omp_get_max_threads();
 #endif
-    std::size_t peak_nwork = 0, peak_wtot = 0, peak_front = 0;
-    std::size_t peak_rss_ = 0, peak_rss_heap_ = 0, peak_rss_gpu_ = 0, peak_rss_gpulive_ = 0;
-    double t_expand = 0, t_merge = 0, t_bucket = 0, t_gather = 0, t_rebuild = 0, t_binit = 0, t_bmain = 0, t_bcnt = 0, t_bpfx = 0, t_bscat = 0;
-    int lvl_cpu = 0, lvl_gpu = 0;   // merge routing actually taken, per level
-    std::size_t tot_work = 0, tot_valid = 0;   // GPU lane utilisation: survivors / work items
-    int prof_nb = 0, prof_maxsz = 0; double prof_meansz = 0; long long prof_peak_sum2 = 0;
     double gpu_rate = -1, cpu_rate = -1;   // adaptive merge routing: work-units (sum bucket^2) per ms
     auto _now = [] { return std::chrono::steady_clock::now(); };
     auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
       return std::chrono::duration<double, std::milli>(b - a).count();
-    };
-    // Rebuild sub-phase attribution (PTCTLMC_RBPROF): copy/transpose vs intern vs frontier write.
-    const bool rbprof = std::getenv("PTCTLMC_RBPROF") != nullptr;
-    const int RBT = std::max(1, hyb_threads);
-    std::vector<double> rb_copy(RBT * 8, 0.0), rb_intern(RBT * 8, 0.0), rb_front(RBT * 8, 0.0);
-    auto rbnow = [](bool on) {
-      return on ? std::chrono::duration<double, std::milli>(
-                      std::chrono::steady_clock::now().time_since_epoch()).count() : 0.0;
-    };
-    auto ompt = [] {
-#ifdef PTCTLMC_HAVE_OPENMP
-      return omp_get_thread_num() * 8;   // stride 8 doubles = 64B, one cache line per thread
-#else
-      return 0;
-#endif
     };
     // Per-level discrete-key -> bucket-id index. This was a std::unordered_map rebuilt every
     // level, which costs ONE MALLOC PER DISTINCT KEY (227k of them per level on fischer11, over
@@ -1316,7 +1283,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       for (std::size_t v = 0; v < net.intvars.size(); ++v) ilo[v] = static_cast<int>(net.intvars[v].lo);
       gpu->set_key_layout(dshift, ilo);
     }
-    const auto _wall0 = _now();
     // Orbit of the target: with symmetry every state is stored as its orbit representative, so a
     // target that is not itself symmetric has to be tested against every image of the property.
     // Each image's required LOCATIONS are a fixed bit pattern in the packed key, so the test stays
@@ -1431,7 +1397,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       if (stats) stats->explored += nfr;
       const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const gz_t* oz = nullptr;
       const std::uint64_t* odk = nullptr;   // device-packed discrete keys (null => pack host-side)
-      const auto _te = _now();
       std::size_t nwork;
       if (hybrid) {
         // CPU-EXPAND / GPU-MERGE, ZERO-COPY. Successor generation is branchy,
@@ -1540,18 +1505,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           nwork = gpu->expand(nfr, cfl, cfi, cfz, ev, ol, oi, oz, odk);
         }
       }
-      if (mtlprof) {
-        const double _dte = _ms(_te, _now());
-        t_expand += _dte; tot_work += nwork;
-        // Per-level (items, ms) so the fixed-vs-variable split of a dispatch can be REGRESSED
-        // from many points within one model, instead of inferred from a two-point fit across
-        // models (which is exactly determined, hence unfalsifiable -- and wrong: it mispredicts
-        // arbiter17 by 2.7x because per-item cost scales with the zone size).
-        if (std::getenv("PTCTLMC_LVLPROF"))
-          std::fprintf(stderr, "[lvl] frontier=%d nwork=%zu expand_ms=%.3f\n", nfr, nwork, _dte);
-      }
       if (nfr > 0) fanout = std::max(fanout, static_cast<double>(nwork) / nfr);
-      if (memprof && nwork > peak_nwork) peak_nwork = nwork;
       if (nwork == 0) {
         // this batch produced nothing: drop it and continue with what is left of the level
         drop_batch(fl, fi, fz, nfr, np, niw, d2);
@@ -1569,7 +1523,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // per-bucket count, then a prefix sum. The obvious `vector<vector<int>>` heap-allocates one
       // small vector PER BUCKET PER LEVEL (millions of alloc/free pairs over a run, and the
       // fragmentation dominated resident memory); this is two flat arrays instead.
-      const auto _tb = _now();
       // Bucketing stays SERIAL by measurement, not by omission. A lock-free open-addressing
       // table (one CAS per key, stable counting-sort scatter) was implemented and measured
       // three ways -- oversized table 328ms, nb-sized 467ms, monotonic 336ms -- against this
@@ -1583,7 +1536,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       w_bucket.assign(nwork, -1);                         // work item -> bucket id (-1 = not a successor)
       for (std::size_t w = 0; w < nwork; ++w) {
         if (!ev[w]) continue;
-        if (mtlprof) ++tot_valid;
         if (stats) ++stats->generated;
         std::uint64_t dk;
         if (odk) {
@@ -1621,7 +1573,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
       const int nb = static_cast<int>(bdk.size());
       prev_nb = static_cast<std::size_t>(nb);
-      const auto _tp = _now();
       work_off.resize(nb); exist_cnt.resize(nb); new_off.resize(nb); new_cnt.resize(nb);
       Lm.resize(static_cast<std::size_t>(nb) * dim); Um.resize(static_cast<std::size_t>(nb) * dim);
       // counts + prefix sums. The NEW zones are never copied: the merge reads them in place from
@@ -1637,7 +1588,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // Scatter the work-item indices into the flat CSR array. Iterating w ascending preserves the
       // per-bucket ordering the merge relies on (the convex union is order-sensitive), so this is
       // bit-for-bit equivalent to the old vector-of-vectors.
-      if (mtlprof) t_bpfx += _ms(_tp, _now());
       new_idx.resize(ntot);
       {
         cursor = new_off;
@@ -1646,9 +1596,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           if (bi >= 0) new_idx[cursor[bi]++] = static_cast<int>(w);
         }
       }
-      if (mtlprof) t_bucket += _ms(_tb, _now());
-      if (memprof && wtot > peak_wtot) peak_wtot = wtot;
-      const auto _tg = _now();
       gz_t* work_buf = nullptr; int* work_isnew = nullptr;
       gpu->stage_merge(wtot, d2, work_buf, work_isnew);
       // PARALLEL: gather only the EXISTING antichains into the work buffer (unified memory);
@@ -1684,7 +1631,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         state_bounds(dl, L2, U2, Lr_, Ur_);
         for (int c = 0; c < dim; ++c) { Lm[static_cast<std::size_t>(b) * dim + c] = L2[c]; Um[static_cast<std::size_t>(b) * dim + c] = U2[c]; }
       }
-      if (mtlprof) t_gather += _ms(_tg, _now());
       out_work_off.clear(); out_count.clear();
       const gz_t* out_zones = nullptr;
       const int* out_isnew = nullptr;
@@ -1693,9 +1639,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // ms) on early BFS levels, then route each later level to the predicted-faster of {GPU, 12 CPU
       // cores}. This rescues merge-heavy models (e.g. philosophers, where the GPU merge is 93% of the
       // wall time — one thread per bucket is the wrong shape) with no effect where the GPU already wins.
-      long long sum2 = 0, sumsz = 0; int maxsz = 0;
-      for (int b = 0; b < nb; ++b) { const long long s = exist_cnt[b] + new_cnt[b]; sum2 += s*s; sumsz += s; if (s > maxsz) maxsz = (int)s; }
-      if (mtlprof && sum2 > prof_peak_sum2) { prof_peak_sum2 = sum2; prof_nb = nb; prof_maxsz = maxsz; prof_meansz = nb ? (double)sumsz/nb : 0; }
+      long long sum2 = 0;
+      for (int b = 0; b < nb; ++b) { const long long s = exist_cnt[b] + new_cnt[b]; sum2 += s*s; }
       bool cpu_merge = false;
       if (detail::options().adaptive_merge && !soa) {   // SoA pool is unreadable by the AoS CPU merge -> GPU only
         if (cpu_rate < 0) cpu_merge = true;         // calibrate the CPU path first (never catastrophic)
@@ -1728,9 +1673,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         gpu->merge(nb, dim, has_diag, work_off, exist_cnt, new_idx, new_off, new_cnt, Lm, Um,
                    out_work_off, out_count, out_zones, out_isnew);
       }
-      if (cpu_merge) ++lvl_cpu; else ++lvl_gpu;
       const double _dtm = _ms(_tm, _now());
-      if (mtlprof) t_merge += _dtm;
       if (detail::options().adaptive_merge && sum2 > 0 && _dtm > 0.5) {   // update throughput calibration (skip trivial levels)
         const double rate = static_cast<double>(sum2) / _dtm;
         if (cpu_merge) cpu_rate = (cpu_rate < 0) ? rate : 0.5 * cpu_rate + 0.5 * rate;
@@ -1738,7 +1681,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
       // rebuild passed + assemble the flat next frontier (survivors). Prefix-sum the per-bucket
       // survivor counts, pre-create the passed nodes, then fill everything in parallel.
-      const auto _tr = _now();
       // Survivor counts, then offsets. Counting scans every merged zone -- O(total zones), the
       // same order as the rebuild copies below -- so it runs in parallel; only the offset
       // prefix-sum stays serial, and that is O(nb) integer adds over data already in cache.
@@ -1759,7 +1701,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
         fr_cnt[b] = c; fr_off[b] = static_cast<int>(frtot); frtot += c;
       }
-      if (memprof && frtot > peak_front) peak_front = frtot;
       // A bucket with NO survivor had all its new zones subsumed — its antichain is unchanged, so
       // `passed[dk]` is already correct. Skip its rebuild copy entirely; only changed buckets are
       // cleared + refilled (their element ptrs stay stable across later inserts).
@@ -1784,18 +1725,15 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
         int fpos = 0;
         std::vector<raw_t> tmp(d2);        // one merged zone, reused across this bucket
-        const int _tid = ompt();
         for (int i = 0; i < out_count[b]; ++i) {
           const std::size_t slot = static_cast<std::size_t>(out_work_off[b]) + i;
           const int tag = out_isnew[slot];
           if (tag >= 0) { pz[i] = tag; continue; }   // kept: already stored, already interned
           raw_t* pzi = tmp.data();
-          const auto _r0 = rbnow(rbprof);
           if (soa)   // transpose SoA pool -> AoS zone: entry k at poolbase + k*cap + i
             for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones, static_cast<int>(poolbase) + k * static_cast<int>(cap) + i);
           else
             for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones + slot * d2, k);
-          const auto _r1 = rbnow(rbprof);
           // The high bit of the stored index records "added during the CURRENT level". The
           // frontier is read off these flags once the level is finished (see the level-advance
           // step), NOT here -- because a later batch of the same level can still absorb this zone
@@ -1803,8 +1741,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           // level's own merge went on to delete. That is what made batching cost fischer12 2.5x
           // its state count.
           pz[i] = zi.intern(pzi) | kNewBit;
-          const auto _r2 = rbnow(rbprof);
-          if (rbprof) { rb_copy[_tid] += _r1 - _r0; rb_intern[_tid] += _r2 - _r1; }
         }
         // Slots the merge dropped (subsumed, or absorbed into a convex union) are garbage now.
         // Antichains are small, so a linear membership test beats any bookkeeping.
@@ -1815,83 +1751,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
         (void)dl; (void)di; (void)fpos;
       }
-      if (mtlprof) t_rebuild += _ms(_tr, _now());
 #ifdef __APPLE__
-      if (memprof) {   // sample the TRUE resident peak per level, with its composition
-        mach_task_basic_info info{};
-        mach_msg_type_number_t cnt = MACH_TASK_BASIC_INFO_COUNT;
-        if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &cnt) == KERN_SUCCESS &&
-            info.resident_size > peak_rss_) {
-          malloc_statistics_t ms{}; malloc_zone_statistics(malloc_default_zone(), &ms);
-          peak_rss_ = info.resident_size;
-          peak_rss_heap_ = ms.size_in_use;
-          peak_rss_gpu_ = gpu->device_bytes();
-          peak_rss_gpulive_ = gpu->live_buffer_bytes();
-        }
-      }
 #endif
-    }
-    if (memprof) {
-      std::size_t live = 0, cap = 0;
-      for (const auto& kv : passed) { live += kv.second.size(); cap += kv.second.capacity(); }
-      const double GB = 1024.0 * 1024.0 * 1024.0, B = sizeof(raw_t);
-      // per-bucket container overhead: unordered_map node (~48 B: hash+next+key+vector object) + malloc header
-      const double node_ov = passed.size() * 64.0;
-      std::fprintf(stderr,
-        "[memprof] buckets=%zu  zones=%zu\n"
-        "          passed live   = %6.2f GB   (the actual data)\n"
-        "          passed capacity= %6.2f GB   (+%.0f%% vector growth slack)\n"
-        "          bucket overhead= %6.2f GB   (~64 B/bucket: map node + malloc header)\n"
-        "          frontier copy  = %6.2f GB   (peak %zu zones — DUPLICATES passed)\n"
-        "          gpu expand pool= %6.2f GB   (peak %zu work items, persistent)\n"
-        "          gpu merge pool = %6.2f GB   (peak %zu work zones, persistent)\n"
-        "          passed arena   = %6.2f GB  (%d B/entry)\n"
-        "          gpu pools LIVE = %6.2f GB  (sum of our own buffers)\n"
-        "          gpu DRIVER map = %6.2f GB  (what Metal actually has mapped)\n"
-        "          ---- accounted = %6.2f GB\n",
-        passed.size(), live / (std::size_t)d2,
-        live * B / GB, cap * B / GB, live ? 100.0 * (double)(cap - live) / (double)live : 0.0,
-        node_ov / GB,
-        peak_front * (double)d2 * B / GB, peak_front,
-        peak_nwork * (double)d2 * B / GB, peak_nwork,
-        peak_wtot * (double)d2 * B / GB, peak_wtot,
-        zi.bytes() / GB, zi.entry_bytes(), gpu->live_buffer_bytes() / GB, gpu->device_bytes() / GB,
-        (cap * B + node_ov + peak_front * (double)d2 * B + gpu->device_bytes()) / GB);
-#ifdef __APPLE__
-      // Separate "bytes the program is using" from "bytes malloc is holding but not returning to
-      // the OS". A large gap here means the cost is allocator RETENTION from per-level churn, not
-      // live data — a different fix (pooling) than shrinking any one structure.
-      {
-        malloc_statistics_t st{};
-        malloc_zone_statistics(malloc_default_zone(), &st);
-        std::fprintf(stderr,
-          "          malloc in-use  = %6.2f GB   (live heap)\n"
-          "          malloc reserved= %6.2f GB   (held by allocator, not returned to OS)\n"
-          "          >>> PEAK RSS   = %6.2f GB   at peak: heap %.2f GB + gpu-mapped %.2f GB "
-          "(of which our pools %.2f GB) = %.2f GB\n",
-          st.size_in_use / GB, st.size_allocated / GB,
-          peak_rss_ / GB, peak_rss_heap_ / GB, peak_rss_gpu_ / GB, peak_rss_gpulive_ / GB,
-          (peak_rss_heap_ + peak_rss_gpu_) / GB);
-      }
-#endif
-    }
-    if (mtlprof) {
-      const double wall = _ms(_wall0, _now());
-      std::fprintf(stderr, "[mtlprof] expand=%.0fms merge=%.0fms host=%.0fms wall=%.0fms  "
-                   "(merge %.0f%%)  peak-level: nb=%d meansz=%.1f maxsz=%d\n"
-                   "[mtlprof]   host split: bucket=%.0fms (passed-lookups %.0fms) gather=%.0fms rebuild=%.0fms other=%.0fms\n"
-                   "[mtlprof]   MERGE ROUTING: %d levels CPU, %d levels GPU\n"
-                   "[mtlprof]   LANE UTILISATION: %zu work items -> %zu survivors (%.1f%% survive)\n",
-                   t_expand, t_merge, wall - t_expand - t_merge, wall,
-                   100.0 * t_merge / wall, prof_nb, prof_meansz, prof_maxsz,
-                   t_bucket, t_bpfx, t_gather, t_rebuild,
-                   wall - t_expand - t_merge - t_bucket - t_gather - t_rebuild, lvl_cpu, lvl_gpu, tot_work, tot_valid,
-                   tot_work ? 100.0 * (double)tot_valid / (double)tot_work : 0.0);
-      if (rbprof) {
-        double c = 0, in = 0, f = 0;
-        for (int t = 0; t < RBT; ++t) { c += rb_copy[t*8]; in += rb_intern[t*8]; f += rb_front[t*8]; }
-        std::fprintf(stderr, "[rbprof]   rebuild CPU-time split: copy/transpose=%.0fms intern=%.0fms frontier-write=%.0fms\n", c, in, f);
-      }
     }
     return false;
   }
@@ -1966,19 +1827,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 
     int level = 0;
     std::size_t nexpanded = 0;
-    // Peak-RSS composition sampler (PTCTLMC_MEMPROF): sample at each level boundary and
-    // remember the composition at the moment RSS was highest.
-    const bool memprof = std::getenv("PTCTLMC_MEMPROF") != nullptr;
-    std::size_t pk_rss = 0, pk_lvl = 0, pk_front = 0, pk_pack = 0, pk_map = 0, pk_cache = 0,
-                pk_arena = 0, pk_tab = 0, pk_heap = 0;
     std::atomic<bool> found{false};
-    const bool phprof = std::getenv("PTCTLMC_PHPROF") != nullptr;
-    double ph_expand = 0, ph_collect = 0, ph_compact = 0, ph_gc = 0;
-    std::vector<double> ph_busy(static_cast<std::size_t>(nthreads) * 8, 0.0);   // padded
-    auto ph_now = [] { return std::chrono::steady_clock::now(); };
-    auto ph_ms = [](std::chrono::steady_clock::time_point a) {
-      return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
-    };
     const bool single = (nthreads == 1);   // seq / omp -p1: skip locks + the touched union
     // Fused batched merge: O(1) critical section + one lock-free settle pass per level.
     // Zone-interner GC trigger: sweep once the allocation level reaches `sweep_at`, then set
@@ -1996,7 +1845,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // shared table, locking only the touched stripe (expansion and insertion
       // → no serial routing barrier). Inserting during expansion is what keeps the
       // convex-union merge order stable enough to match the legacy state counts.
-      auto _t_exp = ph_now();
       std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
       std::vector<std::size_t> tls_gen(nthreads, 0);
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -2013,7 +1861,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         // increment bounced that line between every core on every successor (23M times on
         // phil13). Published once per thread at the end of the region.
         std::size_t gen = 0;
-        const auto _t_busy = std::chrono::steady_clock::now();
 #pragma omp for schedule(dynamic, expand_chunk) nowait
         for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
           if (found.load(std::memory_order_relaxed)) continue;
@@ -2049,10 +1896,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           }
         }
         tls_gen[tid] = gen;
-        if (phprof)
-          ph_busy[static_cast<std::size_t>(tid) * 8] +=
-              std::chrono::duration<double, std::milli>(
-                  std::chrono::steady_clock::now() - _t_busy).count();
       }
 #else
       {
@@ -2077,8 +1920,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
       }
 #endif
-      if (phprof) ph_expand += ph_ms(_t_exp);
-      auto _t_col = ph_now();
       if (stats) for (std::size_t g : tls_gen) stats->generated += g;
       if (found.load()) return true;
 
@@ -2161,13 +2002,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         for (const auto& mp : smap) mp.counts(nlive, ndisc);
         if (ndisc && static_cast<double>(nlive) >= kAdaptRatio * static_cast<double>(ndisc)) {
           emode = ExLuPlus;
-          if (std::getenv("PTCTLMC_STATS"))
-            std::fprintf(stderr, "[adapt] level %d: %zu zones / %zu discrete states -> Extra_LU+ on\n",
-                         level, nlive, ndisc);
         }
       }
-      if (phprof) ph_collect += ph_ms(_t_col);
-      auto _t_cmp = ph_now();
       // Reclaim dead arena tombstones: one thread per stripe (exclusive), between levels.
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
@@ -2190,8 +2026,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // interns that triggered it), so a run does O(log) sweeps instead of one per level. The
       // memory it trades away is bounded: garbage never exceeds the live set, i.e. the
       // interner stays within 2x of its pinned-to-live size.
-      if (phprof) ph_compact += ph_ms(_t_cmp);
-      auto _t_gc = ph_now();
       if (zi.allocated() >= sweep_at) {
         std::vector<std::uint8_t> alive(zi.index_bound(), 0);
         // MARK IN PARALLEL over stripes. Every writer stores the same value (1) and nothing
@@ -2215,166 +2049,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         zi.sweep(alive);
         sweep_at = std::max<std::size_t>(kSweepFloor, zi.allocated() * 2);
       }
-      if (phprof) ph_gc += ph_ms(_t_gc);
 
-      if (memprof) {
-#ifdef __APPLE__
-        mach_task_basic_info info{};
-        mach_msg_type_number_t c = MACH_TASK_BASIC_INFO_COUNT;
-        if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &c) == KERN_SUCCESS &&
-            info.resident_size > pk_rss) {
-          std::size_t pack = 0, mapb = 0, cacheb = 0, an = 0, dn = 0, ab = 0, tb = 0;
-          zi.account(pack, mapb, cacheb);
-          for (const auto& mp : smap) mp.account(an, dn, ab, tb);
-          pk_rss = info.resident_size; pk_lvl = level;
-          pk_front = frontier.capacity() * sizeof(std::pair<std::uint64_t, int>);
-          pk_pack = pack; pk_map = mapb; pk_cache = cacheb; pk_arena = ab; pk_tab = tb;
-          pk_heap = mstats().bytes_used;   // process-wide live heap (all zones)
-        }
-#elif defined(__linux__)
-        const std::size_t rss = linux_rss_bytes();
-        if (rss > pk_rss) {
-          std::size_t pack = 0, mapb = 0, cacheb = 0, an = 0, dn = 0, ab = 0, tb = 0;
-          zi.account(pack, mapb, cacheb);
-          for (const auto& mp : smap) mp.account(an, dn, ab, tb);
-          pk_rss = rss; pk_lvl = level;
-          pk_front = frontier.capacity() * sizeof(std::pair<std::uint64_t, int>);
-          pk_pack = pack; pk_map = mapb; pk_cache = cacheb; pk_arena = ab; pk_tab = tb;
-          pk_heap = linux_heap_bytes();
-        }
-#endif
-      }
-    }
-    if (memprof) {
-      auto MB = [](std::size_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
-      const std::size_t known = pk_front + pk_pack + pk_map + pk_cache + pk_arena + pk_tab;
-      std::fprintf(stderr,
-                   "[memprof] peak-RSS=%.0fMB @level %zu | heap-in-use=%.0fMB | packed=%.0f map=%.0f "
-                   "cache=%.0f arena=%.0f tab=%.0f frontier=%.0f known=%.0f other=%.0f\n",
-                   MB(pk_rss), pk_lvl, MB(pk_heap), MB(pk_pack), MB(pk_map), MB(pk_cache),
-                   MB(pk_arena), MB(pk_tab), MB(pk_front), MB(known), MB(pk_rss) - MB(known));
-      std::fprintf(stderr, "[memprof] distinct-zones=%zu htab-slots=%zu (load=%.2f)\n",
-                   zi.distinct(), zi.htab_slots(),
-                   zi.htab_slots() ? double(zi.distinct()) / zi.htab_slots() : 0.0);
-    }
-    if (phprof) {
-      const double tot = ph_expand + ph_collect + ph_compact + ph_gc;
-      std::fprintf(stderr,
-                   "[phase] levels=%d expand=%.0fms(%.1f%%) collect=%.0fms(%.1f%%) "
-                   "compact=%.0fms(%.1f%%) gc=%.0fms(%.1f%%)  post-barrier=%.1f%%\n",
-                   level, ph_expand, 100*ph_expand/tot, ph_collect, 100*ph_collect/tot,
-                   ph_compact, 100*ph_compact/tot, ph_gc, 100*ph_gc/tot,
-                   100*(ph_collect+ph_compact+ph_gc)/tot);
-      double busy = 0;
-      for (int t = 0; t < nthreads; ++t) busy += ph_busy[static_cast<std::size_t>(t) * 8];
-      const double cap = ph_expand * nthreads;
-      std::fprintf(stderr,
-                   "[phase] expand busy=%.0fms of %.0fms thread-time (%.1f%% occupancy) "
-                   "-> tail idle = %.1f%% of the run\n",
-                   busy, cap, cap > 0 ? 100 * busy / cap : 0.0,
-                   cap > 0 ? 100 * (cap - busy) / cap * (ph_expand / tot) : 0.0);
-    }
-    if (std::getenv("PTCTLMC_STATS")) {
-      std::size_t zones = 0, disc = 0;
-      for (const auto& mp : smap) mp.stats(disc, zones);
-      std::unordered_set<std::uint64_t> distinct;   // distinct-zone probe (FNV-1a of zone bytes)
-      for (const auto& mp : smap)
-        mp.for_each_live_zone([&](const Dbm& z) {
-          const auto& d = z.data();
-          std::uint64_t h = 1469598103934665603ULL;
-          for (raw_t r : d) { h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(r)); h *= 1099511628211ULL; }
-          distinct.insert(h);
-        });
-      if (memo_enabled()) {
-        long mh = 0, ml = 0, md = 0; std::size_t me = 0;
-        for (int t = 0; t < nthreads; ++t) { (void)t; }
-        // Each worker owns its own memo; sum what this thread can see plus the published totals.
-        SuccMemo& sm0 = tls_succ_memo();
-        mh += sm0.hits; ml += sm0.lookups; md += sm0.disables; me += sm0.m.size();
-        { std::lock_guard<std::mutex> lk(memo_stats_mtx());
-          for (const auto& kv : memo_stats()) { mh += kv.hits; ml += kv.lookups; md += kv.disables; me += kv.entries; } }
-        std::fprintf(stderr, "[memo] lookups=%ld hits=%ld hit-rate=%.1f%% entries=%zu disables=%ld\n",
-                     ml, mh, ml ? 100.0 * double(mh) / double(ml) : 0.0, me, md);
-      }
-      std::fprintf(stderr, "[stats] discrete-states=%zu stored-zones=%zu distinct-zones=%zu generated=%zu (shared-passed, %zu stripes)\n",
-                   disc, zones, distinct.size(), stats ? stats->generated : 0, NB);
-      std::size_t packedB = 0, mapB = 0, cacheB = 0;
-      zi.account(packedB, mapB, cacheB);
-      std::size_t arenaNodes = 0, deadNodes = 0, arenaB = 0, tabB = 0;
-      for (const auto& mp : smap) mp.account(arenaNodes, deadNodes, arenaB, tabB);
-      auto MB = [](std::size_t b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
-      std::size_t rsub = 0, rmrg = 0;
-      for (const auto& mp : smap) mp.retire_causes(rsub, rmrg);
-      std::fprintf(stderr, "[retire] subsumed-by-newer=%zu absorbed-into-convex-union=%zu\n",
-                   rsub, rmrg);
-      // ---- PTCTLMC_GAPHIST: how many BFS levels elapse between a zone being STORED and being
-      // retired by a later, more general one. Bucket 0 = retired inside its own level (the node
-      // never reached the frontier, so it cost no expansion); bucket g>=1 = the node was already
-      // expanded g levels ago, so that expansion is the re-exploration tax. Bounds any
-      // "hold the state back for W levels and let it grow first" policy: such a policy can only
-      // reach retirements with gap <= W.
-      if (std::getenv("PTCTLMC_GAPHIST")) {
-        std::uint64_t gh[66] = {0};
-        for (const auto& mp : smap) mp.gap_hist(gh);
-        std::uint64_t tot = 0, cross = 0;
-        for (int i = 0; i < 66; ++i) { tot += gh[i]; if (i >= 1) cross += gh[i]; }
-        std::fprintf(stderr, "[gaphist] retirements=%llu same-level(g=0)=%llu cross-level(g>=1)=%llu\n",
-                     (unsigned long long)tot, (unsigned long long)gh[0], (unsigned long long)cross);
-        std::uint64_t cum = 0;
-        std::fprintf(stderr, "[gaphist] cumulative %% of cross-level retirements caught by a W-level hold:");
-        for (int W = 1; W <= 16 && cross; ++W) {
-          cum += gh[W];
-          std::fprintf(stderr, " W=%d:%.1f%%", W, 100.0 * (double)cum / (double)cross);
-        }
-        std::fprintf(stderr, "\n[gaphist] raw:");
-        for (int i = 0; i < 66; ++i) if (gh[i]) std::fprintf(stderr, " %d:%llu", i, (unsigned long long)gh[i]);
-        std::fprintf(stderr, "\n");
-      }
-      // ---- PTCTLMC_FEDPROBE: measurement-only headroom for a NON-convex (federation) merge.
-      // For each discrete state's antichain, greedily drop any member covered by the UNION of the
-      // survivors (fed_covers is exact, so this is a legal representation change: the denoted set
-      // is unchanged). The delta is the most a federation representation could ever save.
-      if (std::getenv("PTCTLMC_FEDPROBE")) {
-        std::size_t tot = 0, red = 0, multi = 0, maxk = 0, capped = 0;
-        std::vector<std::size_t> hist(16, 0);
-        for (const auto& mp : smap)
-          mp.for_each_antichain([&](const std::vector<Dbm>& zs) {
-            const std::size_t k = zs.size();
-            tot += k;
-            if (k >= 2) ++multi;
-            maxk = std::max(maxk, k);
-            hist[std::min<std::size_t>(k, 15)] += 1;
-            if (k < 2) { red += k; return; }
-            static const std::size_t kcap = [] {
-              const char* e = std::getenv("PTCTLMC_FEDPROBECAP");
-              return e ? static_cast<std::size_t>(std::atol(e)) : std::size_t(10);
-            }();
-            if (k > kcap) { ++capped; red += k; return; }  // fed_subtract blows up; do not guess
-            std::vector<bool> gone(k, false);
-            std::size_t live = k;
-            for (std::size_t i = 0; i < k && live > 1; ++i) {
-              Federation rest;
-              for (std::size_t j = 0; j < k; ++j)
-                if (j != i && !gone[j]) rest.push_back(zs[j]);
-              if (fed_covers(rest, zs[i])) { gone[i] = true; --live; }
-            }
-            red += live;
-          });
-        std::fprintf(stderr,
-                     "[fedprobe] antichains-with>=2=%zu maxk=%zu capped(k>10)=%zu | zones=%zu "
-                     "after-federation-reduce=%zu removable=%zu (%.2f%%)\n",
-                     multi, maxk, capped, tot, red, tot - red,
-                     tot ? 100.0 * static_cast<double>(tot - red) / static_cast<double>(tot) : 0.0);
-        std::fprintf(stderr, "[fedprobe] antichain size histogram:");
-        for (std::size_t i = 1; i < 16; ++i)
-          if (hist[i]) std::fprintf(stderr, " %zu:%zu", i, hist[i]);
-        std::fprintf(stderr, "\n");
-      }
-      std::fprintf(stderr,
-                   "[bytes] packed-zones=%.0fMB intern-map=%.0fMB tcaches=%.0fMB | arena=%.0fMB "
-                   "(%zu nodes, %zu dead=%.0f%%) tab=%.0fMB\n",
-                   MB(packedB), MB(mapB), MB(cacheB), MB(arenaB), arenaNodes, deadNodes,
-                   arenaNodes ? 100.0 * deadNodes / arenaNodes : 0.0, MB(tabB));
     }
     return false;
 }

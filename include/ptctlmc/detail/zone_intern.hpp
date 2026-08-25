@@ -438,27 +438,7 @@ struct ZoneIntern {
     return static_cast<std::size_t>(mx) << kShardBits;
   }
 
-  // High-water distinct-zone count across all shards (PTCTLMC_STATS/MEMPROF reporting).
-  std::size_t distinct() const {
-    std::size_t d = 0;
-    for (const auto& sh : shards) d += static_cast<std::size_t>(sh.n.load(std::memory_order_relaxed));
-    return d;
-  }
-  std::size_t htab_slots() const {
-    std::size_t s = 0;
-    for (const auto& sh : shards) s += sh.htab.capacity();
-    return s;
-  }
 
-  // Byte accounting (PTCTLMC_STATS): where the interner's resident bytes go.
-  void account(std::size_t& packed, std::size_t& mapb, std::size_t& cacheb) const {
-    for (const auto& sh : shards) {
-      for (const auto& s : sh.slabs) packed += s.capacity();
-      mapb += sh.htab.capacity() * sizeof(std::int32_t);
-      mapb += sh.chunks.capacity() * sizeof(const std::uint8_t**);
-    }
-    for (const auto& tc : tcache) cacheb += tc.capacity() * sizeof(CacheLine);
-  }
 };
 
 }  // namespace detail
