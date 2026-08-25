@@ -3,6 +3,7 @@
 #include "ptctlmc/netreach.hpp"
 
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -1317,7 +1318,23 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   if (q.kind == Query::LEADSTO) {  // p --> q
     DiscPred p, qq;
     if (!build_pred(q.lhs, p) || !build_pred(q.note, qq)) return false;
-    *satisfied = leads_to_net(net, p, qq, backend, stats);
+    // THE BACKWARD GREATEST FIXPOINT IS THE SHIPPING ENGINE. leads_to_net's forward SCC
+    // search closes cycles that subsumption invented; the backward fixpoint only ever reads a
+    // target's W as an upper bound, so subsumption is harmless to it. PTCTLMC_LIVENESS picks
+    // an arm for A/B: `otf` (default), `gfp` (the whole-graph form), `net` (the old search).
+    const char* arm = std::getenv("PTCTLMC_LIVENESS");
+    const std::string a = arm ? arm : "otf";
+    if (a == "net") { *satisfied = leads_to_net(net, p, qq, backend, stats); return true; }
+    GfpStats gs;
+    *satisfied = (a == "gfp") ? leads_to_gfp(net, p, qq, &gs)
+                              : leads_to_otf(net, p, qq, std::getenv("PTCTLMC_GFPMODE"), &gs);
+    if (stats) {
+      // `explored` is the like-for-like count: successor computations actually performed.
+      // On a violated query the on-the-fly engine settles early, so this is far below
+      // fwd_nodes -- which is the entire point of the engine and must not be papered over.
+      stats->explored = gs.expanded_nodes ? gs.expanded_nodes : gs.fwd_nodes;
+      stats->generated = gs.fwd_edges;
+    }
     return true;
   }
   return false;

@@ -3864,25 +3864,9 @@ struct GfpTag {
   std::vector<Constraint> abstain;
 };
 
-struct GfpStats {
-  std::size_t fwd_nodes = 0;
-  std::size_t disc_keys = 0;
-  std::size_t fwd_edges = 0;
-  std::size_t iters = 0;
-  std::size_t fed_max = 0;
-  double      fed_avg = 0;
-  std::size_t nonempty = 0;
-  bool        capped = false;
-  // on-the-fly experiment (branch `liveness-on-the-fly`)
-  std::size_t expanded_nodes = 0;   // successor computations actually performed
-  std::size_t passes = 0;           // confined backward passes run
-  std::size_t pre_calls = 0;        // gfp_pre invocations
-  bool        early = false;        // settled before the forward search finished
-  bool        inconclusive = false; // one-sided mode could not conclude
-  std::size_t oracle_nodes = 0;     // D9: coarse graph built before the exact search
-  std::size_t outer_nodes = 0, outer_expands = 0;   // like-for-like with verifyta
-  const char* mode = "gfp";
-};
+// GfpStats now lives in include/ptctlmc/netreach.hpp, alongside the three leads-to entry
+// points it instruments. It used to be declared here AND hand-copied into main_gfp.cpp,
+// which was an ODR hazard waiting to fire the moment a field was added on one side only.
 
 // Tagged successor generation. Mirrors successors_net for LOCAL edges, BINARY synchronisation
 // and BROADCAST, and additionally reports which edges produced each successor.

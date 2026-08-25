@@ -119,8 +119,53 @@ struct DiscPred {
 bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backend = Backend::Seq,
                           ReachStats* stats = nullptr);
 
-// p --> q  (leads-to): does every reachable state satisfying `p` inevitably reach a state
-// satisfying `q` on all maximal runs? Location/integer predicates only.
+// ---- p --> q  (leads-to) --------------------------------------------------
+// Does every reachable state satisfying `p` inevitably reach a state satisfying `q` on all
+// maximal runs? Location/integer predicates only.
+//
+// TWO ENGINES, and the new one ships. `leads_to_otf` is the answer behind `ptctlmc`;
+// `leads_to_net` is retained as the reference oracle the differential harness compares
+// against (tests/liveness/run_otf.py) and as the A/B arm of PTCTLMC_LIVENESS. See
+// leads_to_net's own comment for why it is no longer the default.
+
+// Instrumentation for the backward-gfp engines. Counters only; none of it affects a verdict.
+struct GfpStats {
+  std::size_t fwd_nodes = 0;       ///< symbolic states stored by the forward search
+  std::size_t disc_keys = 0;       ///< distinct discrete states behind them
+  std::size_t fwd_edges = 0;
+  std::size_t iters = 0;           ///< backward fixpoint rounds
+  std::size_t fed_max = 0;
+  double      fed_avg = 0;
+  std::size_t nonempty = 0;
+  bool        capped = false;      ///< federation-width cap hit: the verdict is UNUSABLE
+  std::size_t expanded_nodes = 0;  ///< successor computations actually performed
+  std::size_t passes = 0;
+  std::size_t pre_calls = 0;
+  bool        early = false;       ///< settled before the forward search finished
+  bool        inconclusive = false;
+  std::size_t oracle_nodes = 0;
+  std::size_t outer_nodes = 0, outer_expands = 0;   ///< like-for-like with verifyta
+  const char* mode = "gfp";
+};
+
+// THE SHIPPING ENGINE. On-the-fly backward greatest fixpoint: the forward search and the
+// backward fixpoint are interleaved, so a violated query settles without building the whole
+// graph. `mode` is "base" (the default) or "d5"; nullptr means "base". `gs` may be null.
+bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q,
+                  const char* mode = nullptr, GfpStats* gs = nullptr);
+
+// The published three-phase form of the same fixpoint: forward aLU-subsumed reachability to
+// completion, restrict to !q, then a chaotic backward greatest fixpoint over the whole graph.
+// Same verdicts as leads_to_otf, strictly more states on violated queries. Kept as the
+// reference for the on-the-fly construction and as PTCTLMC_LIVENESS=gfp.
+bool leads_to_gfp(const Network& net, const DiscPred& p, const DiscPred& q,
+                  GfpStats* gs = nullptr);
+
+// The ORIGINAL forward SCC search: outer BFS for reachable p /\ !q states, inner Tarjan over
+// the !q subgraph for a cycle or a stuck/divergent state. Superseded because forward cycle
+// detection is unsound under subsumption -- a subsumption edge closes loops the concrete
+// system cannot run -- which the backward fixpoint is immune to, since it only ever uses a
+// target's W as an upper bound. Retained as the differential oracle; ignores `backend`.
 bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q,
                   Backend backend = Backend::Seq, ReachStats* stats = nullptr);
 
