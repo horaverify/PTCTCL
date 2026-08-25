@@ -24,6 +24,9 @@ paid for in wrong numbers):
 
 IDENTITY AND RESUME: a row is identified by
     (model, tool, threads, rep, chunk, sim, engine, mergescan, hotlen)
+The last three are frozen at "-": PTCTLMC_ENGINE/MERGESCAN/HOTLEN were removed when the engine
+stopped reading the environment. The columns stay so older CSVs still seed and the readers
+still index by name.
 so several configurations can stream into one CSV and a restart re-measures none of
 them. Anything that changes what is being measured belongs in that key; if you add a
 knob, add a column. Rows that predate a column read as "-" (whatever the binary
@@ -266,14 +269,7 @@ class PtctlmcTool(Tool):
         return cmd + [xml, q]
 
     def env(self, a, th):
-        e = {"OMP_NUM_THREADS": str(th)}
-        if a.engine != "adaptive":
-            e["PTCTLMC_ENGINE"] = a.engine
-        if a.mergescan is not None:
-            e["PTCTLMC_MERGESCAN"] = str(a.mergescan)
-        if a.hotlen is not None:
-            e["PTCTLMC_HOTLEN"] = str(a.hotlen)
-        return e
+        return {"OMP_NUM_THREADS": str(th)}
 
 
 class VerifytaTool(Tool):
@@ -390,7 +386,7 @@ def cmd_run(a):
     def log(msg):
         print("[%s] %s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg), flush=True)
 
-    log("bench.py run  tool=%s sim=%s engine=%s chunk=%s" % (a.tool, a.sim, a.engine, a.chunk))
+    log("bench.py run  tool=%s sim=%s chunk=%s" % (a.tool, a.sim, a.chunk))
     log("threads=%s reps=%d timeout=%ds memgb=%g strike=%d pin=%d"
         % (threads, a.reps, a.timeout, a.memgb, a.strike_limit, a.pin))
     log("families: %s" % "; ".join("%s:%s" % (f, ",".join(map(str, n))) for f, n in sorted(fams.items())))
@@ -402,10 +398,9 @@ def cmd_run(a):
         except Exception:
             pass
 
-    knobs = (("-" if a.mergescan is None else str(a.mergescan)),
-             ("-" if a.hotlen is None else str(a.hotlen)),
+    knobs = ("-", "-",                                   # was mergescan, hotlen
              ("-" if a.chunk is None else str(a.chunk)),
-             a.sim, a.engine, a.queries)
+             a.sim, "-", a.queries)                      # "-" was engine
 
     for th in threads:
         if os.path.exists(stop_file):
@@ -635,10 +630,7 @@ def main():
     # ptctlmc knobs
     r.add_argument("--sim", default="alu", choices=["alu", "g"],
                    help="zone subsumption: aLU (default) or the G-simulation")
-    r.add_argument("--engine", default="adaptive", choices=["adaptive", "legacy"])
     r.add_argument("--chunk", type=int, default=8, help="--omp-chunk (default 8, the binary default)")
-    r.add_argument("--mergescan", type=int, default=None, help="PTCTLMC_MERGESCAN")
-    r.add_argument("--hotlen", type=int, default=None, help="PTCTLMC_HOTLEN")
     r.add_argument("--ptctlmc-bin", default=PTCTLMC)
     r.add_argument("--ptctlmc-extra", nargs="*", default=[], help="extra ptctlmc flags")
     # other tools

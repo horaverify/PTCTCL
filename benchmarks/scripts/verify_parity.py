@@ -18,12 +18,17 @@ the gate checks, which is the property the whole default-off discipline rests on
 VERDICTS must agree three ways. Any disagreement fails the run.
 
 STATE COUNTS are the result. They are reported as deltas -- flag-on vs baseline, and baseline
-vs verifyta -- for discrete states, stored zones and explored states.
+vs verifyta -- for explored states.
+
+The engine used to publish discrete-state, stored-zone, distinct-zone and generated counts
+under PTCTLMC_STATS. That switch and its counters were removed when the engine stopped reading
+the environment, so this gate compares the number the binary prints on every run: explored
+symbolic states. Verdict parity, which is what the gate exists for, is unaffected.
 
 Every ptctlmc run is SINGLE-THREADED. thm:determinism says the verdict is deterministic but the
-stored-zone count is not: the convex-union merge is order-sensitive, so at >1 thread two runs of
-the same binary can report different counts. State counts are only comparable across commits at
-one thread, so the gate refuses to produce them any other way.
+state count is not: the convex-union merge is order-sensitive, so at >1 thread two runs of the
+same binary can report different counts. State counts are only comparable across commits at one
+thread, so the gate refuses to produce them any other way.
 
 Usage:
     python3 benchmarks/verify_parity.py                       # baseline snapshot, no flags
@@ -65,7 +70,6 @@ def verdict_of(out):
 
 def probe_ptctlmc(binary, xml, qf, flags, timeout):
     env = dict(os.environ)
-    env["PTCTLMC_STATS"] = "1"
     env["OMP_NUM_THREADS"] = "1"          # thm:determinism -- counts are only comparable at 1 thread
     rc, out = run([binary, "--backend", "omp", *flags, xml, qf], env, timeout)
     if rc is None:
@@ -78,12 +82,7 @@ def probe_ptctlmc(binary, xml, qf, flags, timeout):
     if rc != 0:
         return dict(verdict="CRASH", detail=out[-400:])
     g = lambda p: (lambda m: int(m.group(1)) if m else None)(re.search(p, out))
-    return dict(verdict=verdict_of(out),
-                disc=g(r"discrete-states=(\d+)"),
-                stored=g(r"stored-zones=(\d+)"),
-                distinct=g(r"distinct-zones=(\d+)"),
-                generated=g(r"generated=(\d+)"),
-                explored=g(r"explored (\d+)"))
+    return dict(verdict=verdict_of(out), explored=g(r"explored (\d+)"))
 
 
 def probe_verifyta(xml, qf, timeout):
@@ -171,14 +170,12 @@ def main():
                 prev[row["model"]] = row
 
     hdr = ["model", "family", "n", "verdict", "vfy_verdict", "base_verdict",
-           "disc", "stored", "distinct", "generated", "explored",
-           "base_disc", "base_stored", "base_explored",
-           "vfy_stored", "vfy_explored", "status"]
+           "explored", "base_explored", "vfy_stored", "vfy_explored", "status"]
     rows, failures = [], []
 
-    print(f"{'model':<12} {'verdict':<8} {'disc':>10} {'stored':>10} "
-          f"{'vs base':>9} {'vfy stored':>11} {'vs vfy':>9}  status")
-    print("-" * 86)
+    print(f"{'model':<12} {'verdict':<8} {'explored':>10} "
+          f"{'vs base':>9} {'vfy explored':>13} {'vs vfy':>9}  status")
+    print("-" * 78)
 
     for model, fam, n in work:
         xml = os.path.join(MODELS, model + ".xml")
@@ -203,24 +200,18 @@ def main():
                              flag.get("detail", "") or base.get("detail", "")))
 
         cmp_base = prev.get(model)
-        b_disc = int(cmp_base["disc"]) if cmp_base and cmp_base.get("disc") else base.get("disc")
-        b_stored = (int(cmp_base["stored"]) if cmp_base and cmp_base.get("stored")
-                    else base.get("stored"))
         b_expl = (int(cmp_base["explored"]) if cmp_base and cmp_base.get("explored")
                   else base.get("explored"))
 
         rows.append(dict(model=model, family=fam, n=n, verdict=flag["verdict"],
                          vfy_verdict=vfy["verdict"], base_verdict=base["verdict"],
-                         disc=flag.get("disc"), stored=flag.get("stored"),
-                         distinct=flag.get("distinct"), generated=flag.get("generated"),
-                         explored=flag.get("explored"),
-                         base_disc=b_disc, base_stored=b_stored, base_explored=b_expl,
+                         explored=flag.get("explored"), base_explored=b_expl,
                          vfy_stored=vfy.get("stored"), vfy_explored=vfy.get("explored"),
                          status=status))
-        print(f"{model:<12} {flag['verdict']:<8} {str(flag.get('disc') or '-'):>10} "
-              f"{str(flag.get('stored') or '-'):>10} {(pct(flag.get("stored"), b_stored) if args.flags else ""):>9} "
-              f"{str(vfy.get('stored') or '-'):>11} "
-              f"{pct(flag.get('stored'), vfy.get('stored')):>9}  {status}")
+        print(f"{model:<12} {flag['verdict']:<8} {str(flag.get('explored') or '-'):>10} "
+              f"{(pct(flag.get("explored"), b_expl) if args.flags else ""):>9} "
+              f"{str(vfy.get('explored') or '-'):>13} "
+              f"{pct(flag.get('explored'), vfy.get('explored')):>9}  {status}")
 
     with open(args.out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=hdr)
