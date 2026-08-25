@@ -12,12 +12,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(PTCTLMC_ENABLE_CUDA  "Enable the CUDA GPU backend if a CUDA toolkit is found" ON)
 option(PTCTLMC_ENABLE_METAL "Enable the Metal GPU backend on macOS if available" ON)
 option(PTCTLMC_BUILD_TESTS  "Build tests" ON)
-# Ablation / diagnostic env-var knobs that would otherwise cost something on a hot path (e.g.
-# PTCTLMC_NOACTIVE, checked once per generated successor). OFF for benchmark builds. The
-# reporting hooks PTCTLMC_STATS and PTCTLMC_MEMPROF are NOT behind this -- they are read once
-# per run, cost nothing, and bench_run.py / docs/GUIDE.md depend on them.
-option(PTCTLMC_DEBUG_KNOBS  "Compile in the ablation env-var switches (slower)" OFF)
-
 find_package(OpenMP QUIET)
 # Apple Clang ships without an OpenMP runtime, so find_package fails even when
 # Homebrew's libomp is installed. Wire it up by hand so the parallel network
@@ -121,10 +115,6 @@ if(PTCTLMC_HAVE_METAL)
       ${PTCTLMC_METAL_FRAMEWORK} ${PTCTLMC_FOUNDATION_FRAMEWORK})
   endif()
   target_compile_definitions(ptctlmc_core PUBLIC PTCTLMC_HAVE_METAL=1)
-endif()
-if(PTCTLMC_DEBUG_KNOBS)
-  target_compile_definitions(ptctlmc_core PUBLIC PTCTLMC_DEBUG_KNOBS=1)
-  message(STATUS "PTCTLMC: ablation env-var knobs COMPILED IN (do not use for benchmarks)")
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(ptctlmc_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter>)

@@ -339,47 +339,12 @@ struct NetPassed {
     // 4.6k try_unions per insert, which was most of the run. Zones that merge are nearly always
     // recent neighbours (a merge happens when a successor extends a zone stored moments before),
     // so a small window keeps effectively all of the reduction.
-#ifdef PTCTLMC_DEBUG_KNOBS
-    static const bool no_merge = std::getenv("PTCTLMC_NOMERGE") != nullptr;   // ablation
-#else
-    constexpr bool no_merge = false;
-#endif
-    const std::size_t mscan = no_merge ? 0 : detail::merge_scan();
+    const std::size_t mscan = detail::merge_scan();
     for (bool merged = true; merged;) {
       merged = false;
       for (std::size_t k = 0; k < std::min(live.size(), mscan); ++k) {
-#ifdef PTCTLMC_DEBUG_KNOBS
-        // PTCTLMC_CHECKMERGE: verify every accepted merge against the EXACT set semantics --
-        // hull \ (pre u stored) must be empty. Federation subtraction is exact, so this is a
-        // decision, not a heuristic. Debug-only: it costs a federation subtract per merge.
-        static const bool chk = std::getenv("PTCTLMC_CHECKMERGE") != nullptr;
-        Dbm pre(dim - 1), sto(dim - 1);
-        if (chk) {
-          std::copy(s.zone.data().begin(), s.zone.data().end(), pre.data().begin());
-          std::copy(zp[live[k]], zp[live[k]] + d2, sto.data().begin());
-        }
-#endif
         if (detail::engine_legacy() ? dbm_try_union_legacy(s.zone.data().data(), zp[live[k]], dim)
                             : dbm_try_union(s.zone.data().data(), zp[live[k]], dim)) {
-#ifdef PTCTLMC_DEBUG_KNOBS
-          if (chk) {
-            static std::atomic<long> nchk{0};
-            if (++nchk % 100000 == 1)
-              std::fprintf(stderr, "[checkmerge] verified %ld merges\n", nchk.load());
-            Federation rem = zone_subtract(s.zone, pre);
-            rem = fed_difference(rem, Federation{sto});
-            if (!rem.empty()) {
-              std::fprintf(stderr, "[UNSOUND MERGE] hull has points in neither operand\n  a:");
-              for (std::size_t t = 0; t < d2; ++t) std::fprintf(stderr, " %d", pre.data()[t]);
-              std::fprintf(stderr, "\n  b:");
-              for (std::size_t t = 0; t < d2; ++t) std::fprintf(stderr, " %d", sto.data()[t]);
-              std::fprintf(stderr, "\n  hull:");
-              for (std::size_t t = 0; t < d2; ++t) std::fprintf(stderr, " %d", s.zone.data()[t]);
-              std::fprintf(stderr, "\n");
-              std::abort();
-            }
-          }
-#endif
           ++deadByMerge;
           retire(k);
           live.erase(live.begin() + k);

@@ -306,28 +306,6 @@ struct ZoneIntern {
     const std::size_t qlen =
         mindbm_pack(z.data().data(), dim, qbuf.data(), bits.data(), first.data(), next.data());
     const std::uint64_t h = hash_bytes(qbuf.data(), qlen);
-#ifdef PTCTLMC_DEBUG_KNOBS
-    // PTCTLMC_CHECKINTERN: the packed min-graph record must round-trip EXACTLY. If unpack ever
-    // returns a different (in particular a wider) matrix, every stored zone is suspect and the
-    // engine can reach states the model cannot.
-    {
-      static const bool chk = std::getenv("PTCTLMC_CHECKINTERN") != nullptr;
-      if (chk) {
-        std::vector<raw_t> back(static_cast<std::size_t>(dim) * dim);
-        mindbm_unpack(qbuf.data(), back.data());
-        for (std::size_t t = 0; t < back.size(); ++t)
-          if (back[t] != z.data()[t]) {
-            std::fprintf(stderr, "[BAD ROUND-TRIP] entry %zu: packed %d -> unpacked %d\n  in :",
-                         t, z.data()[t], back[t]);
-            for (std::size_t u = 0; u < back.size(); ++u) std::fprintf(stderr, " %d", z.data()[u]);
-            std::fprintf(stderr, "\n  out:");
-            for (std::size_t u = 0; u < back.size(); ++u) std::fprintf(stderr, " %d", back[u]);
-            std::fprintf(stderr, "\n");
-            std::abort();
-          }
-      }
-    }
-#endif
 
     // Lock-free fast path: per-thread direct-mapped cache. Verify bytes (a 64-bit-hash clash
     // returning the wrong index would be UNSOUND), so a hit is always correct.

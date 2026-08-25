@@ -179,13 +179,6 @@ void frozen_flags(const Network& net, const LocVec& locs, bool* committed, bool*
 // read (qmask) — collapses zones that differ only in dead clocks, soundly.
 void reset_inactive(const Network& net, const LocVec& locs, Dbm& z,
                     const std::vector<char>& qmask) {
-#ifdef PTCTLMC_DEBUG_KNOBS
-  // Ablation switch for this optimization. Compiled out by default: this function runs once per
-  // generated successor, and a function-local static with dynamic initialization costs a guarded
-  // acquire-load on EVERY call, which is pure overhead in a build that never sets the variable.
-  static const bool off = std::getenv("PTCTLMC_NOACTIVE") != nullptr;
-  if (off) return;
-#endif
   if (net.active.empty()) return;
   // BITMASK path: the active set of a location vector is the OR of the per-location masks, so
   // this is nprocs OR-s plus one word of arithmetic instead of an nprocs x nclocks byte scan
@@ -797,14 +790,6 @@ void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
 
 // GPU merge routing mode (see netreach.hpp). Default naive = always the one-thread-per-bucket GPU
 // merge (the original, published behavior); --adaptive turns on the calibrated CPU/GPU routing.
-#ifdef PTCTLMC_DEBUG_KNOBS
-// FNV-1a over a packed record, for the PTCTLMC_CHECKGC frontier-root snapshot.
-static std::uint64_t dbg_rec_hash(const std::uint8_t* p, std::size_t n) {
-  std::uint64_t h = 1469598103934665603ULL;
-  for (std::size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
-  return h;
-}
-#endif
 // Rewrite (locs, zone) to its orbit's canonical representative: the group element giving the
 // lexicographically smallest location vector and, among those, the smallest zone matrix.
 //
@@ -950,12 +935,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // (diagonals kept exact) + plain inclusion subsumption.
   const bool has_diag = network_has_diagonal(net);
   // PTCTLMC_EXACTSUB forces plain-inclusion subsumption for A/B-testing the aLU test itself.
-#ifdef PTCTLMC_DEBUG_KNOBS
-  static const bool force_exact_env = std::getenv("PTCTLMC_EXACTSUB") != nullptr;
-#else
-  constexpr bool force_exact_env = false;
-#endif
-  const bool exact_sub = has_diag || force_exact || force_exact_env;
+  const bool exact_sub = has_diag || force_exact;
   // Finiteness comes from EITHER aLU subsumption on exact zones (the default) OR, when zones must
   // be compared exactly, from LU-extrapolation.
   //
@@ -1986,9 +1966,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 
     int level = 0;
     std::size_t nexpanded = 0;
-#ifdef PTCTLMC_DEBUG_KNOBS
-    std::vector<std::uint64_t> fr_snap;   // PTCTLMC_CHECKGC: per-frontier-entry record hash
-#endif
     // Peak-RSS composition sampler (PTCTLMC_MEMPROF): sample at each level boundary and
     // remember the composition at the moment RSS was highest.
     const bool memprof = std::getenv("PTCTLMC_MEMPROF") != nullptr;
@@ -2003,24 +1980,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
     };
     const bool single = (nthreads == 1);   // seq / omp -p1: skip locks + the touched union
-    // Debug hooks for the local-antichain drain, compiled out unless PTCTLMC_DEBUG_KNOBS is
-    // defined: they sit in the per-successor loop, where even a function-local static costs a
-    // guarded acquire-load on every generated state. Same convention as reset_inactive's ablation.
-#ifdef PTCTLMC_DEBUG_KNOBS
-    static const bool dbg_front = std::getenv("PTCTLMC_DUMPFRONT") != nullptr;
-    static const int dbg_lvl = [] {
-      const char* e = std::getenv("PTCTLMC_TRACELVL");
-      return e ? std::atoi(e) : -1;
-    }();
-    static const std::uint64_t dbg_dk = [] {
-      const char* e = std::getenv("PTCTLMC_DUMPDK");
-      return e ? std::strtoull(e, nullptr, 10) : ~std::uint64_t(0);
-    }();
-#else
-    constexpr bool dbg_front = false;
-    constexpr int dbg_lvl = -1;
-    constexpr std::uint64_t dbg_dk = ~std::uint64_t(0);
-#endif
     // Fused batched merge: O(1) critical section + one lock-free settle pass per level.
     // Zone-interner GC trigger: sweep once the allocation level reaches `sweep_at`, then set
     // the next target to double the surviving live set (see the sweep site below).
@@ -2059,69 +2018,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
           if (found.load(std::memory_order_relaxed)) continue;
           decode_key(frontier[i].first, cur.locs.data(), cur.ints.data());
-#ifdef PTCTLMC_DEBUG_KNOBS
-          // PTCTLMC_SRCSTATS: how many DISTINCT source zones do we expand? The successor zone is a
-          // function of (source zone, edge), so a small distinct count means the same O(dim^3)
-          // delay/constrain/close is being recomputed many times over.
-          {
-            static const bool sst = std::getenv("PTCTLMC_SRCSTATS") != nullptr;
-            if (sst) {
-              static std::mutex m; static std::unordered_set<int> zs; static long tot = 0;
-              std::lock_guard<std::mutex> lk(m);
-              zs.insert(frontier[i].second); ++tot;
-              if (tot % 200000 == 0)
-                std::fprintf(stderr, "[srcstats] expansions=%ld distinct-source-zones=%zu (reuse %.1fx)\n",
-                             tot, zs.size(), double(tot) / double(zs.size()));
-            }
-          }
-#endif
-#ifdef PTCTLMC_DEBUG_KNOBS
-          if (!fr_snap.empty()) {
-            const std::uint8_t* r = zi.record(frontier[i].second);
-            if (dbg_rec_hash(r, mindbm_size(r)) != fr_snap[i]) {
-              std::fprintf(stderr,
-                           "[GC CLOBBERED A FRONTIER ROOT] level=%d entry=%ld dk=%llu zidx=%d\n",
-                           level, i, (unsigned long long)frontier[i].first, frontier[i].second);
-              std::abort();
-            }
-          }
-          // Same invariant check, but on the state as it comes BACK OUT of the passed list.
-          // A successor that was clean when generated and dirty when re-read means storage
-          // (intern / merge / collect), not the successor relation, broke it.
-          {
-            static const bool chk = std::getenv("PTCTLMC_CHECKINV") != nullptr;
-            if (chk) {
-              const int zd = net.nclocks + 1;
-              const raw_t* fz = zi.get(frontier[i].second).data().data();
-              for (int p = 0; p < np_; ++p) {
-                for (const auto& c : net.procs[p].locations[cur.locs[p]].invariant) {
-                  std::vector<raw_t> t(fz, fz + zd * zd);
-                  dbm_constrain(t.data(), zd, c.i, c.j, c.bound);
-                  if (!std::equal(t.begin(), t.end(), fz)) {
-                    std::fprintf(stderr,
-                                 "[FRONTIER INVARIANT BROKEN] level=%d dk=%llu proc=%d loc=%d "
-                                 "x%d-x%d bound=%d locs=",
-                                 level, (unsigned long long)frontier[i].first, p, static_cast<int>(cur.locs[p]),
-                                 c.i, c.j, raw_bound(c.bound));
-                    for (int q = 0; q < np_; ++q) std::fprintf(stderr, "%d,", static_cast<int>(cur.locs[q]));
-                    std::fprintf(stderr, " zone:");
-                    for (int a = 0; a < zd * zd; ++a) std::fprintf(stderr, " %d", fz[a]);
-                    std::fprintf(stderr, "\n");
-                    std::abort();
-                  }
-                }
-              }
-            }
-          }
-#endif
-          if (dbg_dk == frontier[i].first) {
-              const raw_t* pz = zi.get(frontier[i].second).data().data();
-              const int pd = net.nclocks + 1;
-              std::fprintf(stderr, "[zone] level=%d dk=%llu :", level,
-                           (unsigned long long)frontier[i].first);
-              for (int a = 0; a < pd * pd; ++a) std::fprintf(stderr, " %d", pz[a]);
-              std::fprintf(stderr, "\n");
-            }
           // buf is NOT cleared: gen_succ_reuse rebuilds slots in place and returns
           // the count, so the loc/int/zone storage is reused across frontier states.
           const std::size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second), L, U, qmask, emode,
@@ -2130,83 +2026,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             SymState& s = buf[sk];
             ++gen;
             if (is_target(s)) {
-              if (dbg_front) {
-                std::fprintf(stderr, "[hit] level=%d parent_dk=%llu parent_zidx=%d locs=", level,
-                             (unsigned long long)frontier[i].first, frontier[i].second);
-                for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(cur.locs[p]));
-                std::fprintf(stderr, " ints=");
-                for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(cur.ints[v]));
-                std::fprintf(stderr, "\n[hit] child locs=");
-                for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(s.locs[p]));
-                std::fprintf(stderr, " ints=");
-                for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(s.ints[v]));
-                std::fprintf(stderr, "\n[hit] child zone=");
-                {
-                  const int cd = net.nclocks + 1;
-                  for (int a = 0; a < cd * cd; ++a)
-                    std::fprintf(stderr, "%d ", s.zone.data()[a]);
-                }
-                std::fprintf(stderr, "\n[hit] parent zone=");
-                const raw_t* pz = zi.get(frontier[i].second).data().data();
-                const int pd = net.nclocks + 1;
-                for (int a = 0; a < pd * pd; ++a) std::fprintf(stderr, "%d ", pz[a]);
-                std::fprintf(stderr, "\n");
-              }
               found.store(true, std::memory_order_relaxed);
               break;
             }
-#ifdef PTCTLMC_DEBUG_KNOBS
-            // PTCTLMC_CHECKINV: a symbolic state's zone must satisfy the invariant of EVERY
-            // process's current location, not just the one that moved. If tightening by an
-            // invariant changes the zone, that invariant was not enforced on this successor.
-            {
-              static const bool chk = std::getenv("PTCTLMC_CHECKINV") != nullptr;
-              if (chk) {
-                const int zd = net.nclocks + 1;
-                for (int p = 0; p < np_; ++p) {
-                  const auto& inv = net.procs[p].locations[s.locs[p]].invariant;
-                  for (const auto& c : inv) {
-                    std::vector<raw_t> t(s.zone.data().begin(), s.zone.data().end());
-                    dbm_constrain(t.data(), zd, c.i, c.j, c.bound);
-                    if (!std::equal(t.begin(), t.end(), s.zone.data().begin())) {
-                      std::fprintf(stderr,
-                                   "[INVARIANT NOT ENFORCED] level=%d proc=%d loc=%d "
-                                   "constraint x%d-x%d bound=%d locs=",
-                                   level, p, static_cast<int>(s.locs[p]), c.i, c.j, raw_bound(c.bound));
-                      for (int q = 0; q < np_; ++q) std::fprintf(stderr, "%d,", static_cast<int>(s.locs[q]));
-                      std::fprintf(stderr, " zone:");
-                      for (int a = 0; a < zd * zd; ++a)
-                        std::fprintf(stderr, " %d", s.zone.data()[a]);
-                      std::fprintf(stderr, "\n");
-                      std::abort();
-                    }
-                  }
-                }
-              }
-            }
-#endif
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
             const std::uint64_t dk = disc_key(s.locs, s.ints);
-            if (dbg_lvl == level)
-              std::fprintf(stderr, "[edge] %llu -> %llu\n",
-                           (unsigned long long)frontier[i].first, (unsigned long long)dk);
             const std::size_t si = stripe_of(dk);
-            if (dbg_dk == dk) {
-              std::fprintf(stderr, "[succ] level=%d from=%llu plocs=", level,
-                           (unsigned long long)frontier[i].first);
-              for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(cur.locs[p]));
-              std::fprintf(stderr, " pints=");
-              for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(cur.ints[v]));
-              std::fprintf(stderr, " clocs=");
-              for (int p = 0; p < np_; ++p) std::fprintf(stderr, "%d,", static_cast<int>(s.locs[p]));
-              std::fprintf(stderr, " cints=");
-              for (int v = 0; v < ni_; ++v) std::fprintf(stderr, "%d,", static_cast<int>(s.ints[v]));
-              std::fprintf(stderr, " czone:");
-              const int _pd = net.nclocks + 1;
-              for (int a = 0; a < _pd * _pd; ++a) std::fprintf(stderr, " %d", s.zone.data()[a]);
-              std::fprintf(stderr, "\n");
-            }
             if (single) {
               if (smap[si].add(std::move(s), dk, level, exact_sub, state_bounds, tid) >= 0) touched.insert(dk);
             } else {
@@ -2327,42 +2153,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // 0.98x. The retirement is driven by zones that arrive levels apart, which no intra-level
       // ordering can reach.
       frontier.swap(next);
-#ifdef PTCTLMC_DEBUG_KNOBS
-      // PTCTLMC_CHECKGC: a frontier entry is a GC root, so its interned record must be byte-
-      // identical when the level expands it. Snapshot here (before the sweep) and re-check at
-      // expansion; a mismatch means the sweep freed and reused an index that was still named.
-      static const bool chk_gc = std::getenv("PTCTLMC_CHECKGC") != nullptr;
-      if (chk_gc) {
-        fr_snap.clear();
-        fr_snap.reserve(frontier.size());
-        for (const auto& f : frontier) {
-          const std::uint8_t* r = zi.record(f.second);
-          fr_snap.push_back(dbg_rec_hash(r, mindbm_size(r)));
-        }
-      }
-#endif
-      if (dbg_front) {
-        // (dk, zone) of every frontier entry, hashed so the two engines' whole levels can be
-        // diffed cheaply. Sorted, so the comparison is order-insensitive: the drain builds the
-        // frontier in a different order than the shared collect, and order is not a difference.
-        const int pd = net.nclocks + 1;
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> fz;
-        fz.reserve(frontier.size());
-        for (const auto& f : frontier) {
-          const raw_t* z = zi.get(f.second).data().data();
-          std::uint64_t h = 1469598103934665603ULL;
-          for (int a = 0; a < pd * pd; ++a) {
-            h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(z[a]));
-            h *= 1099511628211ULL;
-          }
-          fz.push_back({f.first, h});
-        }
-        std::sort(fz.begin(), fz.end());
-        fz.erase(std::unique(fz.begin(), fz.end()), fz.end());
-        for (const auto& e : fz)
-          std::fprintf(stderr, "[fz] %d %llu %llu\n", level, (unsigned long long)e.first,
-                       (unsigned long long)e.second);
-      }
       // Adaptive abstraction: re-read the zones-per-discrete-state signal now that the level is
       // complete and every thread has joined, and switch widening on if the antichains are
       // filling up. Once on it stays on -- the ratio only ever justifies more abstraction.
@@ -2402,12 +2192,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // interner stays within 2x of its pinned-to-live size.
       if (phprof) ph_compact += ph_ms(_t_cmp);
       auto _t_gc = ph_now();
-#ifdef PTCTLMC_DEBUG_KNOBS
-      static const bool no_gc = std::getenv("PTCTLMC_NOGC") != nullptr;   // ablation
-#else
-      constexpr bool no_gc = false;
-#endif
-      if (!no_gc && zi.allocated() >= sweep_at) {
+      if (zi.allocated() >= sweep_at) {
         std::vector<std::uint8_t> alive(zi.index_bound(), 0);
         // MARK IN PARALLEL over stripes. Every writer stores the same value (1) and nothing
         // reads `alive` until the sweep below, so two threads marking the same zidx cannot
