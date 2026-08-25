@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Differential + state-count harness for `p --> q` on the SHIPPING binary.
+"""Verdict + state-count harness for `p --> q` on the shipping binary.
 
-Runs every query in queries.txt under every requested liveness arm of `ptctlmc` and
-records verdict, symbolic states explored, and wall clock. Arms disagreeing with the
-baseline are the refutation this harness exists to find.
+Runs every query in queries.txt and records verdict, symbolic states explored, and
+wall clock, so a change to the liveness engine can be diffed against a recorded run.
 
-    ./run_otf.py                          # otf only, the shipping default
-    ./run_otf.py --arms otf,gfp,net       # the full differential
-    ./run_otf.py --arms otf,net --filter csma
+    ./run_otf.py                          # every query
+    ./run_otf.py --filter csma            # one family
 
-The arms are PTCTLMC_LIVENESS values; see include/ptctlmc/netreach.hpp.
+There is ONE liveness engine: `leads_to_otf`, the on-the-fly backward greatest
+fixpoint. It used to share the binary with two other implementations selected by
+PTCTLMC_LIVENESS -- `gfp` (the whole-graph three-phase form) and `net` (the original
+forward SCC search) -- which this harness ran side by side looking for a disagreement.
+It never found one: the last full differential, 46 queries over 7 model families,
+agreed on every query that all three answered, and `net` timed out on the one
+(grc4 T0.in-->T0.far) it could not. Both were deleted with that result recorded.
 
-  otf   on-the-fly backward greatest fixpoint          (leads_to_otf, the default)
-  gfp   the whole-graph three-phase form               (leads_to_gfp)
-  net   the original forward SCC search                (leads_to_net, the oracle)
-
-This used to live in nove_mc/prototype/ and drive a separate `gfp_proto` binary linked
-against a private copy of netreach.cpp. There is no second copy any more: the engine it
-was prototyping IS the shipping engine, so the harness drives `ptctlmc` itself. Anything
-this harness can no longer distinguish is something the two builds no longer differ on.
+What still checks the verdicts, now that the arms are gone:
+  * tests/models/liveness-regressions/ -- four models whose correct answers are known
+    independently of this engine (each was found by a wrong verdict).
+  * tests/validate_liveness.sh -- E[]/A<> differential against verifyta.
+  * this file, as a state-count regression against a saved run.
 """
 import argparse, json, os, re, subprocess, sys, tempfile, time
 
@@ -58,9 +59,8 @@ def load_queries(path):
     return out
 
 
-def run(binary, model, p, q, arm, timeout, backend):
+def run(binary, model, p, q, timeout, backend):
     env = dict(os.environ)
-    env["PTCTLMC_LIVENESS"] = arm
     xml = os.path.join(MODELS, model + ".xml")
     # The query goes in a file: `ptctlmc <model> <queries>` is the only shape the CLI takes.
     with tempfile.NamedTemporaryFile("w", suffix=".q", delete=False) as qf:
@@ -91,8 +91,6 @@ def run(binary, model, p, q, arm, timeout, backend):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--arms", default="otf", help="comma-separated PTCTLMC_LIVENESS values; "
-                                                  "the FIRST is the differential baseline")
     ap.add_argument("--queries", default=os.path.join(HERE, "queries.txt"))
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--backend", default="seq", help="seq is reproducible; omp wobbles by a "
@@ -103,57 +101,26 @@ def main():
     a = ap.parse_args()
 
     binary = find_binary(a.bin)
-    arms = a.arms.split(",")
     qs = load_queries(a.queries)
     if a.filter:
         qs = [x for x in qs if a.filter in x[0]]
-    print("binary:", binary, "| backend:", a.backend, "| arms:", ",".join(arms),
-          "|", len(qs), "queries\n")
+    print("binary:", binary, "| backend:", a.backend, "|", len(qs), "queries\n")
 
     results = {}
     for (model, p, q) in qs:
         key = "%s %s-->%s" % (model, p, q)
-        results[key] = {}
-        line = ["%-44s" % key]
-        for arm in arms:
-            r = run(binary, model, p, q, arm, a.timeout, a.backend)
-            results[key][arm] = r
-            n = r["explored"]
-            line.append("%s:%s/%s/%.2fs" % (arm, r["verdict"][:3],
-                                            n if n is not None else "-", r["secs"]))
-        print(" ".join(line), flush=True)
+        r = run(binary, model, p, q, a.timeout, a.backend)
+        results[key] = r
+        n = r["explored"]
+        print("%-44s %s/%s/%.2fs" % (key, r["verdict"][:3],
+                                     n if n is not None else "-", r["secs"]), flush=True)
 
     with open(a.out, "w") as f:
         json.dump(results, f, indent=1)
 
+    total = sum(r["explored"] for r in results.values() if r["explored"])
+    print("\nstates explored: %d" % total)
     rc = 0
-    if len(arms) > 1:
-        base = arms[0]
-        bad = []
-        for k, v in results.items():
-            b = v[base]["verdict"]
-            for arm in arms[1:]:
-                x = v[arm]["verdict"]
-                # TIMEOUT/UNSUPPORTED/ERR are the ABSENCE of a verdict, not a verdict.
-                # Comparing against one would manufacture a fake disagreement and, worse,
-                # hide the case where one arm answers a query the other cannot.
-                if b in ("SATISFIED", "NOT") and x in ("SATISFIED", "NOT") and b != x:
-                    bad.append((k, arm, b, x))
-        print("\n=== DISAGREEMENTS vs %s (both sides answered) ===" % base)
-        if not bad:
-            print("none")
-        for k, arm, b, x in bad:
-            print("  %s  %s=%s  %s=%s" % (k, base, b, arm, x))
-            rc = 1
-
-        print("\n=== states explored, by arm ===")
-        tot = {arm: 0 for arm in arms}
-        for k, v in results.items():
-            for arm in arms:
-                if v[arm]["explored"]:
-                    tot[arm] += v[arm]["explored"]
-        for arm in arms:
-            print("  %-4s %d" % (arm, tot[arm]))
 
     print("\nwrote", a.out)
     return rc
