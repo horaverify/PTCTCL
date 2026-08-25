@@ -100,3 +100,6 @@ UDBM
 # sweep runtime artifacts (pid/pgid of a live driver, not results)
 benchmarks/results_complete/complete.pid
 benchmarks/results_complete/complete.pgid
+
+# local-only archive of superseded material
+old_stuff/
