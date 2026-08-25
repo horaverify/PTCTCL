@@ -140,7 +140,6 @@ struct GfpStats {
   bool        inconclusive = false;
   std::size_t oracle_nodes = 0;
   std::size_t outer_nodes = 0, outer_expands = 0;   ///< like-for-like with verifyta
-  const char* mode = "gfp";
 };
 
 // On-the-fly backward greatest fixpoint: the forward search and the backward fixpoint are

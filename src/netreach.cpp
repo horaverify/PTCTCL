@@ -2838,20 +2838,6 @@ static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
 // ============================================================================
 
 
-// `Base` reproduces Algorithm 1 through this code path (a control for the differential);
-// `D5` is Algorithm 2. The abandoned variants -- append-only, pipelined-conservative,
-// preprocessing overlap, the hull lane, the two-lane race, bounded width and the coarse
-// oracle -- were removed once measured; see docs/superpowers/specs/.
-enum class OtfMode { Base, D5 };
-
-static const char* otf_mode_name(OtfMode m) {
-  switch (m) {
-    case OtfMode::Base: return "base";
-    case OtfMode::D5:   return "d5-candidate-confirm";
-  }
-  return "?";
-}
-
 struct OtfEdge {
   int tgt;
   GfpTag tag;
@@ -2910,9 +2896,9 @@ struct AtomMap {
 
 class Otf {
  public:
-  Otf(const Network& n, const DiscPred& pp, const DiscPred& qq, OtfMode m,
+  Otf(const Network& n, const DiscPred& pp, const DiscPred& qq,
       bool force_exact = false, const std::atomic<bool>* cancel = nullptr)
-      : net(n), p(pp), q(qq), mode(m), force_exact_(force_exact), cancel_(cancel) {}
+      : net(n), p(pp), q(qq), force_exact_(force_exact), cancel_(cancel) {}
 
   // Returns true iff `p --> q` HOLDS. Meaningless if was_cancelled().
   bool run(GfpStats* gs);
@@ -2978,7 +2964,6 @@ class Otf {
   const Network& net;
   const DiscPred& p;
   const DiscPred& q;
-  OtfMode mode;
   bool force_exact_ = false;                   // gate lane B: inclusion covering, no aLU
   bool use_am_ = false;                        // collapse LU to M: bisimulation, deadlock-sound
   const std::atomic<bool>* cancel_ = nullptr;  // set by the winner of the race
@@ -2996,25 +2981,18 @@ class Otf {
   int emode = 0;
   std::vector<char> qmask;
   bool use_alu = false;
-  static constexpr bool append_only = false;
   std::size_t fedcap = 4096;
   bool capped = false;
   std::size_t passes = 0, gfp_iters = 0, expand_calls = 0, pre_calls = 0;
   std::size_t fed_max = 0, nonempty = 0;
   double fed_avg = 0;
   bool settled_early = false;
-  bool eager_local = false;      // D5: test the expansion-free witness at GENERATION time
-  bool local_hit = false;        // set when that test fires
-  std::vector<char> acc_checked;
   // OUTER vs INNER accounting. verifyta's leads-to counters report only the OUTER
   // reachability up to the first violating p-state -- measured: on fischer4/csma4/phil4 the
   // `p --> q` figures are byte-identical to `E<> p`, so the nested inevitability check is not
   // counted at all. Ours counts every interned state including the inner DFS's. To compare
   // like with like, split them.
-  bool in_inner = false;
-  long acc_refuted = 0;              // accepting states tried and refuted
-  static constexpr long kAccPrioBudget = 2;
-  std::size_t outer_expands = 0, inner_expands = 0, outer_nodes = 0, inner_nodes = 0;
+  std::size_t outer_expands = 0, outer_nodes = 0;
 
   std::vector<SymState> node;
   std::vector<std::vector<OtfEdge>> adj;
@@ -3094,8 +3072,6 @@ class Otf {
   void fill_stats(GfpStats* gs);
   bool fwd_ok_ = false;                        // build_all() found a satisfiable initial state
   bool build_all();                            // full forward BFS; true if a certificate fired
-  bool run_bfs_incremental();                  // D1/D3
-  bool run_dfs_candidates();                   // D5
   bool final_verdict_violated();               // one exact pass over the finished graph
  public:
   void zdbg();                                 // PTCTLMC_OTFZDBG: antichain-width diagnostic
@@ -3489,7 +3465,7 @@ void Otf::lazy_split(std::vector<int>& bk, int j, const AtomC& at,
   classify_atoms(node[j].zone, as, &ntag_[j], &ntag_out_[j]);
   classify_atoms(node[j2].zone, as, &ntag_[j2], &ntag_out_[j2]);
   bk.push_back(j2);
-  if (in_inner) ++inner_nodes; else ++outer_nodes;
+  ++outer_nodes;
   std::vector<int> ps = pred[j];
   pred[j].clear();
   for (int u : ps) {
@@ -3650,12 +3626,7 @@ int Otf::intern(SymState&& s) {
   // base test already says the pair would otherwise merge: that is what "the decision genuinely
   // turns on a straddled atom" means operationally. Each split removes that atom's straddle from
   // both resulting pieces, so the loop makes progress and stops.
-  // BASE MODE ONLY, defensively: the permanent split queues nodes for re-expansion in relist_,
-  // and base_forward is the only driver that drains it. A mode that left relist_ undrained would
-  // silently leave a piece of the graph unexplored, which is the one error that turns a violated
-  // query into a satisfied one. (amap_ is only ever installed on a Base-mode run, so this guard
-  // is belt and braces, not a live branch.)
-  if (reccheck && otf_splitlazy() && mode == OtfMode::Base) {
+  if (reccheck && otf_splitlazy()) {
     // Each refinement retires one atom at this key (the local `done` mask stops it being
     // re-picked, and a split leaves neither piece straddling it), so the loop makes progress.
     // The budget is insurance against a pathological key, not a semantic knob: declining a
@@ -3691,8 +3662,7 @@ int Otf::intern(SymState&& s) {
   }
   for (int j : b)
     if (covered(j)) return j;
-  if (!append_only)
-    for (std::size_t k = 0; k < b.size(); ++k)
+  for (std::size_t k = 0; k < b.size(); ++k)
       if (covers(b[k])) {
         node[b[k]].zone = s.zone;
         if (reccheck) { ntag_[b[k]] = tag; ntag_out_[b[k]] = tag_out; }
@@ -3745,7 +3715,7 @@ int Otf::intern(SymState&& s) {
   ntag_[id] = tag;
   ntag_out_[id] = tag_out;
   b.push_back(id);
-  if (in_inner) ++inner_nodes; else ++outer_nodes;
+  ++outer_nodes;
   grow();
   return id;
 }
@@ -3840,7 +3810,7 @@ void Otf::expand(int u) {
   if (expanded[u]) return;
   expanded[u] = 1;
   ++expand_calls;
-  if (in_inner) ++inner_expands; else ++outer_expands;
+  ++outer_expands;
   const int prev_expand = cur_expand_;
   cur_expand_ = u;
   std::vector<SymState> succ;
@@ -3861,25 +3831,8 @@ void Otf::expand(int u) {
     adj[u].push_back(OtfEdge{v, tags[k]});
     pred[v].push_back(u);
     // WITNESS AT GENERATION, not at expansion.
-    //
-    // The two expansion-free stopping disjuncts depend only on v's own zone and the model, so
-    // they can be tested the instant v is interned -- there is no reason to wait until v is
-    // popped from the frontier and expanded. On a violated query whose witness is a single
-    // state this is the difference between settling when the state is FOUND and settling when
-    // the search happens to get round to it. Measured on grc4 `T0.near --> T0.in`, where 1768
-    // stored zones sit on only 122 discrete keys, so the same witness is generated long before
-    // it is expanded.
-    if (eager_local && !local_hit) {
-      if (acc_checked.size() < node.size()) acc_checked.resize(node.size(), 0);
-      if (!acc_checked[v]) {
-        acc_checked[v] = 1;
-        if (is_p(v) && is_nq(v) &&
-            (time_diverges(node[v]) || state_has_deadlock(net, node[v])))
-          local_hit = true;
-      }
-    }
     // In-place enlargement invalidates the enlarged node's adjacency (it was computed from
-    // the smaller zone). Off under append_only, where it cannot happen.
+    // the smaller zone).
     if (intern_grew) {
       if (v != u) {
         expanded[v] = 0;
@@ -4105,202 +4058,6 @@ bool Otf::build_all() {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// D5 (candidate-confirm) -- the variant this branch recommends.
-//
-// The shipping forward engine (src/netreach.cpp, leads_to_net) settles a VIOLATED query in
-// a handful of states with a lazy Tarjan over the !q subgraph, but it has to REFUSE every
-// subsumption edge (`exact_edge`) because a redirected edge closes cycles the concrete
-// system cannot run -- the wrong verdict written up in liveness-subsumption-bug.md. The
-// backward operator has no such problem. So: let the forward DFS follow EVERY edge,
-// including subsumption edges, and use it only as a CANDIDATE GENERATOR; then confirm each
-// candidate exactly with a confined backward pass over the DFS stack.
-//
-//   * a candidate that survives is a genuine certificate -- by (*), with exactly the
-//     verdict the finished graph would give;
-//   * a candidate that dies costs one small pass over a path, and the search continues.
-//
-// The forward search therefore runs on the FULLY SUBSUMED graph (the reachability floor,
-// 1.0-1.3 zones per discrete state) while keeping the exactness of the backward operator.
-// Neither half can do that alone.
-bool Otf::run_dfs_candidates() {
-  eager_local = true;
-  if (!build_all()) return false;
-  { grow();
-    if (is_p(0) && is_nq(0) &&
-        (time_diverges(node[0]) || state_has_deadlock(net, node[0])))
-      { settled_early = true; return true; } }
-  std::unordered_set<long long> tried;            // (root, target) candidates already refuted
-  std::vector<char> onstk;
-  std::vector<int> visit;                         // dfs discovery order marker, -1 = unvisited
-
-  // REFUTATION BUDGET. A confirmation costs one confined pass over the DFS stack -- cheap,
-  // but not free, and on a query that HOLDS every candidate is spurious by definition, so an
-  // unbounded policy pays for a pass per back-edge and buys nothing. Measured: on every
-  // violated query in the set the certificate is confirmed on the FIRST candidate (passes=1,
-  // 1-3 Pre calls, including grc4 where the DFS first walks 1722 states); the only run that
-  // refutes repeatedly is grc4 `T0.in --> T0.far`, which HOLDS and burned 22 passes and 320k
-  // Pre calls to learn that. So spend a small fixed number of refutations and then stop
-  // looking. This cannot change a verdict -- abandoning the early exit only defers the answer
-  // to the exact final pass -- it only gives up the chance of an early one.
-  const long refute_budget =
-      std::getenv("PTCTLMC_OTFREFUTE") ? std::strtol(std::getenv("PTCTLMC_OTFREFUTE"), nullptr, 10)
-                                       : 8;
-  long refuted = 0;
-
-  // Inner !q DFS from an accepting node. Returns true when a candidate is CONFIRMED.
-  auto neg_dfs = [&](int root) -> bool {
-    in_inner = true;
-    struct InnerGuard { bool* f; ~InnerGuard(){ *f = false; } } ig{&in_inner};
-    grow();
-    if (visit.size() < node.size()) visit.resize(node.size(), -1);
-    if (onstk.size() < node.size()) onstk.resize(node.size(), 0);
-    struct Frame { int u; std::size_t i; };
-    std::vector<Frame> fs;
-    std::vector<int> stack_nodes;
-    auto confirm = [&](int tgt) -> bool {
-      if (refuted >= refute_budget) return false;
-      const long long k = (long long)root * 1000000007LL + tgt;
-      if (!tried.insert(k).second) return false;
-      std::vector<int> S;
-      for (int v : stack_nodes)
-        if (expanded[v] && is_nq(v)) S.push_back(v);
-      if (S.empty()) return false;
-      if (certificate_in(S)) return true;
-      ++refuted;
-      return false;
-    };
-    visit[root] = 1;
-    onstk[root] = 1;
-    fs.push_back({root, 0});
-    stack_nodes.push_back(root);
-    while (!fs.empty()) {
-      const int u = fs.back().u;
-      grow();
-      if (visit.size() < node.size()) visit.resize(node.size(), -1);
-      if (onstk.size() < node.size()) onstk.resize(node.size(), 0);
-      expand(u);
-      grow();
-      if (visit.size() < node.size()) visit.resize(node.size(), -1);
-      if (onstk.size() < node.size()) onstk.resize(node.size(), 0);
-      // Candidate kind 1: a maximal !q run can END here.
-      if (fs.back().i == 0 && stop_term(u) && confirm(u)) return true;
-      bool descended = false;
-      while (fs.back().i < adj[u].size()) {
-        const int v = adj[u][fs.back().i++].tgt;
-        if (!is_nq(v)) continue;                  // !q subgraph only
-        if (onstk[v]) {                           // candidate kind 2: a !q cycle
-          if (confirm(v)) return true;
-          continue;
-        }
-        if (visit[v] == -1) {
-          visit[v] = 1;
-          onstk[v] = 1;
-          fs.push_back({v, 0});
-          stack_nodes.push_back(v);
-          descended = true;
-          break;
-        }
-      }
-      if (descended) continue;
-      onstk[u] = 0;
-      stack_nodes.pop_back();
-      fs.pop_back();
-    }
-    return false;
-  };
-
-  // OUTER SEARCH ORDER. The outer search exists to FIND a reachable p /\ !q state; the inner
-  // DFS and the backward pass then settle it. Which state it finds first is therefore the whole
-  // cost on a violated query, and breadth-first is not obviously right: a witness that lives
-  // deep costs the entire shallow shell before it is even looked at. PTCTLMC_OTFORDER=dfs
-  // takes the frontier LIFO instead. Neither order changes the verdict -- both enumerate the
-  // same reachable set -- so this is purely which one settles sooner.
-  static const bool outer_dfs = [] {
-    const char* c = std::getenv("PTCTLMC_OTFORDER");
-    return c && std::string(c) == "dfs";
-  }();
-  // The frontier is a plain deque unless the coarse oracle is usable, in which case it is a
-  // min-heap on "coarse distance from this node's discrete key to the nearest key that could
-  // carry a witness", tie-broken by insertion order so it degrades to BFS within a tier.
-  std::deque<int> work;
-  auto push_work = [&](int v) { work.push_back(v); };
-  push_work(0);
-  std::vector<char> seen(1, 1), acc_done;
-  while (!work.empty()) {
-    int u;
-    if (outer_dfs) { u = work.back(); work.pop_back(); }
-    else { u = work.front(); work.pop_front(); }
-    grow();
-    if (acc_done.size() < node.size()) acc_done.resize(node.size(), 0);
-    // ACCEPTING NODES ARE SETTLED BEFORE THEY ARE EXPANDED, AND EAGERLY.
-    //
-    // Two of the three stopping disjuncts need NO ADJACENCY: `time_diverges` and
-    // `state_has_deadlock` are computed from the zone and the model alone, and only
-    // `adj(u) = empty` needs u expanded. If either holds at an accepting u then
-    // Z_u subseteq stop(u), so W_u = Z_u is already a post-fixpoint on S = {u} and the query
-    // is settled with ZERO expansions and no fixpoint iteration. Expanding first threw that
-    // away: it interned |succ(u)| nodes to learn something that did not depend on them.
-    if (!acc_done[u]) {
-      acc_done[u] = 1;
-      if (is_p(u) && is_nq(u)) {
-        if (time_diverges(node[u]) || state_has_deadlock(net, node[u])) {
-          settled_early = true;
-          return true;
-        }
-        // From here on the work exists ONLY to decide EG!q at u -- the outer reachability did
-        // not need u expanded, and on a violated query it never will, because we stop. So this
-        // expansion is INNER work, and attributing it to the outer count would compare our
-        // liveness check against verifyta's reachability-only counter. (verifyta's `p --> q`
-        // figures are byte-identical to `E<> p` on fischer4/csma4/phil4, which is what
-        // establishes that its counter stops exactly here.)
-        in_inner = true;
-        expand(u);
-        grow();
-        if (adj[u].empty()) { settled_early = true; in_inner = false; return true; }
-        if (neg_dfs(u)) { settled_early = true; in_inner = false; return true; }
-        in_inner = false;
-        ++acc_refuted;                 // this accepting state carries no witness
-      }
-    }
-    // NOT skipped when already expanded: the inner !q DFS expands nodes too, and skipping one
-    // would skip PUBLISHING its successors, which silently truncates the reachable set. A
-    // p /\ !q state may be reachable ONLY through q states, which the inner DFS never enters.
-    expand(u);
-    grow();
-    if (local_hit) { settled_early = true; return true; }
-    // ACCEPTING STATES JUMP THE QUEUE.
-    //
-    // Only a p /\ !q state can settle a violated query, so a newly generated one is the most
-    // valuable thing in the frontier and there is no reason to make it wait behind the rest of
-    // its breadth level. Measured on phil4 `P0.Eat --> P0.Think`, where the first accepting
-    // state found is already a witness (passes=1) and the whole cost was reaching it: the
-    // process enumeration order in gfp_succ_tagged puts the four fork processes before the
-    // philosophers, so P0's own move is generated last.
-    //
-    // BUT IT MUST BE BUDGETED. Where most accepting states are NOT witnesses, front-loading
-    // them turns the breadth search into a dive and costs far more than it saves: grc4
-    // `T0.near --> T0.in` goes 182 -> 1762 outer expansions unbudgeted, because it has many
-    // T0.near states and the early ones are all refuted. So prioritise only until a couple of
-    // accepting states have failed, then fall back to breadth-first. phil4's first accepting
-    // state IS a witness, so it never spends the budget.
-    //
-    // This is a pure ORDERING change: the same states are reachable and a query that HOLDS
-    // still exhausts the identical set, so soundness and completeness are untouched.
-    for (const auto& e : adj[u]) {
-      if (seen.size() < node.size()) seen.resize(node.size(), 0);
-      if (!seen[e.tgt] || !expanded[e.tgt]) {
-        seen[e.tgt] = 1;
-        if (!outer_dfs && acc_refuted < kAccPrioBudget &&
-            is_p(e.tgt) && is_nq(e.tgt))
-          work.push_front(e.tgt);
-        else
-          push_work(e.tgt);
-      }
-    }
-  }
-  return final_verdict_violated();
-}
 
 // The !q nodes that can actually influence the verdict: those forward-reachable, THROUGH !q
 // EDGES ONLY, from a p /\ !q node. F is defined per node from its own successors, so the
@@ -4898,18 +4655,8 @@ bool Otf::finish_verdict(GfpStats* gs) {
 
 bool Otf::run(GfpStats* gs) {
   setup();
-  bool violated = false;
-  switch (mode) {
-    case OtfMode::Base:
-      base_forward();
-      violated = fwd_ok_ && final_verdict_violated();
-      break;
-      violated = run_bfs_incremental();
-      break;
-    case OtfMode::D5:
-      violated = run_dfs_candidates();
-      break;
-  }
+  base_forward();
+  const bool violated = fwd_ok_ && final_verdict_violated();
   fill_stats(gs);
   return !violated;
 }
@@ -4930,7 +4677,6 @@ void Otf::fill_stats(GfpStats* gs) {
     gs->passes = passes;
     gs->pre_calls = pre_calls;
     gs->early = settled_early;
-    gs->mode = otf_mode_name(mode);
     // D6 over-approximates, so a non-empty fixpoint is NOT a witness -- it may rest entirely on
     // hull points the system never reaches. Only the empty direction concludes.
     // Do NOT count the initial state, matching verifyta. Its `E<> p` figures are exactly our
@@ -4993,16 +4739,20 @@ void Otf::fill_stats(GfpStats* gs) {
 // is reachable" says nothing about THIS query -- the dropped witness may or may not have been
 // one -- so that outcome must not publish a verdict and must not cancel lane B.
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs) {
-  OtfMode m = OtfMode::Base;
+  // Phase 1.
+  Otf e1(net, p, q);
 
-  static const bool no_gate    = std::getenv("PTCTLMC_OTFNOGATE")       != nullptr;
-  // THE GENERAL CONSTRUCTION IS THE DEFAULT. It subsumes the certificate -- an empty map IS
-  // dtheta_empty's condition -- so where the certificate used to fire, this is the same
-  // structural sweep and the same a_LU search, node for node. Where the certificate DECLINED
-  // it now carries the model instead of falling back to the race. Best of 3, `Bus.Active -->
-  // Bus.Idle` and `T0.in --> T0.far`:
+  // Diagonal models never used a_LU (Otf::setup forces inclusion), so phase 1 is already
+  // exact: there is nothing to discharge and no atom construction to run.
+  if (network_has_diagonal(net)) return e1.run(gs);
+
+  // THE GENERAL CONSTRUCTION. It subsumes the certificate -- an empty map IS dtheta_empty's
+  // condition -- so where the certificate used to fire, this is the same structural sweep and
+  // the same a_LU search, node for node. Where the certificate DECLINED it carries the model
+  // instead of falling back to the race. Best of 3, `Bus.Active --> Bus.Idle` and
+  // `T0.in --> T0.far`:
   //
-  //     model    old default   NEW      a_M       a_LU floor (unsound)
+  //     model    certificate   THIS     a_M       a_LU floor (unsound)
   //     csma6      0.138       0.018    0.142     0.012
   //     csma7      3.985       0.053    9.729     0.033
   //     grc4       0.085       0.042    0.056     0.031
@@ -5013,192 +4763,69 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
   // splits the backward federations that pass through it, and narrower federations converge
   // faster than the arrangement one wide zone produces.
   //
-  // The race survives only for a map that exceeds the 64-bit tag cap.
-  // PTCTLMC_OTFNOATOMS restores the old default.
-  static const bool want_atoms0 = std::getenv("PTCTLMC_OTFNOATOMS")     == nullptr;
-  // Is the atom construction eligible at all? Decided BEFORE phase 1, because that is what
-  // lets phase 1 stop after its forward half. Everything here is static: the mode, whether the
-  // network has diagonals (a_LU is off entirely there, so there is nothing to discharge), and
-  // the two escape hatches. Nothing about the query or the graph.
-  const bool atoms_lane = want_atoms0 && m == OtfMode::Base && !no_gate &&
-                          !network_has_diagonal(net);
-
-  // Phase 1.
-  Otf e1(net, p, q, m);
-  const auto t_p1 = std::chrono::steady_clock::now();
-  bool holds_alu = true;
-  if (atoms_lane) {
-    // FORWARD ONLY, for now. The atom map is read off this graph; if it turns out non-empty
-    // the refined search replaces this run wholesale and phase 1's backward fixpoint -- 80% of
-    // its wall clock -- would have been dead work. The block below pays it, via
-    // e1.finish_verdict(), on exactly the paths that still need phase 1's own verdict.
-    e1.build_forward(gs);
-  } else {
-    holds_alu = e1.run(gs);
-  }
-  if (std::getenv("PTCTLMC_OTFATOMSTAT"))
-    std::fprintf(stderr, "[atoms] time: phase1=%.1fms\n",
-                 std::chrono::duration<double, std::milli>(
-                     std::chrono::steady_clock::now() - t_p1).count());
-  if (!atoms_lane) {
-    if (!holds_alu) return false;                   // genuine witness; gate never paid
-
-    // Diagonal models never used a_LU (Otf::setup forces inclusion), so phase 1 was already
-    // exact and there is nothing to discharge.
-    if (network_has_diagonal(net)) return true;
-    // PTCTLMC_OTFNOGATE: skip the gate entirely. UNSOUND -- kept only to A/B its cost.
-    if (no_gate) return true;
-  }
-
-  // Phase 2a: THE DEADLOCK-COMPLETION CERTIFICATE (see Otf::dtheta_empty). If the completion's
-  // constraint-map seed is empty at every reachable key, the ordinary constraint map already
-  // preserves deadlock and phase 1's a_LU covering was sound as it stands. One federation
-  // computation per DISCRETE KEY and no search -- against a full reachability traversal for the
-  // deadlock-freedom lane. PTCTLMC_OTFNOCERT skips it, to price it against the race.
-  static const bool no_cert    = std::getenv("PTCTLMC_OTFNOCERT")      != nullptr;
-  // PTCTLMC_OTFATOMSFORCE: build and INSTALL the map even when it comes out empty. Measurement
-  // only -- it is how "atoms ON is a no-op wherever the seed is empty" is checked end to end,
-  // since the empty-map exit below would otherwise return before a second search happens.
-  static const bool atoms_force = std::getenv("PTCTLMC_OTFATOMSFORCE") != nullptr;
-
-  // Phase 2b: THE GENERAL CONSTRUCTION (see AtomMap and Otf::build_atom_map). Where
-  // dtheta_empty only DECIDES whether the deadlock completion's seed is empty, this builds the
-  // seed, closes it under pre, and redoes the search under a_LU refined by the resulting cells.
+  // The race below survives only for a map that exceeds the 64-bit tag cap.
   //
-  // It SUBSUMES the certificate rather than sitting behind it: an EMPTY map is exactly the
-  // condition dtheta_empty tests (every reachable key degenerate, or its atoms implied by
-  // Inv(q) and so constant on every stored zone), so the same structural sweep answers both
-  // questions and the pair is not paid twice.
+  // FORWARD ONLY, for now. The atom map is read off this graph; if it turns out non-empty the
+  // refined search replaces this run wholesale and phase 1's backward fixpoint -- 80% of its
+  // wall clock -- would have been dead work. It is paid below, via e1.finish_verdict(), on
+  // exactly the paths that still need phase 1's own verdict.
+  e1.build_forward(gs);
+
+  // Phase 2: THE ATOM MAP (see AtomMap and Otf::build_atom_map). Where the deadlock-completion
+  // certificate only DECIDES whether the completion's seed is empty, this builds the seed,
+  // closes it under pre, and redoes the search under a_LU refined by the resulting cells.
   //
   // The verdict is sound either way round. VIOLATED is genuine outright -- zones are exact and
   // pre/stop are exact concrete operations -- and HOLDS is sound because the refined covering
   // preserves the sink's reachability, hence deadlock. If the map exceeds its atom cap the
   // whole block falls through to the certificate and the race, unchanged.
-  // BASE MODE ONLY. The map is derived from e1's FINISHED graph -- every key and every
-  // key-edge the atoms run can reach must already be present, which holds because a_LU is a
-  // simulation and so never loses a reachable discrete key or edge. The candidate-confirm mode
-  // may settle and return with the graph half-built, where that guarantee does not hold.
-  if (atoms_lane) {
-    AtomMap am;
-    const auto t_map0 = std::chrono::steady_clock::now();
-    const bool ok = e1.build_atom_map(am);
-    const double ms_map = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - t_map0).count();
-    static const bool astat = std::getenv("PTCTLMC_OTFATOMSTAT") != nullptr;
-    if (ok && am.usable) {
-      if (am.diag.empty() && am.bumped == 0 && !atoms_force) {
-        // EMPTY MAP: this IS dtheta_empty's certificate, so phase 1's a_LU covering was already
-        // deadlock-sound and phase 1's own verdict is the answer. Its backward fixpoint was
-        // deferred, not skipped -- pay it here, exactly once, on the graph already built. The
-        // nine models whose seed is empty therefore run precisely the search they ran before
-        // this refactor, node for node and pass for pass.
-        if (astat) std::fprintf(stderr, "[atoms] seed empty: certificate fires, a_LU stands\n");
-        return e1.finish_verdict(gs);
-      }
-      // NO CLOSURE-DOMINANCE PREDICTOR. There used to be one here: when the pre-closure added
-      // more atoms than the seed did, it abandoned the construction and ran a_M instead,
-      // because on grc4 (139 closure atoms against 25 seed, 100% straddle) the atoms lane
-      // measured 0.18s against a_M's 0.05s. That reading was wrong about WHERE grc4's time
-      // went. Split by phase, the atoms lane was 0.035s of searching behind 0.126s of
-      // structural sweep and 0.025s of a phase-1 backward fixpoint that the refined search
-      // then repeated. Both of those are now gone -- the sweep by the `Inv ^ Esc` rewrite of
-      // the Dead=Inv test, the fixpoint by deferring phase 1's backward half -- and the atoms
-      // lane wins outright on the very model the predictor was built to hand to a_M. The
-      // straddle rate was never the bill: grc4 splits 100% of its tagged zones, stores 1.34x
-      // the a_LU nodes for it, and the refined search still costs the same as the unrefined
-      // one. PTCTLMC_OTFATOMSAM forces a_M instead, for pricing only.
-      if (std::getenv("PTCTLMC_OTFATOMSAM")) {
-        Otf eam(net, p, q, m);
-        eam.set_am(true);
-        GfpStats gsam;
-        const bool holds_am = eam.run(&gsam);
-        if (gs) *gs = gsam;
-        return holds_am;
-      }
-      Otf e2(net, p, q, m);
-      e2.set_atoms(&am);
-      GfpStats gs2;
-      const auto t_run0 = std::chrono::steady_clock::now();
-      const bool holds2 = e2.run(&gs2);
-      const double ms_run = std::chrono::duration<double, std::milli>(
-                                std::chrono::steady_clock::now() - t_run0).count();
-      // PTCTLMC_OTFTIME prints the phase split WITHOUT turning on the statistics, whose own
-      // per-zone sweeps are charged to the search being timed. It is the honest stopwatch for
-      // the split-at-creation / split-at-comparison / lazy A/B.
-      if (astat || std::getenv("PTCTLMC_OTFTIME"))
-        std::fprintf(stderr, "[atoms] time: build-map=%.1fms atoms-search=%.1fms\n",
-                     ms_map, ms_run);
-      if (astat)
-        std::fprintf(stderr,
-                     "[atoms] seed-keys=%zu seed-atoms=%zu nondiag=%zu closure-added=%zu "
-                     "tagged-keys=%zu bumped-clocks=%zu rounds=%zu dropped=%zu/%zu | tagged-zones=%zu "
-                     "straddling-zones=%zu (%.1f%%) atom-straddles=%zu extra-pieces=%zu | "
-                     "nodes=%zu (phase1=%zu, x%.2f)\n",
-                     am.seed_keys, am.seed_atoms, am.nondiag_atoms, am.closure_atoms,
-                     am.keys_tagged, am.bumped, am.rounds, am.dropped_disjoint,
-                     am.dropped_vacuous, e2.atom_cand_zones(),
-                     e2.atom_split_zones(),
-                     e2.atom_cand_zones()
-                         ? 100.0 * double(e2.atom_split_zones()) / double(e2.atom_cand_zones())
-                         : 0.0,
-                     e2.atom_straddles(), e2.atom_splits(), gs2.fwd_nodes,
-                     gs ? gs->fwd_nodes : 0,
-                     (gs && gs->fwd_nodes) ? double(gs2.fwd_nodes) / double(gs->fwd_nodes) : 0.0);
-      if (astat) {
-        const auto lv = e2.atom_liveness(am);
-        std::fprintf(stderr,
-                     "[atoms] atoms that separate anything: %zu of %zu carried (%zu ever split "
-                     "a zone)\n",
-                     lv.first, lv.second, e2.atom_splitters());
-        const auto cp = e2.cover_probe_stats();
-        const auto lz = e2.lazy_stats();
-        std::fprintf(stderr,
-                     "[atoms] cover probes=%zu recursed=%zu (%.2f%%) rec-calls=%zu "
-                     "(%.2f/probe) prefiltered=%zu | lazy splits=%zu redos=%zu activated=%zu\n",
-                     cp[0], cp[1], cp[0] ? 100.0 * double(cp[1]) / double(cp[0]) : 0.0, cp[2],
-                     cp[0] ? double(cp[2]) / double(cp[0]) : 0.0, cp[3], lz[0], lz[1], lz[2]);
-      }
-      if (gs) *gs = gs2;
-      return holds2;
+  //
+  // NO CLOSURE-DOMINANCE PREDICTOR. There used to be one here: when the pre-closure added more
+  // atoms than the seed did, it abandoned the construction and ran a_M instead, because on grc4
+  // (139 closure atoms against 25 seed, 100% straddle) the atoms lane measured 0.18s against
+  // a_M's 0.05s. That reading was wrong about WHERE grc4's time went. Split by phase, the atoms
+  // lane was 0.035s of searching behind 0.126s of structural sweep and 0.025s of a phase-1
+  // backward fixpoint that the refined search then repeated. Both of those are now gone -- the
+  // sweep by the `Inv ^ Esc` rewrite of the Dead=Inv test, the fixpoint by deferring phase 1's
+  // backward half -- and the atoms lane wins outright on the very model the predictor was built
+  // to hand to a_M. The straddle rate was never the bill: grc4 splits 100% of its tagged zones,
+  // stores 1.34x the a_LU nodes for it, and the refined search still costs the same.
+  AtomMap am;
+  if (e1.build_atom_map(am) && am.usable) {
+    if (am.diag.empty() && am.bumped == 0) {
+      // EMPTY MAP: this IS the deadlock-completion certificate, so phase 1's a_LU covering was
+      // already deadlock-sound and phase 1's own verdict is the answer. Its backward fixpoint
+      // was deferred, not skipped -- pay it here, exactly once, on the graph already built.
+      return e1.finish_verdict(gs);
     }
-    if (astat) std::fprintf(stderr, "[atoms] map unusable (atom cap); falling back to the race\n");
-    // The construction cannot run, so phase 1's verdict is owed after all: pay the backward
-    // pass that build_forward deferred, then rejoin the ordinary certificate/race path.
-    if (!e1.finish_verdict(gs)) return false;        // genuine witness
+    Otf e2(net, p, q);
+    e2.set_atoms(&am);
+    GfpStats gs2;
+    const bool holds2 = e2.run(&gs2);
+    if (gs) *gs = gs2;
+    return holds2;
   }
 
-  // Phase 2a: THE DEADLOCK-COMPLETION CERTIFICATE (see Otf::dtheta_empty).
-  if (!no_cert && e1.dtheta_empty()) return true;
+  // The construction cannot run (atom cap), so phase 1's verdict is owed after all: pay the
+  // backward pass build_forward deferred, then rejoin the certificate/race path.
+  if (!e1.finish_verdict(gs)) return false;        // genuine witness
 
-  // PTCTLMC_OTFLANE=A|B runs ONE lane sequentially: the two strategies a sequential tool would
-  // have to gamble between. Measurement only -- both are sound on their own, which is exactly
-  // why the race is sound.
-  if (const char* lane = std::getenv("PTCTLMC_OTFLANE")) {
-    if (*lane == 'A') {
-      ReachStats dl;
-      if (!deadlock_reachable(net, Backend::Omp, &dl, nullptr)) return true;
-      return Otf(net, p, q, m, /*force_exact=*/true).run(nullptr);   // gate inconclusive
-    }
-    if (*lane == 'B') return Otf(net, p, q, m, /*force_exact=*/true).run(gs);
-  }
+  // THE DEADLOCK-COMPLETION CERTIFICATE (see Otf::dtheta_empty). If the completion's
+  // constraint-map seed is empty at every reachable key, the ordinary constraint map already
+  // preserves deadlock and phase 1's a_LU covering was sound as it stands. One federation
+  // computation per DISCRETE KEY and no search -- against a full reachability traversal for
+  // the deadlock-freedom lane.
+  if (e1.dtheta_empty()) return true;
 
   std::atomic<bool> done{false};
   std::atomic<int> verdict{-1};                     // 0 = holds, 1 = violated
   GfpStats gs_b;
-  // PTCTLMC_OTFGATETRACE: which lane won, and how long the pair took. The point of the race is
-  // that this answer is not predictable, so it is worth being able to see it per query.
-  static const bool trace = std::getenv("PTCTLMC_OTFGATETRACE") != nullptr;
-  std::atomic<int> winner{-1};                      // 0 = gate lane A, 1 = exact lane B
-  const auto t_race0 = std::chrono::steady_clock::now();
 
   std::thread lane_b([&] {
-    Otf e(net, p, q, m, /*force_exact=*/true, &done);
+    Otf e(net, p, q, /*force_exact=*/true, &done);
     const bool holds = e.run(&gs_b);
     if (e.was_cancelled()) return;                  // abandoned: its verdict is not a verdict
-    if (!done.exchange(true)) {
-      verdict.store(holds ? 0 : 1, std::memory_order_release);
-      winner.store(1, std::memory_order_release);
-    }
+    if (!done.exchange(true)) verdict.store(holds ? 0 : 1, std::memory_order_release);
   });
 
   {
@@ -5206,20 +4833,11 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
     const bool may_dl = deadlock_reachable(net, Backend::Omp, &dl, &done);
     // A cancelled reach_engine returns false, indistinguishable from "no deadlock reachable",
     // so this lane may only be trusted if it was not the one cancelled.
-    if (!done.load(std::memory_order_acquire) && !may_dl && !done.exchange(true)) {
+    if (!done.load(std::memory_order_acquire) && !may_dl && !done.exchange(true))
       verdict.store(0, std::memory_order_release);  // a_LU found nothing and was sound
-      winner.store(0, std::memory_order_release);
-    }
   }
 
   lane_b.join();
-  if (trace) {
-    const double ms = std::chrono::duration<double, std::milli>(
-                          std::chrono::steady_clock::now() - t_race0).count();
-    const int w = winner.load(std::memory_order_acquire);
-    std::fprintf(stderr, "[gate] winner=%s race=%.1fms\n",
-                 w == 0 ? "A(deadlock-free)" : w == 1 ? "B(exact re-run)" : "none", ms);
-  }
   const int v = verdict.load(std::memory_order_acquire);
   if (v == 1 && gs) *gs = gs_b;                     // lane B won and it disagreed with phase 1
   if (v >= 0) return v == 0;
@@ -5227,7 +4845,7 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
   // Unreachable in the current logic: lane B is cancelled only by lane A concluding
   // "deadlock-free", which publishes verdict 0. Kept so that a future change to either lane
   // cannot silently turn an inconclusive pair into a wrong answer.
-  return Otf(net, p, q, m, /*force_exact=*/true).run(nullptr);
+  return Otf(net, p, q, /*force_exact=*/true).run(nullptr);
 }
 
 }  // namespace ptctlmc
