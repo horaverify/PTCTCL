@@ -1184,7 +1184,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // layout, and the CPU-merge fallback (AoS) is disabled since it can't read it. Declared here
     // rather than beside use_gpu: every reader is inside this GPU-only block, so at file scope it
     // was an unused variable (and a -Wunused-variable warning) in every CPU-only build.
-    const bool soa = use_gpu && gpu->soa_work_pool();
     const int np = net.nprocs(), ni = static_cast<int>(net.intvars.size()), dim = net.nclocks + 1, d2 = dim * dim;
     // The passed set holds ZONE INDICES into a shared dense pool rather than a private dense copy
     // per (discrete state, zone). With `--gpu-intern` the pool DEDUPLICATES, which is a large win
@@ -1607,14 +1606,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         auto pit = passed.find(bdk[b]);
         if (pit != passed.end()) {
           gz_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
-          if (soa) {   // transpose AoS antichain -> SoA pool: zone i entry k at dst[k*cap + i]
-            const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
-            for (int i = 0; i < exist_cnt[b]; ++i)
-              zi.load_gz_strided(pit->second[i] & ~kNewBit, dst + i, cap);
-          } else {
-            for (int i = 0; i < exist_cnt[b]; ++i)
-              zi.load_gz(pit->second[i] & ~kNewBit, dst + static_cast<std::size_t>(i) * d2);
-          }
+          for (int i = 0; i < exist_cnt[b]; ++i)
+            zi.load_gz(pit->second[i] & ~kNewBit, dst + static_cast<std::size_t>(i) * d2);
           // Seed each already-stored zone's TAG with its passed-set index (kNewBit included). The
           // merge carries a kept zone's tag through its compaction and writes -1 for the zones it
           // creates, so the rebuild can tell "this output slot IS stored zone j" from "this output
@@ -1642,7 +1635,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       long long sum2 = 0;
       for (int b = 0; b < nb; ++b) { const long long s = exist_cnt[b] + new_cnt[b]; sum2 += s*s; }
       bool cpu_merge = false;
-      if (detail::options().adaptive_merge && !soa) {   // SoA pool is unreadable by the AoS CPU merge -> GPU only
+      if (detail::options().adaptive_merge) {
         if (cpu_rate < 0) cpu_merge = true;         // calibrate the CPU path first (never catastrophic)
         else if (gpu_rate < 0) cpu_merge = false;   // then calibrate the GPU path
         else cpu_merge = (cpu_rate >= gpu_rate);    // route to the higher-throughput path
@@ -1721,8 +1714,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         oldv.clear();
         for (int idx : pz) oldv.push_back(idx & ~kNewBit);
         pz.resize(static_cast<std::size_t>(out_count[b]));
-        const std::size_t poolbase = static_cast<std::size_t>(out_work_off[b]) * d2;
-        const std::size_t cap = static_cast<std::size_t>(exist_cnt[b]) + new_cnt[b];
         int fpos = 0;
         std::vector<raw_t> tmp(d2);        // one merged zone, reused across this bucket
         for (int i = 0; i < out_count[b]; ++i) {
@@ -1730,10 +1721,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           const int tag = out_isnew[slot];
           if (tag >= 0) { pz[i] = tag; continue; }   // kept: already stored, already interned
           raw_t* pzi = tmp.data();
-          if (soa)   // transpose SoA pool -> AoS zone: entry k at poolbase + k*cap + i
-            for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones, static_cast<int>(poolbase) + k * static_cast<int>(cap) + i);
-          else
-            for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones + slot * d2, k);
+          for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones + slot * d2, k);
           // The high bit of the stored index records "added during the CURRENT level". The
           // frontier is read off these flags once the level is finished (see the level-advance
           // step), NOT here -- because a later batch of the same level can still absorb this zone

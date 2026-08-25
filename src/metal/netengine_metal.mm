@@ -48,30 +48,6 @@ struct NetParams {
   std::int32_t dim, nprocs, nintvars, nclocks, nwork, qbits;
 };
 
-// Engine-internal phase timers (PTCTLMC_MTLPROF). The driver's `t_expand` covers the WHOLE
-// expand() call, which is host recipe enumeration + buffer staging + the kernel; those three
-// have completely different fixes, so they are attributed separately here and dumped once at
-// destruction. Off (and free) unless the env var is set.
-struct EngProf {
-  bool on = false;
-  double enumerate = 0, stage = 0, kernel = 0, mstage = 0, mkernel = 0;
-  long long levels = 0;
-  ~EngProf() {
-    if (!on) return;
-    std::fprintf(stderr,
-        "[engprof] expand: enumerate=%.0fms stage=%.0fms kernel=%.0fms | "
-        "merge: stage=%.0fms kernel=%.0fms  (%lld levels)\n",
-        enumerate, stage, kernel, mstage, mkernel, levels);
-  }
-};
-static EngProf g_eprof;
-struct EngClock {
-  static double now() {
-    return std::chrono::duration<double, std::milli>(
-               std::chrono::steady_clock::now().time_since_epoch()).count();
-  }
-};
-
 // ---- MSL: DBM ops (port of dbm_ops.hpp) + network successor kernel -------------------
 static NSString* const kNetSource = @R"MSL(
 #include <metal_stdlib>
@@ -371,10 +347,8 @@ inline bool d_try_union(thread int* a, thread const int* b, int dim) {
 // without copying either into the other's space. Semantics are byte-identical to the
 // per-thread d_* ops above; only the address spaces differ.
 
-// Strided view of one zone: entry e at base[e*stride]. stride=1 => AoS (base=W+i*d2), stride=cap
-// => SoA (base=W+i). Presenting it via operator[] lets the templated ops read either layout
-// unchanged; in SoA, 32 lanes reading the same entry of consecutive zones hit consecutive
-// addresses (coalesced).
+// Strided view of one zone: entry e at base[e*stride]. Presenting it via operator[] lets the
+// templated DBM ops read the pool without knowing its layout.
 struct SoaZone {
   device const GZ* base;
   int stride;
@@ -503,101 +477,9 @@ inline bool g_union_convex(PA a, PB b, int dim) {
   for (int k = 0; k < dim*dim; ++k) H[k] = a[k] > b[k] ? a[k] : b[k];
   return g_facets_ok(a, b, H, dim) && g_facets_ok(b, a, H, dim);
 }
-// Cooperative all-pairs-shortest-path close of a threadgroup zone: lane L owns row L (dim<=24
-// <32, so <=1 row/lane). The k-loop is sequential (row k must be final before it relaxes the
-// others); row k is invariant during step k (d[k][k]=0), so lane k's writes are no-ops and no
-// intra-step race exists. A barrier per step publishes each row before the next reads it.
-inline void sg_close(threadgroup int* d, int dim, uint lane) {
-  const bool act = (int)lane < dim;
-  for (int k = 0; k < dim; ++k) {
-    simdgroup_barrier(mem_flags::mem_threadgroup);
-    if (act) {
-      int ik = d[lane*dim + k];
-      if (ik < kInf)
-        for (int j = 0; j < dim; ++j) {
-          int s = r_add(ik, d[k*dim + j]);
-          if (s < d[lane*dim + j]) d[lane*dim + j] = s;
-        }
-    }
-  }
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-}
-
-// ---- SIMD-group cooperative DBM ops (zone in THREADGROUP memory) -------------
-// The per-thread kernel below gives each thread its own `int z[MAXDIM*MAXDIM]`.
-// Because it is indexed dynamically (z[i*dim+j]), the compiler cannot keep it in
-// registers, so it lives in DEVICE-backed thread-private memory and every one of
-// the O(dim^2)-O(dim^3) element accesses per successor is a device round trip --
-// that, not the input read or the output write, is what makes net_expand slow
-// (pipeline reflection confirms it is NOT register/occupancy limited: 1024
-// threads/threadgroup).
-//
-// Here one SIMD GROUP (32 lanes) owns one successor and the DBM lives on-chip in
-// threadgroup memory: 32x less memory per work item, so it fits, and each O(dim^2)
-// loop is split across the lanes. Since dim <= MAXDIM(24) < 32, every lane owns AT
-// MOST ONE row, which keeps the parallel form simple: lane L handles row L.
-inline bool sg_empty(threadgroup int* d, int dim, uint lane) {
-  bool e = ((int)lane < dim) && (d[lane*dim + lane] < kZeroLe);
-  return simd_any(e);
-}
-inline void sg_reset(threadgroup int* d, int dim, int k, uint lane) {
-  // Snapshot row0/col0 BEFORE writing row k / col k: the write d[0*dim+k] would
-  // otherwise race the read d[0*dim+j] performed by the lane handling j == k.
-  const bool act = (int)lane < dim;
-  int rv = 0, cv = 0;
-  if (act) { rv = d[0*dim + lane]; cv = d[lane*dim + 0]; }
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  if (act) { d[k*dim + lane] = rv; d[lane*dim + k] = cv; }
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  if (lane == 0) d[k*dim + k] = kZeroLe;
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-}
-inline void sg_delay(threadgroup int* d, int dim, uint lane) {
-  if ((int)lane < dim && lane >= 1u) d[lane*dim + 0] = kInf;
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-}
-// Canonicity-restoring tighten after adding d[a][b] <= bound, in the standard form
-//   d[i][j] = min(d[i][j], d[i][a] + bound + d[b][j])
-// with row b snapshotted (rowb) so every lane sees the pre-update values.
-inline bool sg_constrain(threadgroup int* d, threadgroup int* rowb, int dim,
-                         int a, int b, int bound, uint lane) {
-  if (bound >= d[a*dim + b]) return !sg_empty(d, dim, lane);
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  if (lane == 0) d[a*dim + b] = bound;
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  const bool act = (int)lane < dim;
-  if (act) {                                     // d[i][b] = min(d[i][b], d[i][a]+bound)
-    int via = r_add(d[lane*dim + a], bound);
-    if (via < d[lane*dim + b]) d[lane*dim + b] = via;
-  }
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  if (act) rowb[lane] = d[b*dim + lane];         // snapshot row b
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  if (act) {                                     // d[i][k] = min(d[i][k], d[i][b]+rowb[k])
-    int ib = d[lane*dim + b];
-    if (ib < kInf)
-      for (int k = 0; k < dim; ++k) {
-        int via = r_add(ib, rowb[k]);
-        if (via < d[lane*dim + k]) d[lane*dim + k] = via;
-      }
-  }
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  return !sg_empty(d, dim, lane);
-}
-inline bool sg_apply_inv(threadgroup int* d, threadgroup int* rowb, int dim, int nprocs,
-                         threadgroup const int* nlocs, device const int* locbase,
-                         device const int* inv_off, device const int* inv_data, uint lane) {
-  for (int q = 0; q < nprocs; ++q) {
-    int Lq = locbase[q] + nlocs[q];
-    for (int c = inv_off[Lq]; c < inv_off[Lq+1]; ++c)
-      if (!sg_constrain(d, rowb, dim, inv_data[3*c], inv_data[3*c+1], inv_data[3*c+2], lane))
-        return false;
-  }
-  return true;
-}
 
 struct Params { int dim, nprocs, nintvars, nclocks, nwork, qbits; };
-struct MergeParams { int dim, nb, has_diag, union_on, soa; };
+struct MergeParams { int dim, nb, has_diag, union_on; };
 
 // One thread per successor "recipe": a participant list of (proc, global-edge) — 1 for a
 // location step, 2 for a binary handshake, 1+K for a broadcast. Int guards, committed
@@ -705,326 +587,11 @@ kernel void net_expand(
   for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = gz_store(z[k]);
 }
 
-kernel void net_expand_tg(
-    device const int* front_locs [[buffer(0)]],
-    device const int* work_ints  [[buffer(1)]],   // [nwork*nintvars], post-update
-    device const GZ*  front_zone [[buffer(2)]],
-    device const int* work_state [[buffer(3)]],
-    device const int* part_off   [[buffer(4)]],
-    device const int* part_cnt   [[buffer(5)]],
-    device const int* part_proc  [[buffer(6)]],
-    device const int* part_edge  [[buffer(7)]],
-    device const int* edge_tgt   [[buffer(8)]],
-    device const int* cg_off     [[buffer(9)]],
-    device const int* cg_data    [[buffer(10)]],
-    device const int* rs_off     [[buffer(11)]],
-    device const int* rs_clk     [[buffer(12)]],
-    device const int* locbase    [[buffer(13)]],
-    device const int* inv_off    [[buffer(14)]],
-    device const int* inv_data   [[buffer(15)]],
-    device const int* frozen     [[buffer(16)]],
-    device const int* active     [[buffer(17)]],
-    device const int* qmask      [[buffer(18)]],
-    device int*       out_valid  [[buffer(19)]],
-    device int*       out_locs   [[buffer(20)]],
-    device int*       out_ints   [[buffer(21)]],
-    device GZ*        out_zone   [[buffer(22)]],
-    constant Params&  P          [[buffer(23)]],
-    threadgroup int*  zbuf       [[threadgroup(0)]],
-    uint w [[thread_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]])
-{
-  if (w >= uint(P.nwork)) return;
-  const int dim = P.dim, d2 = dim * dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
-  out_valid[w] = 0;
-  const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
-
-  // target location vector: apply every participant's target
-  int nlocs[MAXPROC];
-  for (int q = 0; q < nprocs; ++q) nlocs[q] = front_locs[si*nprocs + q];
-  for (int t = 0; t < pc; ++t) nlocs[part_proc[po+t]] = edge_tgt[part_edge[po+t]];
-
-  // zone: all participants' clock guards, then all their resets
-  // Stride is d2+1, not d2: threadgroup memory has 32 banks and d2 is typically a multiple
-  // of 16 (dim 12 -> 144), which would map all 32 lanes onto 2 banks -- a 16-way conflict.
-  // An odd stride walks every bank.
-  threadgroup int* z = zbuf + lid * (d2 + 1);
-  for (int k = 0; k < d2; ++k) z[k] = gz_load(front_zone[si*d2 + k]);
-  for (int t = 0; t < pc; ++t) {
-    int ge = part_edge[po+t];
-    for (int c = cg_off[ge]; c < cg_off[ge+1]; ++c)
-      if (!g_constrain(z, dim, cg_data[3*c], cg_data[3*c+1], cg_data[3*c+2])) return;
-  }
-  for (int t = 0; t < pc; ++t) {
-    int ge = part_edge[po+t];
-    for (int r = rs_off[ge]; r < rs_off[ge+1]; ++r) g_reset(z, dim, rs_clk[r]);
-  }
-
-  // combined invariant; delay if no process is committed/urgent; invariant again
-  if (!g_apply_inv(z, dim, nprocs, nlocs, locbase, inv_off, inv_data)) return;
-  bool frozen_any = false;
-  for (int q = 0; q < nprocs; ++q) if (frozen[locbase[q] + nlocs[q]] & 3) { frozen_any = true; break; }
-  if (!frozen_any) {
-    g_delay(z, dim);
-    if (!g_apply_inv(z, dim, nprocs, nlocs, locbase, inv_off, inv_data)) return;
-  }
-
-  // reset clocks inactive at every process's target location and not read by the query
-  for (int cc = 1; cc <= nclocks; ++cc) {
-    bool any = false;
-    for (int q = 0; q < nprocs; ++q)
-      if (active[(locbase[q] + nlocs[q]) * (nclocks + 1) + cc]) { any = true; break; }
-    if (!any && !qmask[cc]) g_reset(z, dim, cc);
-  }
-  if (g_empty(z, dim)) return;
-
-  out_valid[w] = 1;
-  for (int q = 0; q < nprocs; ++q) out_locs[w*nprocs + q] = nlocs[q];
-  // integers: already updated host-side for this recipe (see the header comment)
-  for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
-  for (int k = 0; k < d2; ++k) out_zone[w*d2 + k] = gz_store(z[k]);
-}
 
 
 
-#define RG_PER_TG 8
-kernel void net_expand_rg(
-    device const int* front_locs [[buffer(0)]],
-    device const int* work_ints  [[buffer(1)]],
-    device const GZ*  front_zone [[buffer(2)]],
-    device const int* work_state [[buffer(3)]],
-    device const int* part_off   [[buffer(4)]],
-    device const int* part_cnt   [[buffer(5)]],
-    device const int* part_proc  [[buffer(6)]],
-    device const int* part_edge  [[buffer(7)]],
-    device const int* edge_tgt   [[buffer(8)]],
-    device const int* cg_off     [[buffer(9)]],
-    device const int* cg_data    [[buffer(10)]],
-    device const int* rs_off     [[buffer(11)]],
-    device const int* rs_clk     [[buffer(12)]],
-    device const int* locbase    [[buffer(13)]],
-    device const int* inv_off    [[buffer(14)]],
-    device const int* inv_data   [[buffer(15)]],
-    device const int* frozen     [[buffer(16)]],
-    device const int* active     [[buffer(17)]],
-    device const int* qmask      [[buffer(18)]],
-    device int*       out_valid  [[buffer(19)]],
-    device int*       out_locs   [[buffer(20)]],
-    device int*       out_ints   [[buffer(21)]],
-    device GZ*        out_zone   [[buffer(22)]],
-    constant Params&  P          [[buffer(23)]],
-    uint tgpos [[threadgroup_position_in_grid]],
-    uint sgid  [[simdgroup_index_in_threadgroup]],
-    uint lane  [[thread_index_in_simdgroup]])
-{
-  const uint w = tgpos * RG_PER_TG + sgid;
-  if (w >= uint(P.nwork)) return;          // whole SIMD group leaves together - uniform
-  const int dim = P.dim, d2 = dim * dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
-  if (lane == 0) out_valid[w] = 0;
-  const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
 
-  int nlocs[MAXPROC];
-  for (int q = 0; q < nprocs; ++q) nlocs[q] = front_locs[si*nprocs + q];
-  for (int t = 0; t < pc; ++t) nlocs[part_proc[po+t]] = edge_tgt[part_edge[po+t]];
 
-  int row[MAXDIM];                          // MY row of the zone: dim ints, not dim*dim
-  if (lane < uint(dim))
-    for (int j = 0; j < dim; ++j) row[j] = gz_load(front_zone[si*d2 + int(lane)*dim + j]);
-
-  for (int t = 0; t < pc; ++t) {
-    const int ge = part_edge[po+t];
-    for (int c = cg_off[ge]; c < cg_off[ge+1]; ++c)
-      if (!rg_constrain(row, dim, cg_data[3*c], cg_data[3*c+1], cg_data[3*c+2], lane)) return;
-  }
-  for (int t = 0; t < pc; ++t) {
-    const int ge = part_edge[po+t];
-    for (int r = rs_off[ge]; r < rs_off[ge+1]; ++r) rg_reset(row, dim, rs_clk[r], lane);
-  }
-
-  if (!rg_apply_inv(row, dim, nprocs, nlocs, locbase, inv_off, inv_data, lane)) return;
-  bool frozen_any = false;
-  for (int q = 0; q < nprocs; ++q) if (frozen[locbase[q] + nlocs[q]] & 3) { frozen_any = true; break; }
-  if (!frozen_any) {
-    rg_delay(row, dim, lane);
-    if (!rg_apply_inv(row, dim, nprocs, nlocs, locbase, inv_off, inv_data, lane)) return;
-  }
-
-  for (int cc = 1; cc <= nclocks; ++cc) {
-    bool any = false;
-    for (int q = 0; q < nprocs; ++q)
-      if (active[(locbase[q] + nlocs[q]) * (nclocks + 1) + cc]) { any = true; break; }
-    if (!any && !qmask[cc]) rg_reset(row, dim, cc, lane);
-  }
-  if (rg_empty(row, dim, lane)) return;
-
-  if (lane == 0) {
-    out_valid[w] = 1;
-    for (int q = 0; q < nprocs; ++q) out_locs[w*nprocs + q] = nlocs[q];
-    for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
-  }
-  if (lane < uint(dim))
-    for (int j = 0; j < dim; ++j) out_zone[w*d2 + int(lane)*dim + j] = gz_store(row[j]);
-}
-
-// Cooperative variant of net_expand: ONE SIMD GROUP (32 lanes) per work item, with the
-// zone held on-chip in threadgroup memory instead of a device-backed per-thread array.
-// Every branch here is SIMD-group-UNIFORM (the sg_* helpers reduce through simd_any), so
-// all 32 lanes take the same path and reach the same barriers; simdgroup_barrier (not
-// threadgroup_barrier) is used so a group whose w is past the end can return without
-// stalling its neighbours.
-#define SG_PER_TG 8
-kernel void net_expand_sg(
-    device const int* front_locs [[buffer(0)]],
-    device const int* work_ints  [[buffer(1)]],
-    device const GZ*  front_zone [[buffer(2)]],
-    device const int* work_state [[buffer(3)]],
-    device const int* part_off   [[buffer(4)]],
-    device const int* part_cnt   [[buffer(5)]],
-    device const int* part_proc  [[buffer(6)]],
-    device const int* part_edge  [[buffer(7)]],
-    device const int* edge_tgt   [[buffer(8)]],
-    device const int* cg_off     [[buffer(9)]],
-    device const int* cg_data    [[buffer(10)]],
-    device const int* rs_off     [[buffer(11)]],
-    device const int* rs_clk     [[buffer(12)]],
-    device const int* locbase    [[buffer(13)]],
-    device const int* inv_off    [[buffer(14)]],
-    device const int* inv_data   [[buffer(15)]],
-    device const int* frozen     [[buffer(16)]],
-    device const int* active     [[buffer(17)]],
-    device const int* qmask      [[buffer(18)]],
-    device int*       out_valid  [[buffer(19)]],
-    device int*       out_locs   [[buffer(20)]],
-    device int*       out_ints   [[buffer(21)]],
-    device GZ*        out_zone   [[buffer(22)]],
-    constant Params&  P          [[buffer(23)]],
-    uint tgid [[threadgroup_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint sgid [[simdgroup_index_in_threadgroup]])
-{
-  threadgroup int zbuf[SG_PER_TG * MAXDIM * MAXDIM];
-  threadgroup int rbuf[SG_PER_TG * MAXDIM];
-  threadgroup int lbuf[SG_PER_TG * MAXPROC];
-  threadgroup int* z    = zbuf + sgid * (MAXDIM * MAXDIM);
-  threadgroup int* rowb = rbuf + sgid * MAXDIM;
-  threadgroup int* nlocs= lbuf + sgid * MAXPROC;
-
-  const uint w = tgid * SG_PER_TG + sgid;
-  if (w >= uint(P.nwork)) return;                 // whole group exits together
-  const int dim = P.dim, d2 = dim*dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
-  if (lane == 0) out_valid[w] = 0;
-  const int si = work_state[w], po = part_off[w], pc = part_cnt[w];
-
-  if ((int)lane < nprocs) nlocs[lane] = front_locs[si*nprocs + lane];
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-  if (lane == 0) for (int t = 0; t < pc; ++t) nlocs[part_proc[po+t]] = edge_tgt[part_edge[po+t]];
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-
-  for (int k = (int)lane; k < d2; k += 32) z[k] = gz_load(front_zone[si*d2 + k]);
-  simdgroup_barrier(mem_flags::mem_threadgroup);
-
-  for (int t = 0; t < pc; ++t) {
-    int ge = part_edge[po+t];
-    for (int c = cg_off[ge]; c < cg_off[ge+1]; ++c)
-      if (!sg_constrain(z, rowb, dim, cg_data[3*c], cg_data[3*c+1], cg_data[3*c+2], lane)) return;
-  }
-  for (int t = 0; t < pc; ++t) {
-    int ge = part_edge[po+t];
-    for (int r = rs_off[ge]; r < rs_off[ge+1]; ++r) sg_reset(z, dim, rs_clk[r], lane);
-  }
-
-  if (!sg_apply_inv(z, rowb, dim, nprocs, nlocs, locbase, inv_off, inv_data, lane)) return;
-  bool frozen_any = false;
-  for (int q = 0; q < nprocs; ++q) if (frozen[locbase[q] + nlocs[q]] & 3) { frozen_any = true; break; }
-  if (!frozen_any) {
-    sg_delay(z, dim, lane);
-    if (!sg_apply_inv(z, rowb, dim, nprocs, nlocs, locbase, inv_off, inv_data, lane)) return;
-  }
-
-  for (int cc = 1; cc <= nclocks; ++cc) {
-    bool any = false;
-    for (int q = 0; q < nprocs; ++q)
-      if (active[(locbase[q] + nlocs[q]) * (nclocks + 1) + cc]) { any = true; break; }
-    if (!any && !qmask[cc]) sg_reset(z, dim, cc, lane);
-  }
-  if (sg_empty(z, dim, lane)) return;
-
-  if (lane == 0) {
-    out_valid[w] = 1;
-    for (int q = 0; q < nprocs; ++q) out_locs[w*nprocs + q] = nlocs[q];
-    for (int v = 0; v < nintvars; ++v) out_ints[w*nintvars + v] = work_ints[w*nintvars + v];
-  }
-  for (int k = (int)lane; k < d2; k += 32) out_zone[w*d2 + k] = gz_store(z[k]);
-}
-
-// One thread per discrete-state bucket. Replicates add_to EXACTLY: for each new zone (in
-// order) — drop it if aLU-subsumed by a stored zone; drop stored zones it subsumes; absorb
-// any stored zone whose convex union with it is exact; then append it. Sequential within a
-// bucket (small), parallel across the thousands of buckets. `work` is prefilled by the host
-// with the bucket's existing antichain (isnew=0); the kernel appends survivors (isnew=1).
-kernel void net_merge(
-    device const int* work_off   [[buffer(0)]],  // zone-unit start of bucket b's work slice
-    device const int* exist_cnt  [[buffer(1)]],
-    device const int* new_off    [[buffer(2)]],  // start into new_idx
-    device const int* new_cnt    [[buffer(3)]],
-    device const GZ*  oz         [[buffer(4)]],  // expand output zones (new successors, in place)
-    device const int* new_idx    [[buffer(5)]],  // expand work-item index of each new zone
-    device const int* Lb         [[buffer(6)]],  // [nb*dim]
-    device const int* Ub         [[buffer(7)]],  // [nb*dim]
-    device GZ*        work       [[buffer(8)]],  // in/out antichain zone pool (narrow entries)
-    device int*       work_isnew [[buffer(9)]],
-    device int*       out_count  [[buffer(10)]],
-    constant MergeParams& P      [[buffer(11)]],
-    uint b [[thread_position_in_grid]])
-{
-  if (b >= uint(P.nb)) return;
-  const int dim = P.dim, d2 = dim * dim;
-  const int has_diag = P.has_diag;
-  // ulong indexing: work_off[b]*d2 overflows 32 bits once the pool exceeds ~3.7M zones at d2=576
-  // (kept in step with the same fix in netengine_cuda.cu, where a datacentre GPU reaches it).
-  device GZ* W = work + (ulong)work_off[b] * d2;
-  device int* WI = work_isnew + work_off[b];
-  device const int* L = Lb + b * dim;
-  device const int* U = Ub + b * dim;
-  int cur = exist_cnt[b];
-  int zn[MAXDIM * MAXDIM], zw[MAXDIM * MAXDIM];
-
-  for (int t = 0; t < new_cnt[b]; ++t) {
-    int widx = new_idx[new_off[b] + t];
-    for (int k = 0; k < d2; ++k) zn[k] = gz_load(oz[(ulong)widx * d2 + k]);
-
-    bool subsumed = false;                                   // zn subsumed by a stored zone?
-    for (int i = 0; i < cur; ++i) {
-      for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[i*d2 + k]);
-      if (has_diag ? d_includes(zw, zn, dim) : d_alu_le(zn, zw, dim, L, U)) { subsumed = true; break; }
-    }
-    if (subsumed) continue;
-
-    int w = 0;                                               // drop stored zones subsumed by zn
-    for (int i = 0; i < cur; ++i) {
-      for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[i*d2 + k]);
-      bool killed = has_diag ? d_includes(zn, zw, dim) : d_alu_le(zw, zn, dim, L, U);
-      if (!killed) { if (w != i) { for (int k = 0; k < d2; ++k) W[w*d2 + k] = W[i*d2 + k]; WI[w] = WI[i]; } ++w; }
-    }
-    cur = w;
-
-    bool merged = true;                                      // convex-union absorb
-    while (merged) {
-      merged = false;
-      for (int kk = 0; kk < cur; ++kk) {
-        for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[kk*d2 + k]);
-        if (d_try_union(zn, zw, dim)) {                      // zn becomes the hull
-          for (int i = kk; i < cur - 1; ++i) { for (int k = 0; k < d2; ++k) W[i*d2 + k] = W[(i+1)*d2 + k]; WI[i] = WI[i+1]; }
-          --cur; merged = true; break;
-        }
-      }
-    }
-
-    for (int k = 0; k < d2; ++k) W[cur*d2 + k] = gz_store(zn[k]);   // append
-    WI[cur] = -1; ++cur;   // -1 = 'this merge created it' (see net_gpu.hpp)
-  }
-  out_count[b] = cur;
-}
 
 // gpusplit: cooperative merge — ONE SIMD-GROUP (32 lanes) per bucket. Byte-identical antichain
 // semantics to net_merge, but the per-bucket O(cur^2) subsumption/convex-union loop (the loop
@@ -1067,12 +634,10 @@ kernel void net_merge_sg(
     b = simd_broadcast(b, 0);
     if (b >= P.nb) break;
 
-    device GZ* W  = work + (ulong)work_off[b] * d2;   // SoA pool: zone i entry e at W[e*cap + i]
+    device GZ* W  = work + (ulong)work_off[b] * d2;   // zone i entry e at W[i*d2 + e]
     device int* WI = work_isnew + work_off[b];
     device const int* L = Lb + b * dim;
     device const int* U = Ub + b * dim;
-    const int cap = exist_cnt[b] + new_cnt[b];         // bucket zone-capacity = SoA stride
-    const int zstr = P.soa ? cap : 1;                  // per-zone entry stride (SoA vs AoS)
     int cur = exist_cnt[b];
 
   for (int t = 0; t < new_cnt[b]; ++t) {
@@ -1084,7 +649,7 @@ kernel void net_merge_sg(
     // Read W[i] DIRECTLY from device (read-only test) — no private-memory spill of the operand.
     bool sub = false;
     for (int i = int(lane); i < cur; i += 32) {
-      SoaZone zw{W + (P.soa ? (ulong)i : (ulong)i * d2), zstr};
+      SoaZone zw{W + (ulong)i * d2, 1};
       // zn subsumed by existing zw?  diag: zw ⊇ zn (d_includes(zw,zn)); non-diag: aLU(zn≼zw).
       if (has_diag ? g_includes(zw, zn, dim) : g_alu_le(zn, zw, dim, L, U)) sub = true;
     }
@@ -1099,7 +664,7 @@ kernel void net_merge_sg(
       bool keep = false;
       int isnew_i = 0;
       if (i < cur) {
-        for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[P.soa ? (k*cap + i) : (i*d2 + k)]);
+        for (int k = 0; k < d2; ++k) zw[k] = gz_load(W[i*d2 + k]);
         const bool kill = has_diag ? g_includes(zn, (thread const int*)zw, dim)
                                    : g_alu_le((thread const int*)zw, zn, dim, L, U);
         keep = !kill;
@@ -1108,7 +673,7 @@ kernel void net_merge_sg(
       const uint kb = (uint)(simd_vote::vote_t)simd_ballot(keep);
       const int dst = w + popcount(kb & ((1u << lane) - 1u));
       simdgroup_barrier(mem_flags::mem_threadgroup);   // all reads of W done before any write
-      if (keep) { for (int k = 0; k < d2; ++k) W[P.soa ? (k*cap + dst) : (dst*d2 + k)] = gz_store(zw[k]); WI[dst] = isnew_i; }
+      if (keep) { for (int k = 0; k < d2; ++k) W[dst*d2 + k] = gz_store(zw[k]); WI[dst] = isnew_i; }
       w += popcount(kb);
       simdgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -1128,13 +693,13 @@ kernel void net_merge_sg(
         const int kk = base + int(lane);
         bool ok = false;
         if (kk < cur)   // read-only convex-union test straight from device (AoS/SoA strided view)
-          ok = g_union_convex(zn, SoaZone{W + (P.soa ? (ulong)kk : (ulong)kk * d2), zstr}, dim);
+          ok = g_union_convex(zn, SoaZone{W + (ulong)kk * d2, 1}, dim);
         const uint vb = (uint)(simd_vote::vote_t)simd_ballot(ok);
         if (vb != 0u) winner = base + int(ctz(vb));
       }
       if (winner < 0) break;
       for (int k = int(lane); k < d2; k += 32) {       // zn := elementwise-max hull
-        const int wv = gz_load(W[P.soa ? (k*cap + winner) : (winner*d2 + k)]);
+        const int wv = gz_load(W[winner*d2 + k]);
         if (wv > zn[k]) zn[k] = wv;
       }
       simdgroup_barrier(mem_flags::mem_threadgroup);
@@ -1142,14 +707,14 @@ kernel void net_merge_sg(
       // (h_ij = max(a_ij,b_ij) <= max(a_ik+a_kj, b_ik+b_kj) <= h_ik + h_kj).
       for (int i = winner; i < cur - 1; ++i) {          // shift the absorbed zone out
         for (int k = int(lane); k < d2; k += 32)
-          W[P.soa ? (k*cap + i) : (i*d2 + k)] = W[P.soa ? (k*cap + (i+1)) : ((i+1)*d2 + k)];
+          W[i*d2 + k] = W[(i+1)*d2 + k];
         if (lane == 0) WI[i] = WI[i+1];
         simdgroup_barrier(mem_flags::mem_threadgroup);
       }
       --cur;
     }
 
-    for (int k = int(lane); k < d2; k += 32) W[P.soa ? (k*cap + cur) : (cur*d2 + k)] = gz_store(zn[k]);   // append
+    for (int k = int(lane); k < d2; k += 32) W[cur*d2 + k] = gz_store(zn[k]);   // append
     if (lane == 0) WI[cur] = -1;   // -1 = 'this merge created it' (see net_gpu.hpp)
     ++cur;
     simdgroup_barrier(mem_flags::mem_threadgroup);
@@ -1194,58 +759,15 @@ class NetGpuMetal : public NetGpuExpander {
     PTCTLMC_MTL_CHECK(fn != nil, "kernel 'net_expand' not found");
     pso_ = [device_ newComputePipelineStateWithFunction:fn error:&err];
     PTCTLMC_MTL_CHECK(pso_ != nil, "pipeline creation failed");
-    // Cooperative (SIMD-group-per-successor) expand: opt-in via PTCTLMC_MTLSG=1 so it can
-    // be A/B'd against the per-thread kernel and fall back cleanly.
-    g_eprof.on = std::getenv("PTCTLMC_MTLPROF") != nullptr;
 #ifdef PTCTLMC_HAVE_OPENMP
     eth_ = omp_get_max_threads();
 #endif
     scr_.resize(eth_);
-    use_sg_ = std::getenv("PTCTLMC_MTLSG") != nullptr;
-    use_tg_ = std::getenv("PTCTLMC_MTLTG") != nullptr;
-    use_rg_ = std::getenv("PTCTLMC_MTLRG") != nullptr;
-    if (use_sg_) {
-      id<MTLFunction> fsg = [lib newFunctionWithName:@"net_expand_sg"];
-      PTCTLMC_MTL_CHECK(fsg != nil, "kernel 'net_expand_sg' not found");
-      pso_sg_ = [device_ newComputePipelineStateWithFunction:fsg error:&err];
-      PTCTLMC_MTL_CHECK(pso_sg_ != nil, "cooperative pipeline creation failed");
-    }
-    {   // row-distributed expand (PTCTLMC_MTLRG=1)
-      id<MTLFunction> frg = [lib newFunctionWithName:@"net_expand_rg"];
-      if (frg) pso_rg_ = [device_ newComputePipelineStateWithFunction:frg error:&err];
-    }
-    {   // threadgroup-resident expand (PTCTLMC_MTLTG=1)
-      id<MTLFunction> ftg = [lib newFunctionWithName:@"net_expand_tg"];
-      if (ftg) pso_tg_ = [device_ newComputePipelineStateWithFunction:ftg error:&err];
-    }
-    id<MTLFunction> fm = [lib newFunctionWithName:@"net_merge"];
-    PTCTLMC_MTL_CHECK(fm != nil, "kernel 'net_merge' not found");
-    pso_merge_ = [device_ newComputePipelineStateWithFunction:fm error:&err];
-    PTCTLMC_MTL_CHECK(pso_merge_ != nil, "merge pipeline creation failed");
-    // gpusplit: SIMD-group-per-bucket cooperative work-stealing merge is now the DEFAULT GPU
-    // merge (PTCTLMC_NOGPUSPLIT falls back to the one-thread-per-bucket net_merge for A/B).
-    use_gpusplit_ = std::getenv("PTCTLMC_NOGPUSPLIT") == nullptr;
-    if (use_gpusplit_) {
-      id<MTLFunction> fmsg = [lib newFunctionWithName:@"net_merge_sg"];
-      PTCTLMC_MTL_CHECK(fmsg != nil, "kernel 'net_merge_sg' not found");
-      pso_merge_sg_ = [device_ newComputePipelineStateWithFunction:fmsg error:&err];
-      PTCTLMC_MTL_CHECK(pso_merge_sg_ != nil, "merge_sg pipeline creation failed");
-    }
-    // Occupancy reflection (PTCTLMC_MTLOCC): maxTotalThreadsPerThreadgroup is the
-    // compiler's verdict on register pressure -- if it is far below the device
-    // maximum (1024), each thread is holding too much private state (here a whole
-    // dim*dim DBM) and the kernel is occupancy/spill bound, not ALU bound.
-    if (std::getenv("PTCTLMC_MTLOCC")) {
-      std::fprintf(stderr,
-          "[mtlocc] expand: maxThreads/TG=%lu execWidth=%lu tgMem=%lu B | "
-          "merge: maxThreads/TG=%lu execWidth=%lu | device maxTG=%lu\n",
-          (unsigned long)pso_.maxTotalThreadsPerThreadgroup,
-          (unsigned long)pso_.threadExecutionWidth,
-          (unsigned long)pso_.staticThreadgroupMemoryLength,
-          (unsigned long)pso_merge_.maxTotalThreadsPerThreadgroup,
-          (unsigned long)pso_merge_.threadExecutionWidth,
-          (unsigned long)device_.maxThreadsPerThreadgroup.width);
-    }
+    // gpusplit: SIMD-group-per-bucket cooperative work-stealing merge is the GPU merge.
+    id<MTLFunction> fmsg = [lib newFunctionWithName:@"net_merge_sg"];
+    PTCTLMC_MTL_CHECK(fmsg != nil, "kernel 'net_merge_sg' not found");
+    pso_merge_sg_ = [device_ newComputePipelineStateWithFunction:fmsg error:&err];
+    PTCTLMC_MTL_CHECK(pso_merge_sg_ != nil, "merge_sg pipeline creation failed");
     // static (per-run) buffers
     b_edge_tgt_ = ibuf(en_.edge_tgt); b_cg_off_ = ibuf(en_.cg_off); b_cg_data_ = ibuf(en_.cg_data);
     b_rs_off_ = ibuf(en_.rs_off); b_rs_clk_ = ibuf(en_.rs_clk);
@@ -1406,7 +928,6 @@ class NetGpuMetal : public NetGpuExpander {
     out_valid = out_locs = out_ints = nullptr;
     out_zones = nullptr; out_dk = nullptr;
 
-    const double _t0 = g_eprof.on ? EngClock::now() : 0.0;
     // ---- recipe enumeration: PARALLEL, two-pass, straight into the GPU buffers ------------
     // This used to be one serial loop that push_back'd into six host vectors and then uploaded
     // them into six freshly-allocated MTLBuffers per level. Measured at 286 ms of a 1756 ms
@@ -1451,7 +972,7 @@ class NetGpuMetal : public NetGpuExpander {
       acc_r += r; acc_p += p;
     }
     const int nwork = static_cast<int>(acc_r);
-    if (nwork == 0) { if (g_eprof.on) { g_eprof.enumerate += EngClock::now() - _t0; ++g_eprof.levels; } return 0; }
+    if (nwork == 0) return 0;
 
     // Persistent, grow-on-demand staging buffers. Nothing is carried across levels, so a plain
     // grow() is safe (the previous level's kernel has already been waited on).
@@ -1483,10 +1004,8 @@ class NetGpuMetal : public NetGpuExpander {
                    ++w;
                  });
     }
-    if (g_eprof.on) { g_eprof.enumerate += EngClock::now() - _t0; ++g_eprof.levels; }
 
     @autoreleasepool {
-      const double _t1 = g_eprof.on ? EngClock::now() : 0.0;
       // Empty `zones` => the caller filled pb_fz_ through stage_frontier() already.
       id<MTLBuffer> b_fz = zones.empty()
           ? pb_fz_
@@ -1509,24 +1028,9 @@ class NetGpuMetal : public NetGpuExpander {
                     b_oz = grow(pb_oz_, static_cast<std::size_t>(nwork) * d2 * sizeof(gz_t));
       NetParams P{en_.dim, np, ni, en_.nclocks, nwork, static_cast<std::int32_t>(en_.qmask_bits)};
 
-      if (g_eprof.on) g_eprof.stage += EngClock::now() - _t1;
-      const double _t2 = g_eprof.on ? EngClock::now() : 0.0;
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-      // Threadgroup-memory budget: T threads each need d2 ints on-chip. Apple GPUs expose
-      // 32 KB per threadgroup, so fall back to the spilling private-array kernel when even
-      // one execution width (32 lanes) will not fit.
-      const NSUInteger d2b = (static_cast<NSUInteger>(P.dim) * P.dim + 1) * sizeof(int);  // +1: bank-conflict pad
-      const NSUInteger tgcap = 32768;
-      NSUInteger tg_threads = 0;
-      const bool use_rg = use_rg_ && pso_rg_ && P.dim <= 32;
-      const bool use_tg = !use_rg && use_tg_ && pso_tg_ && d2b * 32 <= tgcap;
-      if (use_tg) {
-        tg_threads = (tgcap / d2b) & ~static_cast<NSUInteger>(31);   // multiple of exec width
-        if (tg_threads > pso_tg_.maxTotalThreadsPerThreadgroup) tg_threads = pso_tg_.maxTotalThreadsPerThreadgroup;
-        if (tg_threads > 256) tg_threads = 256;                      // more resident zones != more parallelism
-      }
-      [enc setComputePipelineState:(use_rg ? pso_rg_ : (use_tg ? pso_tg_ : (use_sg_ ? pso_sg_ : pso_)))];
+      [enc setComputePipelineState:pso_];
       id<MTLBuffer> bufs[23] = {b_fl, b_wi, b_fz, b_ws, b_po, b_pc, b_pp, b_pe, b_edge_tgt_, b_cg_off_,
                                 b_cg_data_, b_rs_off_, b_rs_clk_, b_locbase_,
                                 b_inv_off_, b_inv_data_, b_frozen_, b_active_, b_qmask_, b_ov, b_ol, b_oi, b_oz};
@@ -1535,22 +1039,7 @@ class NetGpuMetal : public NetGpuExpander {
       [enc setBuffer:b_actmask_ offset:0 atIndex:24];
       [enc setBuffer:b_dshift_ offset:0 atIndex:25];
       [enc setBuffer:b_intlo_ offset:0 atIndex:26];
-      if (use_rg) {
-        const NSUInteger kRg = 8, kTg = kRg * 32;   // one SIMD group per zone
-        const NSUInteger groups = (static_cast<NSUInteger>(nwork) + kRg - 1) / kRg;
-        [enc dispatchThreadgroups:MTLSizeMake(groups, 1, 1)
-              threadsPerThreadgroup:MTLSizeMake(kTg, 1, 1)];
-      } else if (use_tg) {
-        [enc setThreadgroupMemoryLength:tg_threads * d2b atIndex:0];
-        [enc dispatchThreads:MTLSizeMake(nwork, 1, 1)
-              threadsPerThreadgroup:MTLSizeMake(tg_threads, 1, 1)];
-      } else if (use_sg_) {
-        // 32 lanes per successor, SG_PER_TG(8) groups per threadgroup
-        const NSUInteger kSg = 8, kTg = kSg * 32;
-        const NSUInteger groups = (static_cast<NSUInteger>(nwork) + kSg - 1) / kSg;
-        [enc dispatchThreadgroups:MTLSizeMake(groups, 1, 1)
-              threadsPerThreadgroup:MTLSizeMake(kTg, 1, 1)];
-      } else {
+      {
         NSUInteger tg = pso_.maxTotalThreadsPerThreadgroup;
         if (tg > static_cast<NSUInteger>(nwork)) tg = nwork;
         [enc dispatchThreads:MTLSizeMake(nwork, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
@@ -1559,7 +1048,6 @@ class NetGpuMetal : public NetGpuExpander {
       [cb commit];
       [cb waitUntilCompleted];
       PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
-      if (g_eprof.on) g_eprof.kernel += EngClock::now() - _t2;
 
       out_valid = static_cast<const int*>(b_ov.contents);   // read valid rows in place
       out_dk = static_cast<const std::uint64_t*>(b_ol.contents);
@@ -1590,7 +1078,6 @@ class NetGpuMetal : public NetGpuExpander {
     out_isnew = nullptr;
     if (nb == 0) return;
     @autoreleasepool {
-      const double _m0 = g_eprof.on ? EngClock::now() : 0.0;
       id<MTLBuffer> b_work = pb_work_, b_wi = pb_wi_;   // work in place; new zones via interned idx
       // Persistent staging (was: eight fresh MTLBuffers per level — see pb_ws_ &c).
       auto fill = [&](__strong id<MTLBuffer>& b, const std::vector<int>& v) {
@@ -1612,18 +1099,15 @@ class NetGpuMetal : public NetGpuExpander {
       // incremental close (dbm_try_union, dbm_ops.hpp) it is O(dim^3) and measures free or
       // better -- while cutting stored states 37% on csma14 and peak RSS 24% on fischer12,
       // because every zone it absorbs is a zone the next level does not expand.
-      // union_on doubles as the bounded-union CAP: 0 = off, K = merge against the last K only,
-      // huge = full. PTCTLMC_NOUNION=1 disables it; PTCTLMC_UNIONCAP=K for the bounded variant.
-      int union_cap = 1 << 20;
-      if (const char* c = std::getenv("PTCTLMC_UNIONCAP")) union_cap = std::atoi(c);
-      else if (std::getenv("PTCTLMC_NOUNION")) union_cap = 0;
-      MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0, union_cap, soa_work_pool() ? 1 : 0};
-      if (g_eprof.on) g_eprof.mstage += EngClock::now() - _m0;
-      const double _m1 = g_eprof.on ? EngClock::now() : 0.0;
+      // union_on doubles as the bounded-union CAP: K = merge against the last K only. The
+      // bound is effectively unreachable -- no antichain is a million zones long -- so the
+      // union is unconditional; the parameter stays because the kernel reads it.
+      constexpr int kUnionCap = 1 << 20;
+      MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0, kUnionCap};
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
       id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
       id<MTLBuffer> bufs[11] = {b_woff, b_ec, b_noff, b_nc, pb_oz_, b_ni, b_L, b_U, b_work, b_wi, b_oc};
-      if (use_gpusplit_) {
+      {
         // gpusplit: one SIMD-group (32 lanes) per bucket; SG_PER_TG groups per threadgroup.
         // zn threadgroup scratch = SG_PER_TG * d2 ints (must match SG_PER_TG in the kernel).
         constexpr NSUInteger kSg = 8, kTg = kSg * 32;
@@ -1640,19 +1124,11 @@ class NetGpuMetal : public NetGpuExpander {
         NSUInteger wantGroups = (static_cast<NSUInteger>(nb) + kSg - 1) / kSg;
         const NSUInteger groups = wantGroups < 128 ? wantGroups : 128;   // 128*8 = 1024 SIMD-groups
         [enc dispatchThreadgroups:MTLSizeMake(groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(kTg, 1, 1)];
-      } else {
-        [enc setComputePipelineState:pso_merge_];
-        for (int i = 0; i < 11; ++i) [enc setBuffer:bufs[i] offset:0 atIndex:i];
-        [enc setBytes:&MP length:sizeof(MP) atIndex:11];
-        NSUInteger tg = pso_merge_.maxTotalThreadsPerThreadgroup;
-        if (tg > static_cast<NSUInteger>(nb)) tg = nb;
-        [enc dispatchThreads:MTLSizeMake(nb, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
       }
       [enc endEncoding];
       [cb commit];
       [cb waitUntilCompleted];
       PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "merge kernel failed");
-      if (g_eprof.on) g_eprof.mkernel += EngClock::now() - _m1;
       const int* oc = static_cast<const int*>(b_oc.contents);
       out_work_off = work_off;
       for (int b = 0; b < nb; ++b) out_count[b] = oc[b];
@@ -1662,7 +1138,7 @@ class NetGpuMetal : public NetGpuExpander {
   }
 
  private:
-  struct MergeParamsGPU { std::int32_t dim, nb, has_diag, union_on, soa; };
+  struct MergeParamsGPU { std::int32_t dim, nb, has_diag, union_on; };
   id<MTLBuffer> Lbuf(const std::vector<std::int32_t>& v) {
     const void* p = v.empty() ? (const void*)&kZeroPad_ : (const void*)v.data();
     std::size_t bytes = v.empty() ? sizeof(std::int32_t) : v.size() * sizeof(std::int32_t);
@@ -1733,15 +1209,7 @@ class NetGpuMetal : public NetGpuExpander {
   id<MTLDevice> device_ = nil;
   id<MTLCommandQueue> queue_ = nil;
   id<MTLComputePipelineState> pso_ = nil;
-  id<MTLComputePipelineState> pso_merge_ = nil;
   id<MTLComputePipelineState> pso_merge_sg_ = nil;   // gpusplit cooperative merge
-  bool use_gpusplit_ = false;
-  id<MTLComputePipelineState> pso_sg_ = nil;   // cooperative expand (PTCTLMC_MTLSG)
-  bool use_sg_ = false;
-  bool use_tg_ = false;
-  id<MTLComputePipelineState> pso_tg_ = nil;
-  bool use_rg_ = false;
-  id<MTLComputePipelineState> pso_rg_ = nil;
   // No b_iu_* here: the integer update is applied host-side (gen_update is an
   // expression, so the kernel cannot replay it from a flat table).
   id<MTLBuffer> b_edge_tgt_, b_cg_off_, b_cg_data_, b_rs_off_, b_rs_clk_,
@@ -1759,27 +1227,6 @@ class NetGpuMetal : public NetGpuExpander {
   std::vector<int> cnt_rec_, cnt_part_;       // per-state recipe/participant counts -> offsets
   int eth_ = 1;                               // enumeration thread count
 
- public:
-  // Sum of every persistent unified-memory pool (diagnostics: PTCTLMC_MEMPROF).
-  std::size_t device_bytes() const override {
-    // What the DRIVER actually has mapped, not just what our live buffers add up to: a grown
-    // pool's predecessor stays resident until the driver reclaims it, and that gap was several
-    // GB of "unaccounted" RSS in the memory profile.
-    return static_cast<std::size_t>(device_.currentAllocatedSize);
-  }
-  std::size_t live_buffer_bytes() const override {
-    std::size_t t = 0;
-    for (id<MTLBuffer> b : {pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_, pb_work_, pb_wi_,
-                            pb_ws_, pb_po_, pb_pc_, pb_pp_, pb_pe_, pb_wi_in_, pb_fl_,
-                            pb_moff_, pb_mec_, pb_mni_, pb_mnoff_, pb_mnc_, pb_mL_, pb_mU_, pb_moc_})
-      if (b != nil) t += static_cast<std::size_t>(b.length);
-    return t;
-  }
-  // net_merge_sg can read/write the work pool transposed (SoA) for coalesced cross-lane loads.
-  // Opt-in via PTCTLMC_SOA (default AoS — SoA lost in back-to-back tests, see kernel notes).
-  bool soa_work_pool() const override { return use_gpusplit_ && std::getenv("PTCTLMC_SOA") != nullptr; }
-
- private:
 };
 
 }  // namespace
@@ -1795,7 +1242,6 @@ std::unique_ptr<NetGpuExpander> make_net_gpu_metal(const Network& net,
   try {
     return std::make_unique<NetGpuMetal>(net, encode(net, qmask));
   } catch (const std::exception& e) {
-    if (std::getenv("PTCTLMC_MTLDEBUG")) std::fprintf(stderr, "[mtldebug] %s\n", e.what());
     return nullptr;  // any Metal failure -> CPU fallback
   } catch (...) {
     return nullptr;  // any Metal failure -> CPU fallback

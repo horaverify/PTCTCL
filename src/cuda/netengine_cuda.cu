@@ -377,13 +377,6 @@ class NetGpuCuda : public NetGpuExpander {
     out_isnew = mwi_.p;
   }
 
-  // Total bytes held in persistent managed buffers (diagnostics: PTCTLMC_MEMPROF). Mirrors
-  // NetGpuMetal::device_bytes() so the two backends stay comparable on the memory metric.
-  std::size_t device_bytes() const override {
-    return (mv_.cap + mol_.cap + moi_.cap + moc_.cap + mwi_.cap + mfl_.cap + mfi_.cap) * sizeof(int)
-         + (moz_.cap + mwork_.cap + mfz_.cap) * sizeof(raw_t);
-  }
-
  private:
   template <class T> struct Managed { T* p = nullptr; std::size_t cap = 0; };
   // persistent managed (unified) buffers, grown on demand
