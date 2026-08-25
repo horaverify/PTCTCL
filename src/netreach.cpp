@@ -3852,6 +3852,16 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
 // them in one list means gfp_pre has a single code path for all three.
 struct GfpTag {
   std::vector<std::pair<int,int>> parts;   // (process, edge index)
+  // BROADCAST ABSTENTION, the backward-direction half of build_broadcast_parts.
+  //
+  // A receiver that does NOT fire still constrains the transition: it stays put precisely
+  // because its own clock guard fails, so the step is enabled only where the COMPLEMENT of
+  // that guard holds. `parts` cannot say that -- an abstaining receiver contributes no edge --
+  // so the constraints ride here. They are a pure guard on the SOURCE: no reset, no location
+  // change, no integer update, which is why gfp_pre can apply them at exactly the same point
+  // as the participants' guards and nowhere else. Empty for local edges, binary sync, and
+  // every broadcast whose receivers all carry unguarded a? edges (csma).
+  std::vector<Constraint> abstain;
 };
 
 struct GfpStats {
@@ -3963,28 +3973,22 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
-      std::vector<std::pair<int, std::vector<int>>> parts;
-      for (int j = 0; j < net.nprocs(); ++j) {
-        if (j == i) continue;
-        std::vector<int> es;
-        for (int ej : net.procs[j].edges_of(s.locs[j])) {
-          const NEdge& re = net.procs[j].edges[ej];
-          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 &&
-              int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
-            es.push_back(ej);
-        }
-        if (!es.empty()) parts.push_back({j, std::move(es)});
-      }
+      std::vector<std::pair<int, std::vector<RecvOpt>>> parts;   // see build_broadcast_parts
+      build_broadcast_parts(net, s, se, i, parts);
       std::vector<std::size_t> pick(parts.size(), 0);
       for (;;) {
         bool part_committed = net.procs[i].locations[s.locs[i]].committed;
-        for (const auto& pr : parts)
-          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        for (std::size_t t2 = 0; t2 < parts.size(); ++t2)
+          if (parts[t2].second[pick[t2]].edge >= 0 &&
+              net.procs[parts[t2].first].locations[s.locs[parts[t2].first]].committed) part_committed = true;
         if (!src_committed || part_committed) {
           Dbm z1 = s.zone;
           bool ok = apply_all(z1, se.clock_guard);
-          for (std::size_t t2 = 0; ok && t2 < parts.size(); ++t2)
-            ok = apply_all(z1, net.procs[parts[t2].first].edges[parts[t2].second[pick[t2]]].clock_guard);
+          for (std::size_t t2 = 0; ok && t2 < parts.size(); ++t2) {
+            const RecvOpt& o = parts[t2].second[pick[t2]];
+            ok = o.edge >= 0 ? apply_all(z1, net.procs[parts[t2].first].edges[o.edge].clock_guard)
+                             : apply_all(z1, o.extra);
+          }
           if (ok) {
             SymState ns;
             ns.locs = s.locs; ns.ints = s.ints;
@@ -3993,7 +3997,13 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
             for (int r : se.clock_resets) z1.reset(r);
             GfpTag tg; tg.parts.push_back({i, ei});
             for (std::size_t t2 = 0; t2 < parts.size(); ++t2) {
-              const int pj = parts[t2].first, ej = parts[t2].second[pick[t2]];
+              const RecvOpt& o = parts[t2].second[pick[t2]];
+              if (o.edge < 0) {          // abstained: nothing moves, but the guard's complement
+                                         // is part of what enables this step -- keep it for Pre
+                tg.abstain.insert(tg.abstain.end(), o.extra.begin(), o.extra.end());
+                continue;
+              }
+              const int pj = parts[t2].first, ej = o.edge;
               const NEdge& re = net.procs[pj].edges[ej];
               ns.locs[pj] = re.tgt;
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
@@ -4090,6 +4100,10 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
 
   for (const auto& pe : t.parts)
     if (!apply_all(Y, net.procs[pe.first].edges[pe.second].clock_guard)) return gfp_empty(net.nclocks);
+  // The abstaining receivers' guard complements, applied here and not elsewhere: like a
+  // participant's guard they constrain the source valuation, and unlike one they undo nothing,
+  // so they belong after the resets have been freed and before the pre-action delay.
+  if (!t.abstain.empty() && !apply_all(Y, t.abstain)) return gfp_empty(net.nclocks);
 
   // Delay BEFORE the action. A stored zone is delay-closed as a SET, which is why the forward
   // operator may write `Z /\ g`; a single valuation may still have to let time pass first.
@@ -4316,6 +4330,11 @@ bool leads_to_gfp(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
   // the comparison.
   auto time_diverges = [&](const SymState& s) -> bool {
     if (net.nclocks == 0) return false;
+    // FROZEN LOCATIONS DO NOT DELAY. Delaying unconditionally reports divergence at a
+    // committed/urgent location, where no positive delay is legal at all -- inventing a
+    // maximal-run witness out of nothing. The same repair as in leads_to_net and
+    // Otf::time_diverges; this third copy was the one still missing it.
+    { bool fc, fu; frozen_flags(net, s.locs, &fc, &fu); if (fc || fu) return false; }
     Dbm z = s.zone; z.delay();
     std::vector<Constraint> inv; all_invariants(net, s.locs, inv); apply_all(z, inv);
     if (z.empty()) return false;
@@ -4792,6 +4811,10 @@ void gen_profile(const Network& net) {
   auto tagkey = [](const GfpTag& t) {
     std::string k;
     for (auto& pe : t.parts) { k += std::to_string(pe.first); k += ':'; k += std::to_string(pe.second); k += ','; }
+    for (const auto& c : t.abstain) {   // two broadcasts differing only in who abstained
+      k += '~'; k += std::to_string(c.i); k += ':'; k += std::to_string(c.j);
+      k += ':'; k += std::to_string((long)c.bound);
+    }
     return k;
   };
 
@@ -4821,6 +4844,11 @@ void gen_profile(const Network& net) {
       for (int x : r) enc(k, x);
       k += '/';
     }
+    k += '~';                              // the abstaining receivers' guard complements
+    { std::vector<Constraint> g = t.abstain;
+      std::sort(g.begin(), g.end(), [](const Constraint& a, const Constraint& b) {
+        return a.i != b.i ? a.i < b.i : (a.j != b.j ? a.j < b.j : a.bound < b.bound); });
+      for (const auto& c : g) { enc(k, c.i); enc(k, c.j); enc(k, c.bound); } }
     k += '|';
     all_invariants(net, tl, kinv);
     std::sort(kinv.begin(), kinv.end(), [](const Constraint& a, const Constraint& b) {
@@ -4953,6 +4981,15 @@ static inline std::uint64_t sig_of_tag_cached(const Network&, const GfpTag& t, F
     while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; --j; } a[j + 1] = v; }
   std::uint64_t h = 1469598103934665603ull;
   for (int i = 0; i < n; ++i) { h ^= (std::uint64_t)(std::uint32_t)a[i]; h *= 1099511628211ull; }
+  // The abstaining receivers' guard complements are part of WHICH transition this is: two
+  // broadcasts with identical participant sets and different abstain sets have different
+  // predecessors, and a memo keyed without them would return the wrong zone. Order-sensitive
+  // is fine -- build_broadcast_parts emits them in process order, deterministically.
+  for (const Constraint& c : t.abstain) {
+    h ^= (std::uint64_t)(std::uint32_t)c.i;            h *= 1099511628211ull;
+    h ^= (std::uint64_t)(std::uint32_t)c.j;            h *= 1099511628211ull;
+    h ^= (std::uint64_t)(std::uint32_t)(long)c.bound;  h *= 1099511628211ull;
+  }
   return h;
 }
 
@@ -5020,39 +5057,38 @@ static void memo_enumerate(const Network& net, const SymState& s, std::vector<Ca
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
-      std::vector<std::pair<int, std::vector<int>>> parts;
-      for (int j = 0; j < net.nprocs(); ++j) {
-        if (j == i) continue;
-        std::vector<int> es;
-        for (int ej : net.procs[j].edges_of(s.locs[j])) {
-          const NEdge& re = net.procs[j].edges[ej];
-          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 &&
-              int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
-            es.push_back(ej);
-        }
-        if (!es.empty()) parts.push_back({j, std::move(es)});
-      }
+      std::vector<std::pair<int, std::vector<RecvOpt>>> parts;   // see build_broadcast_parts
+      build_broadcast_parts(net, s, se, i, parts);
       std::vector<std::size_t> pick(parts.size(), 0);
       for (;;) {
         bool part_committed = net.procs[i].locations[s.locs[i]].committed;
-        for (const auto& pr : parts)
-          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        for (std::size_t t2 = 0; t2 < parts.size(); ++t2)
+          if (parts[t2].second[pick[t2]].edge >= 0 &&
+              net.procs[parts[t2].first].locations[s.locs[parts[t2].first]].committed) part_committed = true;
         if (!src_committed || part_committed) {
           Cand c; c.locs = s.locs; c.ints = s.ints; c.locs[i] = se.tgt;
           for (const auto& a : se.int_updates) c.ints[a.var] = a.val;
           c.tag.parts.push_back({i, ei});
           bool ok = true;
           for (std::size_t t2 = 0; t2 < parts.size(); ++t2) {
-            const int pj = parts[t2].first, ej = parts[t2].second[pick[t2]];
+            const RecvOpt& o = parts[t2].second[pick[t2]];
+            if (o.edge < 0) {                          // abstained: nothing moves
+              c.tag.abstain.insert(c.tag.abstain.end(), o.extra.begin(), o.extra.end());
+              continue;
+            }
+            const int pj = parts[t2].first, ej = o.edge;
             const NEdge& re = net.procs[pj].edges[ej];
             c.locs[pj] = re.tgt;
             for (const auto& a : re.int_updates) c.ints[a.var] = a.val;
             c.tag.parts.push_back({pj, ej});
           }
           if (ok && gen_apply(net, se, c.ints.data(), c.ints.size())) {
-            for (std::size_t t2 = 0; t2 < parts.size() && ok; ++t2)
-              ok = gen_apply(net, net.procs[parts[t2].first].edges[parts[t2].second[pick[t2]]],
+            for (std::size_t t2 = 0; t2 < parts.size() && ok; ++t2) {
+              const RecvOpt& o = parts[t2].second[pick[t2]];
+              if (o.edge < 0) continue;
+              ok = gen_apply(net, net.procs[parts[t2].first].edges[o.edge],
                              c.ints.data(), c.ints.size());
+            }
             if (ok) out.push_back(std::move(c));
           }
         }
@@ -5073,6 +5109,7 @@ static bool memo_apply_zone(const Network& net, const Cand& c, const Dbm& src,
   Dbm z1 = src;
   for (const auto& pe : c.tag.parts)
     if (!apply_all(z1, net.procs[pe.first].edges[pe.second].clock_guard)) return false;
+  if (!c.tag.abstain.empty() && !apply_all(z1, c.tag.abstain)) return false;   // see GfpTag
   for (const auto& pe : c.tag.parts)
     for (int r : net.procs[pe.first].edges[pe.second].clock_resets) z1.reset(r);
   all_invariants(net, c.locs, inv);
