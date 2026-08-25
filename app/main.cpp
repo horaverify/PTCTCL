@@ -82,13 +82,12 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
       // EXCEPT with DIAGONAL constraints, where the single-TA engine is the better one: it
       // SPLITS locations on the truth of each diagonal atom and stays exact, while the network
       // engine can only keep diagonals exact and relax clock-vs-zero, behind a state cap. So
-      // diagonal models keep the old route. PTCTLMC_SINGLETA forces it for A/B measurement.
+      // diagonal models keep the old route.
       if (!net_loaded) {
         net_loaded = true;
         try { net_fb = load_uppaal_network(model); net_ok = true; } catch (...) { net_ok = false; }
       }
-      static const bool force_single_ta = std::getenv("PTCTLMC_SINGLETA") != nullptr;
-      const bool prefer_net = net_ok && !force_single_ta && !network_has_diagonal(net_fb);
+      const bool prefer_net = net_ok && !network_has_diagonal(net_fb);
       bool net_tried = false, done = false;
       if (prefer_net) {
         net_tried = true;

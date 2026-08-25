@@ -62,7 +62,7 @@ struct NetPassed {
   // for their zone, and the aLU bounds come from the INCOMING state's locs.
   struct Node { int zidx; int level; int next; bool dead; };   // zidx: index into the shared ZoneIntern
   // `visits`: how many times add() has walked this chain. Drives adaptive mirror promotion
-  // (see detail::hot_work()). Free -- it lands in the padding after `head`, so Slot stays 16 bytes.
+  // (see detail::kHotWork). Free -- it lands in the padding after `head`, so Slot stays 16 bytes.
   // Only ever written under the stripe's EXCLUSIVE lock; the shared-lock kill probe must not
   // touch it.
   struct Slot { std::uint64_t dk; int head; std::uint32_t visits; };
@@ -105,7 +105,7 @@ struct NetPassed {
   // Live zones a chain must reach before it is mirrored densely. The mirror trades memory (a
   // dense copy of the chain, vs. the packed record the interner shares between identical zones)
   // for dropping an O(chain) unpack from every insert, so the threshold decides which chains are
-  // long enough to be worth it. PTCTLMC_HOTLEN overrides it; 0 disables mirroring entirely.
+  // long enough to be worth it.
   //
   // A FIXED length threshold is the wrong question, and measurably so. What the mirror saves is
   // an O(L*dim^3) unpack on EVERY VISIT to a chain of L live zones; what it costs is L*dim^2*4
@@ -115,7 +115,7 @@ struct NetPassed {
   // chains are short but hammered: phil13 burned 1.14e9 instructions in mindbm_unpack (11.5% of
   // the run, 6.7x the pre-interning baseline) waiting for a threshold it never reached.
   //
-  // So promote on accumulated work instead: visits*L >= detail::hot_work(). This GENERALISES the old
+  // So promote on accumulated work instead: visits*L >= detail::kHotWork. This GENERALISES the old
   // rule rather than replacing it -- a length-64 chain still promotes on its first visit
   // (64*1 >= 64), while a length-16 chain now promotes on its 4th and a length-8 on its 8th.
   // Nothing needs to be known up front and no model-specific constant is involved: a chain earns
@@ -216,7 +216,7 @@ struct NetPassed {
     }
     // This walk is about to cost an unpack of the whole live chain unless it is mirrored, so
     // count it: `visits` is the "how often is this chain hammered" half of the promotion rule in
-    // detail::hot_work(). Saturating, so a pathologically hot chain cannot wrap back to cold. Safe to
+    // detail::kHotWork. Saturating, so a pathologically hot chain cannot wrap back to cold. Safe to
     // write here -- add() runs under the stripe's exclusive lock (the shared-lock kill probe in
     // maybe_subsumed() deliberately does not touch it).
     if (tab[si].visits != UINT32_MAX) ++tab[si].visits;
@@ -326,12 +326,11 @@ struct NetPassed {
     // 4.6k try_unions per insert, which was most of the run. Zones that merge are nearly always
     // recent neighbours (a merge happens when a successor extends a zone stored moments before),
     // so a small window keeps effectively all of the reduction.
-    const std::size_t mscan = detail::merge_scan();
+    constexpr std::size_t mscan = detail::kMergeScan;
     for (bool merged = true; merged;) {
       merged = false;
       for (std::size_t k = 0; k < std::min(live.size(), mscan); ++k) {
-        if (detail::engine_legacy() ? dbm_try_union_legacy(s.zone.data().data(), zp[live[k]], dim)
-                            : dbm_try_union(s.zone.data().data(), zp[live[k]], dim)) {
+        if (dbm_try_union(s.zone.data().data(), zp[live[k]], dim)) {
           retire(k);
           live.erase(live.begin() + k);
           merged = true;
@@ -351,16 +350,13 @@ struct NetPassed {
       detail::hot_bytes().fetch_add(d2 * sizeof(raw_t), std::memory_order_relaxed);
       if (hc->ndead * 2 > hc->node.size()) compact_hot(*hc, d2);
     } else {
-      // ADAPTIVE PROMOTION (see detail::hot_work()): a chain earns its mirror once the unpacking it has
-      // already cost, visits*L, crosses the threshold -- so short-but-hot chains promote too,
-      // which a length-only rule can never do. `visits` was incremented on entry to this walk.
+      // ADAPTIVE PROMOTION (see detail::kHotWork): a chain earns its mirror once the unpacking
+      // it has already cost, visits*L, crosses the threshold -- so short-but-hot chains promote
+      // too, which a length-only rule can never do. `visits` was incremented on entry to this walk.
       const std::size_t L = live.size() + 1;
       const std::size_t cost = L * d2 * sizeof(raw_t);
-      const std::size_t pinned = detail::hot_len_fixed();
-      const bool want = (detail::mirror_mode() == detail::MirrorMode::Off) ? false
-                      : pinned ? (L >= pinned)                       // ablation: length only
-                               : (L >= detail::hot_min_len() &&
-                                  static_cast<std::size_t>(tab[si].visits) * L >= detail::hot_work());
+      const bool want = L >= detail::kHotMinLen &&
+                        static_cast<std::size_t>(tab[si].visits) * L >= detail::kHotWork;
       if (want && detail::hot_bytes().load(std::memory_order_relaxed) + cost <= detail::hot_budget()) {
         HotChain& nh = hot[dk];
         nh.z.reserve(L * d2);

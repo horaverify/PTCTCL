@@ -43,10 +43,9 @@ class SpinRW {
   // when the lock holder has been descheduled -- i.e. when threads outnumber cores. At threads <=
   // cores the holder is running and will release in microseconds, so yielding costs more than the
   // wait it avoids: phil13 measured 14.5M yields, tens of CPU-seconds of pure syscall on a 239
-  // CPU-second run. PTCTLMC_SPIN overrides the threshold.
+  // CPU-second run.
   static int spin_limit() {
     static const int v = [] {
-      if (const char* e = std::getenv("PTCTLMC_SPIN")) return std::max(1, std::atoi(e));
       const unsigned hw = std::thread::hardware_concurrency();
       int nt = 1;
 #ifdef PTCTLMC_HAVE_OPENMP

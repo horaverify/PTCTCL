@@ -189,23 +189,13 @@ struct ZoneIntern {
   // viking12: it catches consecutive reads of the SAME index, but within a level the reads are
   // spread over many distinct indices, so almost every one missed.
   static constexpr int kDecodeLinesMax = 64;
-  /// @brief Lines in the per-thread decode cache (PTCTLMC_DECODELINES, power of two, default 16).
+  /// @brief Lines in the per-thread decode cache. Power of two.
   ///
   /// Not a free parameter in one direction: 1 line and 16 lines favour different families. 16
   /// wins on viking (viking17 -7.9%, viking20 -6.4%) where a level touches many distinct zones;
   /// 1 was better on single, whose long chains re-read one zone repeatedly and whose working set
-  /// then fits without evicting it.
-  static int decode_lines() {
-    static const int v = [] {
-      int n = 16;
-      if (const char* e = std::getenv("PTCTLMC_DECODELINES")) {
-        const long r = std::atol(e);
-        if (r > 0 && r <= kDecodeLinesMax && (r & (r - 1)) == 0) n = static_cast<int>(r);
-      }
-      return n;
-    }();
-    return v;
-  }
+  /// then fits without evicting it. 16 is the shipping value.
+  static constexpr int decode_lines() { return 16; }
 
   /// @brief Decode zone @p idx into a per-thread cache and return it.
   ///

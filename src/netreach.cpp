@@ -440,7 +440,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
 // The successor zone is a function of (source zone, edge, target-location data), and on some
 // models very few DISTINCT zones exist -- viking stores 13.6M states drawn from 120 zones -- so
 // the same O(dim^3) delay/constrain/close is recomputed enormous numbers of times. The engine
-// already noticed this (see PTCTLMC_SRCSTATS above); this caches the result.
+// already noticed this; this caches the result.
 //
 // KEY. Everything Post reads, and nothing more:
 //   * source zone id      -- free: the frontier already carries the interned zidx
@@ -931,7 +931,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // With diagonal constraints the aLU abstraction is unsound: fall back to exact zones
   // (diagonals kept exact) + plain inclusion subsumption.
   const bool has_diag = network_has_diagonal(net);
-  // PTCTLMC_EXACTSUB forces plain-inclusion subsumption for A/B-testing the aLU test itself.
   const bool exact_sub = has_diag || force_exact;
   // Finiteness comes from EITHER aLU subsumption on exact zones (the default) OR, when zones must
   // be compared exactly, from LU-extrapolation.
@@ -940,11 +939,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // would only coarsen what aLU already covers") was wrong in a way worth stating: aLU only ever
   // PRUNES -- it drops a zone when a stored one simulates it -- whereas Extra_LU+ WIDENS, mapping
   // many exact zones onto one representative. On a model whose reachable zones are mutually
-  // aLU-incomparable, pruning does nothing and widening collapses them. PTCTLMC_EXTRAP=1 runs
-  // both (widen, then subsume with aLU), which is sound: Extra_LU+(Z) is contained in the aLU
-  // abstraction of Z, and the query's own constants already floor L and U above.
-  static const bool force_extrap = std::getenv("PTCTLMC_EXTRAP") != nullptr;
-  int emode = has_diag ? ExNoDiag : ((force_exact || force_extrap) ? ExLuPlus : ExNone);
+  // aLU-incomparable, pruning does nothing and widening collapses them.
+  int emode = has_diag ? ExNoDiag : (force_exact ? ExLuPlus : ExNone);
   // ADAPTIVE: which of the two wins is a property of the model, not a constant, and the engine
   // already measures the distinguishing signal. Zones per discrete state near 1 means aLU is
   // collapsing them and widening would only cost time (phil 1.11, viking 1.00: extrapolation
@@ -956,15 +952,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // Switching mid-run is sound in both directions of the mixed passed list it leaves behind: a
   // stored EXACT zone that fails to subsume a new widened one only costs an extra stored state,
   // and a stored WIDENED zone that subsumes a new exact one genuinely contains it. Finiteness is
-  // guaranteed from the switch onwards. PTCTLMC_ADAPT=0 disables the switch.
-  static const bool adapt = [] {
-    const char* e = std::getenv("PTCTLMC_ADAPT");
-    return !e || std::atol(e) != 0;
-  }();
-  static const double kAdaptRatio = [] {
-    const char* e = std::getenv("PTCTLMC_ADAPTRATIO");
-    return e ? std::atof(e) : 4.0;
-  }();
+  // guaranteed from the switch onwards.
+  constexpr double kAdaptRatio = 4.0;
   std::vector<char> qmask(net.nclocks + 1, 0);  // clocks the query reads -> keep active
   for (const auto& c : target.clock_cond) { if (c.i > 0) qmask[c.i] = 1; if (c.j > 0) qmask[c.j] = 1; }
 
@@ -1083,8 +1072,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   if (!force_exact && !use_sym && backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
 #endif
   use_gpu = (gpu != nullptr);
-  if (use_gpu && std::getenv("PTCTLMC_STATS"))
-    std::fprintf(stderr, "[gpu] network expander ACTIVE\n");
 #ifdef PTCTLMC_HAVE_OPENMP
   // The CPU path runs multi-threaded for --backend omp AND for a GPU backend that fell back.
   parallel = (backend == Backend::Omp) || (!use_gpu && backend != Backend::Seq);
@@ -1212,14 +1199,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     std::vector<long> fi(s0.ints.begin(), s0.ints.end());
     std::vector<int> fz(1, zi.intern(s0.zone.data().data()));
     passed[disc_key(s0.locs, s0.ints)].assign(1, fz[0]);
-    // CPU-expand / GPU-merge hybrid (PTCTLMC_HYBRID=1): each phase on the hardware the
-    // measurements say it wins on. Zero-copy via unified memory.
-    const bool hybrid = std::getenv("PTCTLMC_HYBRID") != nullptr;
-    int hyb_threads = 1;
-    std::size_t hyb_ratio = 8;   // successors staged per frontier state (adapts per level)
-#ifdef PTCTLMC_HAVE_OPENMP
-    hyb_threads = omp_get_max_threads();
-#endif
     double gpu_rate = -1, cpu_rate = -1;   // adaptive merge routing: work-units (sum bucket^2) per ms
     auto _now = [] { return std::chrono::steady_clock::now(); };
     auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
@@ -1397,92 +1376,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const gz_t* oz = nullptr;
       const std::uint64_t* odk = nullptr;   // device-packed discrete keys (null => pack host-side)
       std::size_t nwork;
-      if (hybrid) {
-        // CPU-EXPAND / GPU-MERGE, ZERO-COPY. Successor generation is branchy,
-        // serially-dependent small-matrix work the CPU wins; the per-bucket
-        // subsumption/convex-union merge is thousands of independent jobs the GPU wins.
-        // Unified memory lets each phase run where it is fastest with NO transfer: the
-        // CPU expander writes successors DIRECTLY into the buffers the merge kernel
-        // reads. Threads claim slots in blocks (one atomic per BLK successors, not per
-        // successor), so the only per-successor cost is the write itself.
-        const int NT = hyb_threads;
-        constexpr std::size_t BLK = 256;
-        const std::size_t cap = std::max<std::size_t>(
-            static_cast<std::size_t>(nfr) * hyb_ratio + BLK * NT, 1024);
-        int *sv = nullptr, *sl = nullptr, *si2 = nullptr; gz_t* sz = nullptr;
-        gpu->stage_expand(cap, np, ni, d2, sv, sl, si2, sz);
-        // Zero the flags once instead of tracking each thread's unused block tail: a
-        // slot is a successor only if it was written, so unclaimed holes stay invalid.
-        std::memset(sv, 0, cap * sizeof(int));
-        std::atomic<std::size_t> wnext{0};
-        // Overflow spill (only when this level's fan-out beat the estimate).
-        std::vector<std::vector<int>>   spl(NT);
-        std::vector<std::vector<long>>  spi(NT);
-        std::vector<std::vector<raw_t>> spz(NT);
-#ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp parallel num_threads(NT)
-#endif
-        {
-          int tid = 0;
-#ifdef PTCTLMC_HAVE_OPENMP
-          tid = omp_get_thread_num();
-#endif
-          std::vector<SymState> buf;
-          SymState cur; cur.locs.resize(np); cur.ints.resize(ni);
-          Dbm pz(net.nclocks);
-          std::size_t mi = 0, me = 0;
-          bool spilled = false;
-#ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp for schedule(dynamic, 8) nowait
-#endif
-          for (long i = 0; i < static_cast<long>(nfr); ++i) {
-            for (int p = 0; p < np; ++p) cur.locs[p] = fl[static_cast<std::size_t>(i) * np + p];
-            for (int v = 0; v < ni; ++v) cur.ints[v] = fi[static_cast<std::size_t>(i) * niw + v];
-            zi.load(fz[static_cast<std::size_t>(i)], pz.data().data());   // frontier holds arena indices
-            const std::size_t n = gen_succ_reuse(net, cur, pz, L, U, qmask, emode, buf,
-                                                 fz[static_cast<std::size_t>(i)]);
-            for (std::size_t k = 0; k < n; ++k) {
-              const SymState& ns = buf[k];
-              if (!spilled && mi == me) {                       // claim the next block
-                const std::size_t b = wnext.fetch_add(BLK, std::memory_order_relaxed);
-                if (b + BLK > cap) spilled = true; else { mi = b; me = b + BLK; }
-              }
-              if (!spilled) {
-                const std::size_t w = mi++;
-                sv[w] = 1;
-                for (int p = 0; p < np; ++p) sl[w * np + p] = ns.locs[p];
-                for (int v = 0; v < ni; ++v) si2[w * ni + v] = static_cast<int>(ns.ints[v]);
-                for (int k = 0; k < d2; ++k) sz[w * d2 + k] = gz_store(ns.zone.data()[k]);
-              } else {
-                spl[tid].insert(spl[tid].end(), ns.locs.begin(), ns.locs.end());
-                spi[tid].insert(spi[tid].end(), ns.ints.begin(), ns.ints.end());
-                spz[tid].insert(spz[tid].end(), ns.zone.data().begin(), ns.zone.data().end());
-              }
-            }
-          }
-        }
-        const std::size_t direct = std::min<std::size_t>(wnext.load(), cap);
-        std::size_t spill = 0;
-        for (int t = 0; t < NT; ++t) spill += spz[t].size() / d2;
-        if (spill) {   // estimate was low: keep what is written, append the tail
-          gpu->stage_expand(direct + spill, np, ni, d2, sv, sl, si2, sz, /*preserve=*/true);
-          std::size_t w = direct;
-          for (int t = 0; t < NT; ++t) {
-            const std::size_t m = spz[t].size() / d2;
-            for (std::size_t k = 0; k < m; ++k, ++w) {
-              sv[w] = 1;
-              for (int p = 0; p < np; ++p) sl[w * np + p] = spl[t][k * np + p];
-              for (int v = 0; v < ni; ++v) si2[w * ni + v] = static_cast<int>(spi[t][k * ni + v]);
-              for (int q2 = 0; q2 < d2; ++q2) sz[w * d2 + q2] = gz_store(spz[t][k * d2 + q2]);
-            }
-          }
-        }
-        nwork = direct + spill;
-        // Adapt the estimate to what this level actually produced (x2 headroom), so the
-        // spill path stays cold even as the fan-out changes across the search.
-        if (nfr) hyb_ratio = std::max<std::size_t>(4, 2 * (nwork / nfr + 1));
-        ev = sv; ol = sl; oi = si2; oz = sz;
-      } else {
+      {
         // Materialise just THIS BATCH's zones, widened out of the arena. The frontier itself is
         // arena indices (4 B per state) rather than dense matrices (dim^2 words): the zones are
         // in the passed set already, so a level-wide dense copy was storing every one of them
@@ -1985,7 +1879,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // Adaptive abstraction: re-read the zones-per-discrete-state signal now that the level is
       // complete and every thread has joined, and switch widening on if the antichains are
       // filling up. Once on it stays on -- the ratio only ever justifies more abstraction.
-      if (adapt && emode == ExNone) {
+      if (emode == ExNone) {
         std::size_t nlive = 0, ndisc = 0;
         for (const auto& mp : smap) mp.counts(nlive, ndisc);
         if (ndisc && static_cast<double>(nlive) >= kAdaptRatio * static_cast<double>(ndisc)) {
@@ -2670,7 +2564,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
 // federation of (nclocks+1)-dimensional ones. The next `dbm_includes` inside gfp_fed_compact
 // reads dim*dim entries out of a 4-byte allocation.
 //
-// Caught by AddressSanitizer as a heap-buffer-overflow, after `PTCTLMC_GFPMODE=d6` on grc4
+// Caught by AddressSanitizer as a heap-buffer-overflow on grc4
 // returned SATISFIED on 4 of 10 identical runs and UNUSABLE on the other 6: the verdict was a
 // function of whatever heap garbage followed the placeholder. The bug is in gfp_pre and is
 // therefore shared by the published leads_to_gfp, not introduced by the on-the-fly work; the
@@ -2838,7 +2732,7 @@ struct OtfEdge {
 };
 
 // ---------------------------------------------------------------------------
-// THE GENERAL DEADLOCK-COMPLETION CONSTRUCTION (default; PTCTLMC_OTFNOATOMS turns it off).
+// THE GENERAL DEADLOCK-COMPLETION CONSTRUCTION.
 //
 // Otf::dtheta_empty decides only the DEGENERATE case: if Dead(q) is empty, or all of Inv(q),
 // or Inv(q) is time-open at a non-frozen key, the deadlock completion's constraint-map seed is
@@ -3118,7 +3012,7 @@ bool Otf::is_nq(int i) {
   return qc[i] == 0;
 }
 
-// SPLIT AT COMPARISON (PTCTLMC_OTFSPLITCMP), the alternative to split_by_atoms' split at
+// SPLIT AT COMPARISON, the alternative to split_by_atoms' split at
 // creation. Stored zones are whole, so they may STRADDLE an atom, and the split -- if it is
 // needed at all -- happens inside the covering test.
 //
@@ -3159,7 +3053,7 @@ bool Otf::is_nq(int i) {
 //
 // Split-at-creation cuts every zone along every atom at its key the moment it is produced, so
 // stored zones are atom-homogeneous and covering is one mask AND. Split-at-comparison stores
-// zones whole and splits transiently inside the covering test. PTCTLMC_OTFSPLITLAZY also stores
+// zones whole and splits transiently inside the covering test. The LAZY arm also stored
 // whole but, when a covering decision genuinely turns on a stored zone's straddle, splits that
 // node PERMANENTLY -- once per zone rather than once per probe, and only on atoms that actually
 // arose (Herbreteau-Srivathsan-Walukiewicz's lazy abstraction, refine where the property is at
@@ -3176,14 +3070,14 @@ bool Otf::is_nq(int i) {
 // the recursion is NEVER ENTERED: 0 of grc4's 216 blocked probes and 0 of grc5's 2660 recurse.
 // At the keys that carry atoms, the a_LU antichain is already wide enough that no covering
 // succeeds at all, so the atoms never refuse a merge that would otherwise have happened, and
-// the eager split's only effect is fragmentation. Two measurements pin that: with
-// PTCTLMC_NOMERGE, creation goes 1179 -> 2579 on grc4 while comparison is unchanged at 921 --
-// the convex-union merge exists to glue back what the eager split broke -- and comparison plus
-// PTCTLMC_OTFATOMSNOLIVE reaches 883 on grc4, exactly the a_LU floor.
+// the eager split's only effect is fragmentation. Two measurements pin that: with the
+// convex-union merge off, creation goes 1179 -> 2579 on grc4 while comparison is unchanged at
+// 921 -- the merge exists to glue back what the eager split broke -- and comparison without the
+// atom-clock pinning reaches 883 on grc4, exactly the a_LU floor.
 //
-// LAZY IS A NULL RESULT: 0 splits and 0 activations on every model here, so it is bit-identical
-// to comparison. Forced to fire (PTCTLMC_GFPNOALU) it stores MORE than either, because
-// activating an atom re-enables eager splitting for that whole key thereafter.
+// LAZY WAS A NULL RESULT: 0 splits and 0 activations on every model here, so it was
+// bit-identical to comparison. Forced to fire it stored MORE than either, because activating an
+// atom re-enables eager splitting for that whole key thereafter. It is gone.
 //
 // Do not read the forward-reachability result as contradicting this. There the same recursion
 // costs 5x, because coverings at atom-carrying keys DO succeed there and it genuinely fires.
@@ -3364,7 +3258,7 @@ int Otf::intern(SymState&& s) {
         intern_grew = true;
         return b[k];
       }
-  // EXACT CONVEX-UNION MERGE, on by default (PTCTLMC_OTFNOMERGE disables).
+  // EXACT CONVEX-UNION MERGE.
   //
   // The liveness graph inherited "no merge" from leads_to_net, where it is opt-in and was
   // measured a net loss -- but that measurement was made on an EXACT-ZONE graph, not on this
@@ -3833,7 +3727,7 @@ bool Otf::build_atom_map(AtomMap& am) {
     // needs is only `inv subseteq Z` --
     //     x in inv \ (Z \ E)  iff  x in inv and not (x in Z and x notin E)  iff  x in inv ^ E,
     // using x in inv => x in Z -- and that holds both ways round: equal when not frozen, and
-    // `inv = universe ^ Inv subseteq universe = Z` when frozen. PTCTLMC_DLSELFCHECK runs the
+    // `inv = universe ^ Inv subseteq universe = Z` when frozen. A self-check ran the
     // old federation form alongside and aborts on any disagreement; it is clean across the
     // 48-query differential and the three liveness regressions.
     //
@@ -4035,14 +3929,6 @@ bool Otf::build_atom_map(AtomMap& am) {
     if (all_at_m) am.diag.clear();
   }
 
-  // PTCTLMC_OTFATOMSLANE=cell|bump -- DIAGNOSTIC, and each setting is UNSOUND on its own.
-  //
-  // The map has two lanes and they discharge different atoms: cells carry the diagonals, bumps
-  // carry the clock bounds. Running one without the other answers "which lane is actually
-  // load-bearing on this model, and which one is paying the bill" -- a question the combined
-  // figures cannot answer, because a pre-closure that turns a diagonal into a bump at some
-  // predecessor makes the two lanes cover for each other.
-
   // ---- active-clock reduction must keep every clock the map reads ---------
   for (const auto& kv : am.diag)
     for (const AtomC& a : kv.second) {
@@ -4099,20 +3985,6 @@ void Otf::base_forward() {
         for (const auto& e : adj[u])
           if (!expanded[e.tgt]) push(e.tgt);
       }
-      // PTCTLMC_OTFDLSTAT: how much of the graph is actually deadlock-prone?
-      //
-      // This measures the HEADROOM for any scheme that pays a_M strength only where a deadlock
-      // could really be lost. a_M costs 1.3x-10.3x more nodes than a_LU here and the ratio grows
-      // with model size; the whole point of a promotion scheme is to pay that only where it is
-      // owed. If nearly every discrete key can deadlock, there is nothing to win and a_M is
-      // already optimal. If only a handful can, the prize is most of that 10.3x.
-      // PTCTLMC_OTFDLSTRUCT: classify Dead(q) STRUCTURALLY, over all of Inv(q) rather than over
-      // the reachable zone. This is what decides the deadlock-completed constraint map: the seed
-      // D(q) can be dropped whenever Dead(q) is EMPTY (nothing to preserve), whenever it is ALL
-      // of Inv(q) (its atoms are already carried by the invariant), and whenever Inv(q) bounds no
-      // clock (time-open, so the divergence disjunct of stop already covers the whole zone).
-      // Only a PARTIAL Dead(q) forces new atoms -- and only there does the construction cost
-      // anything against plain a_LU.
 }
 
 void Otf::build_forward(GfpStats* gs) {
@@ -4160,7 +4032,7 @@ void Otf::fill_stats(GfpStats* gs) {
   }
 }
 
-// Entry point. `mode` comes from PTCTLMC_GFPMODE; returns true iff `p --> q` HOLDS.
+// Entry point. Returns true iff `p --> q` HOLDS.
 // DEADLOCK-FREEDOM GATE, AND THE RACE THAT DISCHARGES IT.
 //
 // SUPERSEDED AS THE DEFAULT, kept as the fallback. What follows is the original argument and
