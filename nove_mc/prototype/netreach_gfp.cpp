@@ -796,7 +796,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (Uq[c] != kAluNegInf && (Ur[c] == kGNone || le(Uq[c]) > Ur[c])) Ur[c] = le(Uq[c]);
         if (Lq[c] != kAluNegInf && (Lr[c] == kGNone || le(-Lq[c]) > Lr[c])) Lr[c] = le(-Lq[c]);
       }
-      Lr[0] = Ur[0] = kGNone;
+      // (<=,0), NOT kGNone. dbm_is_g_le's loops start at 0 and `continue` on kGNone, so a
+      // kGNone here deletes the (U-cut) witness family at y=0 and the (L-unsat') family at x=0.
+      // Removing witnesses can only turn the test from FALSE to TRUE, i.e. prune zones that are
+      // not actually simulated -- measured at ~19% unsound TRUEs against point-wise ground truth,
+      // versus zero for (<=,0). The sibling dbm_is_alu_le documents L[0]=U[0]=0 as MANDATORY for
+      // exactly this reason, and the code below does that.
+      Lr[0] = Ur[0] = kZeroLe;
     }
     if (net.lbound_loc.empty()) { L2 = L; U2 = U; return; }  // fall back to global bounds
     L2.assign(net.nclocks + 1, kAluNegInf);
@@ -2509,7 +2515,7 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
 // transition is ever enabled -- the quantity this routine already computes internally and
 // then discards. It is what an exact `stop` term needs; see Otf::stop_set.
 static bool state_has_deadlock(const Network& net, const SymState& s,
-                               Federation* stuck = nullptr);
+                               Federation* stuck = nullptr, Federation* escapes = nullptr);
 
 bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Backend backend,
                   ReachStats* stats) {
@@ -3327,7 +3333,7 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
 // of deadlock states. Enabledness is invariant under LU-extrapolation, so working on the
 // extrapolated zone is sound -- the same assumption the rest of the engine already relies on.
 static bool state_has_deadlock(const Network& net, const SymState& s,
-                               Federation* stuck) {
+                               Federation* stuck, Federation* escapes) {
   if (s.zone.empty()) return false;
   bool src_committed, src_urgent;
   frozen_flags(net, s.locs, &src_committed, &src_urgent);
@@ -3369,7 +3375,15 @@ static bool state_has_deadlock(const Network& net, const SymState& s,
       if (i == j) { if (c.bound < kZeroLe) return; continue; }  // 0 <| bound: constant gate
       if (!guarded.constrain(i, j, c.bound)) return;
     }
-    if (!guarded.empty()) live.push_back(std::move(guarded));
+    // INCLUSION-MINIMAL, not append. `live` is consumed only through its UNION -- by the
+    // subtraction below and, for the atom construction, by `escapes` -- so a member contained
+    // in a sibling denotes nothing new. It is not free, though: fed_subtract peels the
+    // remainder once per member and the piece count multiplies, so a redundant escape costs a
+    // whole extra peel of an already-exploded arrangement. Two escapes agreeing on their
+    // clock guard and differing only in which process moved is the common case (grc4's trains),
+    // and it is exactly this case. Pruning BEFORE down() is safe: W subseteq W' implies
+    // down(W) subseteq down(W'), so the union of the downs is unchanged too.
+    if (!guarded.empty()) fed_add(live, guarded);
   };
 
   // ---- local (unsynchronised) edges ----
@@ -3466,6 +3480,27 @@ static bool state_has_deadlock(const Network& net, const SymState& s,
   // region. Subtract that from the zone; a non-empty remainder is a set of deadlock states.
   if (!frozen)
     for (auto& W : live) W.down();
+  // The ESCAPE regions themselves, for callers that need to know WHICH constraints decide
+  // stuckness rather than only the residue. Dead = Z \ union(live), so membership is decided by
+  // the atoms of each live_e -- |out(q)| convex zones -- whereas the residue is an ARRANGEMENT
+  // whose piece count, and hence atom count, is far larger for the same set.
+  if (escapes) *escapes = live;
+  // ONE-ESCAPE SHORT CIRCUIT. fed_subtract peels Z once per escape and the piece count
+  // multiplies, so the arrangement it builds is the dominant cost of the structural sweep --
+  // and it is built even when a SINGLE escape already covers Z, which is the overwhelmingly
+  // common case (a location with one unguarded outgoing edge). One DBM inclusion test per
+  // escape decides that outright. Exact, not a heuristic: Z subseteq W subseteq union(live)
+  // means Dead(q) is empty, which is precisely what the subtraction would have reported.
+  static const bool selfcheck = std::getenv("PTCTLMC_DLSELFCHECK") != nullptr;
+  for (const Dbm& W : live)
+    if (W.includes(Z)) {
+      if (selfcheck && !fed_subtract(Z, live).empty()) {
+        std::fprintf(stderr, "[selfcheck] one-escape shortcut claimed Dead=empty, residue is not\n");
+        std::abort();
+      }
+      if (stuck) stuck->clear();
+      return false;
+    }
   Federation d = fed_subtract(Z, live);      // exactly the valuations with nothing enabled
   if (stuck) *stuck = d;
   return !d.empty();
@@ -3485,14 +3520,32 @@ static bool state_has_deadlock(const Network& net, const SymState& s,
 // unordered_map<std::string, vector<Dbm>> holding DENSE zone copies keyed by a freshly built
 // string. On the engine it gets the parallel level expansion, the sharded stripe-locked passed
 // list and packed min-graph zone records instead.
+// a_M SUBSUMPTION, NOT EXACT ZONES. Mirrors src/netreach.cpp, where the reasoning is written
+// out in full: deadlock needs a BISIMULATION, and setting L = U = M collapses the LU preorder to
+// "equal, or both above M", which is symmetric, hence a bisimulation, hence deadlock-sound
+// (Behrmann-Bouyer-Larsen-Pelanek, STTT 8(3):204-215, 2006, Lemma 1 vs Lemma 3). Collapsing the
+// network's bound arrays rather than threading a flag keeps every downstream consumer of L/U
+// consistent -- notably the adaptive path, where Extra_LU+ with L=U=M is Extra_M+, which can
+// neither invent nor destroy a deadlock.
 bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
                         const std::atomic<bool>* cancel) {
-  // The GPU drivers cannot express this target, and reach_engine keeps force_exact queries on
-  // the CPU regardless; ask for the parallel CPU backend rather than silently running serially.
   const Backend b = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
-  return reach_engine(net, NetTarget{},
-                      [&](const SymState& s) { return state_has_deadlock(net, s); },
-                      /*force_exact=*/true, b, stats, nullptr, nullptr, cancel);
+  const auto is_dl = [&](const SymState& s) { return state_has_deadlock(net, s); };
+  static const bool dl_exact = std::getenv("PTCTLMC_DLEXACT") != nullptr;
+  if (dl_exact || network_has_diagonal(net) || gsim_on())
+    return reach_engine(net, NetTarget{}, is_dl, /*force_exact=*/true, b, stats, nullptr, nullptr,
+                        cancel);
+  Network am = net;
+  auto collapse = [](std::vector<std::int32_t>& lo, std::vector<std::int32_t>& hi) {
+    for (std::size_t c = 0; c < lo.size() && c < hi.size(); ++c)
+      lo[c] = hi[c] = std::max(lo[c], hi[c]);
+  };
+  collapse(am.lbound, am.ubound);
+  for (std::size_t pr = 0; pr < am.lbound_loc.size(); ++pr)
+    for (std::size_t l = 0; l < am.lbound_loc[pr].size(); ++l)
+      collapse(am.lbound_loc[pr][l], am.ubound_loc[pr][l]);
+  return reach_engine(am, NetTarget{}, is_dl, /*force_exact=*/false, b, stats, nullptr, nullptr,
+                      cancel);
 }
 
 // ============================================================================
@@ -5126,19 +5179,140 @@ struct OtfEdge {
   GfpTag tag;
 };
 
+// ---------------------------------------------------------------------------
+// THE GENERAL DEADLOCK-COMPLETION CONSTRUCTION (default; PTCTLMC_OTFNOATOMS turns it off).
+//
+// Otf::dtheta_empty decides only the DEGENERATE case: if Dead(q) is empty, or all of Inv(q),
+// or Inv(q) is time-open at a non-frozen key, the deadlock completion's constraint-map seed is
+// empty and plain a_LU covering is already deadlock-sound. When some key has a genuinely
+// PARTIAL Dead(q) the seed is non-empty and the map has to CARRY the atoms of Dead(q), closed
+// under pre. This is that map.
+//
+// An atom is a half-space x_i - x_j <| b. Two kinds, and they are discharged differently:
+//
+//   DIAGONAL (i > 0 and j > 0). Invariant under time elapse, so agreement on it survives
+//   delay, so it can be carried as a CELL TAG: every stored zone is split until it lies wholly
+//   inside or wholly outside the atom, the resulting bit is appended to the discrete key, and
+//   zones in different cells are never compared. The covering test itself is untouched.
+//
+//   NON-DIAGONAL (i == 0 or j == 0), i.e. a bound on one clock. NOT delay invariant: two
+//   valuations agreeing on `x <= 5` need not agree on it after delaying, so no cell tag can
+//   carry it and splitting would not restore the property. What DOES carry it is the a_LU
+//   preorder itself -- with L(x) >= c and U(x) >= c its three clauses collapse to "equal, or
+//   both above c", which decides every constraint on x with constant <= c the same way for
+//   both valuations. So a non-diagonal atom is discharged by RAISING that one clock's bounds:
+//   a_M on that clock alone, rather than a_M on the whole model.
+//
+// With both in place the relation
+//     nu R nu'  iff  nu <=_LU nu' (raised bounds)  and  nu, nu' agree on the diagonal atoms
+// is a simulation for the COMPLETED automaton A^\perp, because (a) <=_LU is a simulation for A,
+// (b) diagonal agreement is preserved by delay and, via the pre-closure below, by every edge,
+// and (c) Dead(q) is a boolean combination of Inv(q) (which every stored zone satisfies), the
+// diagonal atoms and the non-diagonal ones -- so nu |= Dead(q) iff nu' |= Dead(q). Deadlock is
+// then an EXISTENTIAL reachability of the sink, which R preserves.
+struct AtomC {
+  int i, j;
+  raw_t b;                                   // x_i - x_j <| b
+  bool operator==(const AtomC& o) const { return i == o.i && j == o.j && b == o.b; }
+};
+
+static constexpr std::int32_t kNoBump = -1;  // clock constants are >= 0, so -1 is "unbumped"
+
+struct AtomMap {
+  std::unordered_map<std::string, std::vector<AtomC>> diag;  // discrete key -> cell-tag atoms
+  std::vector<std::int32_t> bump;   // clock -> constant L(x),U(x) must reach (kNoBump = none)
+  std::vector<char> live;           // clocks the atoms read: reset_inactive must not zero them
+  bool usable = false;
+  std::size_t seed_keys = 0, seed_atoms = 0, nondiag_atoms = 0, closure_atoms = 0;
+  std::size_t keys_tagged = 0, rounds = 0, bumped = 0;
+  // Atoms the minimisation removed: `dropped_vacuous` = escape regions that miss Inv(q)
+  // entirely; `dropped_disjoint` = atoms Inv(q) refutes, so their tag bit is constantly 0.
+  std::size_t dropped_vacuous = 0, dropped_disjoint = 0;
+};
+
 class Otf {
  public:
-  Otf(const Network& n, const DiscPred& pp, const DiscPred& qq, OtfMode m)
-      : net(n), p(pp), q(qq), mode(m) {}
+  Otf(const Network& n, const DiscPred& pp, const DiscPred& qq, OtfMode m,
+      bool force_exact = false, const std::atomic<bool>* cancel = nullptr)
+      : net(n), p(pp), q(qq), mode(m), force_exact_(force_exact), cancel_(cancel) {}
 
-  // Returns true iff `p --> q` HOLDS.
+  // Returns true iff `p --> q` HOLDS. Meaningless if was_cancelled().
   bool run(GfpStats* gs);
+
+  // THE FORWARD HALF ALONE, and the backward half separately.
+  //
+  // The atom construction reads only the finished forward GRAPH -- the reachable discrete keys
+  // and the key-edge relation with their resets -- and then, if the map is non-empty, throws
+  // phase 1 away and searches again under the refined covering. Phase 1's backward fixpoint is
+  // ~80% of its wall clock (grc4: 20ms of 25ms) and none of it survives that. So build the
+  // graph, decide the map, and pay the fixpoint exactly once: here if the map came out empty
+  // (the certificate case, where phase 1's own verdict IS the answer), in the refined search
+  // otherwise. Base mode only -- the candidate-confirm modes settle mid-build, which is
+  // precisely the case build_atom_map may not read.
+  void build_forward(GfpStats* gs);
+  bool finish_verdict(GfpStats* gs);          // true iff `p --> q` HOLDS; needs build_forward
+
+  // Structural certificate: is the deadlock-completion's constraint-map seed empty at every
+  // reachable key? If so, plain a_LU covering was already deadlock-sound. Needs a built graph.
+  bool dtheta_empty();
+
+  // A cancelled run abandoned its exploration part-way, so its verdict is not a verdict.
+  // The racing caller in leads_to_otf must consult this before publishing a result.
+  bool was_cancelled() const { return cancelled_; }
+
+  // Derive the deadlock-completion constraint map from THIS run's finished
+  // graph (so it needs run() to have happened), and install one on a fresh run.
+  bool build_atom_map(AtomMap& am);
+  void set_atoms(const AtomMap* a) { amap_ = a; }
+  void set_am(bool on) { force_am_ = on; }     // a_M covering: bisimulation, deadlock-sound
+  std::size_t atom_straddles() const { return straddles_; }
+  // (live atoms, total atoms) over the tagged keys; see tagseen_.
+  std::pair<std::size_t, std::size_t> atom_liveness(const AtomMap& am) const {
+    std::size_t live = 0, tot = 0;
+    for (const auto& kv : am.diag) {
+      const std::size_t n = kv.second.size();
+      tot += n;
+      auto it = tagseen_.find(kv.first);
+      if (it == tagseen_.end()) continue;              // key carries atoms but stored no zone
+      const std::uint64_t varies = it->second.first & ~it->second.second;   // OR & ~AND
+      for (std::size_t a = 0; a < n && a < 64; ++a)
+        if ((varies >> a) & 1u) ++live;
+    }
+    return {live, tot};
+  }
+  std::size_t atom_splitters() const {
+    std::size_t n = 0;
+    for (const auto& kv : straddled_) n += std::size_t(__builtin_popcountll(kv.second));
+    return n;
+  }
+  std::size_t atom_splits() const { return splits_; }
+  std::size_t atom_cand_zones() const { return cand_zones_; }
+  std::size_t atom_split_zones() const { return split_zones_; }
+  // (probes, probes that left the base case, recursive calls, probes killed by the prefilter)
+  std::array<std::size_t, 4> cover_probe_stats() const {
+    return {cov_probes_, cov_recursed_, cov_rec_calls_, cov_prefilter_};
+  }
+  std::array<std::size_t, 3> lazy_stats() const {
+    return {lazy_splits_, lazy_redos_, lazy_activated_};
+  }
 
  private:
   const Network& net;
   const DiscPred& p;
   const DiscPred& q;
   OtfMode mode;
+  bool force_exact_ = false;                   // gate lane B: inclusion covering, no aLU
+  bool use_am_ = false;                        // collapse LU to M: bisimulation, deadlock-sound
+  const std::atomic<bool>* cancel_ = nullptr;  // set by the winner of the race
+  bool cancelled_ = false;
+
+  // Latched, so one observation is enough: nothing downstream of the first check may see the
+  // flag flip back and resume a half-abandoned search.
+  bool cancelled() {
+    if (cancelled_) return true;
+    if (cancel_ && cancel_->load(std::memory_order_relaxed)) cancelled_ = true;
+    return cancelled_;
+  }
 
   std::vector<std::int32_t> L, U, aL, aU, bL, bU;
   int emode = 0;
@@ -5171,6 +5345,44 @@ class Otf {
   std::vector<char> expanded;
   std::vector<char> pc, qc;                    // p/q caches, 2 = unknown
   bool intern_grew = false;
+  const AtomMap* amap_ = nullptr;              // null = ordinary a_LU, no cells
+  bool force_am_ = false;                      // set by the atom-map predictor
+  // Per-node cell tag: bit a is set iff node's zone is contained in atom a of its key. Only
+  // meaningful when amap_ is installed and the key carries atoms; 0 otherwise.
+  std::vector<std::uint64_t> ntag_;
+  // SPLIT-AT-COMPARISON (PTCTLMC_OTFSPLITCMP). Stored zones are NOT atom-homogeneous, so one
+  // "contained" bit no longer classifies them: `ntag_out_` carries the second bit of the
+  // three-valued classification (In = ntag_, Out = ntag_out_, Straddle = neither). Unused and
+  // left all-zero in the default split-at-creation mode.
+  std::vector<std::uint64_t> ntag_out_;
+  // Probe accounting for the A/B: how many covering probes were asked, how many of those had
+  // to leave the O(1)-per-atom base case, and how many recursive calls that cost.
+  std::size_t cov_probes_ = 0, cov_recursed_ = 0, cov_rec_calls_ = 0, cov_prefilter_ = 0;
+  // LAZY ARM. Nodes whose adjacency a permanent split invalidated and which therefore have to
+  // be (re-)expanded; base_forward drains this. `cur_expand_` is the node expand() is in the
+  // middle of, which may not be detached under its own feet -- it is redone at the end of the
+  // call instead, so its adjacency is rebuilt from scratch and never accumulates duplicates.
+  std::vector<int> relist_;
+  int cur_expand_ = -1;
+  bool expand_invalidated_ = false;
+  std::size_t lazy_splits_ = 0, lazy_redos_ = 0, lazy_activated_ = 0;
+  // Per discrete key, the atoms a covering decision has actually turned on. split_by_atoms cuts
+  // a NEW zone only along these -- so a key whose atoms never discriminate is never split at
+  // all, which is the whole point of the lazy arm.
+  std::unordered_map<std::string, std::uint64_t> active_;
+  // How much the cell refinement actually costs. cand_zones_ counts zones GENERATED at a key
+  // that carries atoms -- the denominator of the straddle rate, which is the whole empirical
+  // question: a zone that lies wholly inside or wholly outside every atom is tagged for free.
+  std::size_t straddles_ = 0, splits_ = 0, cand_zones_ = 0, split_zones_ = 0;
+  // WHICH ATOMS ACTUALLY DO ANYTHING (PTCTLMC_OTFATOMSTAT). For each tagged key, the OR and
+  // the AND of the tags of every zone stored there, and the set of atoms that ever forced a
+  // split. An atom whose bit is 0 in the OR is false on every stored zone; one whose bit is 1
+  // in the AND is true on every stored zone; either way it separated nothing and could have
+  // been left out of the map. This is the empirical version of the redundancy question --
+  // strictly sharper than any syntactic test against Inv(q), because it is measured against
+  // the zones the search really stored rather than against every zone Inv(q) permits.
+  std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> tagseen_;
+  std::unordered_map<std::string, std::uint64_t> straddled_;
 
   void setup();
   bool holds(const DiscPred& pr, const SymState& s) const;
@@ -5182,10 +5394,27 @@ class Otf {
   bool time_diverges(const SymState& s) const;
   bool stop_term(int u);                       // whole-zone NoSucc; needs expanded[u]
   Federation stop_set(int u);                  // EXACT NoSucc; needs expanded[u]
+
   void gfp_on(const std::vector<int>& S, std::vector<Federation>& W);
   bool certificate_in(const std::vector<int>& S);
   std::vector<int> accepting_closure();
 
+  void split_by_atoms(SymState&& s, std::vector<SymState>& out);
+  // Split-at-comparison support; see the block comment above Otf::cover_rec.
+  void classify_atoms(const Dbm& z, const std::vector<AtomC>& as,
+                      std::uint64_t* in, std::uint64_t* out) const;
+  bool base_cover(const Dbm& a, const Dbm& b) const {
+    return use_alu ? a.alu_subsumed_by(b, bL, bU) : b.includes(a);
+  }
+  bool cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t bout,
+                 const std::vector<AtomC>& as, int depth);
+  // LAZY ARM ONLY. `detach` is the in-place-enlargement invalidation recipe, lifted out:
+  // drop x's adjacency, unhook it from its targets' pred lists and queue x for re-expansion.
+  void detach(int x);
+  void lazy_split(std::vector<int>& bk, int j, const AtomC& at, const std::vector<AtomC>& as);
+  void base_forward();                         // Base mode's forward half; setup() done already
+  void fill_stats(GfpStats* gs);
+  bool fwd_ok_ = false;                        // build_all() found a satisfiable initial state
   bool build_all();                            // full forward BFS; true if a certificate fired
   bool run_bfs_incremental();                  // D1/D3
   bool run_dfs_candidates();                   // D5
@@ -5279,7 +5508,56 @@ void Otf::zdbg() {
 void Otf::setup() {
   L = net.lbound;
   U = net.ubound;
-  emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;
+  // FINITENESS COMES FROM aLU SUBSUMPTION ON EXACT ZONES, NOT FROM EXTRAPOLATION.
+  //
+  // These two settings are ONE decision and must move together. Plain inclusion does not bound
+  // the zone graph, so with `use_alu` off the only thing that terminates this search is
+  // Extra_LU+; and with Extra_LU+ on, every stored zone is an OVER-APPROXIMATION of the
+  // reachable set, which is fatal for the `stop` term specifically.
+  //
+  // WHY IT IS FATAL. Otf::stop_set computes an exact per-valuation deadlock residue, but it
+  // computes it from node[u].zone. Extra_LU+(Z) is contained in a_LU(Z), so every valuation
+  // extrapolation ADDS does at most what some real valuation does -- enabledness is MONOTONE,
+  // not invariant. Hence "some valuation of the extrapolated zone enables e" transfers back to
+  // Z, but "some valuation of the extrapolated zone enables NOTHING" does not. stop_set asks
+  // the second question. Concretely (diagonal-free, two clocks, one edge):
+  //
+  //     location q, invariant x <= 10;  edge q -> q2 guarded y >= 3
+  //     => L(x)=0, U(x)=10, L(y)=3, U(y)=0
+  //     reach q with y reset 6 after x:  Z = { x - y = 6, 6 <= x <= 10 }
+  //
+  // Z is deadlock-free: from anywhere, delay until y >= 3, i.e. x >= 9, still under the
+  // invariant. Extra_LU+ drops the DIAGONAL x - y <= 6 because 6 > L(x) = 0, leaving
+  // { x >= 6, y >= 0, x - y >= 6 }, which contains (x=10, y=0) -- that needs d >= 3 for the
+  // guard and d <= 0 for the invariant, so it is permanently stuck. Nothing in Z is.
+  // state_has_deadlock's delay-closure repair does NOT save this: the dropped constraint is a
+  // diagonal, and in a diagonal-free automaton no invariant ever restores a diagonal.
+  //
+  // `stop` occurs POSITIVELY in the fixpoint operator, so a spurious stop valuation ENLARGES
+  // the greatest fixpoint and fabricates a certificate: `p --> q` reported VIOLATED when it
+  // holds. That is the opposite error direction from aLU covering, which can only ever lose a
+  // witness, and unlike that one it is not recoverable by any later check.
+  //
+  // On exact zones the whole picture closes: stored zones are genuinely reachable, so stop_set
+  // is exact; cycle and divergence witnesses transfer under simulation unconditionally; and the
+  // only residual hole is that aLU COVERING may drop a deadlock witness -- one-sided, and
+  // discharged by the deadlock-freedom gate (see leads_to_net, src/netreach.cpp:3459).
+  //
+  // Diagonal models cannot use aLU at all, so they keep ExNoDiag + inclusion and extrapolation
+  // stays load-bearing there; their stop term is still exposed. G-simulation is the fix for
+  // that case and would land it in this same shape (exact zones + simulation covering); see
+  // docs/superpowers/specs/g-simulation-extraction.md.
+  //
+  // PTCTLMC_GFPNOALU restores the previous behaviour (inclusion covering + Extra_LU+) for A/B.
+  // PTCTLMC_GFPEXTRAP keeps aLU covering but restores Extra_LU+, which isolates the
+  // extrapolation change on its own -- it is the exact configuration every otf_*.json
+  // baseline in this directory was recorded under (run_otf.py sets PTCTLMC_GFPALU=1).
+  static const bool no_alu   = std::getenv("PTCTLMC_GFPNOALU")  != nullptr;
+  static const bool want_ext = std::getenv("PTCTLMC_GFPEXTRAP") != nullptr;
+  use_alu = !no_alu && !force_exact_ && !network_has_diagonal(net);
+  if (force_am_ || std::getenv("PTCTLMC_OTFAM")) use_am_ = use_alu;
+  emode = network_has_diagonal(net) ? ExNoDiag
+                                    : ((use_alu && !want_ext) ? ExNone : ExLuPlus);
   // qmask is the set of clocks the QUERY forces to stay live; a leads-to predicate has no
   // clock constraints, so it is all-zero and the active-clock reduction runs in FULL.
   // (leads_to_gfp above carries a comment claiming this disables the reduction. It does the
@@ -5292,7 +5570,36 @@ void Otf::setup() {
   aL = net.lbound;
   aU = net.ubound;
   aL[0] = aU[0] = 0;
-  use_alu = std::getenv("PTCTLMC_GFPALU") != nullptr && !network_has_diagonal(net);
+  // THE CONSTRAINT MAP'S TWO GLOBAL EFFECTS (see AtomMap).
+  //
+  // (1) Non-diagonal atoms are discharged by raising that clock's LU bounds. Raising L or U
+  //     only ever makes a_LU FINER, so it is sound wherever it is applied; applying it to the
+  //     global arrays (and, in intern, to the per-location ones) keeps it consistent along
+  //     every path, which is what the simulation argument needs.
+  // (2) reset_inactive pins clocks that no guard will read again to 0. The atoms DO read them
+  //     -- that is the whole point of Dead(q) -- so every clock occurring in the map is added
+  //     to qmask, which reset_inactive treats as "additionally keep alive". Without this the
+  //     reduction erases exactly the differences the cell tag is meant to observe.
+  //
+  // PTCTLMC_OTFATOMSNOLIVE drops (2) -- DIAGNOSTIC, and possibly unsound. It exists because on
+  // csma the pinning is the ENTIRE bill: the bucket count and the straddle count are both
+  // unchanged there, so every extra stored node comes from clocks the reduction would otherwise
+  // have zeroed. Whether the pinning is actually owed for SEED atoms is open: a clock read by
+  // Esc(q) is read by an outgoing guard or a target invariant at q, hence active at q by
+  // construction, and a diagonal that survives pullback involves only clocks some reachable
+  // guard still reads. That argument is NOT a proof -- `active` is a static over-approximation
+  // computed elsewhere -- so the pinning stays on by default and this only prices it.
+  if (amap_) {
+    static const bool no_live = std::getenv("PTCTLMC_OTFATOMSNOLIVE") != nullptr;
+    for (int c = 1; c <= net.nclocks && c < (int)amap_->bump.size(); ++c) {
+      if (amap_->bump[c] != kNoBump) {
+        aL[c] = std::max(aL[c], amap_->bump[c]);
+        aU[c] = std::max(aU[c], amap_->bump[c]);
+      }
+      if (amap_->live[c] && !no_live) qmask[c] = 1;
+    }
+  }
+  // use_alu / emode are set together at the top of setup(); see the note there.
   if (const char* c = std::getenv("PTCTLMC_GFPFEDCAP")) fedcap = std::strtoul(c, nullptr, 10);
 }
 
@@ -5311,6 +5618,8 @@ void Otf::grow() {
   if (qc.size() < n) qc.resize(n, 2);
   if (adj.size() < n) adj.resize(n);
   if (pred.size() < n) pred.resize(n);
+  if (ntag_.size() < n) ntag_.resize(n, 0);
+  if (ntag_out_.size() < n) ntag_out_.resize(n, 0);
 }
 
 bool Otf::is_p(int i) {
@@ -5323,6 +5632,195 @@ bool Otf::is_nq(int i) {
   grow();
   if (qc[i] == 2) qc[i] = holds(q, node[i]) ? 1 : 0;
   return qc[i] == 0;
+}
+
+// SPLIT AT COMPARISON (PTCTLMC_OTFSPLITCMP), the alternative to split_by_atoms' split at
+// creation. Stored zones are whole, so they may STRADDLE an atom, and the split -- if it is
+// needed at all -- happens inside the covering test.
+//
+// THE THREE-VALUED CLASSIFICATION. With homogeneous zones one bit per atom suffices; with
+// straddling zones it does not, and reading a straddle as "disjoint from phi" is the one
+// mistake that makes this unsound. Both bits come off the canonical DBM in O(1):
+//
+//     Z.get(i,j) <= b                       =>  Z subseteq phi          (In)
+//     raw_add(Z.get(j,i), b) < kZeroLe      =>  Z /\ phi = empty        (Out)
+//     otherwise                                                          (Straddle)
+//
+// WHAT THE COVERING TEST OWES. `a covered by b` must witness, for every nu in a, some nu' in b
+// with nu <=_LU nu' AND, for every atom phi of the key, `nu' |= phi => nu |= phi`. (That
+// direction only, and it is the same obligation the homogeneous tag rule discharges -- see the
+// note in Otf::intern. It is NOT the g-simulation relation of the forward diagonal work.)
+//
+// The base case is the EXISTING test, unchanged: `base_cover` (a_LU, or plain inclusion on
+// diagonal models) plus, per atom, the requirement that the obligation hold for ALL pairs at
+// once -- which it does exactly when `b` is Out (no nu' satisfies phi) or `a` is In (every nu
+// does). An atom that is neither is BLOCKED, and only blocked atoms are split. On homogeneous
+// operands "blocked" degenerates to "b In and a Out", i.e. bit-for-bit the implication rule.
+//
+// THE RECURSION (Gastin-Mukherjee-Srivathsan, CAV 2019, Lemma 17), adapted to the implication
+// obligation rather than to agreement:
+//
+//     a <= b   <==   (a /\ phi <= b)  and  (a /\ ~phi <= b /\ ~phi)
+//
+// nu |= phi discharges the phi-obligation for any nu' whatever, so the first conjunct may keep
+// the whole of b; nu !|= phi needs nu' !|= phi, so the second must narrow b as well. Each
+// conjunct resolves phi (In on the left, Out on both sides on the right), so the blocked set
+// strictly shrinks and the recursion terminates in at most 2^|blocked| leaves.
+//
+// The whole-operand base test is also a NECESSARY condition for the conjunction -- both
+// conjuncts test sub-zones of a against sub-zones of b -- so it doubles as a prefilter that
+// kills a hopeless probe before any zone is copied. That is what keeps the common reject path
+// the same price it is in the split-at-creation mode.
+// THE THREE ARMS, and why split-at-COMPARISON is the default.
+//
+// Split-at-creation cuts every zone along every atom at its key the moment it is produced, so
+// stored zones are atom-homogeneous and covering is one mask AND. Split-at-comparison stores
+// zones whole and splits transiently inside the covering test. PTCTLMC_OTFSPLITLAZY also stores
+// whole but, when a covering decision genuinely turns on a stored zone's straddle, splits that
+// node PERMANENTLY -- once per zone rather than once per probe, and only on atoms that actually
+// arose (Herbreteau-Srivathsan-Walukiewicz's lazy abstraction, refine where the property is at
+// stake). Lazy is split-at-comparison plus that rewrite, so it inherits its correctness whole.
+//
+// MEASURED, all three arms, zero verdict differences across five configurations:
+//
+//   model  a_LU floor  creation      cmp       lazy
+//   grc4          883      1179      921        921
+//   grc5        13939     14571    12554      12554
+//   csma7        1696      2368     2368       2368
+//
+// Comparison wins and is never slower. The reason is not that its test is cheaper -- it is that
+// the recursion is NEVER ENTERED: 0 of grc4's 216 blocked probes and 0 of grc5's 2660 recurse.
+// At the keys that carry atoms, the a_LU antichain is already wide enough that no covering
+// succeeds at all, so the atoms never refuse a merge that would otherwise have happened, and
+// the eager split's only effect is fragmentation. Two measurements pin that: with
+// PTCTLMC_NOMERGE, creation goes 1179 -> 2579 on grc4 while comparison is unchanged at 921 --
+// the convex-union merge exists to glue back what the eager split broke -- and comparison plus
+// PTCTLMC_OTFATOMSNOLIVE reaches 883 on grc4, exactly the a_LU floor.
+//
+// LAZY IS A NULL RESULT: 0 splits and 0 activations on every model here, so it is bit-identical
+// to comparison. Forced to fire (PTCTLMC_GFPNOALU) it stores MORE than either, because
+// activating an atom re-enables eager splitting for that whole key thereafter.
+//
+// Do not read the forward-reachability result as contradicting this. There the same recursion
+// costs 5x, because coverings at atom-carrying keys DO succeed there and it genuinely fires.
+// Which arm wins is a property of whether the atoms ever change a covering decision.
+//
+// PTCTLMC_OTFSPLITEAGER restores split-at-creation.
+static bool otf_splitcmp() {
+  static const bool v = std::getenv("PTCTLMC_OTFSPLITEAGER") == nullptr ||
+                        std::getenv("PTCTLMC_OTFSPLITLAZY") != nullptr;
+  return v;
+}
+static bool otf_splitlazy() {
+  static const bool v = std::getenv("PTCTLMC_OTFSPLITLAZY") != nullptr;
+  return v;
+}
+
+void Otf::classify_atoms(const Dbm& z, const std::vector<AtomC>& as,
+                         std::uint64_t* in, std::uint64_t* out) const {
+  std::uint64_t i_ = 0, o_ = 0;
+  const std::size_t n = std::min<std::size_t>(as.size(), 64);
+  for (std::size_t a = 0; a < n; ++a) {
+    const std::uint64_t bit = std::uint64_t(1) << a;
+    if (z.get(as[a].i, as[a].j) <= as[a].b) { i_ |= bit; continue; }
+    if (raw_add(z.get(as[a].j, as[a].i), as[a].b) < kZeroLe) o_ |= bit;
+  }
+  *in = i_;
+  *out = o_;
+}
+
+// `ain` is the In-mask of `a` and `bout` the Out-mask of `b`; they are the only two of the four
+// masks the blocked set reads. At depth 0 they come from the caller's cache (the newcomer's own
+// classification, and ntag_out_[j] for the stored node), so an unblocked probe costs exactly
+// one mask op plus the base test -- the same price as the homogeneous tag rule.
+bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t bout,
+                    const std::vector<AtomC>& as, int depth) {
+  ++cov_rec_calls_;
+  const std::size_t n = std::min<std::size_t>(as.size(), 64);
+  const std::uint64_t all = n >= 64 ? ~std::uint64_t(0) : ((std::uint64_t(1) << n) - 1);
+  const std::uint64_t blocked = all & ~bout & ~ain;
+  // Necessary condition for both conjuncts, so it is safe to ask it first and it doubles as
+  // the reject prefilter.
+  if (!base_cover(a, b)) { if (depth == 0 && blocked) ++cov_prefilter_; return false; }
+  if (blocked == 0) return true;
+  if (depth == 0) ++cov_recursed_;
+  const int k = __builtin_ctzll(blocked);
+  const AtomC& at = as[k];
+  const Constraint nc = negate(Constraint{at.i, at.j, at.b});
+  std::uint64_t xin, xout;
+  {
+    Dbm ap = a;                                              // a /\ phi  <=  b
+    if (ap.constrain(at.i, at.j, at.b)) {
+      classify_atoms(ap, as, &xin, &xout);
+      if (!cover_rec(ap, xin, b, bout, as, depth + 1)) return false;
+    }
+  }
+  Dbm an = a;                                                // a /\ ~phi  <=  b /\ ~phi
+  if (!an.constrain(nc.i, nc.j, nc.bound)) return true;      // a lies wholly inside phi
+  Dbm bn = b;
+  if (!bn.constrain(nc.i, nc.j, nc.bound)) return false;     // ...but b does not: no witness
+  std::uint64_t nin, nout;
+  classify_atoms(an, as, &nin, &nout);
+  classify_atoms(bn, as, &xin, &xout);
+  return cover_rec(an, nin, bn, xout, as, depth + 1);
+}
+
+void Otf::detach(int x) {
+  for (const auto& e : adj[x]) {
+    auto& pv = pred[e.tgt];
+    pv.erase(std::remove(pv.begin(), pv.end(), x), pv.end());
+  }
+  adj[x].clear();
+  expanded[x] = 0;
+  relist_.push_back(x);
+}
+
+// PERMANENTLY SPLIT A STORED NODE (lazy arm). `j` straddles `at`; replace it by its two pieces.
+//
+// WHAT THE REWRITE OWES. node[j]'s zone SHRINKS, so every edge INTO j may now under-represent
+// its source's real successors -- and a missing successor loses runs, which for a greatest
+// fixpoint means losing a violation and reporting the query satisfied when it is not. That is
+// the one direction that must not happen, so every predecessor of j is detached and re-expanded;
+// its successors are then re-interned against the split bucket and land on whichever piece
+// covers them. j itself is detached for the same reason (its own adjacency was computed from
+// the larger zone) and the new piece starts un-expanded.
+//
+// Nodes are never deleted, so the zones stored during a discarded expansion stay. They are
+// genuinely reachable zones -- generated by gfp_succ from a real stored zone -- so keeping them
+// costs a node and nothing else; it cannot fabricate a run the system does not have.
+//
+// NODE 0 IS NEVER SPLIT: it is the initial state and the search's entry point, and it has no
+// predecessor to regenerate the piece that would be cut away from it.
+void Otf::lazy_split(std::vector<int>& bk, int j, const AtomC& at,
+                     const std::vector<AtomC>& as) {
+  Dbm p1 = node[j].zone, p2 = node[j].zone;
+  const Constraint nc = negate(Constraint{at.i, at.j, at.b});
+  if (!p1.constrain(at.i, at.j, at.b)) return;          // not a straddle after all
+  if (!p2.constrain(nc.i, nc.j, nc.bound)) return;
+  ++lazy_splits_;
+  const int j2 = static_cast<int>(node.size());
+  {
+    SymState t;
+    t.locs = node[j].locs;
+    t.ints = node[j].ints;
+    t.zone = std::move(p2);
+    node.push_back(std::move(t));
+  }
+  grow();
+  node[j].zone = std::move(p1);
+  classify_atoms(node[j].zone, as, &ntag_[j], &ntag_out_[j]);
+  classify_atoms(node[j2].zone, as, &ntag_[j2], &ntag_out_[j2]);
+  bk.push_back(j2);
+  if (in_inner) ++inner_nodes; else ++outer_nodes;
+  std::vector<int> ps = pred[j];
+  pred[j].clear();
+  for (int u : ps) {
+    if (u == cur_expand_) { expand_invalidated_ = true; continue; }
+    detach(u);
+  }
+  if (cur_expand_ == j) expand_invalidated_ = true; else detach(j);
+  expanded[j2] = 0;
+  relist_.push_back(j2);
 }
 
 // aLU subsumption, exactly as leads_to_gfp's phase 1, plus the APPEND-ONLY switch.
@@ -5339,7 +5837,54 @@ bool Otf::is_nq(int i) {
 // bucket keeps zones the published version would have collapsed.
 int Otf::intern(SymState&& s) {
   intern_grew = false;
-  auto& b = bucket[disc_key(s.locs, s.ints)];
+  std::string bkey = disc_key(s.locs, s.ints);
+  // CELL TAG. split_by_atoms has already made every zone that reaches here atom-HOMOGENEOUS,
+  // so `Z subseteq phi` is decided by one canonical DBM entry and the tag is well defined.
+  //
+  // WHICH TAG RULE. The tag is what stops a_LU covering from dropping a deadlock: if the
+  // covering zone Z satisfies an escape atom phi and the covered Z' does not, the simulator
+  // escapes where the simulated one is stuck, and Dead is lost. Spelt out: nu' in Z simulates
+  // nu in Z', and Dead(q) = Inv(q) /\ AND_e !Esc_e with each Esc_e a CONJUNCTION of atoms, so
+  // nu |= Dead needs, per e, some atom of Esc_e that nu falsifies to also be falsified by nu'.
+  // The obligation is therefore the IMPLICATION `Z |= phi  =>  Z' |= phi`, in that direction
+  // only -- equivalently tag(Z) & ~tag(Z') == 0. It is strictly coarser than same-cell
+  // equality, which needlessly refuses the (Z disjoint from phi, Z' contained in phi) pair.
+  //
+  // The two REWRITING paths still need equality, and that is not a detail: in-place
+  // enlargement and the convex-union merge both replace a stored zone, and a zone assembled
+  // out of two different cells would STRADDLE phi, destroying the homogeneity the tag is read
+  // from. Guarded below.
+  //
+  // PTCTLMC_OTFATOMSCELLEQ appends the tag to the discrete key instead, so different cells
+  // land in different buckets and never meet. Sound (equality implies the implication) but
+  // finer; kept to price the implication rule against it.
+  // SPLIT-AT-COMPARISON. Under PTCTLMC_OTFSPLITCMP none of the homogeneity above holds:
+  // split_by_atoms emits the zone whole, so `tag` is the In-mask, `tag_out` the Out-mask, and
+  // everything a straddle makes undecidable is deferred to Otf::cover_rec. cell_eq is a
+  // homogeneous-only diagnostic (a straddling zone has no cell to key by) and is ignored here.
+  const bool splitcmp = otf_splitcmp();
+  static const bool cell_eq = std::getenv("PTCTLMC_OTFATOMSCELLEQ") != nullptr && !otf_splitcmp();
+  std::uint64_t tag = 0, tag_out = 0, allmask = 0;
+  bool tagged = false;
+  const std::vector<AtomC>* atoms = nullptr;
+  if (amap_) {
+    auto it = amap_->diag.find(bkey);
+    if (it != amap_->diag.end() && !it->second.empty()) {
+      const std::vector<AtomC>& as = it->second;
+      tagged = true;
+      atoms = &as;
+      const std::size_t na = std::min<std::size_t>(as.size(), 64);
+      allmask = na >= 64 ? ~std::uint64_t(0) : ((std::uint64_t(1) << na) - 1);
+      if (splitcmp) {
+        classify_atoms(s.zone, as, &tag, &tag_out);
+      } else {
+        for (std::size_t a = 0; a < as.size() && a < 64; ++a)
+          if (s.zone.get(as[a].i, as[a].j) <= as[a].b) tag |= std::uint64_t(1) << a;
+      }
+      if (cell_eq) bkey.append(reinterpret_cast<const char*>(&tag), sizeof(tag));
+    }
+  }
+  auto& b = bucket[bkey];
   if (use_alu) {
     bL.assign(net.nclocks + 1, kAluNegInf);
     bU.assign(net.nclocks + 1, kAluNegInf);
@@ -5354,20 +5899,125 @@ int Otf::intern(SymState&& s) {
         }
       bL[0] = bU[0] = 0;
     }
+    // a_M MODE: collapse the two bound arrays to M = max(L, U) per clock.
+    //
+    // With L = U = M the three clauses of the LU preorder -- nu'(x)=nu(x), or
+    // L(x) < nu'(x) < nu(x), or U(x) < nu(x) < nu'(x) -- collapse to "equal, or both above
+    // M(x)", which is SYMMETRIC. A symmetric simulation is a bisimulation, and deadlock IS
+    // preserved by bisimulation. So the same dbm_is_alu_le kernel, fed collapsed bounds,
+    // is a deadlock-sound covering test and needs no gate at all.
+    //
+    // Behrmann-Bouyer-Larsen-Pelanek, STTT 8(3):204-215 (2006): Lemma 1 (=_M is a
+    // bisimulation), Lemma 3 (<=_LU is only a simulation), and the unnumbered prose in the
+    // "Simulation & Bisimulation" paragraph of section 3 stating that Uppaal's deadlock
+    // properties are not preserved by simulation but are by bisimulation. This is also what
+    // UPPAAL itself does: it falls back from LU to LOCAL MAX-CONSTANTS for deadlock and
+    // liveness queries, not to exact zones.
+    // Per-location LU bounds must carry the non-diagonal atoms' constants too; see setup().
+    if (amap_)
+      for (int c = 1; c <= net.nclocks && c < (int)amap_->bump.size(); ++c)
+        if (amap_->bump[c] != kNoBump) {
+          bL[c] = std::max(bL[c], amap_->bump[c]);
+          bU[c] = std::max(bU[c], amap_->bump[c]);
+        }
+    if (use_am_)
+      for (int c = 1; c <= net.nclocks; ++c) bL[c] = bU[c] = std::max(bL[c], bU[c]);
   }
   const int dim2 = s.zone.dim();
+  // With the tag in the bucket key (cell_eq) every j in b already agrees, so both guards are
+  // vacuously true and this costs one predictable branch.
+  const bool tagcheck = tagged && !cell_eq;
+  const bool reccheck = tagcheck && splitcmp;
   auto covered = [&](int j) {
+    if (reccheck) {                                         // straddling operands: recurse
+      ++cov_probes_;
+      return cover_rec(s.zone, tag, node[j].zone, ntag_out_[j], *atoms, 0);
+    }
+    if (tagcheck && (ntag_[j] & ~tag) != 0) return false;   // Z |= phi but Z' does not: refuse
     return use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU) : node[j].zone.includes(s.zone);
   };
+  // THE REWRITING PATHS UNDER SPLIT-AT-COMPARISON. The equality guard exists only to keep the
+  // stored zone HOMOGENEOUS, which is not a property this mode has or wants. What each path
+  // actually owes is:
+  //
+  //   in-place enlargement -- the stored zone is REPLACED by the newcomer, which under a_LU is
+  //     not a superset of it, so everything already routed to j must still be covered. That is
+  //     transitivity of the covering relation, and the relation IS transitive (<=_LU is a
+  //     preorder and `nu'|=phi => nu|=phi` composes), so the ordinary three-valued test in the
+  //     opposite direction is exactly and only what is owed.
+  //
+  //   convex-union merge -- try_union succeeds only when the union is EXACTLY the union, so the
+  //     stored zone afterwards is a set SUPERSET of both operands. Growing the right-hand side
+  //     of an exists-witness can never invalidate a witness, and the newcomer is covered by the
+  //     result via the identity witness. So the merge owes NOTHING here: no tag condition at
+  //     all, and it becomes strictly more powerful than in the homogeneous mode, where a
+  //     cross-cell union was refused outright.
+  //
+  // Both paths must REFRESH the stored masks, since the stored zone changed.
   auto covers = [&](int j) {
+    if (reccheck) {
+      ++cov_probes_;
+      return cover_rec(node[j].zone, ntag_[j], s.zone, tag_out, *atoms, 0);
+    }
+    if (tagcheck && ntag_[j] != tag) return false;          // rewriting: equality, see above
     return use_alu ? node[j].zone.alu_subsumed_by(s.zone, bL, bU) : s.zone.includes(node[j].zone);
   };
+  // LAZY REFINEMENT, before any covering decision is taken.
+  //
+  // The only straddle a permanent split of the STORED zone can resolve is the one where the
+  // newcomer is homogeneous and the stored zone is not: newcomer OUT of phi, stored straddling
+  // it. (Newcomer IN never blocks; newcomer straddling would need the NEWCOMER cut, and cutting
+  // the newcomer is what split-at-creation does -- it costs a node here and saves none, since
+  // storing it whole is one node either way.) So refine exactly that case, and only when the
+  // base test already says the pair would otherwise merge: that is what "the decision genuinely
+  // turns on a straddled atom" means operationally. Each split removes that atom's straddle from
+  // both resulting pieces, so the loop makes progress and stops.
+  // BASE MODE ONLY, defensively: the permanent split queues nodes for re-expansion in relist_,
+  // and base_forward is the only driver that drains it. A mode that left relist_ undrained would
+  // silently leave a piece of the graph unexplored, which is the one error that turns a violated
+  // query into a satisfied one. (amap_ is only ever installed on a Base-mode run, so this guard
+  // is belt and braces, not a live branch.)
+  if (reccheck && otf_splitlazy() && mode == OtfMode::Base) {
+    // Each refinement retires one atom at this key (the local `done` mask stops it being
+    // re-picked, and a split leaves neither piece straddling it), so the loop makes progress.
+    // The budget is insurance against a pathological key, not a semantic knob: declining a
+    // refinement only leaves cover_rec to decide the pair transiently, which it does correctly
+    // either way.
+    std::uint64_t done = 0;
+    int budget = 64;
+    bool changed = true;
+    while (changed && budget > 0) {
+      changed = false;
+      for (std::size_t k = 0; k < b.size(); ++k) {
+        const int j = b[k];
+        if (j == 0 || node[j].zone.dim() != dim2) continue;
+        const std::uint64_t blocked = allmask & ~ntag_out_[j] & ~tag & ~done;
+        if (!blocked) continue;
+        const std::uint64_t sb = ~ntag_[j] & ~ntag_out_[j];        // stored straddles
+        const std::uint64_t sa = ~tag & ~tag_out;                  // newcomer straddles
+        const std::uint64_t cand = blocked & (sb | sa);
+        if (!cand) continue;                    // stored In, newcomer Out: a genuine refusal
+        if (!base_cover(s.zone, node[j].zone)) continue;   // would not merge anyway
+        const int a = __builtin_ctzll(cand);
+        done |= std::uint64_t(1) << a;
+        // ACTIVATE the atom for this key: from here on split_by_atoms cuts new zones along it,
+        // so the case this probe could not resolve (both operands straddling) stops recurring.
+        auto& act = active_[bkey];
+        if (!(act & (std::uint64_t(1) << a))) { act |= std::uint64_t(1) << a; ++lazy_activated_; }
+        if (sb & (std::uint64_t(1) << a)) lazy_split(b, j, (*atoms)[a], *atoms);
+        changed = true;
+        --budget;
+        break;                       // b may have grown; restart the scan
+      }
+    }
+  }
   for (int j : b)
     if (covered(j)) return j;
   if (!append_only)
     for (std::size_t k = 0; k < b.size(); ++k)
       if (covers(b[k])) {
         node[b[k]].zone = s.zone;
+        if (reccheck) { ntag_[b[k]] = tag; ntag_out_[b[k]] = tag_out; }
         intern_grew = true;
         return b[k];
       }
@@ -5389,33 +6039,146 @@ int Otf::intern(SymState&& s) {
   if (!no_merge) {
     for (int j : b) {
       if (node[j].zone.dim() != dim2) continue;
+      // EQUALITY, not implication. The union of a zone contained in phi with one disjoint from
+      // phi STRADDLES phi, and a straddling stored zone has no well-defined tag -- the cheap
+      // test would stop being exact and, with it, a wqo. Same-cell unions stay homogeneous:
+      // both inside phi unions to inside, both outside unions to outside.
+      if (tagcheck && !splitcmp && ntag_[j] != tag) continue;
       Dbm t = node[j].zone;
       if (t.try_union(s.zone)) {          // union is exactly convex: absorb, no approximation
         node[j].zone = std::move(t);
+        if (reccheck) classify_atoms(node[j].zone, *atoms, &ntag_[j], &ntag_out_[j]);
         intern_grew = true;
         return j;
       }
     }
   }
   const int id = static_cast<int>(node.size());
+  static const bool astat_live = std::getenv("PTCTLMC_OTFATOMSTAT") != nullptr;
+  if (tagged && astat_live) {
+    auto& e = tagseen_[disc_key(s.locs, s.ints)];
+    if (e.second == 0 && e.first == 0) e.second = ~std::uint64_t(0);   // AND starts at all-ones
+    e.first |= tag;
+    e.second &= tag;
+  }
   node.push_back(std::move(s));
+  if (ntag_.size() <= static_cast<std::size_t>(id)) ntag_.resize(id + 1, 0);
+  if (ntag_out_.size() <= static_cast<std::size_t>(id)) ntag_out_.resize(id + 1, 0);
+  ntag_[id] = tag;
+  ntag_out_[id] = tag_out;
   b.push_back(id);
   if (in_inner) ++inner_nodes; else ++outer_nodes;
   grow();
   return id;
 }
 
+// SPLIT A GENERATED ZONE INTO ATOM-HOMOGENEOUS PIECES.
+//
+// Splitting is set-theoretic: the pieces partition the zone exactly, so post, pre and stop_set
+// all distribute over them and the greatest fixpoint is unchanged. It is also what makes the
+// cheap cell tag EXACT -- a straddling zone has no well-defined tag, so the tagged covering
+// test would stop being a well-quasi-order and the search could loop.
+//
+// stop_set stays correct on a piece even though a piece need not be delay-closed:
+// state_has_deadlock rebuilds the delay closure Up(Z) /\ Inv(q) before testing, which is the
+// set the escape regions must be measured against, and gfp_on intersects the result back with
+// node[v].zone. (Up(Z) /\ Inv) \ live, intersected with Z, is exactly Z \ live.
+void Otf::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
+  out.clear();
+  const std::vector<AtomC>* at = nullptr;
+  if (amap_) {
+    auto it = amap_->diag.find(disc_key(s.locs, s.ints));
+    if (it != amap_->diag.end() && !it->second.empty()) at = &it->second;
+  }
+  static const bool astat_split = std::getenv("PTCTLMC_OTFATOMSTAT") != nullptr;
+  const std::string skey = astat_split ? disc_key(s.locs, s.ints) : std::string();
+  const bool splitcmp = otf_splitcmp();
+  out.push_back(std::move(s));
+  if (!at) return;
+  ++cand_zones_;
+  const std::size_t str0 = straddles_;
+  // SPLIT AT COMPARISON: emit the zone WHOLE. The classification is still counted -- it is the
+  // straddle rate the A/B is measured against -- but only when the statistics are asked for,
+  // so the timed configuration pays nothing for it here. Every deferred obligation is
+  // discharged in Otf::cover_rec. The LAZY arm cuts here too, but only along the atoms a
+  // covering decision has already turned on at this key -- `active_`, filled by intern.
+  std::uint64_t cutmask = ~std::uint64_t(0);          // split-at-creation: cut on every atom
+  if (splitcmp) {
+    cutmask = 0;
+    if (otf_splitlazy()) {
+      auto ai = active_.find(disc_key(out[0].locs, out[0].ints));
+      if (ai != active_.end()) cutmask = ai->second;   // lazy: only the atoms that mattered
+    }
+    if (astat_split) {                                 // straddle rate of the zone AS GENERATED
+      std::size_t sb = 0;
+      for (const AtomC& a : *at) {
+        const std::size_t abit = sb++;
+        if (out[0].zone.get(a.i, a.j) <= a.b) continue;
+        if (raw_add(out[0].zone.get(a.j, a.i), a.b) < kZeroLe) continue;
+        ++straddles_;
+        if (abit < 64) straddled_[skey] |= std::uint64_t(1) << abit;
+      }
+      if (straddles_ != str0) ++split_zones_;
+    }
+    if (!cutmask) return;
+  }
+  std::size_t aidx = 0;
+  for (const AtomC& a : *at) {
+    const std::size_t abit = aidx++;
+    // The default arm is left bit-for-bit as it was: cutmask is all-ones and the guard is
+    // skipped entirely, so an atom past bit 63 -- which the 64-atom cap already forbids -- is
+    // still cut exactly as before.
+    if (splitcmp && (abit >= 64 || !((cutmask >> abit) & 1u))) continue;
+    const std::size_t n = out.size();
+    bool emptied = false;
+    for (std::size_t k = 0; k < n; ++k) {
+      if (out[k].zone.empty()) { emptied = true; continue; }
+      if (out[k].zone.get(a.i, a.j) <= a.b) continue;                    // Z subseteq phi
+      if (raw_add(out[k].zone.get(a.j, a.i), a.b) < kZeroLe) continue;   // Z disjoint from phi
+      ++straddles_;
+      if (astat_split && abit < 64) straddled_[skey] |= std::uint64_t(1) << abit;
+      SymState t;
+      t.locs = out[k].locs;
+      t.ints = out[k].ints;
+      t.zone = out[k].zone;
+      // NARROW out[k] BEFORE pushing: push_back may reallocate `out`, so nothing may hold a
+      // reference into it across the insertion.
+      const Constraint nc = negate(Constraint{a.i, a.j, a.b});
+      if (!out[k].zone.constrain(nc.i, nc.j, nc.bound)) emptied = true;
+      if (t.zone.constrain(a.i, a.j, a.b)) out.push_back(std::move(t));
+    }
+    if (emptied)
+      out.erase(std::remove_if(out.begin(), out.end(),
+                               [](const SymState& x) { return x.zone.empty(); }), out.end());
+  }
+  // In the lazy arm split_zones_ was already accounted above, against the zone as GENERATED --
+  // which is the straddle rate the three arms are compared on -- so do not count it twice.
+  if (!splitcmp && straddles_ != str0) ++split_zones_;
+}
+
 void Otf::expand(int u) {
   grow();
+  if (cancelled()) return;   // choke point: every forward step goes through here
   if (expanded[u]) return;
   expanded[u] = 1;
   ++expand_calls;
   if (in_inner) ++inner_expands; else ++outer_expands;
+  const int prev_expand = cur_expand_;
+  cur_expand_ = u;
   std::vector<SymState> succ;
   std::vector<GfpTag> tags;
+  std::vector<SymState> pieces;
   gfp_succ_tagged(net, node[u], L, U, qmask, emode, succ, tags);
   for (std::size_t k = 0; k < succ.size(); ++k) {
-    const int v = intern(std::move(succ[k]));
+    pieces.clear();
+    if (amap_) {
+      split_by_atoms(std::move(succ[k]), pieces);
+      if (pieces.size() > 1) splits_ += pieces.size() - 1;
+    } else {
+      pieces.push_back(std::move(succ[k]));
+    }
+    for (std::size_t pi = 0; pi < pieces.size(); ++pi) {
+    const int v = intern(std::move(pieces[pi]));
     grow();
     adj[u].push_back(OtfEdge{v, tags[k]});
     pred[v].push_back(u);
@@ -5451,11 +6214,26 @@ void Otf::expand(int u) {
         expanded[u] = 0;
       }
     }
+    }
+  }
+  cur_expand_ = prev_expand;
+  // A lazy split hit `u` while it was mid-expansion. Its adjacency is now half-built against a
+  // bucket that has since changed, so throw the whole call away and redo it: rebuilding from
+  // scratch is what keeps adj[u] from accumulating duplicate edges.
+  if (expand_invalidated_) {
+    expand_invalidated_ = false;
+    grow();
+    detach(u);
+    ++lazy_redos_;
   }
 }
 
 bool Otf::time_diverges(const SymState& s) const {
   if (net.nclocks == 0) return false;
+  // FROZEN LOCATIONS DO NOT DELAY. Delaying unconditionally reports divergence at a
+  // committed/urgent location, where no positive delay is legal at all -- inventing a
+  // maximal-run witness out of nothing.
+  { bool fc, fu; frozen_flags(net, s.locs, &fc, &fu); if (fc || fu) return false; }
   Dbm z = s.zone;
   z.delay();
   std::vector<Constraint> inv;
@@ -5543,6 +6321,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   bool changed = true;
   std::size_t it = 0;
   while (changed && !capped) {
+    if (cancelled()) return;
     changed = false;
     ++it;
     for (int v : S) {
@@ -5637,7 +6416,14 @@ bool Otf::build_all() {
     if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
     else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U);
   }
-  intern(std::move(s0));
+  if (amap_) {
+    std::vector<SymState> pieces;
+    split_by_atoms(std::move(s0), pieces);
+    if (pieces.size() > 1) splits_ += pieces.size() - 1;
+    for (auto& pc2 : pieces) intern(std::move(pc2));
+  } else {
+    intern(std::move(s0));
+  }
   return true;
 }
 
@@ -5868,15 +6654,429 @@ bool Otf::final_verdict_violated() {
   return certificate_in(accepting_closure());
 }
 
-bool Otf::run(GfpStats* gs) {
-  setup();
-  bool violated = false;
-  switch (mode) {
-    case OtfMode::Base: {
+// THE DEADLOCK-COMPLETION CERTIFICATE.
+//
+// Deadlock is a negative property, so a_LU covering can lose a deadlock witness. Rather than
+// weaken the covering to a_M or pay a second search (the gate/race), put the deadlock INTO the
+// automaton: add a sink with an edge guarded by Dead(q) at every q. The completed automaton is
+// deadlock-free by construction, so a maximal run that ENDS in a deadlock becomes a run that
+// REACHES the sink -- an existential property, which any simulation preserves. The completion is
+// never materialised; its only effect is on which atoms the constraint map has to carry, namely
+// the atoms of Dead(q), closed under pre.
+//
+// Those atoms may be dropped at q when Dead(q) is EMPTY (nothing to preserve), when it is ALL of
+// Inv(q) (its atoms are already carried by the invariant), or when Inv(q) bounds no clock (time
+// is open, so the divergence disjunct of stop already covers the whole zone). If every reachable
+// key falls into one of those three cases the seed is empty everywhere, the constraint map is
+// the ordinary one, and PLAIN a_LU COVERING IS ALREADY SOUND -- no gate, no second search, and
+// no weakening to a_M.
+//
+// This sweep decides exactly that. It is STRUCTURAL: it asks about Dead(q) over all of Inv(q),
+// not over any reachable zone, so it needs no search -- one federation computation per DISCRETE
+// KEY (256 of them on arbiter6, against the 28591-state reachability traversal the gate's
+// deadlock-freedom lane used to pay). Enumerating the keys from the a_LU graph is sound because
+// a simulation never loses a reachable discrete key: the covering zone does at least what the
+// covered one does, so every key the covered zone could reach is still generated.
+bool Otf::dtheta_empty() {
+  std::unordered_set<std::string> seen;
+  for (std::size_t i = 0; i < node.size(); ++i) {
+    const std::string k = disc_key(node[i].locs, node[i].ints);
+    if (!seen.insert(k).second) continue;
+    SymState u; u.locs = node[i].locs; u.ints = node[i].ints;
+    u.zone = Dbm::universe(net.nclocks);
+    Dbm inv = Dbm::universe(net.nclocks);
+    bool c2, u2; frozen_flags(net, u.locs, &c2, &u2);
+    std::vector<Constraint> ci; all_invariants(net, u.locs, ci);
+    if (!c2 && !u2) inv.delay();
+    if (!apply_all(inv, ci)) continue;                        // vacuous key
+    Federation stuck, esc;
+    if (!state_has_deadlock(net, u, &stuck, &esc)) continue;   // Dead(q) = empty
+    bool open = true;
+    for (int c = 1; c <= net.nclocks; ++c)
+      if (inv.get(c, 0) != kInf) { open = false; break; }
+    // (iii) is a claim about TIME DIVERGENCE, so it is only available where time can pass. At a
+    // committed/urgent key no positive delay is legal, Inv(q) is the undelayed universe and so
+    // trivially bounds no clock -- which is exactly when this test would fire, and exactly when
+    // it is wrong. Frozen keys fall through to (ii)/PARTIAL.
+    if (open && !c2 && !u2) continue;                          // divergence already covers stop
+    // Inv \ Dead = Inv ^ union Esc, so "Dead(q) = Inv(q)" is "nothing in Inv(q) escapes" --
+    // one DBM intersection per outgoing transition instead of peeling Inv(q) by the residue
+    // ARRANGEMENT. Same predicate; see the twin test in build_atom_map for why it matters.
+    bool some_escapes = false;
+    for (const Dbm& W : esc) {
+      Dbm t = W;
+      t.intersect(inv);
+      if (!t.empty()) { some_escapes = true; break; }
+    }
+    static const bool selfcheck = std::getenv("PTCTLMC_DLSELFCHECK") != nullptr;
+    if (selfcheck && fed_subtract(inv, stuck).empty() == some_escapes) {
+      std::fprintf(stderr, "[selfcheck] dtheta_empty Dead=Inv MISMATCH at key %s\n", k.c_str());
+      std::abort();
+    }
+    if (!some_escapes) continue;                               // Dead(q) = Inv(q): atoms implied
+    return false;                                              // PARTIAL: real atoms are needed
+  }
+  return true;
+}
+
+
+// BUILD THE DEADLOCK-COMPLETION CONSTRAINT MAP from this run's finished graph.
+//
+// SEED. Only a key with a genuinely PARTIAL Dead(q) contributes. The three degenerate cases
+// dtheta_empty() already decides carry no information and are skipped: Dead(q) empty (there is
+// no sink edge), Dead(q) = Inv(q) (the sink edge is always enabled and every stored zone
+// satisfies Inv(q)), and Inv(q) time-open at a NON-frozen key (the divergence disjunct of stop
+// already admits the whole zone). The frozen guard is not optional -- at a committed/urgent key
+// Inv(q) is the undelayed universe and so trivially bounds no clock, which is exactly where
+// that reasoning fails; see Change 5b.
+//
+// The atoms are read straight off the CANONICAL DBMs of the Dead(q) federation rather than
+// derived from the guards. Dead = \/_i /\_j c_ij, so the truth values of the c_ij decide
+// membership exactly and every atom family comes for free -- including the lower bound that
+// survives Down(), which dbm_down re-derives when it re-closes after zeroing row 0, and which a
+// hand-derived formula for Down(K) got wrong in half the cases.
+//
+// Atoms IMPLIED BY Inv(q) are dropped: every stored zone satisfies Inv(q), so such an atom is
+// constantly true on everything the search will ever compare and distinguishes nothing. On a
+// canonical DBM the test is one entry comparison.
+//
+// PRE-CLOSURE. The map must satisfy [R]^-1(G(q')) subseteq G(q) for every edge (q,g,R,q'), or
+// two zones sharing a cell at q could step into different cells at q'. The pullback of
+// x_i - x_j <| b through a reset set R is the index substitution i,j -> 0 for reset clocks --
+// the same rule state_has_deadlock uses for target invariants. A pullback that lands on clock 0
+// is a NON-diagonal atom and is discharged by the bound raise instead. Dropping an atom at the
+// target only ever RELAXES the clause at the source, so the three seed drops above stay safe
+// under closure. Guard atoms need no seeding: a_LU is already a simulation for the ORIGINAL
+// automaton, and the only edge this construction adds is the sink's.
+bool Otf::build_atom_map(AtomMap& am) {
+  const int nc = net.nclocks;
+  am.diag.clear();
+  am.bump.assign(nc + 1, kNoBump);
+  am.live.assign(nc + 1, 0);
+  am.usable = false;
+  if (nc <= 0 || nc >= 63) return false;
+
+  const char* capenv = std::getenv("PTCTLMC_OTFATOMCAP");
+  // HARD 64. The per-node cell tag is a uint64 bitmask, so an atom past bit 63 would be
+  // silently dropped from the covering test while still splitting zones -- a lost obligation,
+  // i.e. a wrong verdict, not merely a coarseness loss. Exceeding the cap returns "unusable"
+  // and falls back to the race, which is always correct.
+  //
+  // THE DEFAULT IS THE HARD LIMIT, not half of it. It used to be 32, which cost nothing while
+  // the construction was expensive -- declining early meant declining into the race, and the
+  // race was competitive. It is not competitive any more, and 32 was where grc5 fell out:
+  // one key there needs 36 seed atoms, so the map was declared unusable and grc5 ran the race
+  // (20.9s) or a_M (18.5s) when the construction does it in 3.4s. There is no reason to
+  // decline below the point where the representation actually breaks.
+  const std::size_t kMaxAtoms =
+      std::min<std::size_t>(capenv ? std::strtoul(capenv, nullptr, 10) : 64, 64);
+
+  std::unordered_map<std::string, Dbm> invof;
+  const auto t_seed0 = std::chrono::steady_clock::now();
+
+  // ---- seed ---------------------------------------------------------------
+  for (std::size_t i = 0; i < node.size(); ++i) {
+    const std::string k = disc_key(node[i].locs, node[i].ints);
+    if (invof.count(k)) continue;
+    SymState u;
+    u.locs = node[i].locs;
+    u.ints = node[i].ints;
+    u.zone = Dbm::universe(nc);                 // NOT Dbm(nc): that is the ZERO zone (Change 5a)
+    Dbm inv = Dbm::universe(nc);
+    bool fc, fu;
+    frozen_flags(net, u.locs, &fc, &fu);
+    std::vector<Constraint> ci;
+    all_invariants(net, u.locs, ci);
+    if (!fc && !fu) inv.delay();
+    if (!apply_all(inv, ci)) continue;                       // vacuous key
+    invof.emplace(k, inv);
+    Federation stuck, esc;
+    if (!state_has_deadlock(net, u, &stuck, &esc)) continue;  // Dead(q) = empty
+    bool open = true;
+    for (int c = 1; c <= nc; ++c)
+      if (inv.get(c, 0) != kInf) { open = false; break; }
+    if (open && !fc && !fu) continue;                         // divergence already covers stop
+    // Dead(q) = Inv(q)? Written as `fed_subtract(inv, stuck).empty()` this peels Inv(q) once
+    // per piece of the RESIDUE, and the residue is an arrangement -- 472 pieces at grc4's one
+    // partial key, which is 126ms, two thirds of the whole structural sweep and the single
+    // largest term in the atom construction's bill. It never needed the residue at all:
+    //     Inv \ Dead = Inv \ (Inv \ union Esc) = Inv ^ union Esc,
+    // so the test is "does NO valuation of Inv(q) escape", which is |Esc| independent DBM
+    // intersections -- one per outgoing transition, five on that key.
+    //
+    // THE PREMISE IS INCLUSION, NOT EQUALITY, and the difference is real. `stuck` is
+    // `Z \ union esc` for the `Z` state_has_deadlock built, and that `Z` is NOT always this
+    // `inv`: at a FROZEN key state_has_deadlock skips both the delay and the invariant, so its
+    // Z is the bare universe while `inv` here has the invariant applied. What the identity
+    // needs is only `inv subseteq Z` --
+    //     x in inv \ (Z \ E)  iff  x in inv and not (x in Z and x notin E)  iff  x in inv ^ E,
+    // using x in inv => x in Z -- and that holds both ways round: equal when not frozen, and
+    // `inv = universe ^ Inv subseteq universe = Z` when frozen. PTCTLMC_DLSELFCHECK runs the
+    // old federation form alongside and aborts on any disagreement; it is clean across the
+    // 48-query differential and the three liveness regressions.
+    //
+    // ESCAPES THAT MISS Inv(q) ARE NOT ESCAPES. Dead(q) = Inv(q) \ union Esc, so a transition
+    // whose escape region does not meet Inv(q) subtracts nothing and its atoms decide nothing
+    // -- yet every one of its constraints would be seeded, pulled back through the whole key
+    // graph, and split against. Drop those members here, where the intersection is being
+    // computed for the Dead=Inv test anyway.
+    bool some_escapes = false;
+    {
+      Federation kept;
+      kept.reserve(esc.size());
+      for (const Dbm& W : esc) {
+        Dbm t = W;
+        t.intersect(inv);
+        if (t.empty()) { ++am.dropped_vacuous; continue; }
+        some_escapes = true;
+        kept.push_back(W);
+      }
+      esc.swap(kept);
+    }
+    // PTCTLMC_DLSELFCHECK: run the old federation form alongside and abort on disagreement.
+    // Kept because the rewrite is the kind of set identity that is obviously true on paper and
+    // silently wrong if `esc` is ever not the federation `stuck` was subtracted from.
+    static const bool selfcheck = std::getenv("PTCTLMC_DLSELFCHECK") != nullptr;
+    if (selfcheck) {
+      const bool old_eq_inv = fed_subtract(inv, stuck).empty();
+      if (old_eq_inv == some_escapes) {
+        std::fprintf(stderr, "[selfcheck] Dead=Inv MISMATCH at key %s: old=%d new=%d\n",
+                     k.c_str(), int(old_eq_inv), int(!some_escapes));
+        std::abort();
+      }
+    }
+    if (!some_escapes) continue;                              // Dead(q) = Inv(q): atoms implied
+    ++am.seed_keys;
+    // WHICH ZONES TO READ THE ATOMS OFF -- two exact representations of the same set.
+    //
+    // Dead(q) = Inv(q) \ union Esc(q), and every stored zone satisfies Inv(q). So membership in
+    // Dead(q) is decided EITHER by the atoms of the residue's disjoint pieces (Dead = \/_i /\_j
+    // c_ij) OR by the atoms of the ESCAPE zones alone -- one convex zone per outgoing transition
+    // -- since nu is dead iff it escapes by none of them. Both are exact; neither dominates.
+    // The residue's cut constraints are artefacts of the peeling order and blow up on grc4
+    // (3234 occurrences against 25 for the escapes), while the escapes carry diagonals that pull
+    // back through resets into non-diagonal atoms and cost csma four clock bounds the residue
+    // does not. So compute both and keep the cheaper, counting a non-diagonal atom heavier
+    // because it is discharged by raising that clock to M GLOBALLY, not by a local cell.
+    //
+    // MINIMAL GRAPH, not the dense matrix. A canonical DBM's redundant entries are implied by
+    // shortest paths through the others, so the non-redundant edges alone decide membership --
+    // mindbm's round trip reproduces the canonical matrix exactly. Reading the dense matrix
+    // seeds one atom per DERIVED bound and buys nothing.
+    const int dim = nc + 1;
+    std::vector<std::uint32_t> mbits(mindbm_bits2words(std::uint32_t(dim) * std::uint32_t(dim)));
+    std::vector<int> mfirst(dim), mnext(dim);
+    auto extract = [&](const Federation& f, std::vector<AtomC>& g,
+                       std::vector<std::pair<int, std::int32_t>>& nd) {
+      for (const Dbm& d : f) {
+        if (d.empty()) continue;
+        mindbm_analyze(d.data().data(), dim, mbits.data(), mfirst.data(), mnext.data());
+        for (int a = 0; a < dim; ++a)
+          for (int b2 = 0; b2 < dim; ++b2) {
+            if (a == b2) continue;
+            const std::uint32_t idx = std::uint32_t(a) * std::uint32_t(dim) + std::uint32_t(b2);
+            if (!((mbits[idx >> 5] >> (idx & 31)) & 1u)) continue;   // redundant: implied
+            const raw_t r = d.get(a, b2);
+            if (r >= kInf) continue;
+            if (a == 0 && r >= kZeroLe) continue;               // x_b2 >= 0: trivial
+            // BOTH CONSTANT CASES, not just one. Every stored zone at q satisfies Inv(q), so an
+            // atom Inv(q) IMPLIES is true on all of them and an atom Inv(q) is DISJOINT from is
+            // false on all of them; either way its tag bit never varies and it distinguishes
+            // nothing. Only the first was being dropped. On a canonical DBM both are one entry
+            // comparison: implied is inv(a,b2) <= r, disjoint is inv(b2,a) + r < (<=,0).
+            if (inv.get(a, b2) <= r) continue;                  // implied by Inv(q): always true
+            if (raw_add(inv.get(b2, a), r) < kZeroLe) {         // disjoint from Inv(q): never
+              ++am.dropped_disjoint;
+              continue;
+            }
+            if (a > 0 && b2 > 0) {
+              const AtomC at{a, b2, r};
+              if (std::find(g.begin(), g.end(), at) == g.end()) g.push_back(at);
+            } else {
+              const int cl = (a == 0) ? b2 : a;
+              const std::int32_t cst = (a == 0) ? -raw_bound(r) : raw_bound(r);
+              bool seen = false;
+              for (auto& e2 : nd)
+                if (e2.first == cl) { e2.second = std::max(e2.second, cst); seen = true; break; }
+              if (!seen) nd.push_back({cl, cst});
+            }
+          }
+      }
+    };
+    static const bool force_res = std::getenv("PTCTLMC_OTFATOMSRESIDUE") != nullptr;
+    static const bool force_esc = std::getenv("PTCTLMC_OTFATOMSESCAPE") != nullptr;
+    std::vector<AtomC> gr, ge;
+    std::vector<std::pair<int, std::int32_t>> nr, ne2;
+    if (!force_esc) extract(stuck, gr, nr);
+    if (!force_res) extract(esc, ge, ne2);
+    const std::size_t cr = gr.size() + 4 * nr.size();
+    const std::size_t ce = ge.size() + 4 * ne2.size();
+    const bool take_esc = force_esc || (!force_res && ce <= cr);
+    std::vector<AtomC>& g = take_esc ? ge : gr;
+    for (const auto& e2 : (take_esc ? ne2 : nr)) {
+      ++am.nondiag_atoms;
+      if (e2.second > am.bump[e2.first]) am.bump[e2.first] = e2.second;
+    }
+    am.seed_atoms += g.size() + (take_esc ? ne2.size() : nr.size());
+    if (!g.empty()) {
+      if (g.size() > kMaxAtoms) return false;
+      am.diag.emplace(k, std::move(g));
+    }
+  }
+
+  const double ms_seed = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - t_seed0).count();
+
+  // NOTHING TO CLOSE. The pre-closure propagates atoms BACKWARDS from keys that carry them, so
+  // with no seed anywhere it has nothing to move and the key-edge relation it would move them
+  // along need not be built at all. That relation is a string key and a reset mask per graph
+  // EDGE -- on fischer7, 9798 nodes' worth -- and building it is the only work this function
+  // does that the certificate it replaced did not. Returning here is what makes the nine
+  // empty-seed models a literal no-op rather than a no-op plus a sweep.
+  {
+    bool any_seed = !am.diag.empty();
+    for (int c = 1; c <= nc && !any_seed; ++c)
+      if (am.bump[c] != kNoBump) any_seed = true;
+    if (!any_seed) {
+      if (std::getenv("PTCTLMC_OTFATOMSTAT"))
+        std::fprintf(stderr, "[atoms] time: seed-sweep=%.1fms (empty seed: no closure)\n", ms_seed);
+      am.usable = true;
+      return true;
+    }
+  }
+
+  // ---- the key-edge relation, with the union of each transition's resets --
+  struct KE { std::string s, t; std::uint64_t r; };
+  std::vector<KE> kedges;
+  {
+    std::unordered_set<std::string> seenE;
+    const std::size_t n = std::min(adj.size(), node.size());
+    for (std::size_t u = 0; u < n; ++u) {
+      const std::string ks = disc_key(node[u].locs, node[u].ints);
+      for (const auto& e : adj[u]) {
+        std::uint64_t rm = 0;
+        for (const auto& pr : e.tag.parts)
+          for (int rc : net.procs[pr.first].edges[pr.second].clock_resets)
+            if (rc >= 1 && rc < 64) rm |= std::uint64_t(1) << rc;
+        const std::string kt = disc_key(node[e.tgt].locs, node[e.tgt].ints);
+        std::string sig = ks;
+        sig += '\x01';
+        sig += kt;
+        sig.append(reinterpret_cast<const char*>(&rm), sizeof(rm));
+        if (!seenE.insert(sig).second) continue;
+        kedges.push_back(KE{ks, kt, rm});
+      }
+    }
+  }
+
+  // ---- pre-closure fixpoint ----------------------------------------------
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    if (++am.rounds > 4096) return false;
+    for (const KE& e : kedges) {
+      auto it = am.diag.find(e.t);
+      if (it == am.diag.end()) continue;
+      const std::vector<AtomC> tgt = it->second;   // copy: am.diag may rehash below
+      for (const AtomC& a : tgt) {
+        const int i2 = (a.i > 0 && ((e.r >> a.i) & 1)) ? 0 : a.i;
+        const int j2 = (a.j > 0 && ((e.r >> a.j) & 1)) ? 0 : a.j;
+        if (i2 == j2) continue;                    // both reset: a constant, not an atom
+        if (i2 > 0 && j2 > 0) {
+          auto iv = invof.find(e.s);
+          if (iv != invof.end()) {
+            if (iv->second.get(i2, j2) <= a.b) continue;                      // Inv(q) implies
+            // ...and, symmetrically, Inv(q) refutes: the pullback lands outside the source
+            // key's invariant, so no zone stored there can ever satisfy it. This is where the
+            // drop earns its keep -- a closure atom is a constraint from SOMEWHERE ELSE's
+            // deadlock, and the further it is pulled back the less it has to do with the
+            // invariant it arrives at.
+            if (raw_add(iv->second.get(j2, i2), a.b) < kZeroLe) {
+              ++am.dropped_disjoint;
+              continue;
+            }
+          }
+          std::vector<AtomC>& g = am.diag[e.s];
+          const AtomC at{i2, j2, a.b};
+          if (std::find(g.begin(), g.end(), at) == g.end()) {
+            if (g.size() >= kMaxAtoms) return false;
+            g.push_back(at);
+            ++am.closure_atoms;
+            changed = true;
+          }
+        } else {
+          const int cl = (i2 == 0) ? j2 : i2;
+          const std::int32_t cst = (i2 == 0) ? -raw_bound(a.b) : raw_bound(a.b);
+          if (cst > am.bump[cl]) {
+            am.bump[cl] = cst;
+            ++am.closure_atoms;
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+
+  // IF EVERY CLOCK ENDED UP AT M, THE CELLS ARE REDUNDANT. With L(x) = U(x) = M(x) for every
+  // clock the LU preorder collapses to "equal, or both above M", which is SYMMETRIC, hence a
+  // bisimulation, hence deadlock-preserving on its own (Behrmann-Bouyer-Larsen-Pelanek 2006,
+  // Lemma 1). Keeping the cell tags on top of that would only split zones a_M already keeps
+  // apart. Dropping them here is what stops the construction from ever being WORSE than the
+  // a_M fallback it is meant to beat.
+  {
+    bool all_at_m = true;
+    for (int c = 1; c <= nc && all_at_m; ++c) {
+      const std::int32_t mc = std::max(net.lbound[c], net.ubound[c]);
+      if (am.bump[c] < mc) all_at_m = false;
+    }
+    if (all_at_m) am.diag.clear();
+  }
+
+  // PTCTLMC_OTFATOMSLANE=cell|bump -- DIAGNOSTIC, and each setting is UNSOUND on its own.
+  //
+  // The map has two lanes and they discharge different atoms: cells carry the diagonals, bumps
+  // carry the clock bounds. Running one without the other answers "which lane is actually
+  // load-bearing on this model, and which one is paying the bill" -- a question the combined
+  // figures cannot answer, because a pre-closure that turns a diagonal into a bump at some
+  // predecessor makes the two lanes cover for each other.
+  if (const char* lane = std::getenv("PTCTLMC_OTFATOMSLANE")) {
+    if (std::string(lane) == "cell") am.bump.assign(nc + 1, kNoBump);
+    else if (std::string(lane) == "bump") am.diag.clear();
+  }
+
+  // ---- active-clock reduction must keep every clock the map reads ---------
+  for (const auto& kv : am.diag)
+    for (const AtomC& a : kv.second) {
+      if (a.i > 0) am.live[a.i] = 1;
+      if (a.j > 0) am.live[a.j] = 1;
+    }
+  for (int c = 1; c <= nc; ++c)
+    if (am.bump[c] != kNoBump) { am.live[c] = 1; ++am.bumped; }
+  am.keys_tagged = am.diag.size();
+  am.usable = true;
+  // HOW CLOSE TO a_M DID THE BUMPS LAND? The bump is "a_M on one clock", so a map that bumps
+  // every clock to M has already paid the whole a_M price and the cells on top of it are pure
+  // loss. The all-at-M shortcut above catches only the total case; this reports the margin, and
+  // it is the number that decides whether the construction can pay off on a given model at all.
+  if (std::getenv("PTCTLMC_OTFATOMSTAT")) {
+    std::fprintf(stderr, "[atoms] time: seed-sweep=%.1fms key-edges=%zu\n",
+                 ms_seed, kedges.size());
+    std::fprintf(stderr, "[atoms] clocks=%d bump/M:", nc);
+    for (int c = 1; c <= nc; ++c)
+      std::fprintf(stderr, " x%d=%d/%d", c, am.bump[c],
+                   std::max(net.lbound[c], net.ubound[c]));
+    std::fprintf(stderr, "\n");
+  }
+  return true;
+}
+
+// The forward half of Base mode. `setup()` must already have run.
+void Otf::base_forward() {
       // Control: builds the whole graph and runs one exact pass, i.e. Algorithm 1 through
       // this code path. Kept so the differential can check that the shared machinery
       // reproduces the published node count.
-      if (!build_all()) { violated = false; break; }
+      fwd_ok_ = build_all();
+      if (!fwd_ok_) return;
       // DEDUPLICATED WORKLIST, not a level-synchronous frontier.
       //
       // The level-synchronous form pushes a successor whenever `!seen[v] || !expanded[v]`, with
@@ -5895,7 +7095,19 @@ bool Otf::run(GfpStats* gs) {
         if (inq.size() < node.size()) inq.resize(node.size(), 0);
         if (!inq[v]) { inq[v] = 1; work.push_back(v); }
       };
+      // A permanent lazy split detaches nodes ANYWHERE in the graph, not only successors of the
+      // node just expanded, so they cannot be recovered by walking adj[u]. relist_ carries them
+      // and is drained here -- the one place where no expansion is in flight.
+      auto drain_relist = [&]() {
+        while (!relist_.empty()) {
+          const int v = relist_.back();
+          relist_.pop_back();
+          grow();
+          if (!expanded[v]) push(v);
+        }
+      };
       push(0);
+      drain_relist();
       while (!work.empty()) {
         const int u = work.front();
         work.pop_front();
@@ -5908,16 +7120,123 @@ bool Otf::run(GfpStats* gs) {
         // reset because a merge enlarged it.
         for (const auto& e : adj[u])
           if (!expanded[e.tgt]) push(e.tgt);
+        drain_relist();
       }
-      violated = final_verdict_violated();
+      // PTCTLMC_OTFDLSTAT: how much of the graph is actually deadlock-prone?
+      //
+      // This measures the HEADROOM for any scheme that pays a_M strength only where a deadlock
+      // could really be lost. a_M costs 1.3x-10.3x more nodes than a_LU here and the ratio grows
+      // with model size; the whole point of a promotion scheme is to pay that only where it is
+      // owed. If nearly every discrete key can deadlock, there is nothing to win and a_M is
+      // already optimal. If only a handful can, the prize is most of that 10.3x.
+      // PTCTLMC_OTFDLSTRUCT: classify Dead(q) STRUCTURALLY, over all of Inv(q) rather than over
+      // the reachable zone. This is what decides the deadlock-completed constraint map: the seed
+      // D(q) can be dropped whenever Dead(q) is EMPTY (nothing to preserve), whenever it is ALL
+      // of Inv(q) (its atoms are already carried by the invariant), and whenever Inv(q) bounds no
+      // clock (time-open, so the divergence disjunct of stop already covers the whole zone).
+      // Only a PARTIAL Dead(q) forces new atoms -- and only there does the construction cost
+      // anything against plain a_LU.
+      if (std::getenv("PTCTLMC_OTFDLSTRUCT")) {
+        std::unordered_map<std::string, int> cls;   // 0 empty, 1 full, 2 time-open, 3 PARTIAL
+        for (std::size_t i = 0; i < node.size(); ++i) {
+          const std::string k = disc_key(node[i].locs, node[i].ints);
+          if (cls.count(k)) continue;
+          SymState u; u.locs = node[i].locs; u.ints = node[i].ints;
+          u.zone = Dbm::universe(net.nclocks);
+          // Inv(q): the delay-closure of the universe under this key's real invariants.
+          Dbm inv = Dbm::universe(net.nclocks);
+          bool c2, u2; frozen_flags(net, u.locs, &c2, &u2);
+          std::vector<Constraint> ci; all_invariants(net, u.locs, ci);
+          if (!c2 && !u2) { inv.delay(); }
+          if (!apply_all(inv, ci)) { cls[k] = 0; continue; }   // vacuous key
+          bool open = true;
+          for (int c = 1; c <= net.nclocks; ++c) if (inv.get(c, 0) != kInf) { open = false; break; }
+          Federation stuck;
+          if (!state_has_deadlock(net, u, &stuck)) { cls[k] = 0; continue; }
+          if (open) { cls[k] = 2; continue; }
+          bool full = true;                                    // Dead(q) covers all of Inv(q)?
+          Dbm rem = inv;
+          for (const auto& d : stuck) { if (fed_subtract(rem, Federation{d}).empty()) { break; } }
+          full = fed_subtract(inv, stuck).empty();
+          cls[k] = full ? 1 : 3;
+        }
+        int e = 0, f = 0, o = 0, pa = 0;
+        for (const auto& kv : cls)
+          (kv.second == 0 ? e : kv.second == 1 ? f : kv.second == 2 ? o : pa)++;
+        std::fprintf(stderr,
+                     "[dlstruct] keys=%zu  Dead=empty:%d  Dead=full:%d  time-open:%d  "
+                     "PARTIAL:%d (%.1f%%)\n",
+                     cls.size(), e, f, o, pa,
+                     cls.empty() ? 0.0 : 100.0 * double(pa) / double(cls.size()));
+      }
+      if (std::getenv("PTCTLMC_OTFDLSTAT")) {
+        std::unordered_map<std::string, char> key_dl;   // discrete key -> any node deadlock-prone
+        std::size_t dl_nodes = 0, whole = 0, partial = 0;
+        for (std::size_t i = 0; i < node.size(); ++i) {
+          const bool w = adj[i].empty();
+          const bool pd = !w && state_has_deadlock(net, node[i]);
+          if (w) ++whole;
+          if (pd) ++partial;
+          const std::string k = disc_key(node[i].locs, node[i].ints);
+          auto it = key_dl.find(k);
+          if (it == key_dl.end()) key_dl.emplace(k, (w || pd) ? 1 : 0);
+          else if (w || pd) it->second = 1;
+          if (w || pd) ++dl_nodes;
+        }
+        std::size_t dl_keys = 0;
+        for (const auto& kv : key_dl) dl_keys += kv.second ? 1 : 0;
+        std::fprintf(stderr,
+                     "[dlstat] nodes=%zu dl-nodes=%zu (%.1f%%) whole=%zu partial=%zu | "
+                     "keys=%zu dl-keys=%zu (%.1f%%)\n",
+                     node.size(), dl_nodes,
+                     node.empty() ? 0.0 : 100.0 * double(dl_nodes) / double(node.size()),
+                     whole, partial, key_dl.size(), dl_keys,
+                     key_dl.empty() ? 0.0 : 100.0 * double(dl_keys) / double(key_dl.size()));
+      }
+}
+
+void Otf::build_forward(GfpStats* gs) {
+  setup();
+  const auto t0 = std::chrono::steady_clock::now();
+  base_forward();
+  if (std::getenv("PTCTLMC_OTFATOMSTAT"))
+    std::fprintf(stderr, "[atoms]   (forward=%.1fms nodes=%zu)\n",
+                 std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - t0).count(),
+                 node.size());
+  fill_stats(gs);
+}
+
+bool Otf::finish_verdict(GfpStats* gs) {
+  const auto t0 = std::chrono::steady_clock::now();
+  const bool violated = fwd_ok_ && final_verdict_violated();
+  if (std::getenv("PTCTLMC_OTFATOMSTAT"))
+    std::fprintf(stderr, "[atoms]   (backward=%.1fms)\n",
+                 std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - t0).count());
+  fill_stats(gs);
+  return !violated;
+}
+
+bool Otf::run(GfpStats* gs) {
+  setup();
+  bool violated = false;
+  switch (mode) {
+    case OtfMode::Base:
+      base_forward();
+      violated = fwd_ok_ && final_verdict_violated();
       break;
-    }
       violated = run_bfs_incremental();
       break;
     case OtfMode::D5:
       violated = run_dfs_candidates();
       break;
   }
+  fill_stats(gs);
+  return !violated;
+}
+
+void Otf::fill_stats(GfpStats* gs) {
   if (std::getenv("PTCTLMC_OTFZDBG")) zdbg();
   if (gs) {
     gs->fwd_nodes = node.size();
@@ -5942,17 +7261,298 @@ bool Otf::run(GfpStats* gs) {
     gs->outer_nodes = outer_nodes;
     gs->outer_expands = outer_expands;
   }
-  return !violated;
 }
 
 // Entry point. `mode` comes from PTCTLMC_GFPMODE; returns true iff `p --> q` HOLDS.
+// DEADLOCK-FREEDOM GATE, AND THE RACE THAT DISCHARGES IT.
+//
+// SUPERSEDED AS THE DEFAULT, kept as the fallback. What follows is the original argument and
+// it is still exactly why the race is correct -- but the race now runs only when the
+// deadlock-completion constraint map cannot be represented (more than 64 atoms at one key).
+// The default is: build the forward graph, derive the map, and either return phase 1's own
+// verdict (empty map -- the certificate) or search once more under the refined covering. The
+// order below, "phase 1 to a verdict, then discharge", is therefore no longer what happens on
+// the default path: phase 1 stops after its FORWARD half, because the refined search would
+// otherwise repeat its backward fixpoint. See Otf::build_forward.
+//
+// a_LU covering is a SIMULATION. It preserves the positive witnesses -- an infinite run of
+// discrete steps, and time-divergence -- unconditionally, because a simulating valuation does
+// at least what the simulated one does. It does NOT preserve the third witness, DEADLOCK,
+// which is "enables nothing": a universally quantified negative property that simulation says
+// nothing about. So `stop`'s deadlock disjunct may be LOST under a_LU covering.
+//
+// The error is one-sided, and that is the whole lever. Stored zones are exact (see the note in
+// Otf::setup), and pre/stop are exact concrete operations, so a witness FOUND under a_LU sits
+// at a genuinely reachable valuation and is genuine. Only the ABSENCE of a witness is
+// inconclusive. Hence:
+//
+//   phase 1  run under a_LU. Violated => done, and the gate is never paid at all. This is the
+//            common case for counterexample queries, which is exactly where this engine is
+//            far ahead of verifyta -- hoisting the gate in front of it would make every such
+//            query pay for a full reachability traversal whose answer it never needs.
+//   phase 2  no witness. Two ways to discharge the obligation, deciding the SAME proposition:
+//              (A) prove the model deadlock-free -- then nothing could have been dropped, so
+//                  the a_LU answer was sound after all;
+//              (B) redo the search with exact-inclusion covering, which is sound outright.
+//
+// NEITHER DOMINATES and which one wins is not predictable: guessing (A) is cheap means
+// deciding deadlock-freedom, and guessing (B)'s size is the query itself. Measured symbolic
+// states in the shipping engine: fischer7 is 180420 for (A) against 30994 for (B); arbiter6 is
+// 28591 against 66393. A factor of 5.8 one way, 2.3 the other.
+//
+// So run both and take the first CONCLUSIVE answer, cancelling the loser. What the cores buy
+// here is not speed -- neither lane runs faster than it would alone -- but the removal of an
+// undecidable choice. A sequential tool must gamble and can lose by 5.8x.
+//
+// BOTH LANES ARE CANCELLABLE, and that is the difference from the shipping engine's version at
+// src/netreach.cpp:3486. There, `search()` never reads the stop flag, so `lane_b.join()` waits
+// for lane B unconditionally and the wall clock is always lane B's -- lane A can only ever add
+// work. Here lane B polls through Otf::cancelled() (checked in expand(), the choke point for
+// every forward step, and at the head of each backward fixpoint sweep), so the pair really does
+// finish in min(A, B).
+//
+// ASYMMETRY TO PRESERVE: lane A is conclusive only when it answers "deadlock-free". "A deadlock
+// is reachable" says nothing about THIS query -- the dropped witness may or may not have been
+// one -- so that outcome must not publish a verdict and must not cancel lane B.
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, const char* mode_s,
                   GfpStats* gs) {
   OtfMode m = OtfMode::Base;
-  const std::string s = mode_s ? mode_s : "base";
-  if (s == "d5") m = OtfMode::D5;
-  Otf e(net, p, q, m);
-  return e.run(gs);
+  const std::string ms = mode_s ? mode_s : "base";
+  if (ms == "d5") m = OtfMode::D5;
+
+  static const bool no_gate    = std::getenv("PTCTLMC_OTFNOGATE")       != nullptr;
+  // THE GENERAL CONSTRUCTION IS THE DEFAULT. It subsumes the certificate -- an empty map IS
+  // dtheta_empty's condition -- so where the certificate used to fire, this is the same
+  // structural sweep and the same a_LU search, node for node. Where the certificate DECLINED
+  // it now carries the model instead of falling back to the race. Best of 3, `Bus.Active -->
+  // Bus.Idle` and `T0.in --> T0.far`:
+  //
+  //     model    old default   NEW      a_M       a_LU floor (unsound)
+  //     csma6      0.138       0.018    0.142     0.012
+  //     csma7      3.985       0.053    9.729     0.033
+  //     grc4       0.085       0.042    0.056     0.031
+  //     grc5      21.936       3.535   19.475     5.815
+  //
+  // grc5 is the one to look at twice: the REFINED covering beats the coarser one it refines
+  // (3.5s against the 5.8s floor), because splitting a zone along an atom of Dead(q) also
+  // splits the backward federations that pass through it, and narrower federations converge
+  // faster than the arrangement one wide zone produces.
+  //
+  // The race survives only for a map that exceeds the 64-bit tag cap.
+  // PTCTLMC_OTFNOATOMS restores the old default.
+  static const bool want_atoms0 = std::getenv("PTCTLMC_OTFNOATOMS")     == nullptr;
+  // Is the atom construction eligible at all? Decided BEFORE phase 1, because that is what
+  // lets phase 1 stop after its forward half. Everything here is static: the mode, whether the
+  // network has diagonals (a_LU is off entirely there, so there is nothing to discharge), and
+  // the two escape hatches. Nothing about the query or the graph.
+  const bool atoms_lane = want_atoms0 && m == OtfMode::Base && !no_gate &&
+                          !network_has_diagonal(net);
+
+  // Phase 1.
+  Otf e1(net, p, q, m);
+  const auto t_p1 = std::chrono::steady_clock::now();
+  bool holds_alu = true;
+  if (atoms_lane) {
+    // FORWARD ONLY, for now. The atom map is read off this graph; if it turns out non-empty
+    // the refined search replaces this run wholesale and phase 1's backward fixpoint -- 80% of
+    // its wall clock -- would have been dead work. The block below pays it, via
+    // e1.finish_verdict(), on exactly the paths that still need phase 1's own verdict.
+    e1.build_forward(gs);
+  } else {
+    holds_alu = e1.run(gs);
+  }
+  if (std::getenv("PTCTLMC_OTFATOMSTAT"))
+    std::fprintf(stderr, "[atoms] time: phase1=%.1fms\n",
+                 std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - t_p1).count());
+  if (!atoms_lane) {
+    if (!holds_alu) return false;                   // genuine witness; gate never paid
+
+    // Diagonal models never used a_LU (Otf::setup forces inclusion), so phase 1 was already
+    // exact and there is nothing to discharge.
+    if (network_has_diagonal(net)) return true;
+    // PTCTLMC_OTFNOGATE: skip the gate entirely. UNSOUND -- kept only to A/B its cost.
+    if (no_gate) return true;
+  }
+
+  // Phase 2a: THE DEADLOCK-COMPLETION CERTIFICATE (see Otf::dtheta_empty). If the completion's
+  // constraint-map seed is empty at every reachable key, the ordinary constraint map already
+  // preserves deadlock and phase 1's a_LU covering was sound as it stands. One federation
+  // computation per DISCRETE KEY and no search -- against a full reachability traversal for the
+  // deadlock-freedom lane. PTCTLMC_OTFNOCERT skips it, to price it against the race.
+  static const bool no_cert    = std::getenv("PTCTLMC_OTFNOCERT")      != nullptr;
+  // PTCTLMC_OTFATOMSFORCE: build and INSTALL the map even when it comes out empty. Measurement
+  // only -- it is how "atoms ON is a no-op wherever the seed is empty" is checked end to end,
+  // since the empty-map exit below would otherwise return before a second search happens.
+  static const bool atoms_force = std::getenv("PTCTLMC_OTFATOMSFORCE") != nullptr;
+
+  // Phase 2b: THE GENERAL CONSTRUCTION (see AtomMap and Otf::build_atom_map). Where
+  // dtheta_empty only DECIDES whether the deadlock completion's seed is empty, this builds the
+  // seed, closes it under pre, and redoes the search under a_LU refined by the resulting cells.
+  //
+  // It SUBSUMES the certificate rather than sitting behind it: an EMPTY map is exactly the
+  // condition dtheta_empty tests (every reachable key degenerate, or its atoms implied by
+  // Inv(q) and so constant on every stored zone), so the same structural sweep answers both
+  // questions and the pair is not paid twice.
+  //
+  // The verdict is sound either way round. VIOLATED is genuine outright -- zones are exact and
+  // pre/stop are exact concrete operations -- and HOLDS is sound because the refined covering
+  // preserves the sink's reachability, hence deadlock. If the map exceeds its atom cap the
+  // whole block falls through to the certificate and the race, unchanged.
+  // BASE MODE ONLY. The map is derived from e1's FINISHED graph -- every key and every
+  // key-edge the atoms run can reach must already be present, which holds because a_LU is a
+  // simulation and so never loses a reachable discrete key or edge. The candidate-confirm mode
+  // may settle and return with the graph half-built, where that guarantee does not hold.
+  if (atoms_lane) {
+    AtomMap am;
+    const auto t_map0 = std::chrono::steady_clock::now();
+    const bool ok = e1.build_atom_map(am);
+    const double ms_map = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - t_map0).count();
+    static const bool astat = std::getenv("PTCTLMC_OTFATOMSTAT") != nullptr;
+    if (ok && am.usable) {
+      if (am.diag.empty() && am.bumped == 0 && !atoms_force) {
+        // EMPTY MAP: this IS dtheta_empty's certificate, so phase 1's a_LU covering was already
+        // deadlock-sound and phase 1's own verdict is the answer. Its backward fixpoint was
+        // deferred, not skipped -- pay it here, exactly once, on the graph already built. The
+        // nine models whose seed is empty therefore run precisely the search they ran before
+        // this refactor, node for node and pass for pass.
+        if (astat) std::fprintf(stderr, "[atoms] seed empty: certificate fires, a_LU stands\n");
+        return e1.finish_verdict(gs);
+      }
+      // NO CLOSURE-DOMINANCE PREDICTOR. There used to be one here: when the pre-closure added
+      // more atoms than the seed did, it abandoned the construction and ran a_M instead,
+      // because on grc4 (139 closure atoms against 25 seed, 100% straddle) the atoms lane
+      // measured 0.18s against a_M's 0.05s. That reading was wrong about WHERE grc4's time
+      // went. Split by phase, the atoms lane was 0.035s of searching behind 0.126s of
+      // structural sweep and 0.025s of a phase-1 backward fixpoint that the refined search
+      // then repeated. Both of those are now gone -- the sweep by the `Inv ^ Esc` rewrite of
+      // the Dead=Inv test, the fixpoint by deferring phase 1's backward half -- and the atoms
+      // lane wins outright on the very model the predictor was built to hand to a_M. The
+      // straddle rate was never the bill: grc4 splits 100% of its tagged zones, stores 1.34x
+      // the a_LU nodes for it, and the refined search still costs the same as the unrefined
+      // one. PTCTLMC_OTFATOMSAM forces a_M instead, for pricing only.
+      if (std::getenv("PTCTLMC_OTFATOMSAM")) {
+        Otf eam(net, p, q, m);
+        eam.set_am(true);
+        GfpStats gsam;
+        const bool holds_am = eam.run(&gsam);
+        if (gs) *gs = gsam;
+        return holds_am;
+      }
+      Otf e2(net, p, q, m);
+      e2.set_atoms(&am);
+      GfpStats gs2;
+      const auto t_run0 = std::chrono::steady_clock::now();
+      const bool holds2 = e2.run(&gs2);
+      const double ms_run = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - t_run0).count();
+      // PTCTLMC_OTFTIME prints the phase split WITHOUT turning on the statistics, whose own
+      // per-zone sweeps are charged to the search being timed. It is the honest stopwatch for
+      // the split-at-creation / split-at-comparison / lazy A/B.
+      if (astat || std::getenv("PTCTLMC_OTFTIME"))
+        std::fprintf(stderr, "[atoms] time: build-map=%.1fms atoms-search=%.1fms\n",
+                     ms_map, ms_run);
+      if (astat)
+        std::fprintf(stderr,
+                     "[atoms] seed-keys=%zu seed-atoms=%zu nondiag=%zu closure-added=%zu "
+                     "tagged-keys=%zu bumped-clocks=%zu rounds=%zu dropped=%zu/%zu | tagged-zones=%zu "
+                     "straddling-zones=%zu (%.1f%%) atom-straddles=%zu extra-pieces=%zu | "
+                     "nodes=%zu (phase1=%zu, x%.2f)\n",
+                     am.seed_keys, am.seed_atoms, am.nondiag_atoms, am.closure_atoms,
+                     am.keys_tagged, am.bumped, am.rounds, am.dropped_disjoint,
+                     am.dropped_vacuous, e2.atom_cand_zones(),
+                     e2.atom_split_zones(),
+                     e2.atom_cand_zones()
+                         ? 100.0 * double(e2.atom_split_zones()) / double(e2.atom_cand_zones())
+                         : 0.0,
+                     e2.atom_straddles(), e2.atom_splits(), gs2.fwd_nodes,
+                     gs ? gs->fwd_nodes : 0,
+                     (gs && gs->fwd_nodes) ? double(gs2.fwd_nodes) / double(gs->fwd_nodes) : 0.0);
+      if (astat) {
+        const auto lv = e2.atom_liveness(am);
+        std::fprintf(stderr,
+                     "[atoms] atoms that separate anything: %zu of %zu carried (%zu ever split "
+                     "a zone)\n",
+                     lv.first, lv.second, e2.atom_splitters());
+        const auto cp = e2.cover_probe_stats();
+        const auto lz = e2.lazy_stats();
+        std::fprintf(stderr,
+                     "[atoms] cover probes=%zu recursed=%zu (%.2f%%) rec-calls=%zu "
+                     "(%.2f/probe) prefiltered=%zu | lazy splits=%zu redos=%zu activated=%zu\n",
+                     cp[0], cp[1], cp[0] ? 100.0 * double(cp[1]) / double(cp[0]) : 0.0, cp[2],
+                     cp[0] ? double(cp[2]) / double(cp[0]) : 0.0, cp[3], lz[0], lz[1], lz[2]);
+      }
+      if (gs) *gs = gs2;
+      return holds2;
+    }
+    if (astat) std::fprintf(stderr, "[atoms] map unusable (atom cap); falling back to the race\n");
+    // The construction cannot run, so phase 1's verdict is owed after all: pay the backward
+    // pass that build_forward deferred, then rejoin the ordinary certificate/race path.
+    if (!e1.finish_verdict(gs)) return false;        // genuine witness
+  }
+
+  // Phase 2a: THE DEADLOCK-COMPLETION CERTIFICATE (see Otf::dtheta_empty).
+  if (!no_cert && e1.dtheta_empty()) return true;
+
+  // PTCTLMC_OTFLANE=A|B runs ONE lane sequentially: the two strategies a sequential tool would
+  // have to gamble between. Measurement only -- both are sound on their own, which is exactly
+  // why the race is sound.
+  if (const char* lane = std::getenv("PTCTLMC_OTFLANE")) {
+    if (*lane == 'A') {
+      ReachStats dl;
+      if (!deadlock_reachable(net, Backend::Omp, &dl, nullptr)) return true;
+      return Otf(net, p, q, m, /*force_exact=*/true).run(nullptr);   // gate inconclusive
+    }
+    if (*lane == 'B') return Otf(net, p, q, m, /*force_exact=*/true).run(gs);
+  }
+
+  std::atomic<bool> done{false};
+  std::atomic<int> verdict{-1};                     // 0 = holds, 1 = violated
+  GfpStats gs_b;
+  // PTCTLMC_OTFGATETRACE: which lane won, and how long the pair took. The point of the race is
+  // that this answer is not predictable, so it is worth being able to see it per query.
+  static const bool trace = std::getenv("PTCTLMC_OTFGATETRACE") != nullptr;
+  std::atomic<int> winner{-1};                      // 0 = gate lane A, 1 = exact lane B
+  const auto t_race0 = std::chrono::steady_clock::now();
+
+  std::thread lane_b([&] {
+    Otf e(net, p, q, m, /*force_exact=*/true, &done);
+    const bool holds = e.run(&gs_b);
+    if (e.was_cancelled()) return;                  // abandoned: its verdict is not a verdict
+    if (!done.exchange(true)) {
+      verdict.store(holds ? 0 : 1, std::memory_order_release);
+      winner.store(1, std::memory_order_release);
+    }
+  });
+
+  {
+    ReachStats dl;
+    const bool may_dl = deadlock_reachable(net, Backend::Omp, &dl, &done);
+    // A cancelled reach_engine returns false, indistinguishable from "no deadlock reachable",
+    // so this lane may only be trusted if it was not the one cancelled.
+    if (!done.load(std::memory_order_acquire) && !may_dl && !done.exchange(true)) {
+      verdict.store(0, std::memory_order_release);  // a_LU found nothing and was sound
+      winner.store(0, std::memory_order_release);
+    }
+  }
+
+  lane_b.join();
+  if (trace) {
+    const double ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - t_race0).count();
+    const int w = winner.load(std::memory_order_acquire);
+    std::fprintf(stderr, "[gate] winner=%s race=%.1fms\n",
+                 w == 0 ? "A(deadlock-free)" : w == 1 ? "B(exact re-run)" : "none", ms);
+  }
+  const int v = verdict.load(std::memory_order_acquire);
+  if (v == 1 && gs) *gs = gs_b;                     // lane B won and it disagreed with phase 1
+  if (v >= 0) return v == 0;
+
+  // Unreachable in the current logic: lane B is cancelled only by lane A concluding
+  // "deadlock-free", which publishes verdict 0. Kept so that a future change to either lane
+  // cannot silently turn an inconclusive pair into a wrong answer.
+  return Otf(net, p, q, m, /*force_exact=*/true).run(nullptr);
 }
 
 }  // namespace ptctlmc

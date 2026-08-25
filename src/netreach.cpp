@@ -243,6 +243,55 @@ std::string disc_key(const LocVec& locs, const IntVec& ints) {
   return k;
 }
 
+// BROADCAST RECEIVER OPTIONS: participate via one enabled a?, or ABSTAIN.
+//
+// A broadcast `a!` fires whether or not any receiver is enabled, and each `a?` takes part exactly
+// when its OWN guard holds. Collecting receivers by their INT guard alone and then conjoining
+// their CLOCK guards -- what these loops used to do -- silently forces every int-enabled receiver
+// to participate: the run in which a receiver's clock guard fails and it stays put is never
+// generated, so reachable states are LOST. That is an `E<>` false negative and, worse, an `A[]`
+// false positive. See tests/models/liveness-regressions/bcast-receiver.xml.
+//
+// The repair is an explicit ABSTAIN option per receiver process, guarded by the complement of the
+// disjunction of its edges' clock guards. Each clock guard is a conjunction, so its complement is
+// a disjunction of negated atoms, and the complement of the whole disjunction is the cross
+// product of those -- a DNF whose disjuncts are each convex, hence each a separate option. Sizes
+// are the product of the guard lengths, i.e. tiny in practice, and ZERO whenever any receiver
+// edge has an empty clock guard: the complement of `true` is false, that receiver can never
+// abstain, and the option list collapses to exactly what the old code produced. That is why csma,
+// whose five `cd?` edges carry no guard at all, is unaffected.
+struct RecvOpt { int edge; std::vector<Constraint> extra; };   // edge < 0 == abstain
+
+static void build_broadcast_parts(const Network& net, const SymState& s, const NEdge& se, int sender,
+                                  std::vector<std::pair<int, std::vector<RecvOpt>>>& parts) {
+  parts.clear();
+  for (int j = 0; j < net.nprocs(); ++j) {
+    if (j == sender) continue;
+    std::vector<RecvOpt> opts;
+    std::vector<const std::vector<Constraint>*> guards;
+    for (int ej : net.procs[j].edges_of(s.locs[j])) {
+      const NEdge& re = net.procs[j].edges[ej];
+      if (re.sync_chan == se.sync_chan && re.sync_dir == -1 &&
+          int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size())) {
+        opts.push_back({ej, {}});
+        guards.push_back(&re.clock_guard);
+      }
+    }
+    if (opts.empty()) continue;      // no int-enabled a?: j simply does not take part
+    std::vector<std::vector<Constraint>> dnf{{}};
+    for (const auto* g : guards) {
+      if (g->empty()) { dnf.clear(); break; }        // complement of `true` is false
+      std::vector<std::vector<Constraint>> next;
+      next.reserve(dnf.size() * g->size());
+      for (const auto& acc : dnf)
+        for (const auto& c : *g) { auto cp = acc; cp.push_back(negate(c)); next.push_back(std::move(cp)); }
+      dnf.swap(next);
+    }
+    for (auto& d : dnf) opts.push_back({-1, std::move(d)});
+    parts.push_back({j, std::move(opts)});
+  }
+}
+
 // The parent zone is passed SEPARATELY (szone) rather than read from s.zone, so
 // callers that already hold the zone elsewhere -- notably the shared-passed path,
 // where it lives in the intern table -- can pass it by reference instead of
@@ -335,28 +384,22 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
-      // Each other process contributes at most one enabled a? (nondeterministic choice).
-      std::vector<std::pair<int, std::vector<int>>> parts;
-      for (int j = 0; j < net.nprocs(); ++j) {
-        if (j == i) continue;
-        std::vector<int> es;
-        for (int ej : net.procs[j].edges_of(s.locs[j])) {
-          const NEdge& re = net.procs[j].edges[ej];
-          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
-            es.push_back(ej);
-        }
-        if (!es.empty()) parts.push_back({j, std::move(es)});
-      }
+      std::vector<std::pair<int, std::vector<RecvOpt>>> parts;   // see build_broadcast_parts
+      build_broadcast_parts(net, s, se, i, parts);
       std::vector<std::size_t> pick(parts.size(), 0);
       for (;;) {
         bool part_committed = net.procs[i].locations[s.locs[i]].committed;
-        for (const auto& pr : parts)
-          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        for (std::size_t t = 0; t < parts.size(); ++t)
+          if (parts[t].second[pick[t]].edge >= 0 &&
+              net.procs[parts[t].first].locations[s.locs[parts[t].first]].committed) part_committed = true;
         if (!src_committed || part_committed) {
           Dbm z1 = szone;
           bool ok = apply_all(z1, se.clock_guard);
-          for (std::size_t t = 0; ok && t < parts.size(); ++t)
-            ok = apply_all(z1, net.procs[parts[t].first].edges[parts[t].second[pick[t]]].clock_guard);
+          for (std::size_t t = 0; ok && t < parts.size(); ++t) {
+            const RecvOpt& o = parts[t].second[pick[t]];
+            ok = o.edge >= 0 ? apply_all(z1, net.procs[parts[t].first].edges[o.edge].clock_guard)
+                             : apply_all(z1, o.extra);
+          }
           if (ok) {
             SymState ns;
             ns.locs = s.locs; ns.ints = s.ints;
@@ -364,7 +407,9 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
             for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;
             for (int r : se.clock_resets) z1.reset(r);
             for (std::size_t t = 0; t < parts.size(); ++t) {
-              const NEdge& re = net.procs[parts[t].first].edges[parts[t].second[pick[t]]];
+              const RecvOpt& o = parts[t].second[pick[t]];
+              if (o.edge < 0) continue;                       // abstained: nothing moves
+              const NEdge& re = net.procs[parts[t].first].edges[o.edge];
               ns.locs[parts[t].first] = re.tgt;
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) z1.reset(r);
@@ -675,28 +720,23 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
-      std::vector<std::pair<int, std::vector<int>>> parts;
-      for (int j = 0; j < net.nprocs(); ++j) {
-        if (j == i) continue;
-        std::vector<int> es;
-        for (int ej : net.procs[j].edges_of(s.locs[j])) {
-          const NEdge& re = net.procs[j].edges[ej];
-          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 && int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
-            es.push_back(ej);
-        }
-        if (!es.empty()) parts.push_back({j, std::move(es)});
-      }
+      std::vector<std::pair<int, std::vector<RecvOpt>>> parts;   // see build_broadcast_parts
+      build_broadcast_parts(net, s, se, i, parts);
       std::vector<std::size_t> pick(parts.size(), 0);
       for (;;) {
         bool part_committed = net.procs[i].locations[s.locs[i]].committed;
-        for (const auto& pr : parts)
-          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        for (std::size_t t = 0; t < parts.size(); ++t)
+          if (parts[t].second[pick[t]].edge >= 0 &&
+              net.procs[parts[t].first].locations[s.locs[parts[t].first]].committed) part_committed = true;
         if (!src_committed || part_committed) {
           SymState& ns = slot();
           ns.zone = szone;
           bool ok = apply_all(ns.zone, se.clock_guard);
-          for (std::size_t t = 0; ok && t < parts.size(); ++t)
-            ok = apply_all(ns.zone, net.procs[parts[t].first].edges[parts[t].second[pick[t]]].clock_guard);
+          for (std::size_t t = 0; ok && t < parts.size(); ++t) {
+            const RecvOpt& o = parts[t].second[pick[t]];
+            ok = o.edge >= 0 ? apply_all(ns.zone, net.procs[parts[t].first].edges[o.edge].clock_guard)
+                             : apply_all(ns.zone, o.extra);
+          }
           if (ok) {
             ns.locs.assign(s.locs.begin(), s.locs.end());
             ns.ints.assign(s.ints.begin(), s.ints.end());
@@ -704,7 +744,9 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
             for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;
             for (int r : se.clock_resets) ns.zone.reset(r);
             for (std::size_t t = 0; t < parts.size(); ++t) {
-              const NEdge& re = net.procs[parts[t].first].edges[parts[t].second[pick[t]]];
+              const RecvOpt& o = parts[t].second[pick[t]];
+              if (o.edge < 0) continue;                     // abstained: nothing moves
+              const NEdge& re = net.procs[parts[t].first].edges[o.edge];
               ns.locs[parts[t].first] = re.tgt;
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) ns.zone.reset(r);
@@ -979,7 +1021,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (Uq[c] != kAluNegInf && (Ur[c] == kGNone || le(Uq[c]) > Ur[c])) Ur[c] = le(Uq[c]);
         if (Lq[c] != kAluNegInf && (Lr[c] == kGNone || le(-Lq[c]) > Lr[c])) Lr[c] = le(-Lq[c]);
       }
-      Lr[0] = Ur[0] = kGNone;
+      // (<=,0), NOT kGNone. dbm_is_g_le's loops start at 0 and `continue` on kGNone, so a
+      // kGNone here deletes the (U-cut) witness family at y=0 and the (L-unsat') family at x=0.
+      // Removing witnesses can only turn the test from FALSE to TRUE, i.e. prune zones that are
+      // not actually simulated -- measured at ~19% unsound TRUEs against point-wise ground truth,
+      // versus zero for (<=,0). The sibling dbm_is_alu_le documents L[0]=U[0]=0 as MANDATORY for
+      // exactly this reason, and the code below does that.
+      Lr[0] = Ur[0] = kZeroLe;
     }
     if (net.lbound_loc.empty()) { L2 = L; U2 = U; return; }  // fall back to global bounds
     L2.assign(net.nclocks + 1, kAluNegInf);
@@ -2649,6 +2697,10 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
   // time diverge => an infinite run that stays put — an E[] witness on its own.
   auto time_diverges = [&](const SymState& s) -> bool {
     if (net.nclocks == 0) return false;
+    // FROZEN LOCATIONS DO NOT DELAY. Delaying unconditionally reports divergence at a
+    // committed/urgent location, where no positive delay is legal at all -- inventing a
+    // maximal-run witness out of nothing.
+    { bool fc, fu; frozen_flags(net, s.locs, &fc, &fu); if (fc || fu) return false; }
     Dbm z = s.zone;
     z.delay();
     std::vector<Constraint> inv;
@@ -2976,6 +3028,10 @@ bool leads_to_net(const Network& net, const DiscPred& p, const DiscPred& q, Back
   };
   auto time_diverges = [&](const SymState& s) -> bool {
     if (net.nclocks == 0) return false;
+    // FROZEN LOCATIONS DO NOT DELAY. Delaying unconditionally reports divergence at a
+    // committed/urgent location, where no positive delay is legal at all -- inventing a
+    // maximal-run witness out of nothing.
+    { bool fc, fu; frozen_flags(net, s.locs, &fc, &fu); if (fc || fu) return false; }
     Dbm z = s.zone; z.delay();
     std::vector<Constraint> inv; all_invariants(net, s.locs, inv); apply_all(z, inv);
     if (z.empty()) return false;
@@ -3619,30 +3675,23 @@ static bool state_has_deadlock(const Network& net, const SymState& s) {
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
-      std::vector<std::pair<int, std::vector<int>>> parts;
-      for (int j = 0; j < net.nprocs(); ++j) {
-        if (j == i) continue;
-        std::vector<int> es;
-        for (int ej : net.procs[j].edges_of(s.locs[j])) {
-          const NEdge& re = net.procs[j].edges[ej];
-          if (re.sync_chan == se.sync_chan && re.sync_dir == -1 &&
-              int_ok(re.int_guard, s.ints) && gen_ok(net, re, s.ints.data(), s.ints.size()))
-            es.push_back(ej);
-        }
-        if (!es.empty()) parts.push_back({j, std::move(es)});
-      }
+      std::vector<std::pair<int, std::vector<RecvOpt>>> parts;   // see build_broadcast_parts
+      build_broadcast_parts(net, s, se, i, parts);
       std::vector<std::size_t> pick(parts.size(), 0);
       for (;;) {
         bool part_committed = net.procs[i].locations[s.locs[i]].committed;
-        for (const auto& pr : parts)
-          if (net.procs[pr.first].locations[s.locs[pr.first]].committed) part_committed = true;
+        for (std::size_t t = 0; t < parts.size(); ++t)
+          if (parts[t].second[pick[t]].edge >= 0 &&
+              net.procs[parts[t].first].locations[s.locs[parts[t].first]].committed) part_committed = true;
         if (!src_committed || part_committed) {
           Dbm g = Z;
           bool ok = apply_all(g, se.clock_guard);
           std::vector<const std::vector<int>*> rls{&se.clock_resets};
           LocVec tl = s.locs; tl[i] = se.tgt;
           for (std::size_t t = 0; ok && t < parts.size(); ++t) {
-            const NEdge& re = net.procs[parts[t].first].edges[parts[t].second[pick[t]]];
+            const RecvOpt& o = parts[t].second[pick[t]];
+            if (o.edge < 0) { ok = apply_all(g, o.extra); continue; }   // abstained: nothing moves
+            const NEdge& re = net.procs[parts[t].first].edges[o.edge];
             ok = apply_all(g, re.clock_guard);
             rls.push_back(&re.clock_resets);
             tl[parts[t].first] = re.tgt;
@@ -3678,14 +3727,60 @@ static bool state_has_deadlock(const Network& net, const SymState& s) {
 // unordered_map<std::string, vector<Dbm>> holding DENSE zone copies keyed by a freshly built
 // string. On the engine it gets the parallel level expansion, the sharded stripe-locked passed
 // list and packed min-graph zone records instead.
+// a_M SUBSUMPTION, NOT EXACT ZONES.
+//
+// This used to pass force_exact=true, which disables the aLU subsumption test outright and
+// falls back to plain inclusion on Extra_LU+-widened zones. That is far stronger than the
+// property needs, and it is what made `E<> deadlock` cost 167805 states on fischer7 against
+// 11951 for plain reachability on the same model.
+//
+// What deadlock actually needs is a BISIMULATION, not exact zones. aLU is only a simulation and
+// so cannot preserve "enables nothing" (Behrmann-Bouyer-Larsen-Pelanek, STTT 8(3):204-215, 2006,
+// Lemma 3; Lemma 1 gives the bisimulation for =_M, and their section 3 says in as many words
+// that Uppaal's deadlock properties are preserved by bisimulation and not by simulation).
+// But set L = U = M with M = max(L, U) per clock and the three clauses of the LU preorder --
+// nu'(x)=nu(x), or L(x) < nu'(x) < nu(x), or U(x) < nu(x) < nu'(x) -- collapse to "equal, or
+// both above M(x)", which is SYMMETRIC. A symmetric simulation is a bisimulation. So the very
+// same dbm_is_alu_le kernel, fed collapsed bounds, IS the a_M test and IS deadlock-sound.
+//
+// This is also exactly what UPPAAL does: its extrapolation is Lower/Upper for reachability but
+// *Local* (per-location max constants) "whenever the query contains either the deadlock keyword
+// or involves a liveness property". force_exact was strictly stronger than UPPAAL.
+//
+// COLLAPSING THE NETWORK'S BOUND ARRAYS, rather than threading a flag through reach_engine, is
+// deliberate: every consumer of L/U downstream becomes M-flavoured at once and consistently.
+// That matters for more than the subsumption test -- the adaptive path can turn extrapolation
+// back on mid-search, and Extra_LU+ with L=U=M is Extra_M+, which (unlike Extra_LU+) can neither
+// invent nor destroy a deadlock. Threading a flag would have left that path unsound.
+//
+// The predicate itself still closes over the ORIGINAL net: it reads guards, invariants and
+// edges, never the bound arrays.
 bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
                         const std::atomic<bool>* cancel) {
-  // The GPU drivers cannot express this target, and reach_engine keeps force_exact queries on
-  // the CPU regardless; ask for the parallel CPU backend rather than silently running serially.
+  // The GPU drivers cannot express this target. deadlock_reachable never asks for a GPU backend,
+  // so the CPU engine is selected regardless of force_exact.
   const Backend b = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
-  return reach_engine(net, NetTarget{},
-                      [&](const SymState& s) { return state_has_deadlock(net, s); },
-                      /*force_exact=*/true, b, stats, nullptr, nullptr, cancel);
+  const auto is_dl = [&](const SymState& s) { return state_has_deadlock(net, s); };
+
+  // Diagonals make every LU-family abstraction unsound, and the G-bound arrays carry raw encoded
+  // bounds with their own sentinel, so collapsing them correctly is a separate exercise. Both
+  // cases keep the old exact behaviour. PTCTLMC_DLEXACT restores it everywhere, for A/B.
+  static const bool dl_exact = std::getenv("PTCTLMC_DLEXACT") != nullptr;
+  if (dl_exact || network_has_diagonal(net) || gsim_on())
+    return reach_engine(net, NetTarget{}, is_dl, /*force_exact=*/true, b, stats, nullptr, nullptr,
+                        cancel);
+
+  Network am = net;
+  auto collapse = [](std::vector<std::int32_t>& lo, std::vector<std::int32_t>& hi) {
+    for (std::size_t c = 0; c < lo.size() && c < hi.size(); ++c)
+      lo[c] = hi[c] = std::max(lo[c], hi[c]);
+  };
+  collapse(am.lbound, am.ubound);
+  for (std::size_t pr = 0; pr < am.lbound_loc.size(); ++pr)
+    for (std::size_t l = 0; l < am.lbound_loc[pr].size(); ++l)
+      collapse(am.lbound_loc[pr][l], am.ubound_loc[pr][l]);
+  return reach_engine(am, NetTarget{}, is_dl, /*force_exact=*/false, b, stats, nullptr, nullptr,
+                      cancel);
 }
 
 }  // namespace ptctlmc
