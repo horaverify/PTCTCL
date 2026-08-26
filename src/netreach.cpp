@@ -906,6 +906,36 @@ static void drop_batch(std::vector<int>& l, std::vector<long>& iv, std::vector<i
 }
 #endif
 
+// Reclaim interned zones no live passed-set node references any more (subsumed / merged out):
+// mark the survivors -- referenced by a live arena node or by the next frontier -- then sweep the
+// rest back to the interner's free-list for in-place reuse. Returns the next allocation level at
+// which to sweep again.
+//
+// MARK IN PARALLEL over stripes. Every writer stores the same value (1) and nothing reads `alive`
+// until the sweep, so two threads marking the same zidx cannot disagree -- but concurrent plain
+// stores to one byte are still formally a race, so the store is a relaxed atomic. On x86/ARM that
+// is the same instruction as a plain byte store (no lock prefix, no fence): the parallelism is
+// free. The mark walks every live arena node, which was the serial half of the sweep (0.128s of a
+// 3.83s arbiter16 run at 8 threads, and it grows with the state space).
+static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassed>& smap,
+                                    const std::vector<std::pair<std::uint64_t, int>>& frontier,
+                                    int nthreads, std::size_t floor_) {
+  std::vector<std::uint8_t> alive(zi.index_bound(), 0);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
+#endif
+  for (long s = 0; s < static_cast<long>(smap.size()); ++s)
+    for (const auto& nd : smap[s].arena)
+      if (!nd.dead) __atomic_store_n(&alive[nd.zidx], std::uint8_t(1), __ATOMIC_RELAXED);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+#endif
+  for (long k = 0; k < static_cast<long>(frontier.size()); ++k)
+    __atomic_store_n(&alive[frontier[k].second], std::uint8_t(1), __ATOMIC_RELAXED);
+  zi.sweep(alive);
+  return std::max<std::size_t>(floor_, zi.allocated() * 2);
+}
+
 // The initial symbolic state: every process in its initial location, every integer at its
 // declared init value, and the zero zone opened up by the same closing pipeline every successor
 // goes through -- combined invariant, delay unless frozen, active-clock reduction, extrapolation.
@@ -1781,11 +1811,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 #endif
       for (long s = 0; s < static_cast<long>(smap.size()); ++s) smap[s].maybe_compact();
 
-      // Reclaim interned zones that no live passed-set node references any more (subsumed /
-      // merged out). Mark the survivors -- referenced by a live arena node or the next frontier
-      // -- then sweep the rest back to the interner's free-list for in-place reuse.
-      //
-      // TRIGGER: growth-based, not per-level. The old guard was `zi.n > 50000`, but `n` is a
+      // TRIGGER for the interner sweep below: growth-based, not per-level. The old guard was `zi.n > 50000`, but `n` is a
       // high-water counter that never shrinks, so it latched true at the first big level and
       // ran a full mark+sweep on EVERY level thereafter. Both halves are serial and O(all
       // arena nodes + htab slots), so the cost grew with the state space while the expand
@@ -1797,29 +1823,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // interns that triggered it), so a run does O(log) sweeps instead of one per level. The
       // memory it trades away is bounded: garbage never exceeds the live set, i.e. the
       // interner stays within 2x of its pinned-to-live size.
-      if (zi.allocated() >= sweep_at) {
-        std::vector<std::uint8_t> alive(zi.index_bound(), 0);
-        // MARK IN PARALLEL over stripes. Every writer stores the same value (1) and nothing
-        // reads `alive` until the sweep below, so two threads marking the same zidx cannot
-        // disagree -- but concurrent plain stores to one byte are still formally a race, so
-        // the store is a relaxed atomic. On x86/ARM that is the same instruction as a plain
-        // byte store (no lock prefix, no fence): the parallelism is free. The mark walks
-        // every live arena node, which was the serial half of the sweep (0.128s of a 3.83s
-        // arbiter16 run at 8 threads, and it grows with the state space).
-#ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
-#endif
-        for (long s = 0; s < static_cast<long>(smap.size()); ++s)
-          for (const auto& nd : smap[s].arena)
-            if (!nd.dead) __atomic_store_n(&alive[nd.zidx], std::uint8_t(1), __ATOMIC_RELAXED);
-#ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp parallel for schedule(static) num_threads(nthreads)
-#endif
-        for (long k = 0; k < static_cast<long>(frontier.size()); ++k)
-          __atomic_store_n(&alive[frontier[k].second], std::uint8_t(1), __ATOMIC_RELAXED);
-        zi.sweep(alive);
-        sweep_at = std::max<std::size_t>(kSweepFloor, zi.allocated() * 2);
-      }
+      if (zi.allocated() >= sweep_at)
+        sweep_at = sweep_dead_zones(zi, smap, frontier, nthreads, kSweepFloor);
 
     }
     return false;
