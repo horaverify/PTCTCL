@@ -948,6 +948,48 @@ struct DiscKeyCodec {
   }
 };
 
+// STRIPE AND BUCKET LAYOUT for the shared passed table.
+//
+// STRIPES are the lock granularity: a discrete state always lands in the same stripe, so a worker
+// updating it locks only that stripe. There are far more stripes than threads so contention is
+// rare.
+//
+// BUCKETS are the work granularity of the per-level survivor collection. They are taken from the
+// SAME high bits of the SAME mix, so bucket b owns a CONTIGUOUS range of stripes and its scan
+// stays inside one slice of the stripe array instead of scattering across all of them. Four
+// buckets per thread keeps a dynamic schedule balanced.
+//
+// Both are read-only once built, and both index functions run per successor, so they stay in this
+// translation unit and inline into their callers exactly as the lambdas they replaced did.
+struct StripeLayout {
+  static constexpr std::uint64_t kMix = 0x9e3779b97f4a7c15ULL;  ///< Fibonacci hashing multiplier
+
+  std::size_t nstripes = 0;
+  int stripe_shift = 0;
+  int nbuckets = 1;
+  int bucket_shift = 0;
+
+  explicit StripeLayout(int nthreads) {
+    int stripe_bits = 10;                                    // >= 1024 stripes, and >> nthreads
+    while ((1 << stripe_bits) < std::max(16384, nthreads * 64)) ++stripe_bits;
+    nstripes = static_cast<std::size_t>(1) << stripe_bits;
+    stripe_shift = 64 - stripe_bits;
+
+    int bucket_bits = 0;
+    while ((1 << bucket_bits) < nthreads * 4) ++bucket_bits;
+    nbuckets = bucket_bits ? (1 << bucket_bits) : 1;
+    bucket_shift = 64 - bucket_bits;
+  }
+
+  std::size_t stripe_of(std::uint64_t dk) const {
+    return static_cast<std::size_t>((dk * kMix) >> stripe_shift);
+  }
+  // Only valid when nbuckets > 1; a zero bucket_bits would make this a shift by 64.
+  std::size_t bucket_of(std::uint64_t dk) const {
+    return static_cast<std::size_t>((dk * kMix) >> bucket_shift);
+  }
+};
+
 // ---- the shared symbolic-reachability engine ------------------------------------------------
 // ONE engine behind every "is a state satisfying X reachable?" query. It owns the sharded passed
 // list, the zone interner, the parallel level expansion and the interner GC; callers supply only
@@ -1652,13 +1694,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // FUSED, so there is no serial per-level routing barrier; strict-BFS level
   // synchronisation is kept (it minimises the state count). At 1 thread this is
   // bit-identical to the legacy path (same per-bucket merge, same order).
-    int nbbits = 10;                                   // >= 1024 stripes, and >> nthreads
-    while ((1 << nbbits) < std::max(16384, nthreads * 64)) ++nbbits;
-    const std::size_t NB = static_cast<std::size_t>(1) << nbbits;
-    const int shift = 64 - nbbits;
+    const StripeLayout lay(nthreads);                  // stripe + bucket index; see above
     const int dim2 = (net.nclocks + 1) * (net.nclocks + 1);
     ZoneIntern zi(dim2, nthreads);                     // ONE shared distinct-zone table
-    std::vector<NetPassed> smap(NB);                   // flat per-stripe passed tables
+    std::vector<NetPassed> smap(lay.nstripes);         // flat per-stripe passed tables
     for (auto& mp : smap) mp.zi = &zi;
     // The mirror budget is process-wide (one NetPassed per stripe) but these tables are not:
     // a second query in the same process would otherwise inherit the first one's charge and
@@ -1666,7 +1705,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     detail::hot_bytes().store(0, std::memory_order_relaxed);
     // shared_mutex: the read-only kill probe below runs concurrently per stripe; only a real
     // insert/merge needs exclusivity.
-    std::vector<SpinRW> smtx(NB);                      // one lock per stripe (value-init in place)
+    std::vector<SpinRW> smtx(lay.nstripes);            // one lock per stripe (value-init in place)
     // PER-THREAD LOCAL ANTICHAINS were tried here and REMOVED (see git history). Each thread
     // inserted into its own table during a level and a bucket owner drained them into the shared
     // one at the boundary, so the expand phase took no lock at all. It is correct and it is
@@ -1676,20 +1715,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // the drain pays more back than it saves (phil12: 3.2M gathered pairs, 1.5M of them exact
     // duplicates, 19.4s of drain thread-time against a 3.8s wall). Don't retry it without a
     // design that keeps a shared kill probe.
-    auto stripe_of = [&](std::uint64_t dk) -> std::size_t {
-      return static_cast<std::size_t>((dk * 0x9e3779b97f4a7c15ULL) >> shift);
-    };
-    // Buckets for the per-level survivor collection below (see the level loop). Taken from the
-    // SAME high bits of the same mix as stripe_of, so bucket b owns a CONTIGUOUS range of
-    // stripes: a bucket's for_level probes stay inside one slice of `smap` instead of scattering
-    // across all NB tables. >= 4 buckets per thread keeps a dynamic schedule balanced.
-    int nbkbits = 0;
-    while ((1 << nbkbits) < nthreads * 4) ++nbkbits;
-    const int nbk = nbkbits ? (1 << nbkbits) : 1;
-    const int bshift = 64 - nbkbits;
-    auto bucket_of = [&](std::uint64_t dk) -> std::size_t {   // only called when nbkbits > 0
-      return static_cast<std::size_t>((dk * 0x9e3779b97f4a7c15ULL) >> bshift);
-    };
     // Dynamic-schedule chunk for the frontier expansion. Loop-invariant, so OpenMP accepts a
     // runtime value here; --omp-chunk previously reached only reach.cpp's single-TA loop, which
     // made it a no-op for every network (multi-process) model.
@@ -1706,7 +1731,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     {
       const std::uint64_t dk = dkey.encode(s0.locs, s0.ints);
       const int z0 = zi.intern(s0.zone, 0);
-      smap[stripe_of(dk)].add(std::move(s0), dk, 0, exact_sub, state_bounds, 0);
+      smap[lay.stripe_of(dk)].add(std::move(s0), dk, 0, exact_sub, state_bounds, 0);
       frontier.push_back({dk, z0});
     }
 
@@ -1764,7 +1789,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
             const std::uint64_t dk = dkey.encode(s.locs, s.ints);
-            const std::size_t si = stripe_of(dk);
+            const std::size_t si = lay.stripe_of(dk);
             if (single) {
               if (smap[si].add(std::move(s), dk, level, exact_sub, state_bounds, tid) >= 0) touched.insert(dk);
             } else {
@@ -1799,7 +1824,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
             const std::uint64_t dk = dkey.encode(s.locs, s.ints);
-            if (smap[stripe_of(dk)].add(std::move(s), dk, level, exact_sub, state_bounds, 0) >= 0)
+            if (smap[lay.stripe_of(dk)].add(std::move(s), dk, level, exact_sub, state_bounds, 0) >= 0)
               touched.insert(dk);
           }
         }
@@ -1824,8 +1849,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // run to run). Dedup and the for_level scan then happen in the SAME parallel loop, which
       // also removes the separate scan pass.
       //
-      // `nbk` / bucket_of are set up next to stripe_of above.
-      const int nbuk = single ? 1 : nbk;
+      // The stripe/bucket index `lay` is built once at engine setup; see StripeLayout.
+      const int nbuk = single ? 1 : lay.nbuckets;
       // part[t * nbuk + b]: thread t's touched keys destined for bucket b.
       std::vector<std::vector<std::uint64_t>> part(static_cast<std::size_t>(nthreads) * nbuk);
       if (single) {
@@ -1836,7 +1861,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 #endif
         for (long t = 0; t < static_cast<long>(nthreads); ++t) {
           const std::size_t base = static_cast<std::size_t>(t) * nbuk;
-          for (const std::uint64_t dk : tls_touched[t]) part[base + bucket_of(dk)].push_back(dk);
+          for (const std::uint64_t dk : tls_touched[t]) part[base + lay.bucket_of(dk)].push_back(dk);
         }
       }
       // Survivors go into the next frontier as (dk, zone-index) pairs -- no SymState build,
@@ -1851,14 +1876,14 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         // needed there; the parallel path can see the same dk from several threads.
         if (single) {
           for (const std::uint64_t dk : part[b])
-            smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
+            smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
           continue;
         }
         std::unordered_set<std::uint64_t> seen;
         for (int t = 0; t < nthreads; ++t) {
           for (const std::uint64_t dk : part[static_cast<std::size_t>(t) * nbuk + b]) {
             if (!seen.insert(dk).second) continue;
-            smap[stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
+            smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
           }
         }
       }
