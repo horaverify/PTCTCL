@@ -299,7 +299,11 @@ static void build_broadcast_parts(const Network& net, const SymState& s, const N
 // on the dead path. Every successor generator in this file ends with these same six steps in
 // this same order -- local, binary-sync and broadcast edges, in both the accumulating and the
 // slot-reusing variant -- and they must stay in step, so they share one body.
-inline bool close_succ_zone(const Network& net, const LocVec& tgt_locs, Dbm& z,
+// always_inline, not merely inline: this is the tail of every successor generator in the file,
+// and at nine call sites the inliner's cost model starts declining the big ones -- which cost
+// ~2.5% on the liveness successor generation when these three sites first shared this body.
+inline __attribute__((always_inline)) bool
+close_succ_zone(const Network& net, const LocVec& tgt_locs, Dbm& z,
                             std::vector<Constraint>& inv, const std::vector<char>& qmask,
                             const std::vector<std::int32_t>& L,
                             const std::vector<std::int32_t>& U, int emode) {
@@ -2448,13 +2452,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
       ns.ints = s.ints;
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
       if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
-      all_invariants(net, ns.locs, inv);
-      if (!apply_all(z1, inv)) continue;
-      bool nc, nu; frozen_flags(net, ns.locs, &nc, &nu);
-      if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
-      reset_inactive(net, ns.locs, z1, qmask);
-      if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
-      else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
+      if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
       if (z1.empty()) continue;
       ns.zone = std::move(z1);
       out.push_back(std::move(ns));
@@ -2489,13 +2487,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
           if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) ||
               !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
-          all_invariants(net, ns.locs, inv);
-          if (!apply_all(z1, inv)) continue;
-          bool nc, nu; frozen_flags(net, ns.locs, &nc, &nu);
-          if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
-          reset_inactive(net, ns.locs, z1, qmask);
-          if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
-          else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
+          if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
           if (z1.empty()) continue;
           ns.zone = std::move(z1);
           out.push_back(std::move(ns));
@@ -2548,18 +2540,10 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
               for (int r : re.clock_resets) z1.reset(r);
               tg.parts.push_back({pj, ej});
             }
-            all_invariants(net, ns.locs, inv);
-            if (apply_all(z1, inv)) {
-              bool nc, nu; frozen_flags(net, ns.locs, &nc, &nu);
-              if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
-              reset_inactive(net, ns.locs, z1, qmask);
-              if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
-              else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
-              if (!z1.empty()) {
-                ns.zone = std::move(z1);
-                out.push_back(std::move(ns));
-                tags.push_back(std::move(tg));
-              }
+            if (close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode) && !z1.empty()) {
+              ns.zone = std::move(z1);
+              out.push_back(std::move(ns));
+              tags.push_back(std::move(tg));
             }
           }
         }
