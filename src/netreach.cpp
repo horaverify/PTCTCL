@@ -936,6 +936,65 @@ static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassed>& smap
   return std::max<std::size_t>(floor_, zi.allocated() * 2);
 }
 
+// Collect one level's survivors -- the passed-set entries stamped with this level -- into the
+// next frontier, as (discrete key, zone index) pairs. No SymState is built and no zone is copied
+// here; that happens once, lazily, at the next expansion.
+//
+// Each dk must be scanned ONCE, so the per-thread touched sets have to be merged. That merge used
+// to be one serial unordered_set fed from every thread, which was the largest serial phase left
+// in the level loop (0.149s of a 3.83s arbiter16 run at 8 threads) and grows with level width, so
+// it capped the speedup by Amdahl. Instead dk is BUCKETED by hash and each bucket deduplicated
+// independently: a given dk hashes to exactly one bucket, so that bucket's set observes every
+// copy of it and the deduplicated key set is identical to the serial union's. Only the order
+// differs, and the order was never fixed anyway. Dedup and the for_level scan then happen in the
+// SAME parallel loop, so the survivors are never materialised as a key set at all.
+static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
+    std::vector<NetPassed>& smap, const StripeLayout& lay,
+    std::vector<std::unordered_set<std::uint64_t>>& tls_touched,
+    int nthreads, bool single, int level) {
+  const int nbuk = single ? 1 : lay.nbuckets;
+  // part[t * nbuk + b]: thread t's touched keys destined for bucket b.
+  std::vector<std::vector<std::uint64_t>> part(static_cast<std::size_t>(nthreads) * nbuk);
+  if (single) {
+    part[0].assign(tls_touched[0].begin(), tls_touched[0].end());
+  } else {
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+#endif
+    for (long t = 0; t < static_cast<long>(nthreads); ++t) {
+      const std::size_t base = static_cast<std::size_t>(t) * nbuk;
+      for (const std::uint64_t dk : tls_touched[t]) part[base + lay.bucket_of(dk)].push_back(dk);
+    }
+  }
+  std::vector<std::vector<std::pair<std::uint64_t, int>>> nf(nbuk);
+#ifdef PTCTLMC_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(nthreads)
+#endif
+  for (long b = 0; b < static_cast<long>(nbuk); ++b) {
+    auto& buf = nf[b];
+    // `single` already deduplicated inside the one touched set, so no second pass is
+    // needed there; the parallel path can see the same dk from several threads.
+    if (single) {
+      for (const std::uint64_t dk : part[b])
+        smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
+      continue;
+    }
+    std::unordered_set<std::uint64_t> seen;
+    for (int t = 0; t < nthreads; ++t) {
+      for (const std::uint64_t dk : part[static_cast<std::size_t>(t) * nbuk + b]) {
+        if (!seen.insert(dk).second) continue;
+        smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
+      }
+    }
+  }
+  std::vector<std::pair<std::uint64_t, int>> next;
+  std::size_t ntot = 0;
+  for (auto& v : nf) ntot += v.size();
+  next.reserve(ntot);                    // one allocation instead of a realloc chain
+  for (auto& v : nf) next.insert(next.end(), v.begin(), v.end());
+  return next;
+}
+
 // The initial symbolic state: every process in its initial location, every integer at its
 // declared init value, and the zero zone opened up by the same closing pipeline every successor
 // goes through -- combined invariant, delay unless frozen, active-clock reduction, extrapolation.
@@ -1724,66 +1783,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       if (stats) for (std::size_t g : tls_gen) stats->generated += g;
       if (found.load()) return true;
 
-      // Collect this level's survivors (entries stamped `level`) into the next frontier.
-      // Each dk must be scanned ONCE, so the per-thread touched sets have to be merged; the
-      // tables are read-only here (no writers), so for_level is a safe read.
-      //
-      // The merge used to be one serial std::unordered_set fed from every thread's set. That
-      // was the largest serial phase left in the level loop (0.149s of a 3.83s arbiter16 run
-      // at 8 threads) and it grows with level width, so it caps the speedup by Amdahl.
-      //
-      // Instead dk is BUCKETED by hash and each bucket is deduplicated independently. A given
-      // dk hashes to exactly one bucket, so that bucket's set observes every copy of it and
-      // the deduplicated key set is identical to the serial union's -- only the order differs,
-      // and the order was never fixed anyway (the old for_level pass was a dynamic-schedule
-      // loop appending into per-thread buffers, so which thread saw which dk already varied
-      // run to run). Dedup and the for_level scan then happen in the SAME parallel loop, which
-      // also removes the separate scan pass.
-      //
-      // The stripe/bucket index `lay` is built once at engine setup; see StripeLayout.
-      const int nbuk = single ? 1 : lay.nbuckets;
-      // part[t * nbuk + b]: thread t's touched keys destined for bucket b.
-      std::vector<std::vector<std::uint64_t>> part(static_cast<std::size_t>(nthreads) * nbuk);
-      if (single) {
-        part[0].assign(tls_touched[0].begin(), tls_touched[0].end());
-      } else {
-#ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp parallel for schedule(static) num_threads(nthreads)
-#endif
-        for (long t = 0; t < static_cast<long>(nthreads); ++t) {
-          const std::size_t base = static_cast<std::size_t>(t) * nbuk;
-          for (const std::uint64_t dk : tls_touched[t]) part[base + lay.bucket_of(dk)].push_back(dk);
-        }
-      }
-      // Survivors go into the next frontier as (dk, zone-index) pairs -- no SymState build,
-      // no zone copy here (that happens once, lazily, at the next expansion into `cur`).
-      std::vector<std::vector<std::pair<std::uint64_t, int>>> nf(nbuk);
-#ifdef PTCTLMC_HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic, 1) num_threads(nthreads)
-#endif
-      for (long b = 0; b < static_cast<long>(nbuk); ++b) {
-        auto& buf = nf[b];
-        // `single` already deduplicated inside the one touched set, so no second pass is
-        // needed there; the parallel path can see the same dk from several threads.
-        if (single) {
-          for (const std::uint64_t dk : part[b])
-            smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
-          continue;
-        }
-        std::unordered_set<std::uint64_t> seen;
-        for (int t = 0; t < nthreads; ++t) {
-          for (const std::uint64_t dk : part[static_cast<std::size_t>(t) * nbuk + b]) {
-            if (!seen.insert(dk).second) continue;
-            smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
-          }
-        }
-      }
-      std::vector<std::pair<std::uint64_t, int>> next;
-      std::size_t ntot = 0;
-      for (auto& v : nf) ntot += v.size();
-      next.reserve(ntot);                    // one allocation instead of a realloc chain
-      for (auto& v : nf)
-        next.insert(next.end(), v.begin(), v.end());
+      // The passed tables are read-only here (no writers), so for_level is a safe read.
+      std::vector<std::pair<std::uint64_t, int>> next =
+          collect_next_frontier(smap, lay, tls_touched, nthreads, single, level);
       // EXPANSION ORDER was tried here and REMOVED. The idea: a stored zone that a later, more
       // general zone subsumes was expanded for nothing (phil12: 469805 of 1047142 arena nodes,
       // 45%, end up retired), so expanding the most general zones of a level FIRST should let
