@@ -844,6 +844,26 @@ struct StripeLayout {
   }
 };
 
+// The initial symbolic state: every process in its initial location, every integer at its
+// declared init value, and the zero zone opened up by the same closing pipeline every successor
+// goes through -- combined invariant, delay unless frozen, active-clock reduction, extrapolation.
+// Returns false when the initial invariant is unsatisfiable, i.e. the model has no initial state.
+//
+// Extrapolation runs only when finiteness depends on it (emode != ExNone). In the default aLU
+// mode the passed list stays finite and minimal on exact zones, so extrapolating would only lose
+// precision; the successor generators apply the same emode to every successor.
+static bool initial_symbolic_state(const Network& net, const std::vector<char>& qmask,
+                                   const std::vector<std::int32_t>& L,
+                                   const std::vector<std::int32_t>& U, int emode, SymState* s0) {
+  s0->locs.resize(net.nprocs());
+  for (int p = 0; p < net.nprocs(); ++p) s0->locs[p] = net.procs[p].initial;
+  s0->ints.resize(net.intvars.size());
+  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0->ints[v] = net.intvars[v].init;
+  s0->zone = Dbm(net.nclocks);
+  std::vector<Constraint> inv;
+  return close_succ_zone(net, s0->locs, s0->zone, inv, qmask, L, U, emode);
+}
+
 // ---- the shared symbolic-reachability engine ------------------------------------------------
 // ONE engine behind every "is a state satisfying X reachable?" query. It owns the sharded passed
 // list, the zone interner, the parallel level expansion and the interner GC; callers supply only
@@ -1034,27 +1054,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // parallel with no locks. Per discrete state: antichain + convex-union merge.
   const DiscKeyCodec dkey(net);   // packs (locations, int vars) into one uint64; see above
 
-  // initial symbolic state
   SymState s0;
-  s0.locs.resize(net.nprocs());
-  for (int p = 0; p < net.nprocs(); ++p) s0.locs[p] = net.procs[p].initial;
-  s0.ints.resize(net.intvars.size());
-  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
-  s0.zone = Dbm(net.nclocks);
-  {
-    std::vector<Constraint> inv;
-    all_invariants(net, s0.locs, inv);
-    if (!apply_all(s0.zone, inv)) return false;
-    bool c, u;
-    frozen_flags(net, s0.locs, &c, &u);
-    if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
-    reset_inactive(net, s0.locs, s0.zone, qmask);
-    // Extrapolate only when finiteness depends on it (emode != ExNone). In the default aLU mode
-    // the passed list stays finite and minimal on exact zones, so extrapolating would only lose
-    // precision; gen_succ_reuse applies the same emode to every successor.
-    if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
-    else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U);
-  }
+  if (!initial_symbolic_state(net, qmask, L, U, emode, &s0)) return false;
   if (is_target(s0)) return true;
   if (use_sym) canonicalize(*sym, net, s0);
   canon_ints(s0.locs, s0.ints);
@@ -1887,24 +1888,8 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
     return k;
   };
 
-  // initial symbolic state (same construction as reachable_net)
   SymState s0;
-  s0.locs.resize(net.nprocs());
-  for (int p = 0; p < net.nprocs(); ++p) s0.locs[p] = net.procs[p].initial;
-  s0.ints.resize(net.intvars.size());
-  for (std::size_t v = 0; v < net.intvars.size(); ++v) s0.ints[v] = net.intvars[v].init;
-  s0.zone = Dbm(net.nclocks);
-  {
-    std::vector<Constraint> inv;
-    all_invariants(net, s0.locs, inv);
-    if (!apply_all(s0.zone, inv)) return false;
-    bool c, u;
-    frozen_flags(net, s0.locs, &c, &u);
-    if (!c && !u) { s0.zone.delay(); apply_all(s0.zone, inv); }
-    reset_inactive(net, s0.locs, s0.zone, qmask);
-    if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
-    else if (emode == ExNoDiag) s0.zone.extrapolate_lu_plus_nodiag(L, U);
-  }
+  if (!initial_symbolic_state(net, qmask, L, U, emode, &s0)) return false;
   if (!sat(s0)) return false;  // no run from the initial state can stay in phi
 
   // Build the phi-restricted extrapolated zone graph (nodes deduped by exact zone).
