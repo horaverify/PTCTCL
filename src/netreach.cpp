@@ -232,7 +232,7 @@ namespace netgpu { bool network_has_diagonal(const Network& net) { return ptctlm
 
 namespace {
 
-std::string disc_key(const LocVec& locs, const IntVec& ints) {
+std::string disc_key_bytes(const LocVec& locs, const IntVec& ints) {
   std::string k;
   k.reserve(locs.size() * 4 + ints.size() * 8);
   for (int l : locs) k.append(reinterpret_cast<const char*>(&l), sizeof(int));
@@ -869,6 +869,85 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
 }
 #endif
 
+// The network is wider than the packed key can hold. Cold, and deliberately verbose: the widest
+// fields are almost always a couple of int arrays, and the breakdown is the only part of this the
+// user can act on.
+[[noreturn]] static void throw_disc_key_too_wide(const Network& net, int bits_needed,
+                                                 int (*field_bits)(long)) {
+  std::vector<std::pair<int, std::string>> widest;
+  for (int p = 0; p < net.nprocs(); ++p)
+    widest.emplace_back(field_bits(static_cast<long>(net.procs[p].locations.size())),
+                        "proc[" + std::to_string(p) + "] (" +
+                        std::to_string(net.procs[p].locations.size()) + " locs)");
+  for (std::size_t v = 0; v < net.intvars.size(); ++v)
+    widest.emplace_back(field_bits(net.intvars[v].hi - net.intvars[v].lo + 1),
+                        "int " + net.intvars[v].name + " [" + std::to_string(net.intvars[v].lo) +
+                        "," + std::to_string(net.intvars[v].hi) + "]");
+  std::stable_sort(widest.begin(), widest.end(),
+                   [](const auto& a, const auto& b) { return a.first > b.first; });
+  std::string msg = "reachable_net: discrete state needs " + std::to_string(bits_needed) +
+                    " bits but the packed key holds 63 (network too wide).\n"
+                    "  " + std::to_string(net.nprocs()) + " processes + " +
+                    std::to_string(net.intvars.size()) + " int vars. Widest fields:";
+  for (std::size_t i = 0; i < widest.size() && i < 8; ++i)
+    msg += "\n    " + std::to_string(widest[i].first) + " bits  " + widest[i].second;
+  throw std::runtime_error(msg);
+}
+
+// PACKED DISCRETE KEY. A symbolic state's discrete half -- the location vector plus the integer
+// variables -- packed losslessly into one uint64 as a fixed bit-field per process and per int
+// variable. This replaces the per-state std::string key, whose alloc/format/hash dominated the
+// profile: keys are now compared and hashed as plain integers, which is what UPPAAL does with its
+// "compressed integer" discrete states.
+//
+// Built once per search and then read-only, so it is safe to share across the parallel level
+// expansion. `encode` runs once per generated successor and `decode` once per frontier state and
+// per level bucket, so both stay in the header of this translation unit and inline into their
+// callers exactly as the lambdas they replaced did.
+struct DiscKeyCodec {
+  const Network& net;
+  std::vector<int> shift;           ///< bit offset of each field: procs first, then int vars
+  std::vector<std::uint64_t> mask;  ///< per-field value mask, for decoding a key back apart
+
+  static int field_bits(long nvalues) { int b = 0; while ((1LL << b) < nvalues) ++b; return b; }
+
+  explicit DiscKeyCodec(const Network& n) : net(n) {
+    const int nfields = n.nprocs() + static_cast<int>(n.intvars.size());
+    shift.resize(nfields);
+    mask.resize(nfields);
+    int off = 0;
+    auto set = [&](int f, int w) {
+      shift[f] = off;
+      mask[f] = (w >= 64) ? ~0ULL : ((1ULL << w) - 1);
+      off += w;
+    };
+    for (int p = 0; p < n.nprocs(); ++p)
+      set(p, field_bits(static_cast<long>(n.procs[p].locations.size())));
+    for (std::size_t v = 0; v < n.intvars.size(); ++v)
+      set(n.nprocs() + static_cast<int>(v), field_bits(n.intvars[v].hi - n.intvars[v].lo + 1));
+    // >= 64 (not > 64): keeps every field offset < 64, so a trailing zero-width field
+    // (single-value int/location) can never trigger a `value << 64` UB shift.
+    if (off >= 64) throw_disc_key_too_wide(n, off, &field_bits);
+  }
+
+  std::uint64_t encode(const LocVec& locs, const IntVec& ints) const {
+    std::uint64_t k = 0;
+    for (int p = 0; p < static_cast<int>(locs.size()); ++p)
+      k |= static_cast<std::uint64_t>(static_cast<unsigned>(locs[p])) << shift[p];
+    for (std::size_t v = 0; v < ints.size(); ++v)
+      k |= static_cast<std::uint64_t>(ints[v] - net.intvars[v].lo) << shift[net.nprocs() + v];
+    return k;
+  }
+
+  void decode(std::uint64_t dk, int* locs, long* ints) const {
+    for (int p = 0; p < net.nprocs(); ++p)
+      locs[p] = static_cast<int>((dk >> shift[p]) & mask[p]);
+    for (std::size_t v = 0; v < net.intvars.size(); ++v)
+      ints[v] = static_cast<long>((dk >> shift[net.nprocs() + v]) & mask[net.nprocs() + v]) +
+                net.intvars[v].lo;
+  }
+};
+
 // ---- the shared symbolic-reachability engine ------------------------------------------------
 // ONE engine behind every "is a state satisfying X reachable?" query. It owns the sharded passed
 // list, the zone interner, the parallel level expansion and the interner GC; callers supply only
@@ -1057,58 +1136,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // in the same shard, so each shard is a self-contained antichain owned by exactly
   // one thread during the merge — the O(bucket^2 * dim^3) convex-merge now runs in
   // parallel with no locks. Per discrete state: antichain + convex-union merge.
-  // Discrete-state key packed losslessly into a uint64: a fixed bit-field per process
-  // location + per int variable. This replaces the per-state std::string key, whose
-  // alloc/format/hash dominated the profile — keys are now compared and hashed as plain
-  // integers (what UPPAAL does with its "compressed integer" discrete states).
-  const int nfields = net.nprocs() + static_cast<int>(net.intvars.size());
-  std::vector<int> dshift(nfields);
-  std::vector<std::uint64_t> dmask(nfields);  // per-field value mask (for decoding dk -> locs/ints)
-  {
-    int off = 0;
-    auto bits = [](long n) { int b = 0; while ((1LL << b) < n) ++b; return b; };
-    auto set = [&](int f, int w) { dshift[f] = off; dmask[f] = (w >= 64) ? ~0ULL : ((1ULL << w) - 1); off += w; };
-    for (int p = 0; p < net.nprocs(); ++p) set(p, bits(static_cast<long>(net.procs[p].locations.size())));
-    for (std::size_t v = 0; v < net.intvars.size(); ++v)
-      set(net.nprocs() + static_cast<int>(v), bits(net.intvars[v].hi - net.intvars[v].lo + 1));
-    // >= 64 (not > 64): keeps every field offset < 64, so a trailing zero-width
-    // field (single-value int/location) can never trigger a `value << 64` UB shift.
-    if (off >= 64) {
-      // Say WHAT overflowed, not just that something did: the widest fields are almost
-      // always a few int arrays, and the user can only act on the breakdown.
-      std::vector<std::pair<int, std::string>> w;
-      for (int p = 0; p < net.nprocs(); ++p)
-        w.emplace_back(bits(static_cast<long>(net.procs[p].locations.size())),
-                       "proc[" + std::to_string(p) + "] (" +
-                       std::to_string(net.procs[p].locations.size()) + " locs)");
-      for (std::size_t v = 0; v < net.intvars.size(); ++v)
-        w.emplace_back(bits(net.intvars[v].hi - net.intvars[v].lo + 1),
-                       "int " + net.intvars[v].name + " [" + std::to_string(net.intvars[v].lo) +
-                       "," + std::to_string(net.intvars[v].hi) + "]");
-      std::stable_sort(w.begin(), w.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-      std::string msg = "reachable_net: discrete state needs " + std::to_string(off) +
-                        " bits but the packed key holds 63 (network too wide).\n"
-                        "  " + std::to_string(net.nprocs()) + " processes + " +
-                        std::to_string(net.intvars.size()) + " int vars. Widest fields:";
-      for (std::size_t i = 0; i < w.size() && i < 8; ++i)
-        msg += "\n    " + std::to_string(w[i].first) + " bits  " + w[i].second;
-      throw std::runtime_error(msg);
-    }
-  }
-  // Decode a packed key back into location + int vectors (inverse of disc_key).
-  auto decode_key = [&](std::uint64_t dk, int* locs, long* ints) {
-    for (int p = 0; p < net.nprocs(); ++p) locs[p] = static_cast<int>((dk >> dshift[p]) & dmask[p]);
-    for (std::size_t v = 0; v < net.intvars.size(); ++v)
-      ints[v] = static_cast<long>((dk >> dshift[net.nprocs() + v]) & dmask[net.nprocs() + v]) + net.intvars[v].lo;
-  };
-  auto disc_key = [&](const LocVec& locs, const IntVec& ints) -> std::uint64_t {
-    std::uint64_t k = 0;
-    for (int p = 0; p < static_cast<int>(locs.size()); ++p)
-      k |= static_cast<std::uint64_t>(static_cast<unsigned>(locs[p])) << dshift[p];
-    for (std::size_t v = 0; v < ints.size(); ++v)
-      k |= static_cast<std::uint64_t>(ints[v] - net.intvars[v].lo) << dshift[net.nprocs() + v];
-    return k;
-  };
+  const DiscKeyCodec dkey(net);   // packs (locations, int vars) into one uint64; see above
 
   // initial symbolic state
   SymState s0;
@@ -1173,7 +1201,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     std::vector<int> fl(s0.locs.begin(), s0.locs.end());
     std::vector<long> fi(s0.ints.begin(), s0.ints.end());
     std::vector<int> fz(1, zi.intern(s0.zone.data().data()));
-    passed[disc_key(s0.locs, s0.ints)].assign(1, fz[0]);
+    passed[dkey.encode(s0.locs, s0.ints)].assign(1, fz[0]);
     double gpu_rate = -1, cpu_rate = -1;   // adaptive merge routing: work-units (sum bucket^2) per ms
     auto _now = [] { return std::chrono::steady_clock::now(); };
     auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
@@ -1234,7 +1262,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     {   // let the expand kernel pack the discrete key itself (see net_gpu.hpp)
       std::vector<int> ilo(net.intvars.size());
       for (std::size_t v = 0; v < net.intvars.size(); ++v) ilo[v] = static_cast<int>(net.intvars[v].lo);
-      gpu->set_key_layout(dshift, ilo);
+      gpu->set_key_layout(dkey.shift, ilo);
     }
     // Orbit of the target: with symmetry every state is stored as its orbit representative, so a
     // target that is not itself symmetric has to be tested against every image of the property.
@@ -1249,8 +1277,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         const NetTarget& t = src ? (*src)[i] : target;
         OrbitTest ot{0, 0, &t};
         for (const auto& lr : t.loc_req) {
-          ot.mask |= dmask[lr.first] << dshift[lr.first];
-          ot.val  |= static_cast<std::uint64_t>(static_cast<unsigned>(lr.second)) << dshift[lr.first];
+          ot.mask |= dkey.mask[lr.first] << dkey.shift[lr.first];
+          ot.val  |= static_cast<std::uint64_t>(static_cast<unsigned>(lr.second)) << dkey.shift[lr.first];
         }
         tgt_tests.push_back(ot);
       }
@@ -1313,7 +1341,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 #endif
         for (long t = 0; t < static_cast<long>(touched.size()); ++t) {
           int dl[64]; long di[32];
-          decode_key(touched[t], dl, di);
+          dkey.decode(touched[t], dl, di);
           std::size_t f = foff[t];
           auto& pz = passed.find(touched[t])->second;   // present: inserted earlier this level
           for (std::size_t i = 0; i < pz.size(); ++i) {
@@ -1412,8 +1440,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           const int* wl = ol + w * np;
           const int* wi = oi + w * ni;
           dk = 0;
-          for (int p = 0; p < np; ++p) dk |= static_cast<std::uint64_t>(static_cast<unsigned>(wl[p])) << dshift[p];
-          for (int v = 0; v < ni; ++v) dk |= static_cast<std::uint64_t>(wi[v] - net.intvars[v].lo) << dshift[np + v];
+          for (int p = 0; p < np; ++p) dk |= static_cast<std::uint64_t>(static_cast<unsigned>(wl[p])) << dkey.shift[p];
+          for (int v = 0; v < ni; ++v) dk |= static_cast<std::uint64_t>(wi[v] - net.intvars[v].lo) << dkey.shift[np + v];
         }
         // Target test straight off the key: the required locations are a fixed bit pattern in it,
         // so the common (non-target) case is two integer ops instead of a walk over nprocs
@@ -1421,7 +1449,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         for (const auto& ot : tgt_tests) {
           if ((dk & ot.mask) != ot.val) continue;
           int dl2[64]; long di2[32];
-          decode_key(dk, dl2, di2);
+          dkey.decode(dk, dl2, di2);
           bool tgt = true;
           for (const auto& a : ot.t->int_cond) {
             const long x = di2[a.var]; bool r;
@@ -1489,7 +1517,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         int dl[64]; long di[32];
         std::vector<std::int32_t> L2, U2;
         std::vector<raw_t> Lr_, Ur_;   // GPU merge is a_LU only; the G arrays go unused here
-        decode_key(bdk[b], dl, di);
+        dkey.decode(bdk[b], dl, di);
         state_bounds(dl, L2, U2, Lr_, Ur_);
         for (int c = 0; c < dim; ++c) { Lm[static_cast<std::size_t>(b) * dim + c] = L2[c]; Um[static_cast<std::size_t>(b) * dim + c] = U2[c]; }
       }
@@ -1574,7 +1602,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       for (int b = 0; b < nb; ++b) {
         if (fr_cnt[b] == 0) continue;   // unchanged bucket — nothing to do
         int dl[64]; long di[32];
-        decode_key(bdk[b], dl, di);
+        dkey.decode(bdk[b], dl, di);
         auto& pz = *pzp[b];
         // This bucket's slots before the merge; the ones the merge drops go back to the arena
         // free list below. Thread-local, not a fixed array: philosophers' antichains reach ~400
@@ -1668,7 +1696,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     const int expand_chunk = std::max(1, omp_chunk());
 
     // The frontier holds only (dk, zone-index) per state -- 12 B, not a full
-    // SymState. locs/ints come from dk (decode_key) and the zone from the intern
+    // SymState. locs/ints come from dk (DiscKeyCodec::decode) and the zone from the intern
     // table, reconstructed into a REUSED per-thread scratch at expansion. This
     // removes the ~1.6 GB of interned-zone copies the old make_survivor did (one
     // full DBM copied into every frontier state) and shrinks the resident
@@ -1676,7 +1704,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     const int np_ = net.nprocs(), ni_ = static_cast<int>(net.intvars.size());
     std::vector<std::pair<std::uint64_t, int>> frontier;
     {
-      const std::uint64_t dk = disc_key(s0.locs, s0.ints);
+      const std::uint64_t dk = dkey.encode(s0.locs, s0.ints);
       const int z0 = zi.intern(s0.zone, 0);
       smap[stripe_of(dk)].add(std::move(s0), dk, 0, exact_sub, state_bounds, 0);
       frontier.push_back({dk, z0});
@@ -1721,7 +1749,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 #pragma omp for schedule(dynamic, expand_chunk) nowait
         for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
           if (found.load(std::memory_order_relaxed)) continue;
-          decode_key(frontier[i].first, cur.locs.data(), cur.ints.data());
+          dkey.decode(frontier[i].first, cur.locs.data(), cur.ints.data());
           // buf is NOT cleared: gen_succ_reuse rebuilds slots in place and returns
           // the count, so the loc/int/zone storage is reused across frontier states.
           const std::size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second), L, U, qmask, emode,
@@ -1735,7 +1763,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             }
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
-            const std::uint64_t dk = disc_key(s.locs, s.ints);
+            const std::uint64_t dk = dkey.encode(s.locs, s.ints);
             const std::size_t si = stripe_of(dk);
             if (single) {
               if (smap[si].add(std::move(s), dk, level, exact_sub, state_bounds, tid) >= 0) touched.insert(dk);
@@ -1762,7 +1790,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         cur.locs.resize(np_);
         cur.ints.resize(ni_);
         for (auto& fr : frontier) {
-          decode_key(fr.first, cur.locs.data(), cur.ints.data());
+          dkey.decode(fr.first, cur.locs.data(), cur.ints.data());
           const std::size_t ns = gen_succ_reuse(net, cur, zi.get(fr.second), L, U, qmask, emode, buf, fr.second);
           for (std::size_t sk = 0; sk < ns; ++sk) {
             SymState& s = buf[sk];
@@ -1770,7 +1798,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             if (is_target(s)) return true;
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
-            const std::uint64_t dk = disc_key(s.locs, s.ints);
+            const std::uint64_t dk = dkey.encode(s.locs, s.ints);
             if (smap[stripe_of(dk)].add(std::move(s), dk, level, exact_sub, state_bounds, 0) >= 0)
               touched.insert(dk);
           }
@@ -1974,7 +2002,7 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
     return int_ok(phi.ints, s.ints);
   };
   auto key = [&](const SymState& s) -> std::string {
-    std::string k = disc_key(s.locs, s.ints);
+    std::string k = disc_key_bytes(s.locs, s.ints);
     const auto& d = s.zone.data();
     k.append(reinterpret_cast<const char*>(d.data()), d.size() * sizeof(raw_t));
     return k;
@@ -3119,7 +3147,7 @@ bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t
 // bucket keeps zones the published version would have collapsed.
 int Otf::intern(SymState&& s) {
   intern_grew = false;
-  std::string bkey = disc_key(s.locs, s.ints);
+  std::string bkey = disc_key_bytes(s.locs, s.ints);
   // CELL TAG. split_by_atoms has already made every zone that reaches here atom-HOMOGENEOUS,
   // so `Z subseteq phi` is decided by one canonical DBM entry and the tag is well defined.
   //
@@ -3286,7 +3314,7 @@ void Otf::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
   out.clear();
   const std::vector<AtomC>* at = nullptr;
   if (amap_) {
-    auto it = amap_->diag.find(disc_key(s.locs, s.ints));
+    auto it = amap_->diag.find(disc_key_bytes(s.locs, s.ints));
     if (it != amap_->diag.end() && !it->second.empty()) at = &it->second;
   }
   out.push_back(std::move(s));
@@ -3579,7 +3607,7 @@ bool Otf::final_verdict_violated() {
 bool Otf::dtheta_empty() {
   std::unordered_set<std::string> seen;
   for (std::size_t i = 0; i < node.size(); ++i) {
-    const std::string k = disc_key(node[i].locs, node[i].ints);
+    const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
     if (!seen.insert(k).second) continue;
     SymState u; u.locs = node[i].locs; u.ints = node[i].ints;
     u.zone = Dbm::universe(net.nclocks);
@@ -3667,7 +3695,7 @@ bool Otf::build_atom_map(AtomMap& am) {
 
   // ---- seed ---------------------------------------------------------------
   for (std::size_t i = 0; i < node.size(); ++i) {
-    const std::string k = disc_key(node[i].locs, node[i].ints);
+    const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
     if (invof.count(k)) continue;
     SymState u;
     u.locs = node[i].locs;
@@ -3824,13 +3852,13 @@ bool Otf::build_atom_map(AtomMap& am) {
     std::unordered_set<std::string> seenE;
     const std::size_t n = std::min(adj.size(), node.size());
     for (std::size_t u = 0; u < n; ++u) {
-      const std::string ks = disc_key(node[u].locs, node[u].ints);
+      const std::string ks = disc_key_bytes(node[u].locs, node[u].ints);
       for (const auto& e : adj[u]) {
         std::uint64_t rm = 0;
         for (const auto& pr : e.tag.parts)
           for (int rc : net.procs[pr.first].edges[pr.second].clock_resets)
             if (rc >= 1 && rc < 64) rm |= std::uint64_t(1) << rc;
-        const std::string kt = disc_key(node[e.tgt].locs, node[e.tgt].ints);
+        const std::string kt = disc_key_bytes(node[e.tgt].locs, node[e.tgt].ints);
         std::string sig = ks;
         sig += '\x01';
         sig += kt;
