@@ -391,45 +391,26 @@ static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
 
 
 
-// ============================================================================
-// CONFINED BACKWARD PASSES: WHY A PARTIAL GRAPH IS ENOUGH
-//
-// The straightforward algorithm is three strictly sequential phases: build the whole
-// a_LU-subsumed reachable graph, restrict to !q, then run a backward greatest fixpoint over
-// it. Its cost is a function of the MODEL and never of the QUERY -- a `p --> q` violated three
-// transitions from the initial state still pays for every reachable symbolic state.
-//
-// EG is a GREATEST fixpoint, so the textbook iteration starts at TOP and DESCENDS, and an
-// intermediate iterate is only a PRE-fixpoint (W >= F(W)). A pre-fixpoint is an
-// over-approximation and therefore says nothing: "W(v) is non-empty" cannot settle a violation,
-// so there is no early exit from the iteration itself.
-//
-// A violation, however, never needed the fixpoint. It needs a CERTIFICATE, and by
-// Knaster-Tarski the certificates of a greatest fixpoint are exactly its POST-fixpoints:
-//
-//        X  subseteq  F(X)        ==>        X  subseteq  nu F.                        (*)
-//
-// So take ANY set S of nodes explored so far, pin every node outside S to EMPTY, and run the
-// ordinary descending iteration confined to S. Its limit nu F_S is the exact greatest fixpoint
-// of the restricted operator. Restricting only DELETES disjuncts, so F_S <= F pointwise, and
-// monotonicity gives nu F_S subseteq nu F: the limit of a pass over a FRAGMENT is a
-// post-fixpoint of the operator on the FINISHED graph. By (*) it is a sound
-// under-approximation of the final answer, computed without ever seeing the final graph.
-//
-// Two consequences:
-//
-//   * nu F_S(v) non-empty at a p /\ !q node v  =>  the query is VIOLATED, with exactly the
-//     verdict the finished graph would have produced.
-//   * S = every expanded !q node of the FINISHED graph gives F_S = F, so the last pass is the
-//     ordinary algorithm. Nothing is given up when the property holds.
-//
-// THE ONE RESTRICTION. A node may enter S only if it is EXPANDED. The stopping term of the
-// backward operator needs the ABSENCE of successors (`adj[v].empty()`), and an unexpanded node
-// has an empty adjacency for the wrong reason. Everything else survives a partial graph
-// untouched: the Pre disjuncts only ever need edges that EXIST, never the absence of one.
-// Backward work on a half-built graph is therefore legitimate for every node whose own
-// successors have been computed, whatever the rest of the graph is doing.
-// ============================================================================
+/// @name Confined backward passes
+/// @{
+/// The backward fixpoint below is always run *confined* to a node set @c S: nodes outside @c S
+/// are pinned to the empty federation. The limit of the confined iteration is a post-fixpoint
+/// of the operator on the finished graph, and by Knaster–Tarski the post-fixpoints of a
+/// greatest fixpoint are exactly its under-approximations (`X ⊆ F(X) ⇒ X ⊆ νF`). A non-empty
+/// value at a `p /\ !q` node of @c S is therefore already a sound VIOLATED verdict, even though
+/// the graph outside @c S has never been looked at.
+///
+/// @warning A node may enter @c S only if it is EXPANDED. The stopping term ::Otf::stop_set
+///          reads the *absence* of successors (`adj[v].empty()`), and an unexpanded node has an
+///          empty adjacency for the wrong reason. Every other term reads only edges that exist,
+///          so it survives a partial graph unchanged.
+///
+/// @note Intermediate iterates of a descending greatest-fixpoint iteration are only
+///       *pre*-fixpoints, hence over-approximations, hence conclusive in neither direction.
+///       Only the converged limit may be read; see ::Otf::certificate_in.
+///
+/// @see @c DESIGN.md, "On-the-fly liveness", for the full argument.
+/// @}
 
 
 /// @brief One outgoing edge of the liveness graph: a target node and the tag that produced it.
@@ -438,46 +419,41 @@ struct OtfEdge {
   GfpTag tag;   ///< the participating edges, for ::gfp_pre
 };
 
-// ---------------------------------------------------------------------------
-// THE DEADLOCK-COMPLETION CONSTRAINT MAP
-//
-// a_LU covering is a simulation, and deadlock -- "this valuation enables nothing" -- is a
-// universally quantified negative property that simulation does not preserve. The completion
-// construction repairs that without weakening the covering: conceptually, add a sink with an
-// edge guarded by Dead(q) at every key q, so a maximal run that ENDS in a deadlock becomes a
-// run that REACHES the sink, which is an existential property every simulation preserves. The
-// sink is never materialised; its only effect is on which atoms the covering test must carry,
-// namely the atoms of Dead(q), closed under pre.
-//
-// An atom is a half-space x_i - x_j <| b. Two kinds, discharged differently:
-//
-//   DIAGONAL (i > 0 and j > 0). Invariant under time elapse, so agreement on it survives
-//   delay, so it can be carried as a CELL TAG attached to the discrete key: zones classified
-//   differently by the atom are never allowed to cover one another. The covering kernel itself
-//   is untouched.
-//
-//   NON-DIAGONAL (i == 0 or j == 0), i.e. a bound on one clock. NOT delay invariant: two
-//   valuations agreeing on `x <= 5` need not agree on it after delaying, so no cell tag can
-//   carry it. What DOES carry it is the a_LU preorder itself -- with L(x) >= c and U(x) >= c
-//   its three clauses collapse to "equal, or both above c", which decides every constraint on
-//   x with constant <= c the same way for both valuations. A non-diagonal atom is therefore
-//   discharged by RAISING that one clock's bounds: a_M on that clock alone, rather than a_M on
-//   the whole model.
-//
-// With both in place the relation
-//
-//     nu R nu'  iff  nu <=_LU nu' (raised bounds)  and  nu, nu' agree on the diagonal atoms
-//
-// is a simulation for the completed automaton, because (a) <=_LU is a simulation for the
-// original automaton, (b) diagonal agreement is preserved by delay and, via the pre-closure in
-// ::Otf::build_atom_map, by every edge, and (c) Dead(q) is a boolean combination of Inv(q)
-// (which every stored zone satisfies), the diagonal atoms and the non-diagonal ones -- so
-// `nu |= Dead(q)` iff `nu' |= Dead(q)`. Deadlock is then existential reachability of the sink,
-// which R preserves.
-//
-// See DESIGN.md, "The deadlock completion", for why Dead(q) is a diagonal set even in a
-// diagonal-free automaton and why no per-clock (L,U) scheme can preserve deadlock on its own.
-// ---------------------------------------------------------------------------
+/// @name The deadlock-completion constraint map
+/// @{
+/// a_LU covering is a *simulation*, and deadlock — "this valuation enables nothing" — is a
+/// universally quantified negative property that simulation does not preserve
+/// (Behrmann–Bouyer–Larsen–Pelánek, STTT 8(3):204–215, 2006, Lemma 3). The completion repairs
+/// that without weakening the covering: conceptually add a sink with an edge guarded by
+/// `Dead(q)` at every discrete key `q`, so a maximal run that *ends* in a deadlock becomes a
+/// run that *reaches* the sink — an existential property every simulation preserves. The sink
+/// is never materialised. Its only effect is on which atoms the covering test must carry,
+/// namely the atoms of `Dead(q)`, closed under pre.
+///
+/// An atom is a half-space `x_i - x_j <| b`, and the two kinds are discharged differently:
+///
+/// - **Diagonal** (`i > 0` and `j > 0`) — invariant under time elapse, so agreement on it
+///   survives delay and it can ride as a *cell tag* on the discrete key (::AtomMap::diag).
+///   Zones the atom classifies differently are never allowed to cover one another, and the
+///   covering kernel itself is untouched.
+/// - **Non-diagonal** (`i == 0` or `j == 0`, i.e. a bound on one clock) — *not* delay
+///   invariant, so no cell tag can carry it. The a_LU preorder carries it instead: with
+///   `L(x) >= c` and `U(x) >= c` its three clauses collapse to "equal, or both above `c`",
+///   which decides every constraint on `x` with constant `<= c` the same way for both
+///   valuations. Such an atom is therefore discharged by *raising that one clock's bounds*
+///   (::AtomMap::bump) — a_M on that clock alone rather than a_M on the whole model.
+///
+/// With both in place the relation `ν R ν'  iff  ν <=_LU ν'` (raised bounds) *and* `ν, ν'`
+/// agree on the diagonal atoms is a simulation for the completed automaton: `<=_LU` is a
+/// simulation for the original automaton, diagonal agreement is preserved by delay and — via
+/// the pre-closure in ::Otf::build_atom_map — by every edge, and `Dead(q)` is a boolean
+/// combination of `Inv(q)` (which every stored zone satisfies) with the diagonal and
+/// non-diagonal atoms, so `ν |= Dead(q)` iff `ν' |= Dead(q)`.
+///
+/// @see @c DESIGN.md, "The deadlock completion", for why `Dead(q)` is a diagonal set even in a
+///      diagonal-free automaton, why no per-clock `(L,U)` scheme can preserve deadlock on its
+///      own, and why each of the three seed drops is safe.
+/// @}
 
 /// @brief One atom of the constraint map: the half-space `x_i - x_j <| b`.
 struct AtomC {
@@ -679,31 +655,27 @@ void Otf::setup() {
   U = net.ubound;
   use_alu = !force_exact_ && !network_has_diagonal(net);
   emode = network_has_diagonal(net) ? ExNoDiag : (use_alu ? ExNone : ExLuPlus);
-  // qmask is the set of clocks the QUERY forces to stay live. A leads-to predicate carries no
-  // clock constraints, so it starts all-zero and the active-clock reduction runs in FULL --
-  // reset_inactive reads qmask as "additionally keep alive", so all-zero is maximal reduction,
-  // not none. What makes the reduction safe for a BACKWARD analysis is the repair inside
-  // gfp_pre, which frees every clock that is dead at the target before undoing the step.
+  // Clocks the query forces to stay live. A leads-to predicate carries no clock constraints, so
+  // this starts all-zero; reset_inactive reads it as "additionally keep alive", so all-zero is
+  // MAXIMAL reduction, not none. The reduction is safe for a backward analysis because gfp_pre
+  // frees every clock dead at the target before undoing the step.
   qmask.assign(net.nclocks + 1, 0);
   aL = net.lbound;
   aU = net.ubound;
   aL[0] = aU[0] = 0;
-  // THE CONSTRAINT MAP'S TWO GLOBAL EFFECTS (see AtomMap).
+  // The constraint map has two global effects (see ::AtomMap):
   //
-  // (1) Non-diagonal atoms are discharged by raising that clock's LU bounds. Raising L or U
-  //     only ever makes a_LU FINER, so it is sound wherever it is applied; applying it to the
-  //     global arrays -- and, in intern, to the per-location ones -- keeps it consistent along
+  // (1) A non-diagonal atom is discharged by raising its clock's L and U. Raising either only
+  //     ever makes a_LU FINER, so it is sound wherever applied; applying it to the global
+  //     arrays here and to the per-location arrays in Otf::intern keeps it consistent along
   //     every path, which is what the simulation argument needs.
-  // (2) reset_inactive pins clocks that no guard will read again to 0. The atoms DO read them,
-  //     which is the whole point of Dead(q), so every clock occurring in the map is added to
-  //     qmask. Without this the reduction erases exactly the differences the cell tag exists to
-  //     observe.
+  // (2) reset_inactive pins clocks no guard will read again to 0, but the atoms DO read them --
+  //     that is the point of Dead(q) -- so every clock the map mentions joins qmask. Without
+  //     this the reduction erases exactly the differences the cell tag exists to observe.
   //
-  // Whether (2) is strictly owed for SEED atoms is open: a clock read by Esc(q) is read by an
-  // outgoing guard or a target invariant at q, hence active at q by construction, and a
-  // diagonal that survives pullback involves only clocks some reachable guard still reads. That
-  // is an argument, not a proof -- `active` is a static over-approximation -- so the pinning
-  // stays.
+  // The pinning in (2) is kept for seed atoms as well as closure atoms even though seed clocks
+  // are arguably active at their own key by construction: `active` is a static
+  // over-approximation, so the argument is not a proof and the conservative choice stands.
   if (amap_) {
     for (int c = 1; c <= net.nclocks && c < (int)amap_->bump.size(); ++c) {
       if (amap_->bump[c] != kNoBump) {
@@ -839,41 +811,43 @@ bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t
   return cover_rec(an, nin, bn, xout, as, depth + 1);
 }
 
-// aLU subsumption, exactly as leads_to_gfp's phase 1, plus the APPEND-ONLY switch.
-//
-// APPEND-ONLY (D1, D2). The published intern ENLARGES a stored node in place when a
-// newcomer covers it -- `node[j].zone = s.zone` -- and that silently invalidates work:
-// adj[j] was computed from the smaller zone, so j has to be re-expanded and any backward
-// value already computed for j refers to a zone that no longer exists. Append-only refuses
-// the enlargement and stores the newcomer as a separate node. Every stored node is then
-// immutable from birth, which is exactly the property "start backward work only on
-// vertices known not to change" needs -- and it is why D1 cannot be implemented WITHOUT
-// D2's append-only rule: with in-place enlargement, "this node will never change" is not
-// establishable before the forward phase terminates. The price is the antichain: the
-// bucket keeps zones the published version would have collapsed.
+/// @brief Insert @p s into the passed set, returning the node that now represents it.
+///
+/// Covering is a_LU subsumption when @ref use_alu is set and plain zone inclusion otherwise,
+/// refined in both cases by the constraint map's cell tags when one is installed.
+///
+/// Three outcomes, in this order: an existing node already covers @p s (return it, nothing is
+/// stored); @p s covers an existing node, which is then *enlarged in place*; or the exact
+/// convex union of @p s with some stored node is itself a zone, in which case that node absorbs
+/// @p s. Only if all three fail is a new node appended.
+///
+/// @param s  the candidate state; consumed
+/// @return the index into @ref node representing @p s
+///
+/// @post @ref intern_grew is @c true iff a stored zone was rewritten (enlarged or merged). The
+///       caller must then invalidate that node's adjacency: it was computed from the smaller
+///       zone. ::Otf::expand does this.
+/// @post Every stored zone remains atom-homogeneous only in the sense ::Otf::cover_rec needs,
+///       i.e. not at all: straddling zones are stored whole and resolved at comparison time.
+///
+/// @note The two rewriting outcomes are what a purely append-only passed set would forgo. An
+///       append-only rule makes every stored node immutable from birth, which is what "start
+///       backward work only on vertices known not to change" wants, but it pays for that with
+///       an antichain of zones the rewriting version collapses. Rewriting is kept, and the
+///       invalidation above is what makes it safe.
 int Otf::intern(SymState&& s) {
   intern_grew = false;
   std::string bkey = disc_key_bytes(s.locs, s.ints);
-  // CELL TAG. split_by_atoms has already made every zone that reaches here atom-HOMOGENEOUS,
-  // so `Z subseteq phi` is decided by one canonical DBM entry and the tag is well defined.
+  // THE CELL TAG. `tag` is the In-mask and `tag_out` the Out-mask of ::classify_atoms; a zone
+  // set in neither straddles that atom, and every obligation a straddle leaves undecidable is
+  // deferred to Otf::cover_rec.
   //
-  // WHICH TAG RULE. The tag is what stops a_LU covering from dropping a deadlock: if the
-  // covering zone Z satisfies an escape atom phi and the covered Z' does not, the simulator
-  // escapes where the simulated one is stuck, and Dead is lost. Spelt out: nu' in Z simulates
-  // nu in Z', and Dead(q) = Inv(q) /\ AND_e !Esc_e with each Esc_e a CONJUNCTION of atoms, so
-  // nu |= Dead needs, per e, some atom of Esc_e that nu falsifies to also be falsified by nu'.
-  // The obligation is therefore the IMPLICATION `Z |= phi  =>  Z' |= phi`, in that direction
-  // only -- equivalently tag(Z) & ~tag(Z') == 0. It is strictly coarser than same-cell
-  // equality, which needlessly refuses the (Z disjoint from phi, Z' contained in phi) pair.
-  //
-  // The two REWRITING paths still need equality, and that is not a detail: in-place
-  // enlargement and the convex-union merge both replace a stored zone, and a zone assembled
-  // out of two different cells would STRADDLE phi, destroying the homogeneity the tag is read
-  // from. Guarded below.
-  //
-  // SPLIT AT COMPARISON. split_by_atoms emits the zone whole, so `tag` is the In-mask,
-  // `tag_out` the Out-mask, and everything a straddle makes undecidable is deferred to
-  // Otf::cover_rec.
+  // The obligation the tag enforces is the IMPLICATION `Z |= phi => Z' |= phi`, in that
+  // direction only, where Z covers Z'. Dead(q) = Inv(q) /\ AND_e !Esc_e with each Esc_e a
+  // conjunction of atoms, so a stuck valuation needs, per outgoing edge e, some atom of Esc_e
+  // that its simulator also falsifies. Equivalently `tag(Z) & ~tag(Z') == 0`, which is strictly
+  // coarser than same-cell equality: equality needlessly refuses the pair (Z disjoint from phi,
+  // Z' contained in phi).
   std::uint64_t tag = 0, tag_out = 0;
   bool tagged = false;
   const std::vector<AtomC>* atoms = nullptr;
@@ -901,21 +875,16 @@ int Otf::intern(SymState&& s) {
         }
       bL[0] = bU[0] = 0;
     }
-    // a_M MODE: collapse the two bound arrays to M = max(L, U) per clock.
+    // The per-location bounds must carry the non-diagonal atoms' constants too, for the same
+    // reason the global arrays do in Otf::setup: raising L or U only makes a_LU finer, and the
+    // simulation argument needs the raise to hold along every path.
     //
-    // With L = U = M the three clauses of the LU preorder -- nu'(x)=nu(x), or
-    // L(x) < nu'(x) < nu(x), or U(x) < nu(x) < nu'(x) -- collapse to "equal, or both above
-    // M(x)", which is SYMMETRIC. A symmetric simulation is a bisimulation, and deadlock IS
-    // preserved by bisimulation. So the same dbm_is_alu_le kernel, fed collapsed bounds,
-    // is a deadlock-sound covering test and needs no gate at all.
-    //
-    // Behrmann-Bouyer-Larsen-Pelanek, STTT 8(3):204-215 (2006): Lemma 1 (=_M is a
-    // bisimulation), Lemma 3 (<=_LU is only a simulation), and the unnumbered prose in the
-    // "Simulation & Bisimulation" paragraph of section 3 stating that Uppaal's deadlock
-    // properties are not preserved by simulation but are by bisimulation. This is also what
-    // UPPAAL itself does: it falls back from LU to LOCAL MAX-CONSTANTS for deadlock and
-    // liveness queries, not to exact zones.
-    // Per-location LU bounds must carry the non-diagonal atoms' constants too; see setup().
+    // Raising one clock to `max(L, U)` is a_M ON THAT CLOCK: the three clauses of the LU
+    // preorder — nu'(x) = nu(x), or L(x) < nu'(x) < nu(x), or U(x) < nu(x) < nu'(x) — collapse
+    // to "equal, or both above M(x)", which is symmetric, hence a bisimulation, hence
+    // deadlock-preserving (Behrmann–Bouyer–Larsen–Pelánek, STTT 8(3), 2006, Lemma 1 against
+    // Lemma 3). Raising EVERY clock is the global a_M fallback; see DESIGN.md for why it is not
+    // the default.
     if (amap_)
       for (int c = 1; c <= net.nclocks && c < (int)amap_->bump.size(); ++c)
         if (amap_->bump[c] != kNoBump) {
@@ -933,22 +902,18 @@ int Otf::intern(SymState&& s) {
     if (tagcheck && (ntag_[j] & ~tag) != 0) return false;   // Z |= phi but Z' does not: refuse
     return use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU) : node[j].zone.includes(s.zone);
   };
-  // THE REWRITING PATHS UNDER SPLIT-AT-COMPARISON. The equality guard exists only to keep the
-  // stored zone HOMOGENEOUS, which is not a property this mode has or wants. What each path
-  // actually owes is:
+  // WHAT THE REWRITING PATHS OWE.
   //
-  //   in-place enlargement -- the stored zone is REPLACED by the newcomer, which under a_LU is
-  //     not a superset of it, so everything already routed to j must still be covered. That is
-  //     transitivity of the covering relation, and the relation IS transitive (<=_LU is a
-  //     preorder and `nu'|=phi => nu|=phi` composes), so the ordinary three-valued test in the
-  //     opposite direction is exactly and only what is owed.
+  //   In-place enlargement replaces the stored zone by the newcomer, which under a_LU need not
+  //   be a superset of it, so everything already routed to j must still be covered. That is
+  //   transitivity of the covering relation, and the relation is transitive (<=_LU is a preorder
+  //   and `nu' |= phi => nu |= phi` composes), so the ordinary three-valued test in the opposite
+  //   direction is exactly and only what is owed.
   //
-  //   convex-union merge -- try_union succeeds only when the union is EXACTLY the union, so the
-  //     stored zone afterwards is a set SUPERSET of both operands. Growing the right-hand side
-  //     of an exists-witness can never invalidate a witness, and the newcomer is covered by the
-  //     result via the identity witness. So the merge owes NOTHING here: no tag condition at
-  //     all, and it becomes strictly more powerful than in the homogeneous mode, where a
-  //     cross-cell union was refused outright.
+  //   The convex-union merge owes nothing at all: try_union succeeds only when the union really
+  //   is a single zone, so the stored zone afterwards is a set superset of both operands.
+  //   Growing the right-hand side of an exists-witness cannot invalidate a witness, and the
+  //   newcomer is covered by the result via the identity witness.
   //
   // Both paths must REFRESH the stored masks, since the stored zone changed.
   auto covers = [&](int j) {
@@ -967,20 +932,15 @@ int Otf::intern(SymState&& s) {
         intern_grew = true;
         return b[k];
       }
-  // EXACT CONVEX-UNION MERGE.
+  // EXACT CONVEX-UNION MERGE. Dbm::try_union succeeds only when the union of the two zones
+  // really is a single zone, so the stored zone afterwards denotes exactly the set the two it
+  // replaced denoted: no point added, none removed. That exactness is what makes the merge
+  // usable here at all — unlike a convex hull it is not an over-approximation, so it cannot
+  // invent a certificate in the under-approximating backward lane.
   //
-  // The liveness graph inherited "no merge" from leads_to_net, where it is opt-in and was
-  // measured a net loss -- but that measurement was made on an EXACT-ZONE graph, not on this
-  // aLU-subsumed one, and the reachability engine has the merge ON by default precisely
-  // because it collapses antichains. grc4 stores 14.5 zones per discrete key here against
-  // 1.00-1.44 on every other family, which is exactly the shape of an antichain full of zones
-  // whose union happens to be convex.
-  //
-  // dbm_try_union succeeds ONLY when the union of the two zones really is a single zone, so
-  // the stored zone afterwards denotes exactly the same set of valuations as the two it
-  // replaced: no point is added and none is removed. That is what makes it usable in the
-  // UNDER-approximating lane as well -- unlike the hull, it is not an over-approximation, so
-  // it cannot invent a certificate.
+  // It earns its keep on antichains: grc4 stores ~14.5 zones per discrete key without it,
+  // against 1.00–1.44 on every other family, which is the shape of an antichain of zones whose
+  // pairwise unions happen to be convex.
   {
     for (int j : b) {
       if (node[j].zone.dim() != dim2) continue;
