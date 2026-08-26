@@ -844,6 +844,68 @@ struct StripeLayout {
   }
 };
 
+#if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
+// ---- flat GPU driver helpers ----------------------------------------------------------
+// Per-level discrete-key -> bucket-id index. This was a std::unordered_map rebuilt every
+// level, which costs ONE MALLOC PER DISTINCT KEY (227k of them per level on fischer11, over
+// 26 levels) plus a pointer chase on every probe. An open-addressing table with a generation
+// stamp reuses one allocation for the whole run and clears in O(1): the level's bucketing
+// pass measured 267 ms of a 1424 ms fischer11 wall before this.
+struct DkIndex {
+  std::vector<std::uint64_t> key;
+  std::vector<int> val;
+  std::vector<std::uint32_t> stamp;
+  std::uint32_t gen = 0;
+  std::size_t mask = 0, fill = 0, limit = 0;
+  static std::uint64_t mix(std::uint64_t k) {   // splitmix64 finalizer
+    k ^= k >> 30; k *= 0xbf58476d1ce4e5b9ULL;
+    k ^= k >> 27; k *= 0x94d049bb133111ebULL;
+    return k ^ (k >> 31);
+  }
+  void resize_to(std::size_t cap) {
+    key.assign(cap, 0); val.assign(cap, 0); stamp.assign(cap, 0);
+    mask = cap - 1; gen = 1; fill = 0; limit = cap - cap / 4;   // 75% load factor
+  }
+  // Size for the PREVIOUS level's distinct-key count (BFS level widths change smoothly), and
+  // grow by rehashing if this level turns out wider.
+  void begin_level(std::size_t expect) {
+    std::size_t cap = 1024;
+    while (cap - cap / 4 < expect + 1) cap <<= 1;
+    if (cap > key.size()) { resize_to(cap); return; }
+    mask = key.size() - 1; limit = key.size() - key.size() / 4; fill = 0;
+    if (++gen == 0) { std::fill(stamp.begin(), stamp.end(), 0); gen = 1; }
+  }
+  void grow() {
+    const std::vector<std::uint64_t> ok = key;
+    const std::vector<int> ov = val;
+    const std::vector<std::uint32_t> os = stamp;
+    const std::uint32_t og = gen;
+    resize_to(key.size() * 2);
+    for (std::size_t i = 0; i < ok.size(); ++i)
+      if (os[i] == og) { (void)find_or_add(ok[i], ov[i]); }
+  }
+  // Return the id of `k`, inserting it with id `next` if absent (caller checks == next).
+  int find_or_add(std::uint64_t k, int next) {
+    if (fill >= limit) grow();
+    std::size_t i = mix(k) & mask;
+    for (;;) {
+      if (stamp[i] != gen) { stamp[i] = gen; key[i] = k; val[i] = next; ++fill; return next; }
+      if (key[i] == k) return val[i];
+      i = (i + 1) & mask;
+    }
+  }
+};
+
+// Consume the first `nfr` states of the current level, keeping the rest. erase() from the
+// front would memmove the remainder once per batch -- O(batches * level) over a wide level.
+static void drop_batch(std::vector<int>& l, std::vector<long>& iv, std::vector<int>& z,
+                       int nfr, int np_, int niw_, int) {
+  l.erase(l.begin(), l.begin() + static_cast<std::size_t>(nfr) * np_);
+  iv.erase(iv.begin(), iv.begin() + static_cast<std::size_t>(nfr) * niw_);
+  z.erase(z.begin(), z.begin() + static_cast<std::size_t>(nfr));
+}
+#endif
+
 // The initial symbolic state: every process in its initial location, every integer at its
 // declared init value, and the zero zone opened up by the same closing pipeline every successor
 // goes through -- combined invariant, delay unless frozen, active-clock reduction, extrapolation.
@@ -1104,55 +1166,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
       return std::chrono::duration<double, std::milli>(b - a).count();
     };
-    // Per-level discrete-key -> bucket-id index. This was a std::unordered_map rebuilt every
-    // level, which costs ONE MALLOC PER DISTINCT KEY (227k of them per level on fischer11, over
-    // 26 levels) plus a pointer chase on every probe. An open-addressing table with a generation
-    // stamp reuses one allocation for the whole run and clears in O(1): the level's bucketing
-    // pass measured 267 ms of a 1424 ms fischer11 wall before this.
-    struct DkIndex {
-      std::vector<std::uint64_t> key;
-      std::vector<int> val;
-      std::vector<std::uint32_t> stamp;
-      std::uint32_t gen = 0;
-      std::size_t mask = 0, fill = 0, limit = 0;
-      static std::uint64_t mix(std::uint64_t k) {   // splitmix64 finalizer
-        k ^= k >> 30; k *= 0xbf58476d1ce4e5b9ULL;
-        k ^= k >> 27; k *= 0x94d049bb133111ebULL;
-        return k ^ (k >> 31);
-      }
-      void resize_to(std::size_t cap) {
-        key.assign(cap, 0); val.assign(cap, 0); stamp.assign(cap, 0);
-        mask = cap - 1; gen = 1; fill = 0; limit = cap - cap / 4;   // 75% load factor
-      }
-      // Size for the PREVIOUS level's distinct-key count (BFS level widths change smoothly), and
-      // grow by rehashing if this level turns out wider.
-      void begin_level(std::size_t expect) {
-        std::size_t cap = 1024;
-        while (cap - cap / 4 < expect + 1) cap <<= 1;
-        if (cap > key.size()) { resize_to(cap); return; }
-        mask = key.size() - 1; limit = key.size() - key.size() / 4; fill = 0;
-        if (++gen == 0) { std::fill(stamp.begin(), stamp.end(), 0); gen = 1; }
-      }
-      void grow() {
-        const std::vector<std::uint64_t> ok = key;
-        const std::vector<int> ov = val;
-        const std::vector<std::uint32_t> os = stamp;
-        const std::uint32_t og = gen;
-        resize_to(key.size() * 2);
-        for (std::size_t i = 0; i < ok.size(); ++i)
-          if (os[i] == og) { (void)find_or_add(ok[i], ov[i]); }
-      }
-      // Return the id of `k`, inserting it with id `next` if absent (caller checks == next).
-      int find_or_add(std::uint64_t k, int next) {
-        if (fill >= limit) grow();
-        std::size_t i = mix(k) & mask;
-        for (;;) {
-          if (stamp[i] != gen) { stamp[i] = gen; key[i] = k; val[i] = next; ++fill; return next; }
-          if (key[i] == k) return val[i];
-          i = (i + 1) & mask;
-        }
-      }
-    } bidx;
+    DkIndex bidx;
     std::size_t prev_nb = 1024;
     double fanout = 4.0;   // running MAX of successors per frontier state (batch-size estimate)
 
@@ -1207,14 +1221,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     std::vector<std::vector<int>*> pzp;
     std::vector<std::size_t> foff;
     std::vector<int>   cfl; std::vector<long>  cfi; std::vector<raw_t> cfz;
-    // Consume the first `nfr` states of the current level, keeping the rest. erase() from the
-    // front would memmove the remainder once per batch -- O(batches * level) over a wide level.
-    auto drop_batch = [](std::vector<int>& l, std::vector<long>& iv, std::vector<int>& z,
-                         int nfr, int np_, int niw_, int) {
-      l.erase(l.begin(), l.begin() + static_cast<std::size_t>(nfr) * np_);
-      iv.erase(iv.begin(), iv.begin() + static_cast<std::size_t>(nfr) * niw_);
-      z.erase(z.begin(), z.begin() + static_cast<std::size_t>(nfr));
-    };
     for (;;) {
       if (fl.empty()) {                       // current level exhausted: advance
         // Collect the next frontier: every zone still flagged "added during this level" in a
