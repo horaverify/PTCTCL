@@ -323,11 +323,13 @@ struct MemoKey {
   bool operator==(const MemoKey& o) const { return z == o.z && t == o.t && l == o.l; }
 };
 struct MemoKeyHash {
+  static constexpr std::uint64_t kFnvOffset = 1469598103934665603ull;   // FNV-1a, 64-bit
+  static constexpr std::uint64_t kFnvPrime  = 1099511628211ull;
   std::size_t operator()(const MemoKey& k) const {
-    std::uint64_t h = 1469598103934665603ull;
-    h ^= (std::uint64_t)(std::uint32_t)k.z; h *= 1099511628211ull;
-    h ^= k.t; h *= 1099511628211ull;
-    h ^= k.l; h *= 1099511628211ull;
+    std::uint64_t h = kFnvOffset;
+    h ^= (std::uint64_t)(std::uint32_t)k.z; h *= kFnvPrime;
+    h ^= k.t; h *= kFnvPrime;
+    h ^= k.l; h *= kFnvPrime;
     return (std::size_t)h;
   }
 };
@@ -1242,7 +1244,11 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       for (const auto& e : p_.edges) for (const auto& c : e.clock_guard) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
     }
     for (const auto& c : target.clock_cond) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
-    const bool narrow_zones = (maxc < 4000);   // (2M+1)<<1 must stay well inside int16
+    // Narrow (int16) arena entries are safe while (2M+1)<<1 stays well inside int16 for the
+    // largest clock constant M anywhere in the model or the query; the margin is deliberately
+    // generous.
+    constexpr std::int32_t kNarrowZoneMaxConst = 4000;
+    const bool narrow_zones = (maxc < kNarrowZoneMaxConst);
     GpuZoneIntern zi(d2, narrow_zones);
     zi.set_mode(detail::options().gpu_intern ? GpuZoneIntern::Mode::Dedup : GpuZoneIntern::Mode::Append);
     std::unordered_map<std::uint64_t, std::vector<int>> passed;   // dk -> antichain zone indices
@@ -1256,8 +1262,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       return std::chrono::duration<double, std::milli>(b - a).count();
     };
     DkIndex bidx;
-    std::size_t prev_nb = 1024;
-    double fanout = 4.0;   // running MAX of successors per frontier state (batch-size estimate)
+    // Seeds only: both are replaced by measurement after the first level. prev_nb sizes the
+    // next level's key index, fanout the next batch.
+    constexpr std::size_t kInitialBucketEstimate = 1024;
+    constexpr double kInitialFanout = 4.0;
+    std::size_t prev_nb = kInitialBucketEstimate;
+    double fanout = kInitialFanout;   // running MAX of successors per frontier state
 
     {   // let the expand kernel pack the discrete key itself (see net_gpu.hpp)
       std::vector<int> ilo(net.intvars.size());
