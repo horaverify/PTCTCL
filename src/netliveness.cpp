@@ -992,8 +992,11 @@ void Otf::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
   out.push_back(std::move(s));
   if (!at) return;
   // Split at comparison: the zone is emitted whole and every deferred obligation is discharged
-  // in Otf::cover_rec. The atom lookup above is retained because it is the cheapest place to
-  // establish that this key has atoms at all.
+  // in Otf::cover_rec, so both exits from here produce the same single-element `out`.
+  //
+  // The lookup above therefore has no effect on the result. It costs a disc_key_bytes string and
+  // a hash per generated successor whenever a constraint map is installed, on the hottest
+  // forward path, and it is the split-at-creation implementation's only surviving trace.
 }
 
 /// @brief Generate and intern the successors of node @p u.
