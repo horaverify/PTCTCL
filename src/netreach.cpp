@@ -289,6 +289,31 @@ static void build_broadcast_parts(const Network& net, const SymState& s, const N
   }
 }
 
+// Closes a successor zone once the transition's own guards and resets have been applied:
+// conjoin the TARGET location invariant, let time pass (unless the target is frozen), drop the
+// clocks nothing will read again, and extrapolate. `inv` is caller-owned scratch and is left
+// holding the target invariant. Returns false when that invariant is unsatisfiable.
+//
+// The emptiness test is deliberately NOT folded in: the transition memo has to record an
+// extrapolated-but-empty zone before it is discarded, so its call site needs the zone back even
+// on the dead path. Every successor generator in this file ends with these same six steps in
+// this same order -- local, binary-sync and broadcast edges, in both the accumulating and the
+// slot-reusing variant -- and they must stay in step, so they share one body.
+inline bool close_succ_zone(const Network& net, const LocVec& tgt_locs, Dbm& z,
+                            std::vector<Constraint>& inv, const std::vector<char>& qmask,
+                            const std::vector<std::int32_t>& L,
+                            const std::vector<std::int32_t>& U, int emode) {
+  all_invariants(net, tgt_locs, inv);
+  if (!apply_all(z, inv)) return false;
+  bool tgt_committed, tgt_urgent;
+  frozen_flags(net, tgt_locs, &tgt_committed, &tgt_urgent);
+  if (!tgt_committed && !tgt_urgent) { z.delay(); apply_all(z, inv); }
+  reset_inactive(net, tgt_locs, z, qmask);
+  if (emode == ExLuPlus) z.extrapolate_lu_plus(L, U);
+  else if (emode == ExNoDiag) z.extrapolate_lu_plus_nodiag(L, U);
+  return true;
+}
+
 // The parent zone is passed SEPARATELY (szone) rather than read from s.zone, so
 // callers that already hold the zone elsewhere -- notably the shared-passed path,
 // where it lives in the intern table -- can pass it by reference instead of
@@ -317,14 +342,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
       if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
 
-      all_invariants(net, ns.locs, inv);
-      if (!apply_all(z1, inv)) continue;
-      bool nc, nu;
-      frozen_flags(net, ns.locs, &nc, &nu);
-      if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
-      reset_inactive(net, ns.locs, z1, qmask);
-      if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
-      else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
+      if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
       if (z1.empty()) continue;
       ns.zone = std::move(z1);
       out.push_back(std::move(ns));
@@ -359,14 +377,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
           for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;  // sender then receiver
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
           if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) || !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
-          all_invariants(net, ns.locs, inv);
-          if (!apply_all(z1, inv)) continue;
-          bool nc, nu;
-          frozen_flags(net, ns.locs, &nc, &nu);
-          if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
-          reset_inactive(net, ns.locs, z1, qmask);
-          if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
-      else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
+          if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
           if (z1.empty()) continue;
           ns.zone = std::move(z1);
           out.push_back(std::move(ns));
@@ -411,15 +422,9 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) z1.reset(r);
             }
-            all_invariants(net, ns.locs, inv);
-            if (apply_all(z1, inv)) {
-              bool nc, nu;
-              frozen_flags(net, ns.locs, &nc, &nu);
-              if (!nc && !nu) { z1.delay(); apply_all(z1, inv); }
-              reset_inactive(net, ns.locs, z1, qmask);
-              if (emode == ExLuPlus) z1.extrapolate_lu_plus(L, U);
-              else if (emode == ExNoDiag) z1.extrapolate_lu_plus_nodiag(L, U);
-              if (!z1.empty()) { ns.zone = std::move(z1); out.push_back(std::move(ns)); }
+            if (close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode) && !z1.empty()) {
+              ns.zone = std::move(z1);
+              out.push_back(std::move(ns));
             }
           }
         }
@@ -607,13 +612,9 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
         ns.zone = szone;
         if (!apply_all(ns.zone, e.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
         for (int r : e.clock_resets) ns.zone.reset(r);
-        all_invariants(net, ns.locs, inv);
-        if (!apply_all(ns.zone, inv)) { sm.m.emplace(mk, Dbm()); continue; }
-        { bool nc2, nu2; frozen_flags(net, ns.locs, &nc2, &nu2);
-          if (!nc2 && !nu2) { ns.zone.delay(); apply_all(ns.zone, inv); } }
-        reset_inactive(net, ns.locs, ns.zone, qmask);
-        if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
-        else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+        if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) {
+          sm.m.emplace(mk, Dbm()); continue;
+        }
         sm.m.emplace(mk, ns.zone);                       // records empty zones too
         if (ns.zone.empty()) continue;
         ++on;
@@ -622,14 +623,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
       ns.zone = szone;                                    // into reused capacity
       if (!apply_all(ns.zone, e.clock_guard)) continue;
       for (int r : e.clock_resets) ns.zone.reset(r);
-      all_invariants(net, ns.locs, inv);
-      if (!apply_all(ns.zone, inv)) continue;
-      bool nc, nu;
-      frozen_flags(net, ns.locs, &nc, &nu);
-      if (!nc && !nu) { ns.zone.delay(); apply_all(ns.zone, inv); }
-      reset_inactive(net, ns.locs, ns.zone, qmask);
-      if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
-      else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+      if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) continue;
       if (ns.zone.empty()) continue;
       ++on;
     }
@@ -677,13 +671,9 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
             if (!apply_all(ns.zone, re.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
             for (int r : se.clock_resets) ns.zone.reset(r);
             for (int r : re.clock_resets) ns.zone.reset(r);
-            all_invariants(net, ns.locs, inv);
-            if (!apply_all(ns.zone, inv)) { sm.m.emplace(mk, Dbm()); continue; }
-            { bool nc2, nu2; frozen_flags(net, ns.locs, &nc2, &nu2);
-              if (!nc2 && !nu2) { ns.zone.delay(); apply_all(ns.zone, inv); } }
-            reset_inactive(net, ns.locs, ns.zone, qmask);
-            if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
-            else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+            if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) {
+              sm.m.emplace(mk, Dbm()); continue;
+            }
             sm.m.emplace(mk, ns.zone);
             if (ns.zone.empty()) continue;
             ++on; continue;
@@ -693,14 +683,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
           if (!apply_all(ns.zone, re.clock_guard)) continue;
           for (int r : se.clock_resets) ns.zone.reset(r);
           for (int r : re.clock_resets) ns.zone.reset(r);
-          all_invariants(net, ns.locs, inv);
-          if (!apply_all(ns.zone, inv)) continue;
-          bool nc, nu;
-          frozen_flags(net, ns.locs, &nc, &nu);
-          if (!nc && !nu) { ns.zone.delay(); apply_all(ns.zone, inv); }
-          reset_inactive(net, ns.locs, ns.zone, qmask);
-          if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
-          else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
+          if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) continue;
           if (ns.zone.empty()) continue;
           ++on;
         }
@@ -745,16 +728,8 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) ns.zone.reset(r);
             }
-            all_invariants(net, ns.locs, inv);
-            if (apply_all(ns.zone, inv)) {
-              bool nc, nu;
-              frozen_flags(net, ns.locs, &nc, &nu);
-              if (!nc && !nu) { ns.zone.delay(); apply_all(ns.zone, inv); }
-              reset_inactive(net, ns.locs, ns.zone, qmask);
-              if (emode == ExLuPlus) ns.zone.extrapolate_lu_plus(L, U);
-              else if (emode == ExNoDiag) ns.zone.extrapolate_lu_plus_nodiag(L, U);
-              if (!ns.zone.empty()) ++on;
-            }
+            if (close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode) &&
+                !ns.zone.empty()) ++on;
           }
         }
         if (parts.empty()) break;
