@@ -1,13 +1,19 @@
-// expr.cpp — evaluator for the modelling-language subset declared in expr.hpp.
-//
-// Guards evaluate an Expr; edge updates execute a Stmt. Both may call user
-// functions, which are interpreted against the live int cells (train-gate's
-// `dequeue()` shifts a FIFO in a loop, so it cannot be constant-folded).
-//
-// Faults (index out of range, division by zero, runaway recursion) do not throw:
-// they set EvalCtx::fault and yield 0. The caller decides. A faulting GUARD is
-// treated as false and a faulting UPDATE abandons the edge, which keeps a
-// malformed model from silently producing a wrong verdict.
+/// @file expr.cpp
+/// @brief Evaluator for the modelling-language expression and statement subset.
+///
+/// Guards evaluate an ptctlmc::Expr; edge updates execute a ptctlmc::Stmt. Both may call user
+/// functions, which are interpreted against the live integer cells rather than constant-folded,
+/// since a function may loop over an array and depend on the current state.
+///
+/// @par Fault handling
+/// Faults — an index out of range, division by zero, a runaway loop or exceeded call depth — do
+/// **not** throw. They set ptctlmc::EvalCtx::fault and yield 0, leaving the decision to the
+/// caller. A faulting guard is treated as false and a faulting update abandons the edge, so a
+/// malformed model loses transitions rather than silently producing a wrong verdict.
+///
+/// @warning Every recursive entry point must check @c fault on return and propagate it. A fault
+///          that is observed but not propagated turns an abandoned computation into a committed
+///          value of 0.
 #include "ptctlmc/expr.hpp"
 
 #include <algorithm>
@@ -15,9 +21,19 @@
 namespace ptctlmc {
 
 namespace {
-constexpr int kMaxDepth = 64;  // user functions here are not recursive; this is a backstop
+/// Maximum user-function call depth. The language's functions are not recursive, so this is a
+/// backstop against a malformed model rather than a semantic limit.
+constexpr int kMaxDepth = 64;
 }
 
+/// @brief Evaluate an expression.
+/// @param e  the expression
+/// @param[in,out] cx the evaluation context: integer cells, locals, function table and fault flag
+/// @return the value, or 0 if a fault occurred
+/// @post On a fault, `cx.fault` is set and the result is meaningless; callers must test it.
+/// @note A called function shares the caller's integer cells, so a function with side effects can
+///       write them. Callers that must not be perturbed evaluate against a copy; see
+///       ::eval_guard.
 long eval(const Expr& e, EvalCtx& cx) {
   switch (e.op) {
     case EOp::Const: return e.val;
@@ -31,8 +47,9 @@ long eval(const Expr& e, EvalCtx& cx) {
     }
     case EOp::Neg: return -eval(*e.kids[0], cx);
     case EOp::Not: return eval(*e.kids[0], cx) ? 0 : 1;
-    // && and || short-circuit: `len > 0 && list[len-1] == e` must not evaluate
-    // the right side when len == 0, or it would index out of range.
+    // Conjunction and disjunction short-circuit, which is load-bearing rather than an
+    // optimisation: a guard may test a bound before indexing with it, and evaluating the right
+    // side regardless would fault on exactly the states the left side exists to exclude.
     case EOp::And: return (eval(*e.kids[0], cx) && eval(*e.kids[1], cx)) ? 1 : 0;
     case EOp::Or:  return (eval(*e.kids[0], cx) || eval(*e.kids[1], cx)) ? 1 : 0;
     case EOp::Cond: return eval(*e.kids[0], cx) ? eval(*e.kids[1], cx) : eval(*e.kids[2], cx);
@@ -76,6 +93,13 @@ long eval(const Expr& e, EvalCtx& cx) {
   }
 }
 
+/// @brief Execute a statement.
+/// @param s  the statement
+/// @param[in,out] cx the evaluation context
+/// @param[in,out] returned set once a return statement executes; execution then unwinds
+/// @param[out] retval the returned value, written only when @p returned becomes true
+/// @post Execution stops at the first fault, leaving the cells partially updated — which is why
+///       callers run updates against a copy and commit only on success.
 void exec(const Stmt& s, EvalCtx& cx, bool* returned, long* retval) {
   if (*returned || cx.fault) return;
   switch (s.op) {
@@ -113,9 +137,10 @@ void exec(const Stmt& s, EvalCtx& cx, bool* returned, long* retval) {
       return;
     }
     case SOp::While: {
-      // Bounded: a modelling error (or a guard that never falsifies) must not hang
-      // the model checker. Array sizes here are tiny, so this cap is unreachable
-      // for well-formed models.
+      // Bounded so that a modelling error, or a loop condition that never falsifies, cannot hang
+      // the checker. Exceeding the cap raises a fault rather than truncating the loop silently.
+      // The arrays this language iterates are small, so the cap is unreachable for a well-formed
+      // model.
       for (long iter = 0; iter < 1'000'000; ++iter) {
         const long c = s.cond ? eval(*s.cond, cx) : 0;
         if (cx.fault || !c) return;
@@ -132,12 +157,19 @@ void exec(const Stmt& s, EvalCtx& cx, bool* returned, long* retval) {
   }
 }
 
+/// @brief Evaluate a guard expression against a state, without modifying it.
+/// @param e      the guard; a null guard is vacuously satisfied
+/// @param cells  the integer cells of the state
+/// @param ncells number of cells
+/// @param funcs  the function table
+/// @return @c true iff the guard evaluates non-zero without faulting
+/// @post The caller's cells are unchanged.
+/// @note The copy is not incidental. A guard must not mutate the state it filters, but it may
+///       call a function, and a function is free to write; evaluating against a scratch copy
+///       makes that impossible rather than merely discouraged.
 bool eval_guard(const ExprP& e, const long* cells, int ncells,
                 const std::vector<Func>& funcs) {
   if (!e) return true;
-  // Guards must not mutate the state, but they may call functions, and an
-  // ill-behaved function could write. Evaluate against a scratch copy so a guard
-  // can never perturb the state it is filtering.
   std::vector<long> scratch(cells, cells + ncells);
   EvalCtx cx;
   cx.cells = scratch.data();
