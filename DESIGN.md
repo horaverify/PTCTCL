@@ -1112,7 +1112,7 @@ A whole-graph backward fixpoint is not an independent check of the on-the-fly on
 transition tagging, the exact predecessor and the federation helpers — the hard parts — and differ
 only in scheduling, computing the same fixpoint over the whole graph instead of on the fly. A bug
 in the shared machinery shows up identically in both, so the comparison cannot see it. What checks
-the verdicts instead is Section 8.14.
+the verdicts instead is Section 8.15.
 
 ### 8.13 Hit rate alone as the memo criterion
 
@@ -1122,7 +1122,27 @@ only ~4.6 times, so lookup and memory pressure exceed the work saved. viking15 c
 933 entries ~855 times. **Reuse density** (lookups per entry) separates these cleanly where hit rate
 does not, and it is dimensionless — nothing is tied to model size.
 
-### 8.14 What checks the verdicts
+### 8.14 Most-general-first expansion order
+
+A stored zone that a later, more general zone subsumes was expanded for nothing — on phil12,
+469 805 of 1 047 142 arena nodes (**45%**) end up retired. Expanding the most general zones of a
+level first should therefore let them kill their narrower siblings on insertion rather than a level
+later. The generality proxy is free, since a minimal constraint system stores a more general zone in
+a *shorter* packed record, and reordering a worklist cannot affect the fixpoint, so the change is
+sound.
+
+It does not pay. At 8 threads, most-general-first against insertion order:
+
+| model | speedup | stored states |
+|---|---|---|
+| phil12 | 0.95x | 841 637 vs 803 845 (**worse**) |
+| fischer11 | 0.98x | — |
+| twolock11 | 1.00x | — |
+| viking15 | 0.98x | — |
+
+Retirement is driven by zones that arrive *levels* apart, which no intra-level ordering can reach.
+
+### 8.15 What checks the verdicts
 
 Since no independent second implementation of the liveness fixpoint would be independent (Section
 8.12), the verdicts are checked by three things that do not share code with it:

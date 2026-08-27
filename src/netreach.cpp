@@ -233,11 +233,32 @@ namespace netgpu { bool network_has_diagonal(const Network& net) { return ptctlm
 
 namespace {
 
-// The parent zone is passed SEPARATELY (szone) rather than read from s.zone, so
-// callers that already hold the zone elsewhere -- notably the shared-passed path,
-// where it lives in the intern table -- can pass it by reference instead of
-// copying a 576 B DBM into the frontier state for every expansion (millions of
-// pointless copies on large viking). s.zone is ignored; s carries only locs/ints.
+/// @brief Generate every symbolic successor of @p s under one step of the network.
+///
+/// Enumerates the three synchronisation forms of the modelling language in turn: internal edges
+/// (no channel), binary rendezvous (`a!` in one process with `a?` in another), and broadcast
+/// (`a!` fires together with *all* currently enabled `a?`, including none at all).
+///
+/// @param net    the network under analysis
+/// @param s      the source state; only its @c locs and @c ints are read
+/// @param szone  the source zone, supplied separately from @p s
+/// @param L      lower-bound array per clock, for the extrapolation
+/// @param U      upper-bound array per clock, for the extrapolation
+/// @param qmask  clocks the query mentions, which the active-clock reduction must not reset
+/// @param emode  extrapolation mode applied when closing each successor zone
+/// @param[out] out  successors are appended; existing contents are kept
+///
+/// @pre  @p s.locs has one entry per process and @p s.ints one per declared integer variable.
+/// @post Every appended state has a non-empty zone; empty successors are dropped here rather
+///       than by the caller.
+///
+/// @note @p s.zone is ignored. The zone travels as a separate parameter so that callers already
+///       holding it elsewhere — notably the shared-passed path, where it lives in the intern
+///       table — can pass a reference rather than copy a full DBM into the frontier state on
+///       every expansion.
+/// @note When the source is committed, only edges leaving a committed location may fire, and a
+///       synchronisation qualifies if *either* participant is committed. This is the standard
+///       committed-location semantics: such a state must be left before time can pass.
 void successors_net(const Network& net, const SymState& s, const Dbm& szone,
                     const std::vector<std::int32_t>& L,
                     const std::vector<std::int32_t>& U, const std::vector<char>& qmask, int emode, std::vector<SymState>& out) {
@@ -356,37 +377,32 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
   }
 }
 
-// Slot-reusing successor generation for the shared-passed hot path. Semantically
+/// @name Transition memo
+/// @{
+/// Caches the successor-zone pipeline, which is a pure function of
+/// (source zone, edge, target-location data). Where a model reaches many discrete states but
+/// few *distinct* zones, the same O(dim^3) delay/constrain/close otherwise runs a very large
+/// number of times over identical input.
+///
+/// The tables are thread-local, so lookups take no lock and workers share nothing.
+///
+/// @note Enabled by `--memo`; see ptctlmc::set_memo.
+/// @see DESIGN.md §8.13 for why the adaptive rule tests reuse density and not hit rate.
+/// @}
 
-// ---------------------------------------------------------------------------------------
-// TRANSITION MEMO (opt-in: --memo).
-//
-// The successor zone is a function of (source zone, edge, target-location data), and on some
-// models very few DISTINCT zones exist -- viking stores 13.6M states drawn from 120 zones -- so
-// the same O(dim^3) delay/constrain/close is recomputed enormous numbers of times. The engine
-// already noticed this; this caches the result.
-//
-// KEY. Everything Post reads, and nothing more:
-//   * source zone id      -- free: the frontier already carries the interned zidx
-//   * edge identity       -- (proc, edge index), packed
-//   * target-location sig -- Post reads the target locations ONLY through the combined
-//                            invariant, the urgent/committed flags, and the active-clock mask.
-//                            Many location vectors share one signature; that sharing is the
-//                            whole effect. The signature is INTERNED (not hashed to a fixed
-//                            width) so there is no collision risk -- a wrong hit would be
-//                            silent corruption, which is not an acceptable trade for a cache.
-//
-// THREAD-LOCAL, so no locks and no sharing between workers. The tables are tiny where the memo
-// pays (220 entries for viking17's 13.6M states), so per-thread duplication costs nothing.
-//
-// ADAPTIVITY. A sliding window measures the RECENT hit rate; a bad window disables the memo and
-// doubles a backoff; after the backoff elapses it re-probes for one window. The window starts
-// small and grows while healthy, so a model with no reuse is detected in ~512 lookups and a
-// model with reuse checks less and less often. Nothing is tuned to model size.
+/// @brief Key of the transition memo: everything the successor pipeline reads, and nothing more.
+///
+/// @invariant @c l is an *interned* signature, not a fixed-width hash of the target locations.
+///            A colliding key would return a zone belonging to another transition, which is
+///            silent state-space corruption rather than a detectable error, so the memo trades
+///            memory for exactness here instead of accepting a collision probability.
 struct MemoKey {
-  int z; std::uint32_t t; std::uint32_t l;
+  int z;           ///< interned source-zone index, carried by the frontier already
+  std::uint32_t t; ///< edge identity, (process, edge index) packed
+  std::uint32_t l; ///< interned target-location signature; see ::memo_locsig
   bool operator==(const MemoKey& o) const { return z == o.z && t == o.t && l == o.l; }
 };
+/// @brief FNV-1a hash of a ::MemoKey.
 struct MemoKeyHash {
   static constexpr std::uint64_t kFnvOffset = 1469598103934665603ull;   // FNV-1a, 64-bit
   static constexpr std::uint64_t kFnvPrime  = 1099511628211ull;
@@ -398,28 +414,52 @@ struct MemoKeyHash {
     return (std::size_t)h;
   }
 };
+/// @brief One worker's transition memo, together with the counters driving the adaptive rule.
+///
+/// A sliding window measures recent behaviour. A bad window switches the memo off and doubles a
+/// backoff; once the backoff elapses the memo re-probes for one window. The window starts small
+/// and grows while the memo is paying, so a model with no reuse is detected within a few hundred
+/// lookups and a model with heavy reuse is re-checked ever less often.
+///
+/// @invariant All thresholds are dimensionless ratios; nothing here is tuned to model size.
 struct SuccMemo {
-  std::unordered_map<MemoKey, Dbm, MemoKeyHash> m;   // an EMPTY Dbm means "this transition dies"
-  std::unordered_map<std::string, std::uint32_t> lsig;
-  std::string lk;                                    // reused signature buffer: no allocation
-  long winLookups = 0, winHits = 0;
-  long window = 512, backoff = 512, skipped = 0;
-  bool on = true;
-  long lookups = 0;
+  std::unordered_map<MemoKey, Dbm, MemoKeyHash> m;      ///< an EMPTY Dbm means "this transition dies"
+  std::unordered_map<std::string, std::uint32_t> lsig;  ///< location signature -> interned id
+  std::string lk;                                       ///< reused signature buffer; avoids allocating per lookup
+  long winLookups = 0, winHits = 0;  ///< current window's lookups and hits
+  long window = 512, backoff = 512, skipped = 0;  ///< window length, current backoff, lookups skipped while off
+  bool on = true;    ///< is the memo currently consulted?
+  long lookups = 0;  ///< lifetime lookups, the numerator of reuse density
   static constexpr long kWindowMax = 65536;
   static constexpr long kMaxBackoff = 1L << 22;
-  static constexpr double kMinHit = 0.30;
+  static constexpr double kMinHit = 0.30;      ///< window hit rate below which the memo is disabled
   static constexpr double kMinDensity = 32.0;  ///< lookups per entry below which the table is not worth it
 };
+/// @brief The calling thread's transition memo.
+/// @return a reference to this thread's ::SuccMemo, constructed on first use
 inline SuccMemo& tls_succ_memo() { static thread_local SuccMemo sm; return sm; }
 
+/// @brief Is the transition memo enabled for this run?
+/// @return the `--memo` option, read once and cached
 inline bool memo_enabled() {
   static const bool v = detail::options().memo;
   return v;
 }
 
-// Interned target-location signature. Cheap: it walks nprocs but only emits for processes whose
-// location actually carries an invariant or a frozen flag, which is a small minority.
+/// @brief Intern the part of a location vector that the successor pipeline can observe.
+///
+/// The pipeline reads the target locations only through the combined invariant, the
+/// urgent/committed flags and the active-clock mask. Location vectors agreeing on those three
+/// are interchangeable for the memo, and collapsing them is where the reuse comes from.
+///
+/// @param net  the network under analysis
+/// @param l    the target location vector
+/// @param[in,out] sm  the worker's memo, whose signature table is extended on a miss
+/// @return a dense id, equal for two location vectors exactly when the pipeline cannot tell
+///         them apart
+///
+/// @note Walks every process but emits only for those whose location carries an invariant or a
+///       frozen flag, which is normally a small minority.
 inline std::uint32_t memo_locsig(const Network& net, const LocVec& l, SuccMemo& sm) {
   sm.lk.clear();
   auto enc = [&](std::uint32_t v) {
@@ -449,19 +489,22 @@ inline std::uint32_t memo_locsig(const Network& net, const LocVec& l, SuccMemo& 
   return id;
 }
 
-// Evaluate the sliding window; called once per lookup. Returns whether the memo is live.
+/// @brief Advance the adaptive window and decide whether the memo is live.
+///
+/// @param[in,out] sm  the worker's memo
+/// @return @c true if the memo should be consulted for this lookup
+/// @post When the backoff reaches its maximum the table is released, on the grounds that a memo
+///       this consistently unhelpful will not become useful later in the same run.
 inline bool memo_tick(SuccMemo& sm) {
   if (!sm.on) {
     if (++sm.skipped >= sm.backoff) { sm.on = true; sm.skipped = 0; sm.winLookups = sm.winHits = 0; }
     return sm.on;
   }
   if (sm.winLookups >= sm.window) {
-    // TWO criteria, because hit rate alone is the wrong one. phil12 sustains a 78% hit rate and
-    // is still 33% SLOWER, because its table holds 117 629 entries per thread: each entry is
-    // consulted only ~4.6 times, so the lookup and memory-pressure cost exceeds the Post it
-    // saves. viking15 consults each of its 933 entries ~855 times. REUSE DENSITY
-    // (lookups / entries) separates these cleanly where hit rate does not, and it is
-    // dimensionless -- nothing is tied to model size.
+    // Two criteria, because hit rate alone admits tables that are large and thinly reused: a
+    // high hit rate spread over very many entries still costs more in lookups and memory
+    // pressure than the pipeline it saves. Reuse density (lookups per entry) separates those
+    // cases where hit rate does not. See DESIGN.md 8.13.
     const double density = sm.m.empty() ? 0.0 : double(sm.lookups) / double(sm.m.size());
     const bool thin = sm.m.size() > 4096 && density < SuccMemo::kMinDensity;
     if (thin || double(sm.winHits) / double(sm.winLookups) < SuccMemo::kMinHit) {
@@ -480,16 +523,31 @@ inline bool memo_tick(SuccMemo& sm) {
   return sm.on;
 }
 
-// identical to successors_net above, but instead of building a fresh SymState
-// (two pooled loc/int vectors + a DBM) per successor and push_back-ing it -- ~3
-// allocations for every one of tens of millions of successors, all discarded by
-// add() which keeps only the interned zone -- it BUILDS EACH SUCCESSOR IN PLACE in
-// a reused `out` slot. The caller does not clear `out`; it reads out[0..return).
-// Because add() interns the zone by copy (never moves the SymState out), the slots
-// survive the caller's loop and are reused on the next frontier state, so after a
-// short warm-up the per-successor allocation is ZERO. (The legacy successors_net
-// stays for the seq/legacy/single-TA paths, which accumulate rather than reuse and
-// are slated for removal.)
+/// @brief Slot-reusing successor generation for the shared-passed hot path.
+///
+/// Semantically identical to ::successors_net, but builds each successor in place in a reused
+/// slot of @p out instead of constructing and appending a fresh state per successor. The passed
+/// set interns each zone by copy and never takes ownership of the state, so the slots stay valid
+/// across the caller's loop and are reused on the next frontier state; after a short warm-up
+/// this generates successors without allocating.
+///
+/// @param net    the network under analysis
+/// @param s      the source state; only its @c locs and @c ints are read
+/// @param szone  the source zone, supplied separately from @p s
+/// @param L      lower-bound array per clock, for the extrapolation
+/// @param U      upper-bound array per clock, for the extrapolation
+/// @param qmask  clocks the query mentions, which the active-clock reduction must not reset
+/// @param emode  extrapolation mode applied when closing each successor zone
+/// @param[in,out] out  successor slots, reused across calls and grown as needed
+/// @param szidx  interned index of @p szone, or a negative value if it is not interned
+/// @return the number of successors written, i.e. the valid range is `out[0 .. return)`
+///
+/// @warning @p out is **not** cleared. Entries beyond the returned count are stale successors
+///          from an earlier call and must not be read.
+/// @note The memo is consulted only when @p szidx is non-negative, since the interned index is
+///       part of the memo key.
+/// @note ::successors_net remains for the sequential and single-automaton paths, which
+///       accumulate successors rather than reuse slots.
 std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szone,
                            const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
                            const std::vector<char>& qmask, int emode, std::vector<SymState>& out,
@@ -663,6 +721,24 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
   return on;
 }
 
+/// @brief Widen the LU bound arrays so they also dominate the constraints in @p cs.
+///
+/// The extrapolation is parameterised by the largest constant each clock is compared against.
+/// A query adds constraints that the network itself never states, so its constants must be
+/// folded into the bounds before exploration or the extrapolation could merge two states the
+/// query distinguishes.
+///
+/// @param[in,out] L  per-clock lower bounds, widened in place
+/// @param[in,out] U  per-clock upper bounds, widened in place
+/// @param cs         constraints to absorb
+///
+/// @pre  @p L and @p U are indexed by clock and are at least as long as the largest index in
+///       @p cs.
+/// @post @p L and @p U are pointwise greater than or equal to their previous values; the
+///       function only ever widens, so it is safe to call repeatedly.
+/// @note A diagonal constraint bounds neither clock on its own, so its magnitude is applied to
+///       both clocks in both directions — the conservative choice that keeps the abstraction
+///       sound whichever of the two the extrapolation later tests.
 void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
                    const std::vector<Constraint>& cs) {
   for (const auto& c : cs) {
@@ -681,25 +757,34 @@ void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
 
 }  // namespace
 
-// GPU merge routing mode (see netreach.hpp). Default naive = always the one-thread-per-bucket GPU
-// merge (the original, published behavior); --adaptive turns on the calibrated CPU/GPU routing.
-// Rewrite (locs, zone) to its orbit's canonical representative: the group element giving the
-// lexicographically smallest location vector and, among those, the smallest zone matrix.
-//
-// The location pass alone decides it in almost every case (the zone is only permuted for the
-// winners), so the cost is |G| x nprocs integer compares per successor -- against a state space
-// |G| times smaller. Permuting a canonical DBM by a clock permutation leaves it canonical: the
-// triangle inequality is preserved under relabelling, so no re-closure is needed.
+/// @brief Rewrite a symbolic state to the canonical representative of its symmetry orbit.
+///
+/// Chooses the group element yielding the lexicographically smallest location vector and, among
+/// those, the smallest zone matrix. Exploring only representatives shrinks the state space by up
+/// to a factor of |G|.
+///
+/// @param G    the automorphism group of the network
+/// @param net  the network under analysis
+/// @param[in,out] s  the state, rewritten in place
+///
+/// @pre  Every element of @p G is an automorphism of @p net, so that applying it preserves the
+///       transition relation.
+/// @post @p s is the canonical representative of its orbit: two states in the same orbit are
+///       rewritten to identical (locs, ints, zone) triples.
+///
+/// @note The location pass decides the winner in almost every case, so the zone is permuted only
+///       for the few candidates that tie; the cost is |G| x nprocs integer comparisons per state.
+/// @note Permuting a canonical DBM by a clock permutation leaves it canonical — the triangle
+///       inequality is preserved under relabelling — so no re-closure is needed afterwards.
 static void canonicalize(const std::vector<Automorphism>& G, const Network& net, SymState& s) {
   const int np = static_cast<int>(s.locs.size());
   const int ni = static_cast<int>(s.ints.size());
   const int dim = s.zone.dim();
-  // The DISCRETE key is (locations, integer values) and BOTH move. Permuting only the locations
-  // is not a partial canonicalisation, it is a wrong one: Fischer's `id` holds a process index,
-  // so a state whose location vector has been rotated while `id` still names the old process is
-  // not in the orbit at all. It denotes a configuration where the lock is held by a process that
-  // is not in `req` -- reachable in the reduced graph, unreachable in the real one, and it
-  // reports mutual exclusion VIOLATED on a model that satisfies it.
+  // The discrete key is (locations, integer values) and both must move together. Permuting only
+  // the locations is not a weaker canonicalisation but an unsound one, because an integer
+  // variable may itself hold a process index: rotating the location vector while such a variable
+  // still names the old process yields a state outside the orbit, reachable in the reduced graph
+  // and unreachable in the real one.
   thread_local std::vector<int> cur, best, win;
   cur.resize(np + ni); best.resize(np + ni);
   auto image = [&](const Automorphism& a, std::vector<int>& out) {
@@ -734,12 +819,30 @@ static void canonicalize(const std::vector<Automorphism>& G, const Network& net,
 }
 
 #if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
-// Host port of the net_merge GPU kernel body (dbm_ops.hpp host functions), for ONE discrete-state
-// bucket. The GPU runs one thread per bucket, so a level with few/fat buckets stalls on a handful of
-// slow lanes; this lets the flat driver merge such buckets across all CPU cores instead. Existing
-// antichain is at work_buf[work_off_b .. +exist_cnt_b) (already gathered); new zones are read in
-// place from the expand output `oz` at indices new_idx_b[0..new_cnt_b). Writes the final antichain
-// back in place, sets WI (isnew flags: existing=0, appended new=1), returns the surviving count.
+/// @brief Host port of the GPU merge kernel, for one discrete-state bucket.
+///
+/// The GPU merge runs one thread per bucket, so a level made of few but very wide buckets stalls
+/// on a handful of slow lanes. This lets the flat driver merge such buckets across all CPU cores
+/// instead, which is what ptctlmc::set_adaptive_merge routes between.
+///
+/// @param[in,out] work_buf  zone storage; the bucket's existing antichain occupies
+///                          `work_buf[work_off_b .. work_off_b + exist_cnt_b)`
+/// @param work_off_b  offset of this bucket within @p work_buf
+/// @param exist_cnt_b number of zones already in the bucket's antichain
+/// @param oz          expand output, read in place rather than gathered
+/// @param new_idx_b   indices into @p oz of the candidate zones for this bucket
+/// @param new_cnt_b   length of @p new_idx_b
+/// @param L           per-clock lower bounds for the covering test
+/// @param U           per-clock upper bounds for the covering test
+/// @param dim         zone dimension, so each matrix is `dim * dim`
+/// @param has_diag    whether the network has diagonal constraints, selecting the covering test
+/// @param[out] WI     per-survivor "is new" flags: 0 for a pre-existing zone, 1 for an appended one
+/// @return the number of zones surviving in the bucket
+///
+/// @post The surviving antichain is written back in place at @p work_off_b, and no surviving
+///       zone covers another.
+/// @note Must agree with the GPU kernel zone for zone; the routing decision is a scheduling
+///       choice, so the two paths have to be interchangeable.
 static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
                              const gz_t* oz, const int* new_idx_b, int new_cnt_b,
                              const std::int32_t* L, const std::int32_t* U,
@@ -790,9 +893,18 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
 }
 #endif
 
-// The network is wider than the packed key can hold. Cold, and deliberately verbose: the widest
-// fields are almost always a couple of int arrays, and the breakdown is the only part of this the
-// user can act on.
+/// @brief Report that the network's discrete state does not fit the packed key, and throw.
+///
+/// @param net         the network under analysis
+/// @param bits_needed total width the packed key would require
+/// @param field_bits  the same width function ::DiscKeyCodec uses, so the breakdown agrees with
+///                    the packing that failed
+/// @throws std::runtime_error always
+///
+/// @note The message lists the widest fields because the offender is usually a small number of
+///       integer variables declared over the language's default range, and narrowing those is
+///       the only part of this the user can act on.
+/// @see ptctlmc::set_narrow_ranges, which derives tighter ranges and often avoids this.
 [[noreturn]] static void throw_disc_key_too_wide(const Network& net, int bits_needed,
                                                  int (*field_bits)(long)) {
   std::vector<std::pair<int, std::string>> widest;
@@ -815,23 +927,35 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
   throw std::runtime_error(msg);
 }
 
-// PACKED DISCRETE KEY. A symbolic state's discrete half -- the location vector plus the integer
-// variables -- packed losslessly into one uint64 as a fixed bit-field per process and per int
-// variable. This replaces the per-state std::string key, whose alloc/format/hash dominated the
-// profile: keys are now compared and hashed as plain integers, which is what UPPAAL does with its
-// "compressed integer" discrete states.
-//
-// Built once per search and then read-only, so it is safe to share across the parallel level
-// expansion. `encode` runs once per generated successor and `decode` once per frontier state and
-// per level bucket, so both stay in the header of this translation unit and inline into their
-// callers exactly as the lambdas they replaced did.
+/// @brief Lossless packing of a symbolic state's discrete half into a single @c uint64_t.
+///
+/// The location vector and the integer variables occupy one fixed-width bit-field each, sized
+/// from the number of locations of each process and from each variable's declared range. Keys
+/// are then compared and hashed as plain integers rather than as formatted strings.
+///
+/// @invariant The encoding is injective: two discrete states share a key only if they are equal.
+///            This is what lets the passed set be keyed on the packed value alone.
+/// @invariant Total width is at most 63 bits, so every field offset is strictly below 64 and a
+///            zero-width trailing field cannot produce an undefined shift.
+///
+/// @note Built once per search and thereafter read-only, so it is safe to share across the
+///       parallel level expansion without synchronisation.
+/// @warning A network whose fields do not fit is rejected outright by ::throw_disc_key_too_wide
+///          rather than being packed lossily; an aliased key would silently merge distinct
+///          states.
 struct DiscKeyCodec {
   const Network& net;
   std::vector<int> shift;           ///< bit offset of each field: procs first, then int vars
   std::vector<std::uint64_t> mask;  ///< per-field value mask, for decoding a key back apart
 
+  /// @brief Bits needed to distinguish @p nvalues values.
+  /// @param nvalues number of distinct values the field must hold
+  /// @return the smallest @c b with `2^b >= nvalues`; @c 0 for a single-valued field
   static int field_bits(long nvalues) { int b = 0; while ((1LL << b) < nvalues) ++b; return b; }
 
+  /// @brief Lay out one bit-field per process and per integer variable.
+  /// @param n the network whose discrete states are to be packed
+  /// @throws std::runtime_error if the fields need 64 bits or more
   explicit DiscKeyCodec(const Network& n) : net(n) {
     const int nfields = n.nprocs() + static_cast<int>(n.intvars.size());
     shift.resize(nfields);
@@ -846,11 +970,16 @@ struct DiscKeyCodec {
       set(p, field_bits(static_cast<long>(n.procs[p].locations.size())));
     for (std::size_t v = 0; v < n.intvars.size(); ++v)
       set(n.nprocs() + static_cast<int>(v), field_bits(n.intvars[v].hi - n.intvars[v].lo + 1));
-    // >= 64 (not > 64): keeps every field offset < 64, so a trailing zero-width field
-    // (single-value int/location) can never trigger a `value << 64` UB shift.
+    // The test is >= 64 rather than > 64 so that every field offset stays strictly below 64;
+    // a trailing zero-width field would otherwise be shifted by exactly 64, which is undefined.
     if (off >= 64) throw_disc_key_too_wide(n, off, &field_bits);
   }
 
+  /// @brief Pack a discrete state into its key.
+  /// @param locs the location vector, one entry per process
+  /// @param ints the integer variables, one entry per declared variable
+  /// @return the packed key
+  /// @pre Every value lies in its field's declared range; ::gen_apply enforces this for updates.
   std::uint64_t encode(const LocVec& locs, const IntVec& ints) const {
     std::uint64_t k = 0;
     for (int p = 0; p < static_cast<int>(locs.size()); ++p)
@@ -860,6 +989,12 @@ struct DiscKeyCodec {
     return k;
   }
 
+  /// @brief Unpack a key back into a discrete state.
+  /// @param dk        a key previously produced by ::DiscKeyCodec::encode
+  /// @param[out] locs receives one location per process
+  /// @param[out] ints receives one value per integer variable
+  /// @pre @p locs and @p ints have room for @c nprocs and @c intvars.size() entries.
+  /// @post `decode(encode(l, i))` reproduces @p l and @p i exactly.
   void decode(std::uint64_t dk, int* locs, long* ints) const {
     for (int p = 0; p < net.nprocs(); ++p)
       locs[p] = static_cast<int>((dk >> shift[p]) & mask[p]);
@@ -869,19 +1004,20 @@ struct DiscKeyCodec {
   }
 };
 
-// STRIPE AND BUCKET LAYOUT for the shared passed table.
-//
-// STRIPES are the lock granularity: a discrete state always lands in the same stripe, so a worker
-// updating it locks only that stripe. There are far more stripes than threads so contention is
-// rare.
-//
-// BUCKETS are the work granularity of the per-level survivor collection. They are taken from the
-// SAME high bits of the SAME mix, so bucket b owns a CONTIGUOUS range of stripes and its scan
-// stays inside one slice of the stripe array instead of scattering across all of them. Four
-// buckets per thread keeps a dynamic schedule balanced.
-//
-// Both are read-only once built, and both index functions run per successor, so they stay in this
-// translation unit and inline into their callers exactly as the lambdas they replaced did.
+/// @brief Maps a packed discrete key to a lock stripe and to a work bucket.
+///
+/// *Stripes* are the lock granularity of the shared passed table. A given discrete state always
+/// lands in the same stripe, so a worker updating it locks that stripe alone, and stripes greatly
+/// outnumber threads so collisions are rare.
+///
+/// *Buckets* are the work granularity of the per-level survivor collection.
+///
+/// @invariant Both indices come from the high bits of the same multiplicative mix, so each bucket
+///            owns a contiguous range of stripes and its scan stays within one slice of the
+///            stripe array rather than scattering across all of it.
+/// @note Sized at roughly four buckets per thread, which keeps a dynamic schedule balanced
+///       without making the per-bucket work too small to amortise its bookkeeping.
+/// @note Read-only once built, so it is shared across workers without synchronisation.
 struct StripeLayout {
   static constexpr std::uint64_t kMix = 0x9e3779b97f4a7c15ULL;  ///< Fibonacci hashing multiplier
 
@@ -890,8 +1026,11 @@ struct StripeLayout {
   int nbuckets = 1;
   int bucket_shift = 0;
 
+  /// @brief Size the stripe and bucket arrays for a given worker count.
+  /// @param nthreads number of workers that will share the passed table
+  /// @post Both counts are powers of two, so the index functions need only a shift.
   explicit StripeLayout(int nthreads) {
-    int stripe_bits = 10;                                    // >= 1024 stripes, and >> nthreads
+    int stripe_bits = 10;                                    // floor; grown below past nthreads
     while ((1 << stripe_bits) < std::max(16384, nthreads * 64)) ++stripe_bits;
     nstripes = static_cast<std::size_t>(1) << stripe_bits;
     stripe_shift = 64 - stripe_bits;
@@ -902,10 +1041,17 @@ struct StripeLayout {
     bucket_shift = 64 - bucket_bits;
   }
 
+  /// @brief Lock stripe owning a discrete key.
+  /// @param dk the packed discrete key
+  /// @return an index in `[0, nstripes)`
   std::size_t stripe_of(std::uint64_t dk) const {
     return static_cast<std::size_t>((dk * kMix) >> stripe_shift);
   }
-  // Only valid when nbuckets > 1; a zero bucket_bits would make this a shift by 64.
+  /// @brief Work bucket owning a discrete key.
+  /// @param dk the packed discrete key
+  /// @return an index in `[0, nbuckets)`
+  /// @pre `nbuckets > 1`. With a single bucket @c bucket_shift is 64 and the shift is undefined;
+  ///      callers take a separate single-bucket path instead.
   std::size_t bucket_of(std::uint64_t dk) const {
     return static_cast<std::size_t>((dk * kMix) >> bucket_shift);
   }
@@ -913,28 +1059,45 @@ struct StripeLayout {
 
 #if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
 // ---- flat GPU driver helpers ----------------------------------------------------------
-// Per-level discrete-key -> bucket-id index. This was a std::unordered_map rebuilt every
-// level, which costs ONE MALLOC PER DISTINCT KEY (227k of them per level on fischer11, over
-// 26 levels) plus a pointer chase on every probe. An open-addressing table with a generation
-// stamp reuses one allocation for the whole run and clears in O(1): the level's bucketing
-// pass measured 267 ms of a 1424 ms fischer11 wall before this.
+
+/// @brief Per-level map from packed discrete key to bucket id, for the flat GPU driver.
+///
+/// An open-addressing table with a generation stamp, so the whole run reuses one allocation and
+/// clearing between levels is O(1) rather than proportional to the table. A node-based map would
+/// instead allocate once per distinct key and rebuild every level, which is significant because
+/// this index is rebuilt on each of many BFS levels.
+///
+/// @invariant Capacity is always a power of two, so probing masks rather than divides.
+/// @invariant An entry is live exactly when its stamp equals the current generation; entries
+///            from earlier levels are therefore invisible without being erased.
 struct DkIndex {
-  std::vector<std::uint64_t> key;
-  std::vector<int> val;
-  std::vector<std::uint32_t> stamp;
-  std::uint32_t gen = 0;
-  std::size_t mask = 0, fill = 0, limit = 0;
-  static std::uint64_t mix(std::uint64_t k) {   // splitmix64 finalizer
+  std::vector<std::uint64_t> key;    ///< probe slots; meaningful only where stamp == gen
+  std::vector<int> val;              ///< bucket id assigned to the corresponding key
+  std::vector<std::uint32_t> stamp;  ///< generation that last wrote the slot
+  std::uint32_t gen = 0;             ///< current generation; bumped once per level
+  std::size_t mask = 0, fill = 0, limit = 0;  ///< capacity-1, live entries, and the grow threshold
+
+  /// @brief splitmix64 finaliser, to spread keys whose low bits are highly structured.
+  static std::uint64_t mix(std::uint64_t k) {
     k ^= k >> 30; k *= 0xbf58476d1ce4e5b9ULL;
     k ^= k >> 27; k *= 0x94d049bb133111ebULL;
     return k ^ (k >> 31);
   }
+  /// @brief Reallocate to @p cap slots and reset to an empty first generation.
+  /// @param cap new capacity; must be a power of two
+  /// @post The table is empty and its load limit is 75% of @p cap.
   void resize_to(std::size_t cap) {
     key.assign(cap, 0); val.assign(cap, 0); stamp.assign(cap, 0);
     mask = cap - 1; gen = 1; fill = 0; limit = cap - cap / 4;   // 75% load factor
   }
-  // Size for the PREVIOUS level's distinct-key count (BFS level widths change smoothly), and
-  // grow by rehashing if this level turns out wider.
+  /// @brief Start a new level, logically clearing the table.
+  ///
+  /// @param expect expected number of distinct keys, taken from the previous level because BFS
+  ///               level widths change smoothly; an underestimate costs a rehash, not
+  ///               correctness
+  /// @post All entries from earlier levels are unreachable.
+  /// @note When the generation counter wraps, the stamps are cleared explicitly so that a stale
+  ///       slot cannot be mistaken for a live one.
   void begin_level(std::size_t expect) {
     std::size_t cap = 1024;
     while (cap - cap / 4 < expect + 1) cap <<= 1;
@@ -942,6 +1105,8 @@ struct DkIndex {
     mask = key.size() - 1; limit = key.size() - key.size() / 4; fill = 0;
     if (++gen == 0) { std::fill(stamp.begin(), stamp.end(), 0); gen = 1; }
   }
+  /// @brief Double the capacity, reinserting the current generation's live entries.
+  /// @post Existing key-to-id assignments are preserved.
   void grow() {
     const std::vector<std::uint64_t> ok = key;
     const std::vector<int> ov = val;
@@ -951,7 +1116,11 @@ struct DkIndex {
     for (std::size_t i = 0; i < ok.size(); ++i)
       if (os[i] == og) { (void)find_or_add(ok[i], ov[i]); }
   }
-  // Return the id of `k`, inserting it with id `next` if absent (caller checks == next).
+  /// @brief Look up @p k, inserting it if absent.
+  /// @param k    the packed discrete key
+  /// @param next id to assign if @p k is not present
+  /// @return the id of @p k, which equals @p next exactly when the key was newly inserted — the
+  ///         caller detects insertion by that comparison
   int find_or_add(std::uint64_t k, int next) {
     if (fill >= limit) grow();
     std::size_t i = mix(k) & mask;
@@ -963,8 +1132,22 @@ struct DkIndex {
   }
 };
 
-// Consume the first `nfr` states of the current level, keeping the rest. erase() from the
-// front would memmove the remainder once per batch -- O(batches * level) over a wide level.
+/// @brief Drop the first @p nfr states of the current level, keeping the remainder.
+///
+/// Used by the chunked frontier driver once a batch has been expanded.
+///
+/// @param[in,out] l   location components, @p np_ entries per state
+/// @param[in,out] iv  integer components, @p niw_ entries per state
+/// @param[in,out] z   interned zone indices, one per state
+/// @param nfr  number of leading states to remove
+/// @param np_  location entries per state
+/// @param niw_ integer entries per state
+///
+/// @pre Each array holds at least @p nfr states' worth of entries.
+/// @post The arrays hold the surviving states, still in order.
+/// @note Erasing from the front shifts the remainder, so a level split into many batches pays
+///       that shift once per batch. Chunk sizes are large enough that this is not the dominant
+///       cost, but it does bound how small a useful chunk can be.
 static void drop_batch(std::vector<int>& l, std::vector<long>& iv, std::vector<int>& z,
                        int nfr, int np_, int niw_, int) {
   l.erase(l.begin(), l.begin() + static_cast<std::size_t>(nfr) * np_);
@@ -973,17 +1156,27 @@ static void drop_batch(std::vector<int>& l, std::vector<long>& iv, std::vector<i
 }
 #endif
 
-// Reclaim interned zones no live passed-set node references any more (subsumed / merged out):
-// mark the survivors -- referenced by a live arena node or by the next frontier -- then sweep the
-// rest back to the interner's free-list for in-place reuse. Returns the next allocation level at
-// which to sweep again.
-//
-// MARK IN PARALLEL over stripes. Every writer stores the same value (1) and nothing reads `alive`
-// until the sweep, so two threads marking the same zidx cannot disagree -- but concurrent plain
-// stores to one byte are still formally a race, so the store is a relaxed atomic. On x86/ARM that
-// is the same instruction as a plain byte store (no lock prefix, no fence): the parallelism is
-// free. The mark walks every live arena node, which was the serial half of the sweep (0.128s of a
-// 3.83s arbiter16 run at 8 threads, and it grows with the state space).
+/// @brief Mark-and-sweep the zone interner, reclaiming zones nothing references any more.
+///
+/// Zones become garbage when the passed set subsumes or merges out the node that held them.
+/// Survivors are those referenced by a live arena node or by the next frontier; everything else
+/// returns to the interner's free list for reuse in place.
+///
+/// @param[in,out] zi  the zone interner to sweep
+/// @param smap        the striped passed set, scanned for live arena nodes
+/// @param frontier    the next frontier, whose zone indices are also roots
+/// @param nthreads    workers to use for the mark phase
+/// @param floor_      lower bound on the returned threshold, so sweeps cannot become too frequent
+/// @return the allocation count at which to sweep again
+///
+/// @pre No worker is mutating @p smap or @p zi for the duration of the call.
+/// @post Every zone index still reachable from @p smap or @p frontier remains valid; all others
+///       are freed.
+///
+/// @note The mark phase runs in parallel and every writer stores the same value, with nothing
+///       reading the marks until the sweep, so racing writers cannot disagree. The store is a
+///       relaxed atomic to keep that formally race-free; on the supported architectures it
+///       compiles to a plain byte store.
 static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassed>& smap,
                                     const std::vector<std::pair<std::uint64_t, int>>& frontier,
                                     int nthreads, std::size_t floor_) {
@@ -1003,18 +1196,27 @@ static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassed>& smap
   return std::max<std::size_t>(floor_, zi.allocated() * 2);
 }
 
-// Collect one level's survivors -- the passed-set entries stamped with this level -- into the
-// next frontier, as (discrete key, zone index) pairs. No SymState is built and no zone is copied
-// here; that happens once, lazily, at the next expansion.
-//
-// Each dk must be scanned ONCE, so the per-thread touched sets have to be merged. That merge used
-// to be one serial unordered_set fed from every thread, which was the largest serial phase left
-// in the level loop (0.149s of a 3.83s arbiter16 run at 8 threads) and grows with level width, so
-// it capped the speedup by Amdahl. Instead dk is BUCKETED by hash and each bucket deduplicated
-// independently: a given dk hashes to exactly one bucket, so that bucket's set observes every
-// copy of it and the deduplicated key set is identical to the serial union's. Only the order
-// differs, and the order was never fixed anyway. Dedup and the for_level scan then happen in the
-// SAME parallel loop, so the survivors are never materialised as a key set at all.
+/// @brief Collect one level's survivors into the next frontier.
+///
+/// Gathers the passed-set entries stamped with @p level as (discrete key, zone index) pairs. No
+/// symbolic state is built and no zone is copied here; that happens lazily at the next expansion.
+///
+/// @param[in,out] smap  the striped passed set
+/// @param lay           stripe and bucket layout, supplying the bucket assignment
+/// @param[in,out] tls_touched  per-worker sets of discrete keys touched during the expansion
+/// @param nthreads      worker count
+/// @param single        take the single-bucket path, for layouts with only one bucket
+/// @param level         the level stamp identifying this level's survivors
+/// @return the next frontier
+///
+/// @post Each discrete key appears at most once in the result.
+///
+/// @note Each discrete key must be scanned exactly once, so the per-worker touched sets have to
+///       be merged. Keys are bucketed by hash and each bucket deduplicated independently: a key
+///       hashes to exactly one bucket, so that bucket observes every copy of it and the result
+///       equals the serial union. Only the order differs, and no caller depends on it.
+/// @note Deduplication and the survivor scan share one parallel loop, so the merged key set is
+///       never materialised.
 static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
     std::vector<NetPassed>& smap, const StripeLayout& lay,
     std::vector<std::unordered_set<std::uint64_t>>& tls_touched,
@@ -1062,14 +1264,26 @@ static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
   return next;
 }
 
-// The initial symbolic state: every process in its initial location, every integer at its
-// declared init value, and the zero zone opened up by the same closing pipeline every successor
-// goes through -- combined invariant, delay unless frozen, active-clock reduction, extrapolation.
-// Returns false when the initial invariant is unsatisfiable, i.e. the model has no initial state.
-//
-// Extrapolation runs only when finiteness depends on it (emode != ExNone). In the default aLU
-// mode the passed list stays finite and minimal on exact zones, so extrapolating would only lose
-// precision; the successor generators apply the same emode to every successor.
+/// @brief Build the network's initial symbolic state.
+///
+/// Every process sits in its initial location and every integer variable holds its declared
+/// initial value. The zero zone is then opened up by the same closing pipeline every successor
+/// goes through: combined invariant, delay unless the state is frozen, active-clock reduction and
+/// extrapolation.
+///
+/// @param net    the network under analysis
+/// @param qmask  clocks the query reads, which the active-clock reduction must preserve
+/// @param L      per-clock lower bounds
+/// @param U      per-clock upper bounds
+/// @param emode  extrapolation mode, applied here exactly as to every successor
+/// @param[out] s0  receives the initial state; meaningful only on @c true
+/// @return @c false when the initial invariant is unsatisfiable, i.e. the model has no initial
+///         state at all
+///
+/// @post On @c true, `s0->zone` is non-empty and closed.
+/// @note Using the successor pipeline rather than a separate construction is what keeps the root
+///       comparable with everything the search later stores; a root closed differently could fail
+///       to subsume states it ought to.
 static bool initial_symbolic_state(const Network& net, const std::vector<char>& qmask,
                                    const std::vector<std::int32_t>& L,
                                    const std::vector<std::int32_t>& U, int emode, SymState* s0) {
@@ -1082,31 +1296,44 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
   return close_succ_zone(net, s0->locs, s0->zone, inv, qmask, L, U, emode);
 }
 
-// ---- the shared symbolic-reachability engine ------------------------------------------------
-// ONE engine behind every "is a state satisfying X reachable?" query. It owns the sharded passed
-// list, the zone interner, the parallel level expansion and the interner GC; callers supply only
-// what actually differs between queries:
-//
-//   is_target     what makes a symbolic state a witness. A predicate, not a NetTarget, so a
-//                 target can inspect the ZONE (deadlock) and not just locations/int vars.
-//   force_exact   compare stored zones by plain inclusion instead of the aLU test. MUST be set
-//                 when the property is per-VALUATION: aLU is a location-reachability abstraction
-//                 and may drop concrete valuations, so `E<> deadlock` would go unsound with it.
-//                 It also changes how finiteness is obtained -- see `emode` below.
-//   target        still needed for the query's clock constants (aLU bound flooring, qmask) and
-//                 by the GPU driver's flat target test. Pass a default-constructed one when the
-//                 target is a predicate; then it contributes no constraints. A predicate target
-//                 must therefore keep the GPU path off (an empty NetTarget matches everything).
-//
-// `deadlock_reachable` was a second, independent copy of this search: serial, storing dense Dbm
-// copies in an unordered_map keyed by a std::string. Folding it in here is what gives deadlock
-// queries the parallel expansion and the packed interned zones.
+/// @brief The shared symbolic-reachability engine.
+///
+/// One engine behind every "is a state satisfying X reachable?" query in the build. It owns the
+/// sharded passed list, the zone interner, the parallel level expansion and the interner garbage
+/// collection; callers supply only what genuinely differs between queries.
+///
+/// @tparam TargetFn  predicate on a symbolic state
+///
+/// @param net       the network under analysis
+/// @param target    the query's target, needed for its clock constants — which floor the a_LU
+///                  bounds and build @c qmask — and for the GPU driver's flat target test
+/// @param is_target what makes a symbolic state a witness. A predicate rather than a
+///                  ptctlmc::NetTarget so that a target may inspect the *zone*, which deadlock
+///                  must
+/// @param force_exact  compare stored zones by plain inclusion instead of the a_LU test
+/// @param backend   which expansion backend to run
+/// @param[out] stats  optional statistics; unchanged when null
+/// @param sym       optional automorphism group enabling symmetry reduction
+/// @param orbit     optional per-orbit targets, used with @p sym
+/// @param cancel    optional cancellation flag, polled once per BFS level
+/// @return @c true if a state satisfying @p is_target is reachable; @c false if none is, **or**
+///         if the search was cancelled
+///
+/// @warning @p force_exact must be set whenever the property is per-*valuation*. a_LU is a
+///          location-reachability abstraction and may drop concrete valuations, so a
+///          valuation-sensitive target such as deadlock would be unsound without it. It also
+///          changes how finiteness is obtained; see the extrapolation mode below.
+/// @warning A caller passing a predicate target must pass a default-constructed @p target and
+///          keep the GPU path off: an empty ptctlmc::NetTarget matches every state, so the GPU
+///          driver's flat test would report a witness immediately.
+/// @warning Because cancellation and exhaustion both return @c false, the result of a search the
+///          caller cancelled carries no information and must not be consulted.
+///
+/// @note @p cancel is polled at the level boundary rather than per state, so it costs one relaxed
+///       load per level. Abandoning between levels leaves nothing half-built, since the caller
+///       discards the whole engine.
+/// @see DESIGN.md §4 for why stored zones must be exact and what that costs.
 template <class TargetFn>
-// `cancel`, when non-null, is polled once per BFS level: another worker has already settled the
-// question and this search is now dead weight. Checked at the level boundary rather than per state
-// so it costs one relaxed load per level, and abandoning between levels leaves nothing half-built
-// -- the caller discards the whole engine anyway. Returns false when cancelled; the caller must
-// therefore only consult the result of a search it did not cancel.
 static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&& is_target,
                          bool force_exact, Backend backend, ReachStats* stats,
                          const std::vector<Automorphism>* sym = nullptr,
@@ -1115,37 +1342,32 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   const bool use_sym = sym && sym->size() > 1;
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   extend_bounds(L, U, target.clock_cond);
-  L[0] = U[0] = 0;  // reference clock: mandatory for the aLU subsumption test
-  // With diagonal constraints the aLU abstraction is unsound: fall back to exact zones
-  // (diagonals kept exact) + plain inclusion subsumption.
+  L[0] = U[0] = 0;  // reference clock; mandatory for the a_LU subsumption test
+  // With diagonal constraints a_LU is unsound (Bouyer 2004), so such networks fall back to exact
+  // zones with diagonals preserved, compared by plain inclusion.
   const bool has_diag = network_has_diagonal(net);
   const bool exact_sub = has_diag || force_exact;
-  // Finiteness comes from EITHER aLU subsumption on exact zones (the default) OR, when zones must
-  // be compared exactly, from LU-extrapolation.
-  //
-  // The two are NOT interchangeable, and the comment that used to sit here ("extrapolating too
-  // would only coarsen what aLU already covers") was wrong in a way worth stating: aLU only ever
-  // PRUNES -- it drops a zone when a stored one simulates it -- whereas Extra_LU+ WIDENS, mapping
-  // many exact zones onto one representative. On a model whose reachable zones are mutually
-  // aLU-incomparable, pruning does nothing and widening collapses them.
+  // Finiteness comes from either a_LU subsumption over exact zones (the default) or, when zones
+  // must be compared exactly, from LU-extrapolation. The two are not interchangeable: a_LU only
+  // prunes, dropping a zone when a stored one simulates it, whereas Extra_LU+ widens, mapping
+  // many exact zones onto one representative. Where the reachable zones are mutually
+  // a_LU-incomparable, pruning achieves nothing and widening still collapses them.
   int emode = has_diag ? ExNoDiag : (force_exact ? ExLuPlus : ExNone);
-  // ADAPTIVE: which of the two wins is a property of the model, not a constant, and the engine
-  // already measures the distinguishing signal. Zones per discrete state near 1 means aLU is
-  // collapsing them and widening would only cost time (phil 1.11, viking 1.00: extrapolation
-  // there changes no state count and costs 20-35%). A ratio that climbs means the antichains are
-  // filling with mutually incomparable zones, which aLU cannot prune and widening can (single:
-  // one location, thousands of zones -- widening takes it from 3873 stored to 3676, which is
-  // UPPAAL's 3673). So start exact and switch on once the ratio crosses the threshold.
+  // Which of the two wins is a property of the model, so the engine starts exact and switches
+  // extrapolation on once zones per discrete state cross the threshold. A ratio near 1 means
+  // a_LU is already collapsing the antichains and widening would only cost time; a climbing
+  // ratio means they are filling with mutually incomparable zones, which only widening removes.
   //
-  // Switching mid-run is sound in both directions of the mixed passed list it leaves behind: a
-  // stored EXACT zone that fails to subsume a new widened one only costs an extra stored state,
-  // and a stored WIDENED zone that subsumes a new exact one genuinely contains it. Finiteness is
-  // guaranteed from the switch onwards.
-  constexpr double kAdaptRatio = 4.0;
-  std::vector<char> qmask(net.nclocks + 1, 0);  // clocks the query reads -> keep active
+  // Switching mid-run leaves a mixed passed list, and both directions stay sound: a stored exact
+  // zone that fails to subsume a new widened one costs one extra stored state, and a stored
+  // widened zone that subsumes a new exact one genuinely contains it. Finiteness holds from the
+  // switch onwards. See DESIGN.md 4.
+  constexpr double kAdaptRatio = 4.0;  ///< zones per discrete state at which widening turns on
+  std::vector<char> qmask(net.nclocks + 1, 0);  // clocks the query reads; kept active
   for (const auto& c : target.clock_cond) { if (c.i > 0) qmask[c.i] = 1; if (c.j > 0) qmask[c.j] = 1; }
 
-  // Query clock constants floor every state's aLU bounds (the property may hold anywhere).
+  // The query's clock constants floor every state's a_LU bounds, because the property may hold
+  // at any state and the abstraction must not merge two states the query distinguishes.
   std::vector<std::int32_t> Lq(net.nclocks + 1, kAluNegInf), Uq(net.nclocks + 1, kAluNegInf);
   for (const auto& c : target.clock_cond) {
     const int v = raw_bound(c.bound);
@@ -1157,13 +1379,15 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       Lq[c.i] = std::max(Lq[c.i], a); Lq[c.j] = std::max(Lq[c.j], a);
     }
   }
-  // Per-state aLU bounds: max of per-location bounds over processes, floored by the query.
+  // Per-state a_LU bounds: the per-location bounds maximised over processes, floored by the
+  // query's own constants.
   auto state_bounds = [&](const int* locs, std::vector<std::int32_t>& L2,
                           std::vector<std::int32_t>& U2, std::vector<raw_t>& Lr,
                           std::vector<raw_t>& Ur) {
-    // The G arrays are the same per-location fixpoint with strictness kept. Combined over
-    // processes by raw max, which is the "weakest wins" rule Cor. 3.6 requires -- the same
-    // compositional union upstream TChecker uses for LU with pointwise max.
+    // The G arrays are the same per-location fixpoint with strictness retained. Combining them
+    // across processes by raw max implements the "weakest wins" rule the G-simulation requires
+    // (Gastin-Mukherjee-Srivathsan, CAV 2019, Cor. 3.6), matching the pointwise-max composition
+    // used for LU.
     if (detail::options().gsim && !net.uraw_loc.empty()) {
       Lr.assign(net.nclocks + 1, kGNone);
       Ur.assign(net.nclocks + 1, kGNone);
@@ -1173,18 +1397,17 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           if (lr != kGNone && (Lr[c] == kGNone || lr > Lr[c])) Lr[c] = lr;
           if (ur != kGNone && (Ur[c] == kGNone || ur > Ur[c])) Ur[c] = ur;
         }
-      // The query's own constants must floor the bounds exactly as they do for L/U, or a state
-      // satisfying the property could be abstracted away. Non-strict: the safe direction.
+      // The query's constants must floor these bounds exactly as they do L and U, or a state
+      // satisfying the property could be abstracted away. Non-strict is the safe direction.
       for (int c = 1; c <= net.nclocks; ++c) {
         if (Uq[c] != kAluNegInf && (Ur[c] == kGNone || le(Uq[c]) > Ur[c])) Ur[c] = le(Uq[c]);
         if (Lq[c] != kAluNegInf && (Lr[c] == kGNone || le(-Lq[c]) > Lr[c])) Lr[c] = le(-Lq[c]);
       }
-      // (<=,0), NOT kGNone. dbm_is_g_le's loops start at 0 and `continue` on kGNone, so a
-      // kGNone here deletes the (U-cut) witness family at y=0 and the (L-unsat') family at x=0.
-      // Removing witnesses can only turn the test from FALSE to TRUE, i.e. prune zones that are
-      // not actually simulated -- measured at ~19% unsound TRUEs against point-wise ground truth,
-      // versus zero for (<=,0). The sibling dbm_is_alu_le documents L[0]=U[0]=0 as MANDATORY for
-      // exactly this reason, and the code below does that.
+      // The reference clock must be (<=, 0) here, never kGNone. The G-simulation test skips
+      // kGNone entries, so leaving one at index 0 would delete the witness families at x = 0 and
+      // y = 0. Missing witnesses can only flip the test from false to true, i.e. prune zones that
+      // are not in fact simulated, which is the unsound direction. This mirrors the
+      // L[0] = U[0] = 0 requirement of the a_LU test.
       Lr[0] = Ur[0] = kZeroLe;
     }
     if (net.lbound_loc.empty()) { L2 = L; U2 = U; return; }  // fall back to global bounds
@@ -1233,11 +1456,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     }
   };
 
-  // `parallel` is decided AFTER the GPU factory below, because a GPU backend that falls back to
-  // the CPU path (out-of-scope model, no device) must still use every core. It did not: the test
-  // was `backend == Omp`, so `--backend metal` on a model the GPU declines ran SINGLE-THREADED --
-  // arbiter24 took 93 s that way against `omp`'s 20 s, which reads as "the GPU lost" and is in
-  // fact "the fallback used one core".
+  // Decided after the GPU factory below: a GPU backend that falls back to the CPU path, because
+  // the network is out of scope or no device is present, must still use every core. Testing for
+  // Backend::Omp alone would silently run such a fallback single-threaded.
   bool parallel = false;
   int nthreads = 1;
 
@@ -1247,12 +1468,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // to the CPU path transparently.
   std::unique_ptr<NetGpuExpander> gpu;
   bool use_gpu = false;
-  // force_exact callers pass a default NetTarget, which the GPU's flat target test would treat
-  // as "matches everything"; and the GPU merge selects its subsumption by has_diag alone, so it
-  // cannot honour force_exact. Keep such queries on the CPU engine. (Tested per backend rather
-  // than around the block: the two #ifdefs are independent, so a wrapping brace would not pair.)
-  // Symmetry reduction rewrites each successor to its orbit representative on the host; the GPU
-  // drivers have no such step, so the two are mutually exclusive for now.
+  // Two families of query stay on the CPU engine. force_exact callers pass a default NetTarget,
+  // which the GPU's flat target test treats as matching everything, and the GPU merge selects its
+  // subsumption from has_diag alone, so it cannot honour force_exact at all. Symmetry reduction
+  // rewrites each successor to its orbit representative on the host, and the GPU drivers have no
+  // such step. The condition is repeated per backend rather than wrapped around the block because
+  // the two #ifdefs are independent and a wrapping brace would not pair.
 #ifdef PTCTLMC_HAVE_METAL
   if (!force_exact && !use_sym && backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
 #endif
@@ -1266,11 +1487,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   if (parallel) nthreads = omp_get_max_threads();
 #endif
 
-  // Passed list SHARDED by discrete-state hash: a given discrete state always lands
-  // in the same shard, so each shard is a self-contained antichain owned by exactly
-  // one thread during the merge — the O(bucket^2 * dim^3) convex-merge now runs in
-  // parallel with no locks. Per discrete state: antichain + convex-union merge.
-  const DiscKeyCodec dkey(net);   // packs (locations, int vars) into one uint64; see above
+  // The passed list is sharded by discrete-state hash, so a given discrete state always lands in
+  // the same shard and each shard is a self-contained antichain owned by exactly one worker
+  // during the merge. That is what lets the O(bucket^2 * dim^3) convex merge run without locks.
+  const DiscKeyCodec dkey(net);
 
   SymState s0;
   if (!initial_symbolic_state(net, qmask, L, U, emode, &s0)) return false;
@@ -1279,26 +1499,26 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   canon_ints(s0.locs, s0.ints);
 
 #if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
-  // ---- FLAT GPU-resident driver (Metal / CUDA) -------------------------------------------
-  // Everything stays as flat zone arrays across levels: no SymState round-trip, no per-level
-  // rebuild of a map of Dbm copies (which the profiler showed dominated the metal wall time).
-  // GPU does expand + the per-bucket subsumption/convex-union merge; the host only groups by
-  // dk (cheap integer hashing) and marshals flat zone spans.
+  // ---- Flat GPU-resident driver (Metal / CUDA) -------------------------------------------
+  // State stays in flat zone arrays across levels: no round-trip through SymState and no
+  // per-level rebuild of a map of DBM copies. The GPU performs the expansion and the per-bucket
+  // subsumption and convex-union merge; the host only groups by discrete key, which is integer
+  // hashing, and marshals flat zone spans.
   if (use_gpu) {
-    // SoA work pool (Metal gpusplit merge): host gather/rebuild transpose to/from the transposed
-    // layout, and the CPU-merge fallback (AoS) is disabled since it can't read it. Declared here
-    // rather than beside use_gpu: every reader is inside this GPU-only block, so at file scope it
-    // was an unused variable (and a -Wunused-variable warning) in every CPU-only build.
+    // The GPU factories decline any network with more than 64 processes or 32 integer variables,
+    // so within this block the fixed-size `dl`/`di` decode buffers below cannot overflow.
+    // Structure-of-arrays work pool for the split GPU merge: the host gather and rebuild
+    // transpose into and out of this layout, and the AoS CPU-merge fallback is disabled because
+    // it cannot read it. Declared inside this block because every reader is GPU-only.
     const int np = net.nprocs(), ni = static_cast<int>(net.intvars.size()), dim = net.nclocks + 1, d2 = dim * dim;
-    // The passed set holds ZONE INDICES into a shared dense pool rather than a private dense copy
-    // per (discrete state, zone). With `--gpu-intern` the pool DEDUPLICATES, which is a large win
-    // wherever few distinct zones are reachable: viking15 stores 2.77M zones drawn from just 120
-    // distinct ones, i.e. GBs of unified memory representing ~120 KB of zone data. Without the
-    // flag the pool simply appends, reproducing the old layout's memory with the same indexed
-    // access path, so the flag isolates deduplication from everything else.
-    // Narrow the arena to 16-bit entries when the model's constants make overflow impossible
-    // (see GpuZoneIntern). The bound is 2*M+1 for the largest clock constant M anywhere in the
-    // model or the query; the margin below is deliberately generous.
+    // The passed set holds zone indices into a shared dense pool rather than a private dense copy
+    // per (discrete state, zone). With --gpu-intern the pool deduplicates, which is a large win
+    // wherever few distinct zones are reachable; without it the pool simply appends through the
+    // same indexed access path, so the flag isolates deduplication from every other difference.
+    //
+    // The arena narrows to 16-bit entries when the model's constants make overflow impossible.
+    // The bound is 2*M + 1 for the largest clock constant M anywhere in the model or the query;
+    // the margin applied below is deliberately generous. See ptctlmc::detail::GpuZoneIntern.
     std::int32_t maxc = 0;
     for (int c = 0; c <= net.nclocks; ++c) {
       if (L[c] != kAluNegInf) maxc = std::max(maxc, L[c]);
@@ -1366,18 +1586,18 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // The batch boundary must NOT move states between BFS levels. `fl` holds what is left of the
     // CURRENT level and `nf*` accumulates the NEXT one; a batch is taken from the front of `fl`
     // and its survivors go to `nf*`, which only becomes the frontier once `fl` is exhausted.
-    // (This is the correction to the previous design, which appended the un-expanded tail to the
-    // survivors and swapped: that mixes level k and level k+1 states into one frontier, loses
-    // strict BFS, and cost 2.5x the explored states on fischer12 -- 4.76M -> 12.0M.)
-    // A stored zone is a 31-bit index into the zone interner plus one flag bit: "this zone was
-    // added during the level currently being expanded". The flag is what the next frontier is
-    // read off at level end, and packing it into the index costs no extra memory.
+    // Appending the un-expanded tail to the survivors and swapping would mix level k and level
+    // k+1 states into one frontier, losing strict BFS and inflating the explored-state count.
+    //
+    // A stored zone is a 31-bit index into the zone interner plus one flag bit meaning "added
+    // during the level currently being expanded". That flag is what the next frontier is read off
+    // at level end, and packing it into the index costs no extra memory.
     static constexpr int kNewBit = 1 << 30;
     std::vector<std::uint64_t> touched;   // buckets changed during the current level
-    // Per-BATCH scratch, hoisted: every one of these is sized by the batch and was previously
-    // allocated and freed inside the loop. With --chunking a level is many batches, so the churn
-    // (hundreds of MB per allocation) left GBs sitting in the allocator -- it turned a 9.5x cut in
-    // GPU pool bytes into a net LOSS in peak RSS. Reused buffers keep their capacity instead.
+    // Per-batch scratch, hoisted out of the loop. Each of these is sized by the batch, and with
+    // --chunking a level is many batches, so allocating them per batch churns the allocator badly
+    // enough to cancel the peak-memory saving chunking exists to deliver. Reused buffers keep
+    // their capacity instead.
     std::vector<std::uint64_t> bdk;
     std::vector<int> bcnt, w_bucket, work_off, exist_cnt, new_off, new_cnt, new_idx, cursor;
     std::vector<int> fr_off, fr_cnt, host_isnew_v, host_count, out_work_off, out_count;
@@ -1388,8 +1608,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     for (;;) {
       if (fl.empty()) {                       // current level exhausted: advance
         // Collect the next frontier: every zone still flagged "added during this level" in a
-        // bucket the level touched. Doing it here rather than per batch is what keeps batching
-        // exact -- a zone a later batch absorbed has had its flag cleared with it.
+        // bucket the level touched. Doing this at level end rather than per batch is what keeps
+        // batching exact, since a zone a later batch absorbed has had its flag cleared with it.
         std::sort(touched.begin(), touched.end());
         touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
         std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<int>().swap(fz);
@@ -1424,18 +1644,16 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
       const int total = static_cast<int>(fz.size());
       // Batch size: either the fixed --chunking N, or the largest batch whose GPU pools fit the
-      // budget. `fanout` is the measured successors-per-frontier-state of the previous batch;
-      // the pools cost about 2.2 words per successor per matrix entry (expand output zones +
-      // merge work pool + the discrete arrays).
+      // budget.
       int nfr = total;
       if (detail::options().chunking) {
         if (detail::options().chunk_states > 0) {
           nfr = std::min(total, detail::options().chunk_states);
         } else {
-          // 3 words per successor per matrix entry: the expand output zones, the merge work
-          // pool (exist + new), and the frontier/staging arrays. The fan-out is the running MAX,
-          // not an average: under-predicting it is what lets a batch overshoot the budget, and a
-          // batch that overshoots is exactly the peak the budget exists to bound.
+          // Three words per successor per matrix entry: the expand output zones, the merge work
+          // pool, and the frontier and staging arrays. The fan-out is the running maximum rather
+          // than an average, because under-predicting it lets a batch overshoot the budget, and
+          // such an overshoot is exactly the peak the budget exists to bound.
           const double per_state = fanout * static_cast<double>(d2) * sizeof(raw_t) * 3.0;
           const double cap = static_cast<double>(detail::chunk_budget_bytes()) / std::max(1.0, per_state);
           nfr = static_cast<int>(std::min<double>(total, std::max(4096.0, cap)));
@@ -1447,11 +1665,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       const std::uint64_t* odk = nullptr;   // device-packed discrete keys (null => pack host-side)
       std::size_t nwork;
       {
-        // Materialise just THIS BATCH's zones, widened out of the arena. The frontier itself is
-        // arena indices (4 B per state) rather than dense matrices (dim^2 words): the zones are
-        // in the passed set already, so a level-wide dense copy was storing every one of them
-        // twice -- 0.24 GB on fischer12 and 0.81 GB on fischer16 -- and it also meant reading
-        // them out of the arena at level end only to copy them again here.
+        // Materialise only this batch's zones, widened out of the arena. The frontier itself
+        // holds arena indices rather than dense matrices, because the zones are already in the
+        // passed set and a level-wide dense copy would store every one of them twice.
         gz_t* fzbuf = nullptr;
         gpu->stage_frontier(static_cast<std::size_t>(nfr), d2, fzbuf);
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -1474,26 +1690,21 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         drop_batch(fl, fi, fz, nfr, np, niw, d2);
         continue;
       }
-      // The GPU now holds its own copy of the frontier (persistent device buffer) and the host
-      // copies are dead until the end-of-level swap. Release them NOW: otherwise they sit alongside
-      // the next frontier being built during the rebuild, i.e. a full extra copy of the frontier at
-      // exactly the moment memory peaks.
-      // Only safe when the whole level was expanded; when batching, the tail is still needed.
+      // The GPU now holds its own copy of the frontier in a persistent device buffer, so the host
+      // copies are dead until the end-of-level swap. Releasing them here rather than later
+      // matters because they would otherwise sit alongside the next frontier during the rebuild,
+      // a full extra copy at exactly the moment memory peaks. Only safe when the whole level was
+      // expanded; when batching, the tail is still needed.
       if (whole) { std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<int>().swap(fz); }
       else drop_batch(fl, fi, fz, nfr, np, niw, d2);   // batch consumed; keep the rest of the level
-      // group VALID successors by dk (reading straight from GPU buffers); target check on the fly
-      // Bucket the valid successors with a FLAT (CSR) layout: a per-work-item bucket id plus a
-      // per-bucket count, then a prefix sum. The obvious `vector<vector<int>>` heap-allocates one
-      // small vector PER BUCKET PER LEVEL (millions of alloc/free pairs over a run, and the
-      // fragmentation dominated resident memory); this is two flat arrays instead.
-      // Bucketing stays SERIAL by measurement, not by omission. A lock-free open-addressing
-      // table (one CAS per key, stable counting-sort scatter) was implemented and measured
-      // three ways -- oversized table 328ms, nb-sized 467ms, monotonic 336ms -- against this
-      // loop's ~200ms. A private-map parallel version (per-thread maps + distinct-key merge +
-      // parallel counting-sort scatter) was also measured: 268ms -> 241ms on viking15, i.e. ~1%
-      // of wall time, because the loop is bound by streaming the expand output out of unified
-      // memory while the GPU is using the same bandwidth -- not by the hashing. Neither variant
-      // is worth the complexity here. See docs/GUIDE.md.
+      // Group the valid successors by discrete key, reading straight from the GPU buffers and
+      // testing the target on the fly. The layout is flat (CSR): a per-work-item bucket id and a
+      // per-bucket count, followed by a prefix sum. A vector-of-vectors would instead allocate one
+      // small vector per bucket per level, whose fragmentation dominates resident memory.
+      //
+      // This loop is serial by measurement rather than by omission: it is bound by streaming the
+      // expand output out of unified memory while the GPU competes for the same bandwidth, not by
+      // the hashing, so parallelising the hashing moves little. See DESIGN.md 8.10.
       bidx.begin_level(prev_nb);
       bdk.clear(); bcnt.clear();
       w_bucket.assign(nwork, -1);                         // work item -> bucket id (-1 = not a successor)
@@ -1538,8 +1749,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       prev_nb = static_cast<std::size_t>(nb);
       work_off.resize(nb); exist_cnt.resize(nb); new_off.resize(nb); new_cnt.resize(nb);
       Lm.resize(static_cast<std::size_t>(nb) * dim); Um.resize(static_cast<std::size_t>(nb) * dim);
-      // counts + prefix sums. The NEW zones are never copied: the merge reads them in place from
-      // the expand output by work-item index, so we only flatten the index list (integers, cheap).
+      // Counts and prefix sums. New zones are never copied: the merge reads them in place from
+      // the expand output by work-item index, so only the index list is flattened.
       std::size_t ntot = 0, wtot = 0;  // total new zones; total work-pool zones (exist+new)
       for (int b = 0; b < nb; ++b) {
         new_cnt[b] = bcnt[b];
@@ -1548,9 +1759,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         new_off[b] = static_cast<int>(ntot); ntot += new_cnt[b];
         work_off[b] = static_cast<int>(wtot); wtot += exist_cnt[b] + new_cnt[b];
       }
-      // Scatter the work-item indices into the flat CSR array. Iterating w ascending preserves the
-      // per-bucket ordering the merge relies on (the convex union is order-sensitive), so this is
-      // bit-for-bit equivalent to the old vector-of-vectors.
+      // Scatter the work-item indices into the flat CSR array. Ascending w preserves the
+      // per-bucket ordering the merge relies on, which matters because the convex union is
+      // order-sensitive.
       new_idx.resize(ntot);
       {
         cursor = new_off;
@@ -1561,8 +1772,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
       gz_t* work_buf = nullptr; int* work_isnew = nullptr;
       gpu->stage_merge(wtot, d2, work_buf, work_isnew);
-      // PARALLEL: gather only the EXISTING antichains into the work buffer (unified memory);
-      // successor zones stay in the expand output and are read in place by the merge kernel.
+      // Gather only the existing antichains into the unified-memory work buffer; successor zones
+      // stay in the expand output and are read in place by the merge kernel.
 #ifdef PTCTLMC_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 32)
 #endif
@@ -1572,18 +1783,18 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           gz_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
           for (int i = 0; i < exist_cnt[b]; ++i)
             zi.load_gz(pit->second[i] & ~kNewBit, dst + static_cast<std::size_t>(i) * d2);
-          // Seed each already-stored zone's TAG with its passed-set index (kNewBit included). The
-          // merge carries a kept zone's tag through its compaction and writes -1 for the zones it
-          // creates, so the rebuild can tell "this output slot IS stored zone j" from "this output
-          // slot is new" -- and a kept zone then needs no copy and no re-intern at all. The flag
-          // also has to survive because a zone an EARLIER batch of this level added is still a
-          // frontier state; without carrying it, batching would silently lose frontier states.
+          // Seed each already-stored zone's tag with its passed-set index, kNewBit included. The
+          // merge carries a kept zone's tag through its compaction and writes -1 for zones it
+          // creates, so the rebuild can distinguish "this output slot is stored zone j" from
+          // "this output slot is new", and a kept zone then needs neither copy nor re-intern.
+          // Carrying kNewBit is required, not incidental: a zone added by an earlier batch of
+          // this same level is still a frontier state, and dropping the flag would lose it.
           int* wi = work_isnew + work_off[b];
           for (int i = 0; i < exist_cnt[b]; ++i) wi[i] = pit->second[i];
         }
         int dl[64]; long di[32];
         std::vector<std::int32_t> L2, U2;
-        std::vector<raw_t> Lr_, Ur_;   // GPU merge is a_LU only; the G arrays go unused here
+        std::vector<raw_t> Lr_, Ur_;   // unused: the GPU merge implements a_LU only
         dkey.decode(bdk[b], dl, di);
         state_bounds(dl, L2, U2, Lr_, Ur_);
         for (int c = 0; c < dim; ++c) { Lm[static_cast<std::size_t>(b) * dim + c] = L2[c]; Um[static_cast<std::size_t>(b) * dim + c] = U2[c]; }
@@ -1591,16 +1802,16 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       out_work_off.clear(); out_count.clear();
       const gz_t* out_zones = nullptr;
       const int* out_isnew = nullptr;
-      // Merge routing. NAIVE (default): always the GPU one-thread-per-bucket merge (original
-      // behavior). ADAPTIVE (--adaptive): CALIBRATE each path's throughput (work ~ sum bucket^2, per
-      // ms) on early BFS levels, then route each later level to the predicted-faster of {GPU, 12 CPU
-      // cores}. This rescues merge-heavy models (e.g. philosophers, where the GPU merge is 93% of the
-      // wall time — one thread per bucket is the wrong shape) with no effect where the GPU already wins.
+      // Merge routing. In naive mode the GPU one-thread-per-bucket merge always runs. In adaptive
+      // mode each path's throughput — work, taken as the sum of squared bucket sizes, per
+      // millisecond — is calibrated on early levels, and each later level is routed to the
+      // predicted-faster path. This recovers merge-heavy models, where one thread per bucket is
+      // the wrong shape, without affecting models on which the GPU already wins.
       long long sum2 = 0;
       for (int b = 0; b < nb; ++b) { const long long s = exist_cnt[b] + new_cnt[b]; sum2 += s*s; }
       bool cpu_merge = false;
       if (detail::options().adaptive_merge) {
-        if (cpu_rate < 0) cpu_merge = true;         // calibrate the CPU path first (never catastrophic)
+        if (cpu_rate < 0) cpu_merge = true;         // calibrate the CPU path first: it is never catastrophic
         else if (gpu_rate < 0) cpu_merge = false;   // then calibrate the GPU path
         else cpu_merge = (cpu_rate >= gpu_rate);    // route to the higher-throughput path
       }
@@ -1636,18 +1847,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         if (cpu_merge) cpu_rate = (cpu_rate < 0) ? rate : 0.5 * cpu_rate + 0.5 * rate;
         else           gpu_rate = (gpu_rate < 0) ? rate : 0.5 * gpu_rate + 0.5 * rate;
       }
-      // rebuild passed + assemble the flat next frontier (survivors). Prefix-sum the per-bucket
-      // survivor counts, pre-create the passed nodes, then fill everything in parallel.
-      // Survivor counts, then offsets. Counting scans every merged zone -- O(total zones), the
-      // same order as the rebuild copies below -- so it runs in parallel; only the offset
-      // prefix-sum stays serial, and that is O(nb) integer adds over data already in cache.
-      // (Fusing the two, as this loop used to, forced the whole O(total zones) scan to be
-      // serial purely because `frtot` was carried through it.)
-      // Survivor counts and offsets. Kept fused and serial deliberately: splitting the count
-      // into an omp parallel-for and leaving only the offset prefix-sum serial was measured on
-      // arbiter17/Metal and is not faster (rebuild 563ms vs 545ms) -- buckets average ~10 zones,
-      // so the scan is memory-bound and the per-bucket parallel overhead plus false sharing on
-      // fr_cnt costs more than the scan itself.
+      // Rebuild the passed set and assemble the flat next frontier: count the per-bucket
+      // survivors, prefix-sum the counts, pre-create the passed nodes, then fill in parallel.
+      //
+      // The count and the offset prefix-sum stay fused and serial. Buckets hold only a handful of
+      // zones on average, so the scan is memory-bound and the per-bucket parallel overhead, plus
+      // false sharing on fr_cnt, costs more than the scan itself.
       fr_off.resize(nb); fr_cnt.resize(nb);
       std::size_t frtot = 0;
       for (int b = 0; b < nb; ++b) {
@@ -1658,9 +1863,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
         fr_cnt[b] = c; fr_off[b] = static_cast<int>(frtot); frtot += c;
       }
-      // A bucket with NO survivor had all its new zones subsumed — its antichain is unchanged, so
-      // `passed[dk]` is already correct. Skip its rebuild copy entirely; only changed buckets are
-      // cleared + refilled (their element ptrs stay stable across later inserts).
+      // A bucket with no survivor had all its new zones subsumed, so its antichain is unchanged
+      // and `passed[dk]` is already correct; its rebuild copy is skipped entirely. Only changed
+      // buckets are cleared and refilled, and their element pointers stay stable across later
+      // inserts.
       pzp.assign(nb, nullptr);
       for (int b = 0; b < nb; ++b) if (fr_cnt[b] > 0) { pzp[b] = &passed[bdk[b]]; touched.push_back(bdk[b]); }
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -1671,9 +1877,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         int dl[64]; long di[32];
         dkey.decode(bdk[b], dl, di);
         auto& pz = *pzp[b];
-        // This bucket's slots before the merge; the ones the merge drops go back to the arena
-        // free list below. Thread-local, not a fixed array: philosophers' antichains reach ~400
-        // zones, and a fixed 64 would silently leak every slot past it.
+        // This bucket's slots before the merge; those the merge drops return to the arena free
+        // list below. Thread-local rather than a fixed-size array because antichains can reach
+        // several hundred zones, and a fixed bound would silently leak every slot past it.
         thread_local std::vector<int> oldv;
         oldv.clear();
         for (int idx : pz) oldv.push_back(idx & ~kNewBit);
@@ -1711,46 +1917,42 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 #endif
 
   // ======================================================================
-  // SHARED-PASSED (hybrid): one stripe-locked passed/waiting table that any
-  // worker may touch, locking only the stripe of the discrete state it is
-  // updating -- LTSmin's "shared table + fine-grained locking, no static
-  // partition" (Alg. 3/4). The per-bucket update is unchanged: PTCTLMC's exact
-  // aLU subsumption + convex-union merge (add_to). Expansion and insertion are
-  // FUSED, so there is no serial per-level routing barrier; strict-BFS level
-  // synchronisation is kept (it minimises the state count). At 1 thread this is
-  // bit-identical to the legacy path (same per-bucket merge, same order).
-    const StripeLayout lay(nthreads);                  // stripe + bucket index; see above
+  // Shared passed set: one stripe-locked table any worker may touch, locking only the stripe of
+  // the discrete state it is updating — the "shared table with fine-grained locking and no static
+  // partition" scheme of LTSmin (Laarman, van de Pol and Weber, 2011). The per-bucket update is
+  // unchanged: a_LU subsumption followed by the convex-union merge.
+  //
+  // Expansion and insertion are fused, so there is no serial per-level routing barrier, while
+  // strict BFS level synchronisation is retained because it minimises the stored-state count.
+  //
+  // @invariant At one thread this path is bit-identical to the sequential one: same per-bucket
+  //            merge, same insertion order, same counts.
+    const StripeLayout lay(nthreads);
     const int dim2 = (net.nclocks + 1) * (net.nclocks + 1);
     ZoneIntern zi(dim2, nthreads);                     // ONE shared distinct-zone table
     std::vector<NetPassed> smap(lay.nstripes);         // flat per-stripe passed tables
     for (auto& mp : smap) mp.zi = &zi;
-    // The mirror budget is process-wide (one NetPassed per stripe) but these tables are not:
-    // a second query in the same process would otherwise inherit the first one's charge and
-    // never promote anything.
+    // The mirror budget is process-wide while these tables are per query, so it must be reset
+    // here; otherwise a second query in the same process inherits the first one's charge and
+    // never promotes anything.
     detail::hot_bytes().store(0, std::memory_order_relaxed);
-    // shared_mutex: the read-only kill probe below runs concurrently per stripe; only a real
-    // insert/merge needs exclusivity.
-    std::vector<SpinRW> smtx(lay.nstripes);            // one lock per stripe (value-init in place)
-    // PER-THREAD LOCAL ANTICHAINS were tried here and REMOVED (see git history). Each thread
-    // inserted into its own table during a level and a bucket owner drained them into the shared
-    // one at the boundary, so the expand phase took no lock at all. It is correct and it is
-    // consistently SLOWER -- 8 threads: phil11 1.48x, viking12 1.29x, twolock10 1.90x,
-    // fischer10 1.92x. Removing the lock saves the ~15% of busy thread-time that was spin, but a
-    // private antichain cannot see the read-only kill probe that answers 83% of successors, so
-    // the drain pays more back than it saves (phil12: 3.2M gathered pairs, 1.5M of them exact
-    // duplicates, 19.4s of drain thread-time against a 3.8s wall). Don't retry it without a
-    // design that keeps a shared kill probe.
-    // Dynamic-schedule chunk for the frontier expansion. Loop-invariant, so OpenMP accepts a
-    // runtime value here; --omp-chunk previously reached only reach.cpp's single-TA loop, which
-    // made it a no-op for every network (multi-process) model.
+    // A reader/writer lock per stripe: the read-only kill probe below runs concurrently within a
+    // stripe, and only a genuine insert or merge needs exclusivity.
+    std::vector<SpinRW> smtx(lay.nstripes);
+    //
+    // Per-thread local antichains were tried here and removed: they are correct but consistently
+    // slower, because a private antichain cannot consult the shared read-only kill probe that
+    // answers most successors. See DESIGN.md 8.9 before reconsidering.
+    //
+    // Dynamic-schedule chunk for the frontier expansion, loop-invariant so OpenMP accepts a
+    // runtime value.
     const int expand_chunk = std::max(1, omp_chunk());
 
-    // The frontier holds only (dk, zone-index) per state -- 12 B, not a full
-    // SymState. locs/ints come from dk (DiscKeyCodec::decode) and the zone from the intern
-    // table, reconstructed into a REUSED per-thread scratch at expansion. This
-    // removes the ~1.6 GB of interned-zone copies the old make_survivor did (one
-    // full DBM copied into every frontier state) and shrinks the resident
-    // frontier ~50× so it stays cache-resident during expansion.
+    // The frontier holds only (discrete key, zone index) per state rather than a full SymState.
+    // Locations and integers are recovered from the key and the zone from the intern table, both
+    // reconstructed into reused per-thread scratch at expansion time. This avoids copying a full
+    // DBM into every frontier state and keeps the resident frontier small enough to stay
+    // cache-resident during expansion.
     const int np_ = net.nprocs(), ni_ = static_cast<int>(net.intvars.size());
     std::vector<std::pair<std::uint64_t, int>> frontier;
     {
@@ -1763,11 +1965,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     int level = 0;
     std::size_t nexpanded = 0;
     std::atomic<bool> found{false};
-    const bool single = (nthreads == 1);   // seq / omp -p1: skip locks + the touched union
-    // Fused batched merge: O(1) critical section + one lock-free settle pass per level.
-    // Zone-interner GC trigger: sweep once the allocation level reaches `sweep_at`, then set
-    // the next target to double the surviving live set (see the sweep site below).
-    constexpr std::size_t kSweepFloor = 50000;   // don't bother GCing a small interner
+    const bool single = (nthreads == 1);   // one worker: skip the locks and the touched union
+    // Zone-interner GC trigger: sweep once allocation reaches `sweep_at`, then set the next
+    // target to double the surviving live set.
+    constexpr std::size_t kSweepFloor = 50000;   // below this the interner is not worth sweeping
     std::size_t sweep_at = kSweepFloor;
     while (!frontier.empty()) {
       if (cancel && cancel->load(std::memory_order_relaxed)) return false;
@@ -1776,10 +1977,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         throw std::runtime_error("state cap exceeded — model likely has unbounded diagonal clocks");
       ++level;
 
-      // Expand each frontier state and insert its successors DIRECTLY into the
-      // shared table, locking only the touched stripe (expansion and insertion
-      // → no serial routing barrier). Inserting during expansion is what keeps the
-      // convex-union merge order stable enough to match the legacy state counts.
+      // Expand each frontier state and insert its successors directly into the shared table,
+      // locking only the touched stripe, so there is no serial routing barrier. Inserting during
+      // expansion is also what keeps the convex-union merge order stable enough to reproduce the
+      // sequential state counts.
       std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
       std::vector<std::size_t> tls_gen(nthreads, 0);
 #ifdef PTCTLMC_HAVE_OPENMP
@@ -1791,16 +1992,15 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         SymState cur;                    // reused per thread: reconstructed frontier state
         cur.locs.resize(np_);
         cur.ints.resize(ni_);
-        // Count generated successors in a REGISTER, not in tls_gen[tid]: the counters are
-        // 8 bytes apart, so all `nthreads` of them share one cache line and the per-successor
-        // increment bounced that line between every core on every successor (23M times on
-        // phil13). Published once per thread at the end of the region.
+        // Accumulate the generated-successor count in a local, not directly in tls_gen[tid]:
+        // those counters are adjacent, so they share a cache line and a per-successor increment
+        // would bounce that line between all cores. Published once per thread at the end.
         std::size_t gen = 0;
 #pragma omp for schedule(dynamic, expand_chunk) nowait
         for (long i = 0; i < static_cast<long>(frontier.size()); ++i) {
           if (found.load(std::memory_order_relaxed)) continue;
           dkey.decode(frontier[i].first, cur.locs.data(), cur.ints.data());
-          // buf is NOT cleared: gen_succ_reuse rebuilds slots in place and returns
+          // buf is deliberately not cleared: gen_succ_reuse rebuilds slots in place and returns
           // the count, so the loc/int/zone storage is reused across frontier states.
           const std::size_t ns = gen_succ_reuse(net, cur, zi.get(frontier[i].second), L, U, qmask, emode,
                                                 buf, frontier[i].second);
@@ -1861,20 +2061,14 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // The passed tables are read-only here (no writers), so for_level is a safe read.
       std::vector<std::pair<std::uint64_t, int>> next =
           collect_next_frontier(smap, lay, tls_touched, nthreads, single, level);
-      // EXPANSION ORDER was tried here and REMOVED. The idea: a stored zone that a later, more
-      // general zone subsumes was expanded for nothing (phil12: 469805 of 1047142 arena nodes,
-      // 45%, end up retired), so expanding the most general zones of a level FIRST should let
-      // them kill their narrower siblings on insertion instead of a level later. The generality
-      // proxy was free -- a minimal constraint system stores a more general zone in a SHORTER
-      // packed record -- and ordering a worklist cannot affect the fixpoint, so it was sound.
-      // It simply does not pay: 8 threads, most-general-first vs insertion order gave phil12
-      // 0.95x (and MORE states, 841637 vs 803845), fischer11 0.98x, twolock11 1.00x, viking15
-      // 0.98x. The retirement is driven by zones that arrive levels apart, which no intra-level
-      // ordering can reach.
+      // Reordering a level to expand its most general zones first was tried and removed: it is
+      // sound but does not pay, because zone retirement is driven by zones arriving levels apart,
+      // which no intra-level ordering can reach. See DESIGN.md 8.14.
       frontier.swap(next);
-      // Adaptive abstraction: re-read the zones-per-discrete-state signal now that the level is
-      // complete and every thread has joined, and switch widening on if the antichains are
-      // filling up. Once on it stays on -- the ratio only ever justifies more abstraction.
+      // Re-read the zones-per-discrete-state signal now that the level is complete and every
+      // worker has joined, and switch widening on if the antichains are filling up. Once on it
+      // stays on: a rising ratio only ever justifies more abstraction, and switching back would
+      // forfeit the finiteness guarantee established at the switch.
       if (emode == ExNone) {
         std::size_t nlive = 0, ndisc = 0;
         for (const auto& mp : smap) mp.counts(nlive, ndisc);
@@ -1888,18 +2082,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 #endif
       for (long s = 0; s < static_cast<long>(smap.size()); ++s) smap[s].maybe_compact();
 
-      // TRIGGER for the interner sweep below: growth-based, not per-level. The old guard was `zi.n > 50000`, but `n` is a
-      // high-water counter that never shrinks, so it latched true at the first big level and
-      // ran a full mark+sweep on EVERY level thereafter. Both halves are serial and O(all
-      // arena nodes + htab slots), so the cost grew with the state space while the expand
-      // phase stayed parallel -- on arbiter17 that was 2.8s of a 9.3s run (30%), and it is
-      // what capped the 12-thread speedup at ~5x.
-      //
-      // Sweeping when the allocation level has DOUBLED since the last sweep makes the work
-      // amortized O(1) per interned zone (a sweep costing O(A) is paid for by the A/2 fresh
-      // interns that triggered it), so a run does O(log) sweeps instead of one per level. The
-      // memory it trades away is bounded: garbage never exceeds the live set, i.e. the
-      // interner stays within 2x of its pinned-to-live size.
+      // The sweep trigger is growth-based rather than per-level. Sweeping once the allocation
+      // level has doubled since the last sweep makes the work amortised O(1) per interned zone —
+      // a sweep costing O(A) is paid for by the A/2 fresh interns that triggered it — so a run
+      // performs O(log) sweeps instead of one per level. The memory traded away is bounded:
+      // garbage never exceeds the live set, so the interner stays within 2x of its live size.
+      // A level-triggered sweep instead grows with the state space while the expansion around it
+      // stays parallel, which caps the achievable speedup.
       if (zi.allocated() >= sweep_at)
         sweep_at = sweep_dead_zones(zi, smap, frontier, nthreads, kSweepFloor);
 
@@ -1907,15 +2096,25 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     return false;
 }
 
-// E<> target, where the target is a location/integer/clock-constraint conjunction. aLU
-// subsumption applies: the property is evaluated per symbolic state, so the abstraction is sound.
+/// @brief Decide `E<> target`, for a target that is a conjunction of location, integer and
+///        clock constraints.
+///
+/// @param net     the network under analysis
+/// @param target  the target conjunction
+/// @param backend which expansion backend to run
+/// @param[out] stats  optional statistics; unchanged when null
+/// @return @c true iff some reachable symbolic state satisfies @p target
+///
+/// @note a_LU subsumption is sound here because the property is evaluated per symbolic state
+///       rather than per valuation, so covering preserves it. Contrast
+///       ptctlmc::deadlock_reachable, which is not.
 bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                    ReachStats* stats) {
-  // Symmetry reduction explores one representative per orbit, so a target that is NOT itself
-  // symmetric has to be tested over the whole ORBIT of the property: `E<> P0.Eat && P1.Eat` on a
-  // ring of philosophers becomes "some adjacent pair eats", which is the same question because
-  // the network is rotation-symmetric. That is done by mapping the target through every group
-  // element ONCE, up front, and testing the state against each image -- no state is permuted.
+  // Symmetry reduction explores one representative per orbit, so a target that is not itself
+  // symmetric must be tested against the whole orbit of the property: on a rotation-symmetric
+  // ring, "processes 0 and 1 both eat" becomes "some adjacent pair eats", which is the same
+  // question. The target is mapped through every group element once, up front, and each state is
+  // tested against every image; no state is ever permuted at test time.
   std::vector<Automorphism> G;
   if (symmetry_on()) G = symmetry_group(net);
   const bool use_sym = G.size() > 1;
@@ -1931,9 +2130,9 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       for (const auto& lr : target.loc_req) t.loc_req.push_back({g.proc[lr.first], lr.second});
       for (const auto& c : target.clock_cond)
         t.clock_cond.push_back(Constraint{g.clk[c.i], g.clk[c.j], c.bound});
-      // Every image's clock constants must reach the abstraction, or the LU bounds would be
-      // asymmetric and two states of one orbit could be abstracted differently -- which is
-      // exactly what the reduction may not do.
+      // Every image's clock constants must reach the abstraction. Otherwise the LU bounds would
+      // be asymmetric and two states of the same orbit could be abstracted differently, which is
+      // precisely what the reduction may not do.
       bounds_target.clock_cond.insert(bounds_target.clock_cond.end(), t.clock_cond.begin(),
                                       t.clock_cond.end());
       orbit.push_back(std::move(t));
@@ -1955,12 +2154,26 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                       use_sym ? &G : nullptr, use_sym ? &orbit : nullptr);
 }
 
+/// @brief Decide whether some infinite run exists along which @p phi holds at every state.
+///
+/// @param net  the network under analysis
+/// @param phi  the invariant predicate, over locations and integer variables only
+/// @param backend  ignored; this search is sequential
+/// @param[out] stats  optional statistics; unchanged when null
+/// @return @c true iff a @p phi-invariant infinite run exists
+///
+/// @warning ptctlmc::DiscPred constrains only the **discrete** state. A liveness predicate
+///          therefore cannot mention clocks, and @c qmask below is empty for that reason. See
+///          KNOWN_LIMITATION.md.
+/// @note Zones must be extrapolated here rather than kept exact, because termination of the
+///       cycle search depends on the zone graph being finite; a_LU pruning alone does not give
+///       that for a greatest-fixpoint search.
 bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backend,
                           ReachStats* stats) {
-  (void)backend;  // liveness graph search is sequential (cycle detection); omp TODO
+  (void)backend;  // the cycle detection below is sequential
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;  // diagonals: keep exact
-  const std::vector<char> qmask(net.nclocks + 1, 0);  // liveness predicate has no clocks
+  const std::vector<char> qmask(net.nclocks + 1, 0);  // a DiscPred never mentions a clock
 
   auto sat = [&](const SymState& s) -> bool {
     for (const auto& r : phi.locs) {
@@ -2051,18 +2264,41 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
   return false;
 }
 
-// Does the (delay-closed, extrapolated) symbolic state `s` contain a concrete valuation
-// with no outgoing action transition -- a deadlock?  A whole zone that has no successor is
-// the easy case; the hard case is a PARTIAL deadlock, where the zone has successors but a
-// sub-region of it can never reach any of them (e.g. an invariant caps time before the only
-// guard opens). We compute it exactly: mirror successors_net's three transition kinds, but
-// for each transition that CAN fire collect its SOURCE zone within `s.zone` -- the pre-reset
-// valuations from which it fires and lands in a legal target (guards ∧ reset^{-1}(target
-// invariant)). The union of the time-pasts (down()) of those source zones is the set of
-// non-deadlocked valuations (for a frozen source -- committed/urgent -- no time may pass, so
-// there is no down()). Anything in `s.zone` left over after subtracting that union is a set
-// of deadlock states. Enabledness is invariant under LU-extrapolation, so working on the
-// extrapolated zone is sound -- the same assumption the rest of the engine already relies on.
+/// @brief Does the symbolic state @p s contain a valuation with no outgoing action transition?
+///
+/// A zone with no successor at all is the easy case. The hard case is a *partial* deadlock,
+/// where the zone has successors but some sub-region of it can never reach any of them — for
+/// instance where an invariant caps time before the only guard opens. This computes the partial
+/// case exactly rather than approximating it.
+///
+/// The three transition kinds of ::successors_net are mirrored. For each transition that can
+/// fire, its *source* region within `s.zone` is collected: the pre-reset valuations from which it
+/// fires and lands in a legal target, i.e. the guards intersected with the target invariant
+/// pulled back through the resets. The union of the time-pasts of those source regions is the set
+/// of non-deadlocked valuations, and whatever remains of the zone after subtracting it is
+/// deadlocked.
+///
+/// @param net  the network under analysis
+/// @param s    the symbolic state to test
+/// @param[out] stuck    if non-null, receives the deadlocked sub-region; cleared when there is none
+/// @param[out] escapes  if non-null, receives the escape regions themselves, for callers that
+///                      need to know *which* constraints decide stuckness rather than only the
+///                      residue
+/// @return @c true iff some valuation of @p s is deadlocked
+///
+/// @pre  For an exact answer, `s.zone` must already satisfy the invariant of `s.locs`. States
+///       produced by the forward engine satisfy this, since ::close_succ_zone applies it.
+/// @post `*escapes` is inclusion-minimal; a region contained in a sibling is never added.
+///
+/// @warning At a **frozen** state — committed or urgent — neither the delay nor the invariant is
+///          applied, so the zone subtracted from is `s.zone` as given. A caller that passes the
+///          bare universe for such a state therefore receives `Dead` computed against the
+///          universe rather than against `Inv(q)`, which over-approximates. This is the
+///          conservative direction and costs precision only, but such a caller must intersect the
+///          result with `Inv(q)` itself. See KNOWN_LIMITATION.md.
+/// @note Enabledness is invariant under LU-extrapolation, so working on the extrapolated zone is
+///       sound — the same assumption the rest of the engine relies on.
+/// @see DESIGN.md §2 for the deadlock completion this feeds.
 bool detail::state_has_deadlock(const Network& net, const SymState& s,
                                 Federation* stuck, Federation* escapes) {
   if (s.zone.empty()) return false;
@@ -2070,12 +2306,13 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   frozen_flags(net, s.locs, &src_committed, &src_urgent);
   const bool frozen = src_committed || src_urgent;  // no delay allowed from this state
 
-  // Rebuild the true delay-closure of this state's zone. The stored zone has the
-  // active-clock reduction applied, which pins DEAD clocks to 0 with an upper bound and so
-  // is no longer delay-closed -- down() could not let time pass those clocks, inventing
-  // spurious deadlocks. Re-opening every upper bound (delay) and re-imposing only the real
-  // location invariant restores the closure; dead clocks become free, which is sound since
-  // no guard or invariant here reads them. Frozen locations do not delay, so leave them be.
+  // Rebuild the true delay-closure of this state's zone. The stored zone carries the
+  // active-clock reduction, which pins dead clocks to 0 with an upper bound and so is no longer
+  // delay-closed; without this step down() could not let time pass those clocks and would invent
+  // spurious deadlocks. Re-opening every upper bound and re-imposing only the real location
+  // invariant restores the closure. Dead clocks become free, which is sound because no guard or
+  // invariant reachable from here reads them. Frozen locations do not delay, so they are left as
+  // they are — see the warning on this function.
   Dbm Z = s.zone;
   if (!frozen) {
     Z.delay();
@@ -2087,11 +2324,12 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   std::vector<Constraint> tinv;  // target-invariant scratch
   Federation live;
 
-  // `guarded` = Z ∩ (participant clock guards), pre-reset. Pull it back through the target
-  // invariant under the transition's resets and, if a non-empty source region survives, add
-  // it to `live`. reset^{-1}(inv): a constraint on a reset clock becomes one on clock 0 (its
-  // post-reset value), so it either constrains the surviving source clocks or, if it reduces
-  // to `0 <| bound`, gates the whole transition on feasibility of that constant.
+  // `guarded` is Z intersected with the participants' clock guards, before any reset. It is
+  // pulled back through the target invariant under the transition's resets, and if a non-empty
+  // source region survives it joins `live`. In that pullback a constraint on a reset clock
+  // becomes a constraint on clock 0, its post-reset value, so it either constrains the surviving
+  // source clocks or, when it reduces to `0 ~ bound`, gates the whole transition on whether that
+  // constant is satisfiable.
   auto add_src = [&](Dbm guarded, const LocVec& tgt_locs,
                      const std::vector<const std::vector<int>*>& reset_lists) {
     if (guarded.empty()) return;
@@ -2106,14 +2344,15 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
       if (i == j) { if (c.bound < kZeroLe) return; continue; }  // 0 <| bound: constant gate
       if (!guarded.constrain(i, j, c.bound)) return;
     }
-    // INCLUSION-MINIMAL, not append. `live` is consumed only through its UNION -- by the
-    // subtraction below and, for the atom construction, by `escapes` -- so a member contained
-    // in a sibling denotes nothing new. It is not free, though: fed_subtract peels the
-    // remainder once per member and the piece count multiplies, so a redundant escape costs a
-    // whole extra peel of an already-exploded arrangement. Two escapes agreeing on their
-    // clock guard and differing only in which process moved is the common case (grc4's trains),
-    // and it is exactly this case. Pruning BEFORE down() is safe: W subseteq W' implies
-    // down(W) subseteq down(W'), so the union of the downs is unchanged too.
+    // Kept inclusion-minimal rather than simply appended. `live` is consumed only through its
+    // union — by the subtraction below, and by `escapes` for the atom construction — so a member
+    // contained in a sibling denotes nothing new. It is not free either: the subtraction peels
+    // the remainder once per member and the piece count multiplies, so a redundant escape costs
+    // an extra peel of an already-large arrangement. Two escapes that agree on their clock guard
+    // and differ only in which process moved are the common case.
+    //
+    // Pruning before down() is sound because W subseteq W' implies down(W) subseteq down(W'), so
+    // the union of the time-pasts is unchanged.
     if (!guarded.empty()) fed_add(live, guarded);
   };
 
@@ -2204,17 +2443,18 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   // region. Subtract that from the zone; a non-empty remainder is a set of deadlock states.
   if (!frozen)
     for (auto& W : live) W.down();
-  // The ESCAPE regions themselves, for callers that need to know WHICH constraints decide
-  // stuckness rather than only the residue. Dead = Z \ union(live), so membership is decided by
-  // the atoms of each live_e -- |out(q)| convex zones -- whereas the residue is an ARRANGEMENT
-  // whose piece count, and hence atom count, is far larger for the same set.
+  // The escape regions themselves, for callers needing to know which constraints decide
+  // stuckness rather than only the residue. Since Dead = Z \ union(live), membership is decided
+  // by the atoms of each escape — one convex zone per outgoing transition — whereas the residue
+  // is an arrangement whose piece count, and hence atom count, is far larger for the same set.
   if (escapes) *escapes = live;
-  // ONE-ESCAPE SHORT CIRCUIT. fed_subtract peels Z once per escape and the piece count
-  // multiplies, so the arrangement it builds is the dominant cost of the structural sweep --
-  // and it is built even when a SINGLE escape already covers Z, which is the overwhelmingly
-  // common case (a location with one unguarded outgoing edge). One DBM inclusion test per
-  // escape decides that outright. Exact, not a heuristic: Z subseteq W subseteq union(live)
-  // means Dead(q) is empty, which is precisely what the subtraction would have reported.
+  // Short circuit when a single escape already covers Z, which is the common case of a location
+  // with one unguarded outgoing edge. The subtraction peels Z once per escape and the piece count
+  // multiplies, so the arrangement it builds dominates the sweep; one DBM inclusion test per
+  // escape avoids building it at all.
+  //
+  // This is exact, not a heuristic: Z subseteq W subseteq union(live) means Dead(q) is empty,
+  // which is precisely what the subtraction would have reported.
   for (const Dbm& W : live)
     if (W.includes(Z)) {
       if (stuck) stuck->clear();
@@ -2225,48 +2465,31 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   return !d.empty();
 }
 
-// E<> deadlock. Same search as reachable_net -- reachability with subsumption -- so it runs on
-// the SAME engine; only two things differ, and both are engine parameters:
-//
-//   * the target inspects the ZONE (a state may be only PARTIALLY deadlocked), so it is a
-//     predicate rather than a NetTarget;
-//   * subsumption must be exact inclusion. Deadlock is a per-valuation property: a valuation
-//     dropped by the aLU abstraction could be the deadlocked one. Exact inclusion IS sound here,
-//     because the deadlocked valuations of a subsumed zone lie inside the subsuming zone and are
-//     found when that one is checked.
-//
-// This used to be a second search of its own: single-threaded, with the passed list as an
-// unordered_map<std::string, vector<Dbm>> holding DENSE zone copies keyed by a freshly built
-// string. On the engine it gets the parallel level expansion, the sharded stripe-locked passed
-// list and packed min-graph zone records instead.
-// a_M SUBSUMPTION, NOT EXACT ZONES.
-//
-// This used to pass force_exact=true, which disables the aLU subsumption test outright and
-// falls back to plain inclusion on Extra_LU+-widened zones. That is far stronger than the
-// property needs, and it is what made `E<> deadlock` cost 167805 states on fischer7 against
-// 11951 for plain reachability on the same model.
-//
-// What deadlock actually needs is a BISIMULATION, not exact zones. aLU is only a simulation and
-// so cannot preserve "enables nothing" (Behrmann-Bouyer-Larsen-Pelanek, STTT 8(3):204-215, 2006,
-// Lemma 3; Lemma 1 gives the bisimulation for =_M, and their section 3 says in as many words
-// that Uppaal's deadlock properties are preserved by bisimulation and not by simulation).
-// But set L = U = M with M = max(L, U) per clock and the three clauses of the LU preorder --
-// nu'(x)=nu(x), or L(x) < nu'(x) < nu(x), or U(x) < nu(x) < nu'(x) -- collapse to "equal, or
-// both above M(x)", which is SYMMETRIC. A symmetric simulation is a bisimulation. So the very
-// same dbm_is_alu_le kernel, fed collapsed bounds, IS the a_M test and IS deadlock-sound.
-//
-// This is also exactly what UPPAAL does: its extrapolation is Lower/Upper for reachability but
-// *Local* (per-location max constants) "whenever the query contains either the deadlock keyword
-// or involves a liveness property". force_exact was strictly stronger than UPPAAL.
-//
-// COLLAPSING THE NETWORK'S BOUND ARRAYS, rather than threading a flag through reach_engine, is
-// deliberate: every consumer of L/U downstream becomes M-flavoured at once and consistently.
-// That matters for more than the subsumption test -- the adaptive path can turn extrapolation
-// back on mid-search, and Extra_LU+ with L=U=M is Extra_M+, which (unlike Extra_LU+) can neither
-// invent nor destroy a deadlock. Threading a flag would have left that path unsound.
-//
-// The predicate itself still closes over the ORIGINAL net: it reads guards, invariants and
-// edges, never the bound arrays.
+/// @brief Decide whether a state containing a deadlocked valuation is reachable.
+///
+/// @param net      the network under analysis
+/// @param backend  Seq runs sequentially; anything else runs the multi-threaded CPU engine
+/// @param[out] stats   optional statistics; unchanged when null
+/// @param cancel   optional cancellation flag; see ::reach_engine
+/// @return @c true iff some reachable state has a deadlocked valuation, @c false if none has
+///         **or** the search was cancelled
+///
+/// @par Why a bisimulation is required
+/// Deadlock is the property "enables nothing", which a simulation does not preserve; it needs a
+/// bisimulation (Behrmann, Bouyer, Larsen and Pelánek, STTT 8(3):204–215, 2006, Lemma 3, with
+/// Lemma 1 giving the bisimulation for `=_M`). Setting `L = U = M` for `M = max(L, U)` per clock
+/// collapses the three clauses of the LU preorder to "equal, or both above M(x)", which is
+/// symmetric — and a symmetric simulation is a bisimulation. The ordinary a_LU kernel fed these
+/// collapsed bounds is therefore exactly the a_M test, and is deadlock-sound.
+///
+/// @note The bound arrays are collapsed on a copy of the network rather than a flag being
+///       threaded through the engine, so that every downstream consumer of L and U becomes
+///       M-flavoured at once. This matters beyond the subsumption test: the adaptive path may
+///       turn extrapolation back on mid-search, and `Extra_LU+` with `L = U = M` is `Extra_M+`,
+///       which — unlike `Extra_LU+` — can neither invent nor destroy a deadlock.
+/// @note The predicate closes over the *original* network. It reads guards, invariants and edges,
+///       never the bound arrays, so the collapse does not reach it.
+/// @see DESIGN.md §3 for the full argument and the measured comparison against exact zones.
 bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
                         const std::atomic<bool>* cancel) {
   // The GPU drivers cannot express this target. deadlock_reachable never asks for a GPU backend,
@@ -2275,8 +2498,8 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
   const auto is_dl = [&](const SymState& s) { return state_has_deadlock(net, s); };
 
   // Diagonals make every LU-family abstraction unsound, and the G-bound arrays carry raw encoded
-  // bounds with their own sentinel, so collapsing them correctly is a separate exercise. Both
-  // cases keep the exact behaviour.
+  // bounds with their own sentinel, so collapsing those correctly is a separate exercise. Both
+  // cases fall back to exact zones, which is sound but stores more states.
   if (network_has_diagonal(net) || gsim_on())
     return reach_engine(net, NetTarget{}, is_dl, /*force_exact=*/true, b, stats, nullptr, nullptr,
                         cancel);
