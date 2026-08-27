@@ -1,3 +1,16 @@
+/// @file reach.cpp
+/// @brief Symbolic reachability over a **single** timed automaton.
+///
+/// The single-automaton counterpart of the network engine in @ref netreach.cpp. It is a separate
+/// implementation because it can do something the network engine cannot: rather than falling back
+/// to exact covering on diagonal constraints, it rewrites the automaton into an equivalent
+/// diagonal-free one (::split_diagonals) and then uses the fast `Extra_LU+` abstraction
+/// throughout. That rewrite is tractable for one automaton, whose diagonal atoms are few, and is
+/// what lets the GPU backends accept diagonal models here.
+///
+/// @see netreach.cpp for the network case, and KNOWN_LIMITATION.md §2 for why networks take the
+///      slower route instead.
+
 #include "ptctlmc/reach.hpp"
 
 #include <atomic>
@@ -17,27 +30,49 @@
 
 namespace ptctlmc {
 
-static int g_omp_chunk = 8;  // tunable via set_omp_chunk() / --omp-chunk CLI flag
+static int g_omp_chunk = 8;  ///< OpenMP dynamic-schedule chunk; see ::set_omp_chunk
+
+/// @brief Set the dynamic-schedule chunk used by the parallel frontier expansions.
+/// @param chunk states per scheduling chunk; non-positive values are ignored
+/// @note Process-global and set once from the command line, before any query runs.
 void set_omp_chunk(int chunk) { if (chunk > 0) g_omp_chunk = chunk; }
+
+/// @brief The dynamic-schedule chunk size.
+/// @return the value last set by ::set_omp_chunk (default 8)
 int omp_chunk() { return g_omp_chunk; }
 
 namespace {
 
+/// @brief Conjoin every constraint of @p cs into @p z.
+/// @param[in,out] z the zone, tightened in place
+/// @param cs        the constraints
+/// @return @c false as soon as @p z becomes empty
 bool apply_cs(Dbm& z, const std::vector<Constraint>& cs) {
   for (const auto& c : cs)
     if (!z.constrain(c.i, c.j, c.bound)) return false;
   return true;
 }
 
+/// @brief Let time pass in @p loc, unless the location forbids it.
+/// @param[in,out] z the zone, opened upwards in place
+/// @param loc       the location whose urgency and invariant govern the delay
+/// @post The invariant is re-imposed after the delay, so @p z stays within it.
 void delay_in(Dbm& z, const Location& loc) {
   if (loc.urgent || loc.committed) return;  // no time may pass
   z.delay();
   apply_cs(z, loc.invariant);
 }
 
-// Extend LU bounds with the constants appearing in `cs` (so extrapolation never
-// widens past what a guard / invariant / query condition needs — this is what keeps
-// Extra_LU sound w.r.t. the property being checked).
+/// @brief Widen the LU bound arrays to dominate the constants in @p cs.
+///
+/// @param[in,out] L per-clock lower bounds, widened in place
+/// @param[in,out] U per-clock upper bounds, widened in place
+/// @param cs        constraints to absorb
+///
+/// @post @p L and @p U only ever grow, so repeated calls compose.
+/// @warning The query's own constants must be absorbed before exploration. Otherwise the
+///          extrapolation could widen past a constant the property tests and merge two states the
+///          query distinguishes.
 void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
                    const std::vector<Constraint>& cs) {
   for (const auto& c : cs) {
@@ -54,9 +89,13 @@ void extend_bounds(std::vector<std::int32_t>& L, std::vector<std::int32_t>& U,
   }
 }
 
-// Extrapolation policy: LU+ (fast, sound for diagonal-FREE automata) or per-pair
-// k-normalisation (sound WITH diagonal constraints). `C` is the per-pair max-constant
-// matrix used by the diagonal path.
+/// @brief Which extrapolation to apply to each explored zone.
+///
+/// @note `Extra_LU+` is the fast path and is sound only for diagonal-free automata. The
+///       diagonal-preserving variant is the fallback for an automaton that was not split.
+/// @note After ::split_diagonals has run, the automaton being explored is diagonal-free by
+///       construction, so ::reachable sets @c diagonal to @c false even for a model that
+///       originally had diagonals.
 struct Extrap {
   const std::vector<std::int32_t>*L, *U;
   bool diagonal = false;
@@ -66,29 +105,62 @@ struct Extrap {
   }
 };
 
-// Any difference constraint x_i - x_j with i>0 && j>0 is a "diagonal".
+/// @brief Does @p cs contain a constraint comparing two clocks?
+/// @param cs the constraints to scan
+/// @return @c true iff some constraint has both indices non-zero
 bool has_diagonal(const std::vector<Constraint>& cs) {
   for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
   return false;
 }
 
-// --- diagonal splitting: rewrite a TA with diagonal guards into an equivalent
-// diagonal-FREE one, so Extra_LU+ / aLU is sound and exploration terminates. Each
-// distinct diagonal atom d ≡ (x_i - x_j ~ c) becomes a boolean recorded in the
-// location: since x_i - x_j is constant except at resets, d's truth only changes when
-// x_i or x_j is reset, and the new truth is a NON-diagonal condition on the surviving
-// clock. Locations split into (loc, bitvector); reset edges split on those conditions.
-struct SplitTA { TimedAutomaton ta; int nb = 1; std::vector<Constraint> atoms; };
+/// @brief An automaton rewritten diagonal-free, with the atoms its locations encode.
+///
+/// @invariant `ta` contains no diagonal constraint, so `Extra_LU+` and a_LU are sound on it.
+/// @invariant Location `l` of the original automaton corresponds to locations
+///            `l * nb .. (l + 1) * nb` of `ta`, one per valuation of the `atoms` bitvector.
+struct SplitTA {
+  TimedAutomaton ta;                ///< the diagonal-free automaton
+  int nb = 1;                       ///< split locations per original location, i.e. `2^|atoms|`
+  std::vector<Constraint> atoms;    ///< the diagonal atoms, in bit order
+};
 
+/// @brief Index of a diagonal atom in the atom list.
+/// @param D the atom list
+/// @param c the constraint to find, matched on both indices and the exact bound
+/// @return its index, or -1 if absent
 int find_atom(const std::vector<Constraint>& D, const Constraint& c) {
   for (int k = 0; k < static_cast<int>(D.size()); ++k)
     if (D[k].i == c.i && D[k].j == c.j && D[k].bound == c.bound) return k;
   return -1;
 }
-bool diag_true_at_zero(const Constraint& c) {  // x_i - x_j = 0 satisfies (0 ~ value)?
+/// @brief Does the atom hold when its two clocks are equal?
+/// @param c the diagonal atom
+/// @return @c true iff `0` satisfies the atom's bound
+/// @note This is the truth of the atom immediately after both its clocks are reset, which is what
+///       the split needs to label the target location of a resetting edge.
+bool diag_true_at_zero(const Constraint& c) {
   return raw_is_strict(c.bound) ? (0 < raw_bound(c.bound)) : (0 <= raw_bound(c.bound));
 }
 
+/// @brief Rewrite an automaton with diagonal constraints into an equivalent diagonal-free one.
+///
+/// Each distinct diagonal atom `x_i - x_j ~ c` becomes a boolean recorded in the location. The
+/// difference `x_i - x_j` is constant except at a reset, so an atom's truth can change only when
+/// one of its two clocks is reset — and the new truth is then a **non-diagonal** condition on the
+/// surviving clock. Locations therefore split into (location, bitvector) pairs and resetting edges
+/// split on those non-diagonal conditions.
+///
+/// @param in    the original automaton
+/// @param query the query's constraints, whose diagonal atoms must also be encoded so the target
+///              can be tested on a split location's bits
+/// @return the rewritten automaton, with `nb == 1` and no atoms when @p in is already
+///         diagonal-free
+///
+/// @post The result is language-equivalent to @p in with respect to the encoded atoms, so a
+///       verdict on it is a verdict on @p in.
+/// @note The construction is exponential in the number of *distinct* diagonal atoms. That is
+///       tractable for a single automaton, where they are few, and is why the network engine does
+///       not use this route.
 SplitTA split_diagonals(const TimedAutomaton& in, const std::vector<Constraint>& query) {
   SplitTA S;
   std::vector<Constraint>& D = S.atoms;
@@ -169,6 +241,11 @@ SplitTA split_diagonals(const TimedAutomaton& in, const std::vector<Constraint>&
   return S;
 }
 
+/// @brief Build the automaton's initial zone.
+/// @param ta the automaton
+/// @param[out] z0 receives the initial zone; meaningful only on @c true
+/// @param ex the extrapolation to apply
+/// @return @c false when the initial invariant is unsatisfiable
 bool initial_zone(const TimedAutomaton& ta, Dbm& z0, const Extrap& ex) {
   z0 = Dbm(ta.nclocks);
   if (!apply_cs(z0, ta.locations[ta.initial].invariant)) return false;
@@ -177,6 +254,13 @@ bool initial_zone(const TimedAutomaton& ta, Dbm& z0, const Extrap& ex) {
   return true;
 }
 
+/// @brief Generate the symbolic successors of one (location, zone) pair.
+/// @param ta  the automaton
+/// @param loc the source location
+/// @param z   the source zone
+/// @param[out] out successors are appended as (target location, zone)
+/// @param ex  the extrapolation applied when closing each successor
+/// @post Every appended successor has a non-empty zone.
 void successors(const TimedAutomaton& ta, int loc, const Dbm& z,
                 std::vector<std::pair<int, Dbm>>& out, const Extrap& ex) {
   for (int ei : ta.edges_from(loc)) {
@@ -194,6 +278,19 @@ void successors(const TimedAutomaton& ta, int loc, const Dbm& z,
 
 }  // namespace
 
+/// @brief Decide whether a target location satisfying a clock condition is reachable.
+///
+/// @param ta         the automaton
+/// @param target_loc the target location in @p ta's original numbering
+/// @param target     clock constraints the target state must satisfy
+/// @param[out] stats optional statistics; unchanged when null
+/// @param backend    which expansion backend to run
+/// @return @c true iff such a state is reachable
+///
+/// @note When @p ta has diagonal constraints it is first rewritten diagonal-free by
+///       ::split_diagonals, and the target is translated accordingly: its non-diagonal atoms stay
+///       zone constraints while its diagonal atoms become required bits of the split location.
+///       The GPU backends therefore accept diagonal models here, via a per-location accept mask.
 bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Constraint>& target,
                ReachStats* stats, Backend backend) {
   bool parallel = (backend == Backend::Omp);
@@ -202,8 +299,9 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
   std::vector<std::int32_t> L = ta.lbound, U = ta.ubound;
   extend_bounds(L, U, target);
 
-  // Diagonal constraints make LU/aLU unsound. Rewrite the automaton diagonal-FREE by
-  // splitting locations on the truth of each diagonal atom, then use fast Extra_LU+.
+  // Diagonal constraints make the LU family unsound (Bouyer 2004). Rather than weakening the
+  // covering, rewrite the automaton diagonal-free by splitting locations on the truth of each
+  // diagonal atom, which keeps the fast Extra_LU+ path available.
   bool diag = has_diagonal(target);
   for (const auto& l : ta.locations) if (has_diagonal(l.invariant)) diag = true;
   for (const auto& e : ta.edges) if (has_diagonal(e.guard)) diag = true;
@@ -222,8 +320,8 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
   Extrap ex;
   ex.L = &L; ex.U = &U; ex.diagonal = false;  // W is diagonal-free
 
-  // Translate the target: location (÷ nb), non-diagonal clock atoms (checked on the
-  // zone), and diagonal atoms (checked via the split location's boolean bit).
+  // Translate the target across the split: the location scales by nb, non-diagonal atoms remain
+  // zone constraints, and each diagonal atom becomes a required bit of the split location.
   std::vector<Constraint> tgt_clocks;
   std::vector<int> tgt_diag_bits;
   for (const auto& c : target) {
