@@ -21,17 +21,22 @@ TCHECKER_LIVE_DIR="$LIVE_DIR/tchecker"
 
 mkdir -p "$PTCTLMC_LIVE_DIR" "$LTSMIN_LIVE_DIR" "$UPPAAL_LIVE_DIR" "$TCHECKER_LIVE_DIR"
 
-PTCTLMC_BIN="${PTCTLMC_BIN:-$BENCH_DIR/../build_new_engine/ptctlmc}"
+PTCTLMC_BIN="${PTCTLMC_BIN:-$BENCH_DIR/../build_shipping/ptctlmc}"
 
 echo "=== Liveness pipeline started: $(date -Iseconds) ==="
 
-echo "[ptctlmc] live, threads 16 -> 24 -> 32 (sequential), all families"
+# ONE THREAD COUNT, not three. The liveness engine has no OpenMP in it at all (see
+# KNOWN_LIMITATION.md #6): wall time and peak RSS are identical at 1, 4, 16 and 32 threads, so a
+# t16/t24/t32 sweep measures the same sequential run three times and triples a multi-day job for
+# no information. t16 is kept rather than t1 because it is the column live_results/ptctlmc_old
+# holds for the previous engine, so the two stay directly comparable.
+echo "[ptctlmc] live, threads 16 only -- the liveness engine is sequential, all families"
 PTCTLMC_BIN="$PTCTLMC_BIN" python3 "$SCRIPT_DIR/bench.py" run \
   --tool ptctlmc \
   --sim g \
   --queries live \
   --families all \
-  --threads 16 24 32 \
+  --threads 1 \
   --outdir "$PTCTLMC_LIVE_DIR" \
   --tag ptctlmc_live \
   --ptctlmc-bin "$PTCTLMC_BIN"

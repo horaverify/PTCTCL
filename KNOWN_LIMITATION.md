@@ -124,29 +124,77 @@ is substantially slower, so a model that trips the cap is slow rather than wrong
 **Detection.** A liveness query that is unexpectedly slow on a model with many outgoing transitions
 at a single discrete state is the signature. The cap is a fixed 64; it is not configurable.
 
+
 ---
 
-## 6. The `omp` backend's state count is not reproducible
+## 6. The liveness engine is sequential, and the obvious ways to parallelise it do not pay
 
-Verdicts are deterministic. **Stored-state counts are not.**
+**Mechanism.** `src/netliveness.cpp` contains no `#pragma omp` at all, against twelve in
+`src/netreach.cpp`. `--backend omp` and `OMP_NUM_THREADS` change nothing for `p --> q`: wall time
+and peak RSS on `arbiter14` are identical at 1, 4, 16 and 32 threads. The reachability engine is
+parallel; the liveness engine that replaced `leads_to_net` is not.
 
-**Mechanism.** Workers insert into the shared striped passed set as they expand, and the
-convex-union merge in `NetPassed::add` is order-sensitive: whether two zones merge into one depends
-on which arrives first. Thread interleaving therefore changes how many zones survive, and the
-per-level merge window (`kMergeScan`) sees a different newest-first ordering from run to run. The
-adaptive mirror-promotion rule is likewise driven by per-chain visit counts, which are
-schedule-dependent.
+**Where the time actually goes.** Measured per phase, and it is not the same phase twice:
 
-**Consequence.** The verdict is unaffected — merging is an optimisation, and skipping one only
-leaves two zones where one would do. Only the count moves. Measured on `fischer6 A[] not deadlock`,
-six consecutive `--backend omp` runs:
+| phase | `arbiter14` | `phil9` |
+| --- | --- | --- |
+| forward search (`base_forward`) | 2.18 s (58%) | 0.28 s (11%) |
+| constraint map (`build_atom_map`) | 1.33 s (36%) | 0.11 s (4%) |
+| backward fixpoint (`gfp_on`) | 0.10 s (3%) | 2.16 s (84%) |
 
-| backend | stored states |
-|---|---|
-| `omp`, 6 runs | 12 005 / 12 011 / 12 058 / 12 081 / 12 082 / 12 089 |
-| `seq`, any run | **11 889** |
+There is no single hot phase to parallelise. A model is dominated either by the forward half or by
+the backward one, and the two want opposite treatments.
 
-A spread of 84 states, and consistently above the sequential count.
+**Why the outer-search route does not pay.** Parallelising successor generation — the shape
+`mostoptimized` used, generation is pure so it runs unlocked while interning stays serial — is
+capped by Amdahl at **1.33x** even on the most forward-heavy family, because generation is only 25%
+of `arbiter14`. Measured, it was worse than that: 1.19x wall at 16 threads for **2.6x** the CPU, and
+*slower* than the sequential driver at one thread. The cause is the allocator, not the barrier.
+Zones come from `ThreadDbmPool`, which is `thread_local`; workers allocate them and the serial
+absorb frees them on the main thread, so the worker pools never recycle and every generated zone
+becomes a real cross-thread `malloc`/`free`. Producer-consumer allocation defeats a per-thread pool.
 
-**Rule.** Any state count quoted in a paper, a benchmark table or a regression baseline must come
-from `--backend seq`, which is deterministic. Use `omp` for timing, `seq` for counts.
+**Why the backward route does not pay either.** `gfp_on`'s round-robin sweep parallelises cleanly if
+it is made Jacobi — read the previous round's `W`, write a second buffer — and it is *sound*: the
+operator is monotone and the iteration descends from the same start, so both schedules converge to
+the same greatest fixpoint. Measured, at 16 threads: `phil9` **6.9x** faster (4.86 s -> 0.71 s),
+`fischer7` 2.5x, `csma9` 2.3x, `twolock8` unchanged — and `arbiter14` **4.6x slower**, because
+Gauss-Seidel propagates along a chain within one round and Jacobi advances one edge per round. A
+fixpoint that converged in ~2 rounds and cost 3% of the run became the whole run. The families that
+win are the ones where the fixpoint was already expensive; the families that lose are the ones where
+it was free. A schedule that switches between the two on a measured trigger is the obvious next
+step, and is not implemented.
+
+**Consequence.** The `t16`/`t24`/`t32` columns of a liveness sweep measure the same sequential engine
+three times. `benchmarks/scripts/run_live_pipeline.sh` therefore runs ptctlmc liveness at one thread
+count only; running three would triple a multi-day sweep for no information.
+
+---
+
+## 7. Stored zones are dense, and minimal-graph packing cannot back the covering test
+
+**Mechanism.** Zones dominate this engine's memory: on `arbiter14`, 109.8 MB of 178 MB live, 62%.
+`HDBM/include/ptctlmc/mindbm.hpp` already packs a zone into its minimal graph and would cut that
+term **15.2x** (112.5 MB -> 7.4 MB measured on the same graph), and `ZoneIntern` in the reachability
+engine uses exactly that. The liveness engine cannot.
+
+`dbm_is_alu_le` reads the covering zone as `Zp[y][x]` at an *arbitrary* `(y, x)`. A minimal-graph
+record stores only the non-redundant edges; the value at a redundant entry is the shortest path
+through the others, which is what `mindbm_unpack`'s `O(dim^3)` closure reconstructs. Substituting
+"the stored edge, `+inf` where absent" is not conservative in the safe direction: that bound is too
+*large*, which makes the witness test `Zp[y][x] < Z[y][x]` harder to satisfy, which reports **more**
+zones subsumed than truly are — dropped states and a possibly wrong verdict. `mindbm_includes_dense`
+avoids the closure only because inclusion needs the stored zone's own constraints and nothing else;
+aLU has no such formulation.
+
+**What is done instead.** Entries are narrowed rather than the graph packed: stored zones live in a
+chunked `int16` arena (`Otf::zs_`), keeping the dense layout and its `O(1)` index. No new kernel was
+needed — the predicates are templated on their operands' entry type and read through `zget`, so
+`dbm_is_alu_le` and `dbm_includes` take a narrow stored operand directly and the hot covering path
+never widens anything. Bounds outside `int16` keep a dense copy for that node alone (`Otf::nok_`);
+truncating would silently move the zone.
+
+**Consequence.** Half the zone term, not a fifteenth of it. Measured end to end against the engine
+before this work, at identical verdicts and identical stored-state counts: `arbiter14` 439 MB ->
+272 MB, `arbiter16` 2329 MB -> 1438 MB, both **-38%**. Closing the rest needs an aLU kernel that
+works on a minimal graph without reconstructing it, which is an open problem here, not a tuning knob.

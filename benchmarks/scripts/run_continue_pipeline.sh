@@ -28,14 +28,6 @@ families_in() {
   awk -F, 'NR==1 {next} $1 != "" && $1 != "family" {print $1}' "$@" | sort -u
 }
 
-families_at_threads() {
-  # Print distinct families that have rows AT a given thread count. Column 4 is `threads`.
-  # args: <threads> <csv>...
-  local th="$1"; shift
-  awk -F, -v th="$th" 'NR==1 {next} $1 != "" && $1 != "family" && $4 == th {print $1}' "$@" \
-    | sort -u
-}
-
 missing_family_spec() {
   # Convert set difference into bench.py family spec: fam1;fam2;...
   # args: <all_set_file> <done_set_file>
@@ -78,38 +70,50 @@ run_verifyta_continue() {
 }
 
 run_ltsmin_continue() {
-  local all_file done_file missing th
+  local all_file done_file missing
   all_file="$(mktemp)"
   done_file="$(mktemp)"
   trap 'rm -f "$all_file" "$done_file"' RETURN
 
   families_in "$PTCTLMC_DIR"/*.csv > "$all_file"
+  if ls "$LTSMIN_DIR"/*.csv >/dev/null 2>&1; then
+    families_in "$LTSMIN_DIR"/*.csv > "$done_file"
+  else
+    : > "$done_file"
+  fi
 
-  # The missing set is per THREAD COUNT, not per family. A family appearing in some ltsmin CSV
-  # says nothing about whether it has ever run at 32 threads: comparing bare family sets made
-  # t32 -- which has no rows anywhere -- look complete, and skipped the whole tool.
-  for th in 16 24 32; do
-    if ls "$LTSMIN_DIR"/*.csv >/dev/null 2>&1; then
-      families_at_threads "$th" "$LTSMIN_DIR"/*.csv > "$done_file"
-    else
-      : > "$done_file"
-    fi
+  missing="$(missing_family_spec "$all_file" "$done_file")"
+  if [[ -z "$missing" ]]; then
+    echo "[ltsmin] no missing families detected."
+    return 0
+  fi
 
-    missing="$(missing_family_spec "$all_file" "$done_file")"
-    if [[ -z "$missing" ]]; then
-      echo "[ltsmin] t$th: no missing families."
-      continue
-    fi
+  echo "[ltsmin] missing families: $missing"
+  echo "[ltsmin] running threads 16 -> 24 -> 32 (sequential)"
 
-    echo "[ltsmin] t$th: missing families: $missing"
-    python3 "$SCRIPT_DIR/bench.py" run \
-      --tool ltsmin \
-      --threads "$th" \
-      --families "$missing" \
-      --outdir "$LTSMIN_DIR" \
-      --tag "$(basename "$LTS_BASE")" \
-      --seed "$LTSMIN_DIR"/*.csv
-  done
+  python3 "$SCRIPT_DIR/bench.py" run \
+    --tool ltsmin \
+    --threads 16 \
+    --families "$missing" \
+    --outdir "$LTSMIN_DIR" \
+    --tag "$(basename "$LTS_BASE")" \
+    --seed "$LTSMIN_DIR/ltsmin_t16_2h.csv" "$LTSMIN_DIR/ltsmin_t24_2h.csv"
+
+  python3 "$SCRIPT_DIR/bench.py" run \
+    --tool ltsmin \
+    --threads 24 \
+    --families "$missing" \
+    --outdir "$LTSMIN_DIR" \
+    --tag "$(basename "$LTS_BASE")" \
+    --seed "$LTSMIN_DIR/ltsmin_t16_2h.csv" "$LTSMIN_DIR/ltsmin_t24_2h.csv"
+
+  python3 "$SCRIPT_DIR/bench.py" run \
+    --tool ltsmin \
+    --threads 32 \
+    --families "$missing" \
+    --outdir "$LTSMIN_DIR" \
+    --tag "$(basename "$LTS_BASE")" \
+    --seed "$LTSMIN_DIR/ltsmin_t16_2h.csv" "$LTSMIN_DIR/ltsmin_t24_2h.csv"
 
   # Merge thread CSVs into the requested single continuation CSV.
   : > "$LTS_CONTINUE_CSV"

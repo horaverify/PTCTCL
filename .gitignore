@@ -103,3 +103,5 @@ benchmarks/results_complete/complete.pgid
 
 # local-only archive of superseded material
 old_stuff/
+
+.tmp/

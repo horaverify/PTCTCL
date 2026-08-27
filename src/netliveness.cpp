@@ -27,8 +27,15 @@
 /// and what was measured and rejected — are collected in @c DESIGN.md at the repository root.
 
 #include "ptctlmc/netreach.hpp"
+#include "ptctlmc/reach.hpp"
+
+#ifdef PTCTLMC_HAVE_OPENMP
+#include <omp.h>
+#endif
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -416,8 +423,37 @@ static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
 /// @brief One outgoing edge of the liveness graph: a target node and the tag that produced it.
 struct OtfEdge {
   int tgt;      ///< index into ::Otf::node
-  GfpTag tag;   ///< the participating edges, for ::gfp_pre
+  int tag;      ///< index into ::Otf::tags_, the deduplicated tag pool
 };
+
+/// @brief Value equality for ::GfpTag, so the tag pool can deduplicate.
+inline bool gfp_tag_eq(const GfpTag& a, const GfpTag& b) {
+  if (a.parts.size() != b.parts.size() || a.abstain.size() != b.abstain.size()) return false;
+  for (std::size_t i = 0; i < a.parts.size(); ++i)
+    if (a.parts[i] != b.parts[i]) return false;
+  for (std::size_t i = 0; i < a.abstain.size(); ++i) {
+    const Constraint& x = a.abstain[i];
+    const Constraint& y = b.abstain[i];
+    if (x.i != y.i || x.j != y.j || x.bound != y.bound) return false;
+  }
+  return true;
+}
+
+/// @brief Hash of a ::GfpTag's value, keyed on the same fields ::gfp_tag_eq compares.
+inline std::uint64_t gfp_tag_hash(const GfpTag& t) {
+  std::uint64_t h = 1469598103934665603ULL;
+  const auto mix = [&h](std::uint64_t v) {
+    h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  };
+  for (const auto& pr : t.parts) { mix(std::uint64_t(std::uint32_t(pr.first))); mix(std::uint64_t(std::uint32_t(pr.second))); }
+  mix(0xabcdULL);
+  for (const auto& c : t.abstain) {
+    mix(std::uint64_t(std::uint32_t(c.i)));
+    mix(std::uint64_t(std::uint32_t(c.j)));
+    mix(std::uint64_t(std::uint32_t(c.bound)));
+  }
+  return h;
+}
 
 /// @name The deadlock-completion constraint map
 /// @{
@@ -508,6 +544,29 @@ class Otf {
   /// @warning The result is meaningless if ::was_cancelled() is true afterwards.
   bool run(GfpStats* gs);
 
+  /// @brief Drop the forward graph and everything indexed by it.
+  ///
+  /// After this the instance may not be run, finished or queried again; only destruction is
+  /// legal. It exists because ::leads_to_otf builds a SECOND engine over the same network once
+  /// the constraint map is in hand, and the first one's graph — nodes, zones, adjacency and the
+  /// discrete-key buckets — is dead from that point on but would otherwise stay resident for the
+  /// whole of the second search, doubling the peak. The map itself owns its atoms, so nothing
+  /// released here is reachable from it.
+  void release() {
+    std::vector<SymState>().swap(node);
+    std::vector<std::vector<OtfEdge>>().swap(adj);
+    std::unordered_map<std::string, std::vector<int>>().swap(bucket);
+    std::vector<GfpTag>().swap(tags_);
+    std::vector<std::vector<nraw_t>>().swap(zs_);
+    std::vector<char>().swap(nok_);
+    std::unordered_map<std::uint64_t, std::vector<int>>().swap(tagidx_);
+    std::vector<char>().swap(expanded);
+    std::vector<char>().swap(pc);
+    std::vector<char>().swap(qc);
+    std::vector<std::uint64_t>().swap(ntag_);
+    std::vector<std::uint64_t>().swap(ntag_out_);
+  }
+
   /// @brief Run the forward half only, leaving the backward fixpoint unpaid.
   ///
   /// ::build_atom_map reads only the finished forward *graph* — the reachable discrete keys and
@@ -584,11 +643,105 @@ class Otf {
 
   std::vector<SymState> node;                  ///< the forward graph's vertices
   std::vector<std::vector<OtfEdge>> adj;       ///< tagged out-edges, indexed like ::node
-  std::vector<std::vector<int>> pred;          ///< reverse edges, indexed like ::node
+  // THE TAG POOL. A tag names the edges that fire on a transition, so it is a property of the
+  // *transition*, not of the (source, target) pair: the same participant set fires out of every
+  // state that offers it, and on these models the graph carries ~8 edges per node against a few
+  // hundred distinct tags in total. Stored by value, a GfpTag is two std::vectors -- 48 bytes of
+  // headers per edge plus a heap block for `parts`, and `abstain` is empty for every edge that
+  // is not a broadcast with guarded receivers. Interned, an edge costs one int.
+  std::vector<GfpTag> tags_;                   ///< the pool; ::OtfEdge::tag indexes it
+  std::unordered_map<std::uint64_t, std::vector<int>> tagidx_;  ///< hash -> candidate pool slots
   std::unordered_map<std::string, std::vector<int>> bucket;  ///< discrete key -> node indices
   std::vector<char> expanded;                  ///< 1 once ::expand has computed the out-edges
   std::vector<char> pc, qc;                    ///< p/q predicate caches; 2 = not yet evaluated
   bool intern_grew = false;                    ///< last ::intern rewrote a stored zone
+
+  // NARROW ZONE STORE. A stored zone dominates this engine's memory -- 62% of everything live
+  // on arbiter14 -- and the obvious cure, the minimal-graph record mindbm.hpp already packs, is
+  // not usable HERE: dbm_is_alu_le reads the covering zone at an ARBITRARY (y,x), a minimal
+  // graph keeps only the non-redundant edges, and recovering an arbitrary entry from one is the
+  // O(dim^3) closure mindbm_unpack runs. Reading it "as stored, +inf where absent" would use a
+  // bound that is too LARGE, which makes the witness test harder, which reports MORE zones
+  // subsumed than truly are -- dropped states and a possibly wrong verdict. See
+  // KNOWN_LIMITATION.md.
+  //
+  // Narrowing the ENTRIES instead keeps the dense layout and its O(1) index while halving the
+  // bill, and needs no new kernel: the predicates are templated on their operands' entry type
+  // and read through zget, so a narrow stored operand drops straight into dbm_is_alu_le and
+  // dbm_includes -- the hot covering path never widens anything.
+  //
+  // A bound outside int16 keeps its dense copy in node[i].zone instead (nok_[i] == 0).
+  // Truncating would silently move the zone, so the escape is not optional; it simply never
+  // fires on models whose constants sit far inside the range.
+  // CHUNKED, not one growing vector. A single std::vector doubles, so the arena can sit at up
+  // to 2x the entries it holds and a reallocation transiently needs both copies -- on arbiter16
+  // that over-allocation ate 80% of what narrowing had just saved. Fixed chunks allocate what
+  // they use, never copy, and never invalidate a pointer into an earlier chunk.
+  static constexpr std::size_t kZChunk = 1024;   ///< nodes per chunk
+  std::vector<std::vector<nraw_t>> zs_;          ///< chunk c holds nodes [c*kZChunk, ...)
+  std::vector<char> nok_;          ///< 1 iff node i's zone lives in ::zs_, not in node[i].zone
+  std::size_t zd2_ = 0;            ///< dim * dim
+  int zdim_ = 0;                   ///< nclocks + 1
+
+  const nraw_t* zp(int i) const {
+    return zs_[std::size_t(i) / kZChunk].data() + (std::size_t(i) % kZChunk) * zd2_;
+  }
+
+  /// @brief Store node @p i's zone narrow, or keep it dense if any bound does not fit.
+  /// @param z  consumed; on the dense path it becomes @c node[i].zone
+  void zstore(int i, Dbm&& z) {
+    if (zdim_ <= 0 || z.dim() != zdim_) { node[i].zone = std::move(z); nok_[i] = 0; return; }
+    const raw_t* d = z.data().data();
+    for (std::size_t k = 0; k < zd2_; ++k)
+      if (!mindbm_fits16(d[k])) { node[i].zone = std::move(z); nok_[i] = 0; return; }
+    const std::size_t c = std::size_t(i) / kZChunk;
+    if (zs_.size() <= c) zs_.resize(c + 1);
+    if (zs_[c].empty()) zs_[c].resize(kZChunk * zd2_);
+    nraw_t* o = zs_[c].data() + (std::size_t(i) % kZChunk) * zd2_;
+    for (std::size_t k = 0; k < zd2_; ++k) zput(o, static_cast<int>(k), d[k]);
+    nok_[i] = 1;
+    node[i].zone = Dbm();                       // the narrow copy is now the only one
+  }
+
+  /// @brief Node @p i's zone as a dense matrix, widened into @p sc only when it is stored narrow.
+  const Dbm& zread(int i, Dbm& sc) const {
+    if (!nok_[i]) return node[i].zone;
+    if (sc.dim() != zdim_) sc = Dbm(zdim_ - 1);
+    raw_t* o = sc.data().data();
+    const nraw_t* d = zp(i);
+    for (std::size_t k = 0; k < zd2_; ++k) o[k] = zget(d, static_cast<int>(k));
+    return sc;
+  }
+
+  /// @brief Node @p i as a whole state; @p sc is reused, so its buffers survive between calls.
+  const SymState& sread(int i, SymState& sc) const {
+    if (!nok_[i]) return node[i];
+    sc.locs.assign(node[i].locs.begin(), node[i].locs.end());
+    sc.ints.assign(node[i].ints.begin(), node[i].ints.end());
+    zread(i, sc.zone);
+    return sc;
+  }
+
+  // The four covering tests, each dispatching once on where the stored zone lives. Both arms
+  // are the same kernel at a different entry type, so the narrow arm is not an approximation.
+  bool alu_le_stored(const Dbm& z, int j) const {
+    return nok_[j] ? dbm_is_alu_le(z.data().data(), zp(j), zdim_, bL.data(), bU.data())
+                   : dbm_is_alu_le(z.data().data(), node[j].zone.data().data(), zdim_,
+                                   bL.data(), bU.data());
+  }
+  bool alu_le_new(int j, const Dbm& z) const {
+    return nok_[j] ? dbm_is_alu_le(zp(j), z.data().data(), zdim_, bL.data(), bU.data())
+                   : dbm_is_alu_le(node[j].zone.data().data(), z.data().data(), zdim_,
+                                   bL.data(), bU.data());
+  }
+  bool stored_includes(int j, const Dbm& z) const {
+    return nok_[j] ? dbm_includes(zp(j), z.data().data(), zdim_)
+                   : dbm_includes(node[j].zone.data().data(), z.data().data(), zdim_);
+  }
+  bool includes_stored(const Dbm& z, int j) const {
+    return nok_[j] ? dbm_includes(z.data().data(), zp(j), zdim_)
+                   : dbm_includes(z.data().data(), node[j].zone.data().data(), zdim_);
+  }
   const AtomMap* amap_ = nullptr;              ///< null = ordinary a_LU, no cells
 
   /// @brief Per-node "In" mask: bit @c a is set iff the node's zone lies wholly inside atom @c a.
@@ -606,6 +759,7 @@ class Otf {
   bool is_nq(int i);
   void grow();
   int intern(SymState&& s);
+  int intern_tag(const GfpTag& t);
   void expand(int u);
   bool time_diverges(const SymState& s) const;
   Federation stop_set(int u);                  ///< exact NoSucc; requires `expanded[u]`
@@ -651,6 +805,8 @@ class Otf {
 /// @note Diagonal models cannot use a_LU at all (Bouyer 2004), so they keep ExNoDiag with
 ///       inclusion covering and extrapolation stays load-bearing there.
 void Otf::setup() {
+  zdim_ = net.nclocks + 1;
+  zd2_ = std::size_t(zdim_) * std::size_t(zdim_);
   L = net.lbound;
   U = net.ubound;
   use_alu = !force_exact_ && !network_has_diagonal(net);
@@ -701,9 +857,9 @@ void Otf::grow() {
   if (pc.size() < n) pc.resize(n, 2);
   if (qc.size() < n) qc.resize(n, 2);
   if (adj.size() < n) adj.resize(n);
-  if (pred.size() < n) pred.resize(n);
   if (ntag_.size() < n) ntag_.resize(n, 0);
   if (ntag_out_.size() < n) ntag_out_.resize(n, 0);
+  if (nok_.size() < n) nok_.resize(n, 0);
 }
 
 bool Otf::is_p(int i) {
@@ -895,12 +1051,13 @@ int Otf::intern(SymState&& s) {
   const int dim2 = s.zone.dim();
   const bool tagcheck = tagged;
   const bool reccheck = tagcheck;
+  Dbm zsc;                                                  // widening scratch, reused
   auto covered = [&](int j) {
     if (reccheck) {                                         // straddling operands: recurse
-      return cover_rec(s.zone, tag, node[j].zone, ntag_out_[j], *atoms, 0);
+      return cover_rec(s.zone, tag, zread(j, zsc), ntag_out_[j], *atoms, 0);
     }
     if (tagcheck && (ntag_[j] & ~tag) != 0) return false;   // Z |= phi but Z' does not: refuse
-    return use_alu ? s.zone.alu_subsumed_by(node[j].zone, bL, bU) : node[j].zone.includes(s.zone);
+    return use_alu ? alu_le_stored(s.zone, j) : stored_includes(j, s.zone);
   };
   // WHAT THE REWRITING PATHS OWE.
   //
@@ -918,16 +1075,16 @@ int Otf::intern(SymState&& s) {
   // Both paths must REFRESH the stored masks, since the stored zone changed.
   auto covers = [&](int j) {
     if (reccheck) {
-      return cover_rec(node[j].zone, ntag_[j], s.zone, tag_out, *atoms, 0);
+      return cover_rec(zread(j, zsc), ntag_[j], s.zone, tag_out, *atoms, 0);
     }
     if (tagcheck && ntag_[j] != tag) return false;          // rewriting: equality, see above
-    return use_alu ? node[j].zone.alu_subsumed_by(s.zone, bL, bU) : s.zone.includes(node[j].zone);
+    return use_alu ? alu_le_new(j, s.zone) : includes_stored(s.zone, j);
   };
   for (int j : b)
     if (covered(j)) return j;
   for (std::size_t k = 0; k < b.size(); ++k)
       if (covers(b[k])) {
-        node[b[k]].zone = s.zone;
+        zstore(b[k], Dbm(s.zone));
         if (reccheck) { ntag_[b[k]] = tag; ntag_out_[b[k]] = tag_out; }
         intern_grew = true;
         return b[k];
@@ -943,22 +1100,26 @@ int Otf::intern(SymState&& s) {
   // pairwise unions happen to be convex.
   {
     for (int j : b) {
-      if (node[j].zone.dim() != dim2) continue;
-      Dbm t = node[j].zone;
+      Dbm t = zread(j, zsc);              // copy: try_union rewrites its left operand
+      if (t.dim() != dim2) continue;
       if (t.try_union(s.zone)) {          // union is exactly convex: absorb, no approximation
-        node[j].zone = std::move(t);
-        if (reccheck) classify_atoms(node[j].zone, *atoms, &ntag_[j], &ntag_out_[j]);
+        if (reccheck) classify_atoms(t, *atoms, &ntag_[j], &ntag_out_[j]);
+        zstore(j, std::move(t));
         intern_grew = true;
         return j;
       }
     }
   }
   const int id = static_cast<int>(node.size());
+  Dbm znew = std::move(s.zone);           // taken out first: zstore decides where it lands
+  s.zone = Dbm();
   node.push_back(std::move(s));
   if (ntag_.size() <= static_cast<std::size_t>(id)) ntag_.resize(id + 1, 0);
   if (ntag_out_.size() <= static_cast<std::size_t>(id)) ntag_out_.resize(id + 1, 0);
   ntag_[id] = tag;
   ntag_out_[id] = tag_out;
+  if (nok_.size() <= static_cast<std::size_t>(id)) nok_.resize(id + 1, 0);
+  zstore(id, std::move(znew));
   b.push_back(id);
   ++outer_nodes;
   grow();
@@ -1005,13 +1166,32 @@ void Otf::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
 ///
 /// @post `expanded[u]` is set unless the expansion re-entered @p u through a rewrite, or the
 ///       search was cancelled before any work was done.
-/// @post For every successor @c v, `adj[u]` gains an edge to @c v and `pred[v]` gains @p u.
+/// @post For every successor @c v, `adj[u]` gains an edge to @c v.
 ///
 /// @warning If ::Otf::intern rewrote a stored zone, that node's adjacency was computed from the
-///          smaller zone and is now stale. It is cleared here, its `pred` back-links are
-///          removed, and `expanded` is reset so the driver re-expands it.
+///          smaller zone and is now stale. It is cleared here and `expanded` is reset so the
+///          driver re-expands it.
 /// @note This is the single choke point through which every forward step passes, so it is where
 ///       cancellation is polled.
+/// @brief Add @p t to the tag pool, reusing an equal tag if one is already there.
+///
+/// @param t  the tag produced for one transition
+/// @return the index into ::Otf::tags_ that ::OtfEdge::tag must carry
+///
+/// @note Tags are immutable once pooled, and ::gfp_pre only ever reads them, so sharing one
+///       between edges is safe. Deduplication is by VALUE, not by identity: two transitions
+///       that fire the same participants with the same abstain constraints invert identically.
+int Otf::intern_tag(const GfpTag& t) {
+  const std::uint64_t h = gfp_tag_hash(t);
+  auto& slots = tagidx_[h];
+  for (int i : slots)
+    if (gfp_tag_eq(tags_[i], t)) return i;
+  const int id = static_cast<int>(tags_.size());
+  tags_.push_back(t);
+  slots.push_back(id);
+  return id;
+}
+
 void Otf::expand(int u) {
   grow();
   if (cancelled()) return;   // choke point: every forward step goes through here
@@ -1022,7 +1202,8 @@ void Otf::expand(int u) {
   std::vector<SymState> succ;
   std::vector<GfpTag> tags;
   std::vector<SymState> pieces;
-  gfp_succ_tagged(net, node[u], L, U, qmask, emode, succ, tags);
+  SymState usc;
+  gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags);
   for (std::size_t k = 0; k < succ.size(); ++k) {
     pieces.clear();
     if (amap_) {
@@ -1030,19 +1211,17 @@ void Otf::expand(int u) {
     } else {
       pieces.push_back(std::move(succ[k]));
     }
+    // One tag serves every piece of this successor: the pieces partition the successor zone,
+    // and the transition that produced them is the same one.
+    const int tid = intern_tag(tags[k]);
     for (std::size_t pi = 0; pi < pieces.size(); ++pi) {
     const int v = intern(std::move(pieces[pi]));
     grow();
-    adj[u].push_back(OtfEdge{v, tags[k]});
-    pred[v].push_back(u);
+    adj[u].push_back(OtfEdge{v, tid});
     // A rewrite invalidates the rewritten node's adjacency; see the @warning above.
     if (intern_grew) {
       if (v != u) {
         expanded[v] = 0;
-        for (const auto& e : adj[v]) {
-          auto& pv = pred[e.tgt];
-          pv.erase(std::remove(pv.begin(), pv.end(), v), pv.end());
-        }
         adj[v].clear();
       } else {
         expanded[u] = 0;
@@ -1093,9 +1272,11 @@ bool Otf::time_diverges(const SymState& s) const {
 ///       that the active-clock reduction cannot leave the stored zone unclosed.
 Federation Otf::stop_set(int u) {
   Federation f;
-  if (adj[u].empty() || time_diverges(node[u])) { f.push_back(node[u].zone); return f; }
+  SymState usc;
+  const SymState& su = sread(u, usc);
+  if (adj[u].empty() || time_diverges(su)) { f.push_back(su.zone); return f; }
   Federation d;
-  if (state_has_deadlock(net, node[u], &d)) f.swap(d);
+  if (state_has_deadlock(net, su, &d)) f.swap(d);
   return f;
 }
 
@@ -1120,34 +1301,58 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   for (int v : S) inS[v] = 1;
   W.assign(N, Federation{});
   std::vector<Federation> nosucc(N);
+  // THE SEED IS NOT MATERIALISED. Every node of S starts at its own zone, and writing all |S|
+  // of those copies down before the sweep begins is the peak of the entire run -- one full
+  // dense DBM per node, held simultaneously, on top of the copy already in `node`. `seeded[v]`
+  // stands in for that copy: it means "W[v] is logically { node[v].zone }". The sweep
+  // materialises a seed only for the node it is processing, and replaces it with `W[v] /\ cand`
+  // in the same step, so at most one seed is ever live. On a satisfied query that refinement is
+  // already draining towards empty, which is why the peak never re-forms.
+  //
+  // A seed is never empty: ::Otf::intern stores no empty zone, so `seeded[v]` implies non-empty
+  // and every emptiness test below can short-circuit on it.
+  std::vector<char> seeded(N, 0);
   for (int v : S) {
-    W[v].push_back(node[v].zone);
+    seeded[v] = 1;
     nosucc[v] = stop_set(v);
   }
+  // Widening scratch, reused across the whole sweep so a narrow-stored zone costs a copy of
+  // its entries and never an allocation.
+  Dbm vsc, jsc;
+  SymState vst, jst;
   // ROUND-ROBIN LOCKSTEP SWEEP, deliberately, not for want of a worklist. Replacing it with a
-  // chaotic worklist keyed on `pred` saves 0.1% of Pre calls on fischer7 and turns grc4
+  // chaotic worklist keyed on the reverse edges saves 0.1% of Pre calls on fischer7 and turns grc4
   // `T0.in --> T0.far` from SATISFIED into UNUSABLE: reordering cannot change the limit of a
   // monotone descending iteration, but it does change the intermediate federation SHAPES, and
   // `fedcap` is a resource bound on those. The lockstep sweep acts as a de-facto normaliser.
-  // See DESIGN.md, "Measured and rejected", for the numbers.
+  // See DESIGN.md, "Measured and rejected", for the numbers -- and KNOWN_LIMITATION.md for why
+  // the same sensitivity is what blocks a parallel schedule here.
   bool changed = true;
   std::size_t it = 0;
   while (changed && !capped) {
-    if (cancelled()) return;
+    if (cancelled()) break;
     changed = false;
     ++it;
     for (int v : S) {
-      if (gfp_fed_empty(W[v])) continue;
+      if (!seeded[v] && gfp_fed_empty(W[v])) continue;
       Federation cand = nosucc[v];
       for (const auto& e : adj[v]) {
         const int j = e.tgt;
-        if (!inS[j] || gfp_fed_empty(W[j])) continue;
-        for (const auto& Y : W[j]) {
+        if (!inS[j]) continue;
+        if (!seeded[j] && gfp_fed_empty(W[j])) continue;
+        // A seeded successor contributes exactly one zone, its own, without being written down.
+        const Dbm* one = seeded[j] ? &zread(j, jsc) : nullptr;
+        const std::size_t ny = one ? 1u : W[j].size();
+        for (std::size_t yi = 0; yi < ny; ++yi) {
+          const Dbm& Y = one ? *one : W[j][yi];
           ++pre_calls;
-          Dbm pz = gfp_pre(net, e.tag, node[v], node[j], Y);
+          Dbm pz = gfp_pre(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y);
           if (!pz.empty()) cand.push_back(std::move(pz));
         }
       }
+      // Materialise v's own seed now, for this one node only: the swap below overwrites it with
+      // the refinement, so the copy does not outlive the iteration.
+      if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
       gfp_fed_compact(cand, fedcap, &capped);
       // `W[v] /\ cand`, computed directly rather than as the double complement
       // `subtract(z, subtract(z, cand))` the textbook formulation uses. Both denote the same
@@ -1170,6 +1375,12 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     }
     if (it > 100000) break;
   }
+  // Restore the documented postcondition on every exit path. A converged sweep materialised
+  // every seed as it went, so this loop does nothing; an aborted one (capped or cancelled) can
+  // still hold seeds, and W must denote the iterate the sweep actually reached rather than
+  // reading as empty at those nodes.
+  for (int v : S)
+    if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
   gfp_iters += it;
 }
 
@@ -1555,7 +1766,7 @@ bool Otf::build_atom_map(AtomMap& am) {
       const std::string ks = disc_key_bytes(node[u].locs, node[u].ints);
       for (const auto& e : adj[u]) {
         std::uint64_t rm = 0;
-        for (const auto& pr : e.tag.parts)
+        for (const auto& pr : tags_[e.tag].parts)
           for (int rc : net.procs[pr.first].edges[pr.second].clock_resets)
             if (rc >= 1 && rc < 64) rm |= std::uint64_t(1) << rc;
         const std::string kt = disc_key_bytes(node[e.tgt].locs, node[e.tgt].ints);
@@ -1654,7 +1865,6 @@ bool Otf::build_atom_map(AtomMap& am) {
 /// @post @ref fwd_ok_ is @c false iff the initial state is vacuous; otherwise every reachable
 ///       node is stored and expanded, subject to cancellation.
 ///
-/// @note The worklist is DEDUPLICATED, via an `inq` flag, rather than a level-synchronous
 ///       frontier. A frontier that pushes a successor whenever `!expanded[v]` is harmless while
 ///       ::Otf::intern only appends, since `expanded` then goes 0 -> 1 once per node; it becomes
 ///       quadratic as soon as intern rewrites, because every rewrite resets `expanded[v]` and
@@ -1812,6 +2022,10 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
       // deferred, not skipped -- pay it here, exactly once, on the graph already built.
       return e1.finish_verdict(gs);
     }
+    // e1 is dead from here: the map is a value that owns its atoms, and every path that still
+    // needs e1's own verdict (the empty-map return above, and the fall-through below) is out of
+    // reach. Releasing before e2 starts is what keeps the peak at one graph instead of two.
+    e1.release();
     Otf e2(net, p, q);
     e2.set_atoms(&am);
     GfpStats gs2;
