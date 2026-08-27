@@ -13,6 +13,12 @@
 #include "ptctlmc/ta.hpp"
 #include "ptctlmc/uppaal.hpp"
 
+/// @brief `--stats`: append successor-generation counts to each verdict line.
+/// The explored-state count is always reported; this adds the generated-zone count, which
+/// together give the subsumption ratio used in evaluation.
+static bool g_stats = false;
+
+
 namespace {
 constexpr const char* kVersion = "PTCTLMC 0.1.0";
 
@@ -51,7 +57,8 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
         std::cout << "Verifying formula: " << q.raw << "\n";
         if (check_net_query(net, q, &sat, backend, &st))
           std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
-                    << "  [explored " << st.explored << " symbolic states]\n";
+                    << "  [explored " << st.explored << " symbolic states"
+                    << (g_stats ? ", generated " + std::to_string(st.generated) : "") << "]\n";
         else {
           std::cout << "-- Formula is UNSUPPORTED" << (q.note.empty() ? "" : " (" + q.note + ")") << "\n";
           rc = 2;
@@ -99,7 +106,8 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
         done = check_net_query(net_fb, q, &sat, backend, &st);
       if (done) {
         std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
-                  << "  [explored " << st.explored << " symbolic states]\n";
+                  << "  [explored " << st.explored << " symbolic states"
+                  << (g_stats ? ", generated " + std::to_string(st.generated) : "") << "]\n";
       } else {
         std::cout << "-- Formula is UNSUPPORTED" << (q.note.empty() ? "" : " (" + q.note + ")") << "\n";
         rc = 2;
@@ -244,6 +252,8 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(false);
     } else if (a == "--gpu-intern") {   // GPU passed set: deduplicate zones (memory over speed)
       ptctlmc::set_gpu_intern(true);
+    } else if (a == "--stats") {       // report generated successors alongside explored states
+      g_stats = true;
     } else if (a == "--memo") {        // memoise the successor-zone pipeline (adaptive; off by default)
       ptctlmc::set_memo(true);
     } else if (a == "--symmetry") {     // explore one representative per automorphism orbit
@@ -278,7 +288,8 @@ int main(int argc, char** argv) {
   if (nf == 2) return run(files[0], files[1], backend);
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
-            << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] <model.xml> <query.q>\n"
+            << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats] <model.xml> <query.q>\n"
+            << "       --stats: also report the number of successor zones generated\n"
             << "       --gpu-intern: GPU passed set deduplicates zones (large win on models with\n"
             << "                     few distinct zones, e.g. viking; neutral elsewhere)\n"
             << "       --adaptive: GPU merge auto-routes CPU/GPU per level (default --naive)\n"
