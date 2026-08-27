@@ -39,8 +39,6 @@ inline bool sim_le(const raw_t* Z, const raw_t* Zp, int dim,
                    const std::vector<std::int32_t>& L, const std::vector<std::int32_t>& U,
                    const std::vector<raw_t>& Lr, const std::vector<raw_t>& Ur) {
   if (detail::options().gsim && !Ur.empty()) {
-#ifndef NDEBUG
-#endif
     return dbm_is_g_le(Z, Zp, dim, Lr.data(), Ur.data());
   }
   return dbm_is_alu_le(Z, Zp, dim, L.data(), U.data());
