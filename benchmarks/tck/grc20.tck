@@ -1,0 +1,426 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_grc20.xml
+# x0:(clock)
+clock:1:x0
+# x1:(clock)
+clock:1:x1
+# x2:(clock)
+clock:1:x2
+# x3:(clock)
+clock:1:x3
+# x4:(clock)
+clock:1:x4
+# x5:(clock)
+clock:1:x5
+# x6:(clock)
+clock:1:x6
+# x7:(clock)
+clock:1:x7
+# x8:(clock)
+clock:1:x8
+# x9:(clock)
+clock:1:x9
+# x10:(clock)
+clock:1:x10
+# x11:(clock)
+clock:1:x11
+# x12:(clock)
+clock:1:x12
+# x13:(clock)
+clock:1:x13
+# x14:(clock)
+clock:1:x14
+# x15:(clock)
+clock:1:x15
+# x16:(clock)
+clock:1:x16
+# x17:(clock)
+clock:1:x17
+# x18:(clock)
+clock:1:x18
+# x19:(clock)
+clock:1:x19
+# y:(clock)
+clock:1:y
+# z:(clock)
+clock:1:z
+# approach:(channel)
+# global event: approach
+# leave:(channel)
+# global event: leave
+# lower:(channel)
+# global event: lower
+# raise:(channel)
+# global event: raise
+# no iodecl
+# compilation of process T0
+process:T0
+location:T0:far{initial:}
+location:T0:near{invariant:1 && x0 <= 4}
+location:T0:in{invariant:1 && x0 <= 15}
+event:approach_emit
+edge:T0:far:near:approach_emit{do:x0=0}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:T0:near:in:tau{do:x0=0:provided:(x0 >= 4)}
+event:leave_emit
+edge:T0:in:far:leave_emit{provided:(x0 >= 1)}
+
+# compilation of process T1
+process:T1
+location:T1:far{initial:}
+location:T1:near{invariant:1 && x1 <= 4}
+location:T1:in{invariant:1 && x1 <= 15}
+edge:T1:far:near:approach_emit{do:x1=0}
+edge:T1:near:in:tau{do:x1=0:provided:(x1 >= 4)}
+edge:T1:in:far:leave_emit{provided:(x1 >= 1)}
+
+# compilation of process T2
+process:T2
+location:T2:far{initial:}
+location:T2:near{invariant:1 && x2 <= 4}
+location:T2:in{invariant:1 && x2 <= 15}
+edge:T2:far:near:approach_emit{do:x2=0}
+edge:T2:near:in:tau{do:x2=0:provided:(x2 >= 4)}
+edge:T2:in:far:leave_emit{provided:(x2 >= 1)}
+
+# compilation of process T3
+process:T3
+location:T3:far{initial:}
+location:T3:near{invariant:1 && x3 <= 4}
+location:T3:in{invariant:1 && x3 <= 15}
+edge:T3:far:near:approach_emit{do:x3=0}
+edge:T3:near:in:tau{do:x3=0:provided:(x3 >= 4)}
+edge:T3:in:far:leave_emit{provided:(x3 >= 1)}
+
+# compilation of process T4
+process:T4
+location:T4:far{initial:}
+location:T4:near{invariant:1 && x4 <= 4}
+location:T4:in{invariant:1 && x4 <= 15}
+edge:T4:far:near:approach_emit{do:x4=0}
+edge:T4:near:in:tau{do:x4=0:provided:(x4 >= 4)}
+edge:T4:in:far:leave_emit{provided:(x4 >= 1)}
+
+# compilation of process T5
+process:T5
+location:T5:far{initial:}
+location:T5:near{invariant:1 && x5 <= 4}
+location:T5:in{invariant:1 && x5 <= 15}
+edge:T5:far:near:approach_emit{do:x5=0}
+edge:T5:near:in:tau{do:x5=0:provided:(x5 >= 4)}
+edge:T5:in:far:leave_emit{provided:(x5 >= 1)}
+
+# compilation of process T6
+process:T6
+location:T6:far{initial:}
+location:T6:near{invariant:1 && x6 <= 4}
+location:T6:in{invariant:1 && x6 <= 15}
+edge:T6:far:near:approach_emit{do:x6=0}
+edge:T6:near:in:tau{do:x6=0:provided:(x6 >= 4)}
+edge:T6:in:far:leave_emit{provided:(x6 >= 1)}
+
+# compilation of process T7
+process:T7
+location:T7:far{initial:}
+location:T7:near{invariant:1 && x7 <= 4}
+location:T7:in{invariant:1 && x7 <= 15}
+edge:T7:far:near:approach_emit{do:x7=0}
+edge:T7:near:in:tau{do:x7=0:provided:(x7 >= 4)}
+edge:T7:in:far:leave_emit{provided:(x7 >= 1)}
+
+# compilation of process T8
+process:T8
+location:T8:far{initial:}
+location:T8:near{invariant:1 && x8 <= 4}
+location:T8:in{invariant:1 && x8 <= 15}
+edge:T8:far:near:approach_emit{do:x8=0}
+edge:T8:near:in:tau{do:x8=0:provided:(x8 >= 4)}
+edge:T8:in:far:leave_emit{provided:(x8 >= 1)}
+
+# compilation of process T9
+process:T9
+location:T9:far{initial:}
+location:T9:near{invariant:1 && x9 <= 4}
+location:T9:in{invariant:1 && x9 <= 15}
+edge:T9:far:near:approach_emit{do:x9=0}
+edge:T9:near:in:tau{do:x9=0:provided:(x9 >= 4)}
+edge:T9:in:far:leave_emit{provided:(x9 >= 1)}
+
+# compilation of process T10
+process:T10
+location:T10:far{initial:}
+location:T10:near{invariant:1 && x10 <= 4}
+location:T10:in{invariant:1 && x10 <= 15}
+edge:T10:far:near:approach_emit{do:x10=0}
+edge:T10:near:in:tau{do:x10=0:provided:(x10 >= 4)}
+edge:T10:in:far:leave_emit{provided:(x10 >= 1)}
+
+# compilation of process T11
+process:T11
+location:T11:far{initial:}
+location:T11:near{invariant:1 && x11 <= 4}
+location:T11:in{invariant:1 && x11 <= 15}
+edge:T11:far:near:approach_emit{do:x11=0}
+edge:T11:near:in:tau{do:x11=0:provided:(x11 >= 4)}
+edge:T11:in:far:leave_emit{provided:(x11 >= 1)}
+
+# compilation of process T12
+process:T12
+location:T12:far{initial:}
+location:T12:near{invariant:1 && x12 <= 4}
+location:T12:in{invariant:1 && x12 <= 15}
+edge:T12:far:near:approach_emit{do:x12=0}
+edge:T12:near:in:tau{do:x12=0:provided:(x12 >= 4)}
+edge:T12:in:far:leave_emit{provided:(x12 >= 1)}
+
+# compilation of process T13
+process:T13
+location:T13:far{initial:}
+location:T13:near{invariant:1 && x13 <= 4}
+location:T13:in{invariant:1 && x13 <= 15}
+edge:T13:far:near:approach_emit{do:x13=0}
+edge:T13:near:in:tau{do:x13=0:provided:(x13 >= 4)}
+edge:T13:in:far:leave_emit{provided:(x13 >= 1)}
+
+# compilation of process T14
+process:T14
+location:T14:far{initial:}
+location:T14:near{invariant:1 && x14 <= 4}
+location:T14:in{invariant:1 && x14 <= 15}
+edge:T14:far:near:approach_emit{do:x14=0}
+edge:T14:near:in:tau{do:x14=0:provided:(x14 >= 4)}
+edge:T14:in:far:leave_emit{provided:(x14 >= 1)}
+
+# compilation of process T15
+process:T15
+location:T15:far{initial:}
+location:T15:near{invariant:1 && x15 <= 4}
+location:T15:in{invariant:1 && x15 <= 15}
+edge:T15:far:near:approach_emit{do:x15=0}
+edge:T15:near:in:tau{do:x15=0:provided:(x15 >= 4)}
+edge:T15:in:far:leave_emit{provided:(x15 >= 1)}
+
+# compilation of process T16
+process:T16
+location:T16:far{initial:}
+location:T16:near{invariant:1 && x16 <= 4}
+location:T16:in{invariant:1 && x16 <= 15}
+edge:T16:far:near:approach_emit{do:x16=0}
+edge:T16:near:in:tau{do:x16=0:provided:(x16 >= 4)}
+edge:T16:in:far:leave_emit{provided:(x16 >= 1)}
+
+# compilation of process T17
+process:T17
+location:T17:far{initial:}
+location:T17:near{invariant:1 && x17 <= 4}
+location:T17:in{invariant:1 && x17 <= 15}
+edge:T17:far:near:approach_emit{do:x17=0}
+edge:T17:near:in:tau{do:x17=0:provided:(x17 >= 4)}
+edge:T17:in:far:leave_emit{provided:(x17 >= 1)}
+
+# compilation of process T18
+process:T18
+location:T18:far{initial:}
+location:T18:near{invariant:1 && x18 <= 4}
+location:T18:in{invariant:1 && x18 <= 15}
+edge:T18:far:near:approach_emit{do:x18=0}
+edge:T18:near:in:tau{do:x18=0:provided:(x18 >= 4)}
+edge:T18:in:far:leave_emit{provided:(x18 >= 1)}
+
+# compilation of process T19
+process:T19
+location:T19:far{initial:}
+location:T19:near{invariant:1 && x19 <= 4}
+location:T19:in{invariant:1 && x19 <= 15}
+edge:T19:far:near:approach_emit{do:x19=0}
+edge:T19:near:in:tau{do:x19=0:provided:(x19 >= 4)}
+edge:T19:in:far:leave_emit{provided:(x19 >= 1)}
+
+# compilation of process G
+process:G
+location:G:up{initial:}
+location:G:low{invariant:1 && y <= 2}
+location:G:down{}
+location:G:rai{invariant:1 && y <= 2}
+event:lower_recv
+edge:G:up:low:lower_recv{do:y=0}
+edge:G:low:down:tau{provided:(y >= 2)}
+event:raise_recv
+edge:G:down:rai:raise_recv{do:y=0}
+edge:G:rai:up:tau{provided:(y >= 2)}
+
+# compilation of process Ctl
+process:Ctl
+location:Ctl:up{initial:}
+location:Ctl:low_1{invariant:1 && z <= 1}
+location:Ctl:low_2{invariant:1 && z <= 1}
+location:Ctl:low_3{invariant:1 && z <= 1}
+location:Ctl:low_4{invariant:1 && z <= 1}
+location:Ctl:low_5{invariant:1 && z <= 1}
+location:Ctl:low_6{invariant:1 && z <= 1}
+location:Ctl:low_7{invariant:1 && z <= 1}
+location:Ctl:low_8{invariant:1 && z <= 1}
+location:Ctl:low_9{invariant:1 && z <= 1}
+location:Ctl:low_10{invariant:1 && z <= 1}
+location:Ctl:low_11{invariant:1 && z <= 1}
+location:Ctl:low_12{invariant:1 && z <= 1}
+location:Ctl:low_13{invariant:1 && z <= 1}
+location:Ctl:low_14{invariant:1 && z <= 1}
+location:Ctl:low_15{invariant:1 && z <= 1}
+location:Ctl:low_16{invariant:1 && z <= 1}
+location:Ctl:low_17{invariant:1 && z <= 1}
+location:Ctl:low_18{invariant:1 && z <= 1}
+location:Ctl:low_19{invariant:1 && z <= 1}
+location:Ctl:low_20{invariant:1 && z <= 1}
+location:Ctl:dn_1{}
+location:Ctl:dn_2{}
+location:Ctl:dn_3{}
+location:Ctl:dn_4{}
+location:Ctl:dn_5{}
+location:Ctl:dn_6{}
+location:Ctl:dn_7{}
+location:Ctl:dn_8{}
+location:Ctl:dn_9{}
+location:Ctl:dn_10{}
+location:Ctl:dn_11{}
+location:Ctl:dn_12{}
+location:Ctl:dn_13{}
+location:Ctl:dn_14{}
+location:Ctl:dn_15{}
+location:Ctl:dn_16{}
+location:Ctl:dn_17{}
+location:Ctl:dn_18{}
+location:Ctl:dn_19{}
+location:Ctl:dn_20{}
+location:Ctl:rai{invariant:1 && z <= 1}
+event:approach_recv
+edge:Ctl:up:low_1:approach_recv{do:z=0}
+edge:Ctl:low_1:low_2:approach_recv{}
+event:lower_emit
+edge:Ctl:low_1:dn_1:lower_emit{}
+edge:Ctl:low_2:low_3:approach_recv{}
+edge:Ctl:low_2:dn_2:lower_emit{}
+edge:Ctl:low_3:low_4:approach_recv{}
+edge:Ctl:low_3:dn_3:lower_emit{}
+edge:Ctl:low_4:low_5:approach_recv{}
+edge:Ctl:low_4:dn_4:lower_emit{}
+edge:Ctl:low_5:low_6:approach_recv{}
+edge:Ctl:low_5:dn_5:lower_emit{}
+edge:Ctl:low_6:low_7:approach_recv{}
+edge:Ctl:low_6:dn_6:lower_emit{}
+edge:Ctl:low_7:low_8:approach_recv{}
+edge:Ctl:low_7:dn_7:lower_emit{}
+edge:Ctl:low_8:low_9:approach_recv{}
+edge:Ctl:low_8:dn_8:lower_emit{}
+edge:Ctl:low_9:low_10:approach_recv{}
+edge:Ctl:low_9:dn_9:lower_emit{}
+edge:Ctl:low_10:low_11:approach_recv{}
+edge:Ctl:low_10:dn_10:lower_emit{}
+edge:Ctl:low_11:low_12:approach_recv{}
+edge:Ctl:low_11:dn_11:lower_emit{}
+edge:Ctl:low_12:low_13:approach_recv{}
+edge:Ctl:low_12:dn_12:lower_emit{}
+edge:Ctl:low_13:low_14:approach_recv{}
+edge:Ctl:low_13:dn_13:lower_emit{}
+edge:Ctl:low_14:low_15:approach_recv{}
+edge:Ctl:low_14:dn_14:lower_emit{}
+edge:Ctl:low_15:low_16:approach_recv{}
+edge:Ctl:low_15:dn_15:lower_emit{}
+edge:Ctl:low_16:low_17:approach_recv{}
+edge:Ctl:low_16:dn_16:lower_emit{}
+edge:Ctl:low_17:low_18:approach_recv{}
+edge:Ctl:low_17:dn_17:lower_emit{}
+edge:Ctl:low_18:low_19:approach_recv{}
+edge:Ctl:low_18:dn_18:lower_emit{}
+edge:Ctl:low_19:low_20:approach_recv{}
+edge:Ctl:low_19:dn_19:lower_emit{}
+edge:Ctl:low_20:dn_20:lower_emit{}
+event:leave_recv
+edge:Ctl:low_1:up:leave_recv{do:z=0}
+edge:Ctl:dn_1:dn_2:approach_recv{}
+edge:Ctl:dn_2:dn_3:approach_recv{}
+edge:Ctl:dn_2:dn_1:leave_recv{}
+edge:Ctl:dn_3:dn_4:approach_recv{}
+edge:Ctl:dn_3:dn_2:leave_recv{}
+edge:Ctl:dn_4:dn_5:approach_recv{}
+edge:Ctl:dn_4:dn_3:leave_recv{}
+edge:Ctl:dn_5:dn_6:approach_recv{}
+edge:Ctl:dn_5:dn_4:leave_recv{}
+edge:Ctl:dn_6:dn_7:approach_recv{}
+edge:Ctl:dn_6:dn_5:leave_recv{}
+edge:Ctl:dn_7:dn_8:approach_recv{}
+edge:Ctl:dn_7:dn_6:leave_recv{}
+edge:Ctl:dn_8:dn_9:approach_recv{}
+edge:Ctl:dn_8:dn_7:leave_recv{}
+edge:Ctl:dn_9:dn_10:approach_recv{}
+edge:Ctl:dn_9:dn_8:leave_recv{}
+edge:Ctl:dn_10:dn_11:approach_recv{}
+edge:Ctl:dn_10:dn_9:leave_recv{}
+edge:Ctl:dn_11:dn_12:approach_recv{}
+edge:Ctl:dn_11:dn_10:leave_recv{}
+edge:Ctl:dn_12:dn_13:approach_recv{}
+edge:Ctl:dn_12:dn_11:leave_recv{}
+edge:Ctl:dn_13:dn_14:approach_recv{}
+edge:Ctl:dn_13:dn_12:leave_recv{}
+edge:Ctl:dn_14:dn_15:approach_recv{}
+edge:Ctl:dn_14:dn_13:leave_recv{}
+edge:Ctl:dn_15:dn_16:approach_recv{}
+edge:Ctl:dn_15:dn_14:leave_recv{}
+edge:Ctl:dn_16:dn_17:approach_recv{}
+edge:Ctl:dn_16:dn_15:leave_recv{}
+edge:Ctl:dn_17:dn_18:approach_recv{}
+edge:Ctl:dn_17:dn_16:leave_recv{}
+edge:Ctl:dn_18:dn_19:approach_recv{}
+edge:Ctl:dn_18:dn_17:leave_recv{}
+edge:Ctl:dn_19:dn_20:approach_recv{}
+edge:Ctl:dn_19:dn_18:leave_recv{}
+edge:Ctl:dn_20:dn_19:leave_recv{}
+edge:Ctl:dn_1:rai:leave_recv{do:z=0}
+event:raise_emit
+edge:Ctl:rai:up:raise_emit{}
+
+sync:Ctl@approach_recv:T0@approach_emit
+sync:Ctl@approach_recv:T1@approach_emit
+sync:Ctl@approach_recv:T10@approach_emit
+sync:Ctl@approach_recv:T11@approach_emit
+sync:Ctl@approach_recv:T12@approach_emit
+sync:Ctl@approach_recv:T13@approach_emit
+sync:Ctl@approach_recv:T14@approach_emit
+sync:Ctl@approach_recv:T15@approach_emit
+sync:Ctl@approach_recv:T16@approach_emit
+sync:Ctl@approach_recv:T17@approach_emit
+sync:Ctl@approach_recv:T18@approach_emit
+sync:Ctl@approach_recv:T19@approach_emit
+sync:Ctl@approach_recv:T2@approach_emit
+sync:Ctl@approach_recv:T3@approach_emit
+sync:Ctl@approach_recv:T4@approach_emit
+sync:Ctl@approach_recv:T5@approach_emit
+sync:Ctl@approach_recv:T6@approach_emit
+sync:Ctl@approach_recv:T7@approach_emit
+sync:Ctl@approach_recv:T8@approach_emit
+sync:Ctl@approach_recv:T9@approach_emit
+sync:Ctl@leave_recv:T0@leave_emit
+sync:Ctl@leave_recv:T1@leave_emit
+sync:Ctl@leave_recv:T10@leave_emit
+sync:Ctl@leave_recv:T11@leave_emit
+sync:Ctl@leave_recv:T12@leave_emit
+sync:Ctl@leave_recv:T13@leave_emit
+sync:Ctl@leave_recv:T14@leave_emit
+sync:Ctl@leave_recv:T15@leave_emit
+sync:Ctl@leave_recv:T16@leave_emit
+sync:Ctl@leave_recv:T17@leave_emit
+sync:Ctl@leave_recv:T18@leave_emit
+sync:Ctl@leave_recv:T19@leave_emit
+sync:Ctl@leave_recv:T2@leave_emit
+sync:Ctl@leave_recv:T3@leave_emit
+sync:Ctl@leave_recv:T4@leave_emit
+sync:Ctl@leave_recv:T5@leave_emit
+sync:Ctl@leave_recv:T6@leave_emit
+sync:Ctl@leave_recv:T7@leave_emit
+sync:Ctl@leave_recv:T8@leave_emit
+sync:Ctl@leave_recv:T9@leave_emit
+sync:Ctl@lower_emit:G@lower_recv
+sync:Ctl@raise_emit:G@raise_recv

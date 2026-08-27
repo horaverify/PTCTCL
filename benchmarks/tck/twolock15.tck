@@ -1,0 +1,296 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_twolock15.xml
+# x0:(clock)
+clock:1:x0
+# x1:(clock)
+clock:1:x1
+# x2:(clock)
+clock:1:x2
+# x3:(clock)
+clock:1:x3
+# x4:(clock)
+clock:1:x4
+# x5:(clock)
+clock:1:x5
+# x6:(clock)
+clock:1:x6
+# x7:(clock)
+clock:1:x7
+# x8:(clock)
+clock:1:x8
+# x9:(clock)
+clock:1:x9
+# x10:(clock)
+clock:1:x10
+# x11:(clock)
+clock:1:x11
+# x12:(clock)
+clock:1:x12
+# x13:(clock)
+clock:1:x13
+# x14:(clock)
+clock:1:x14
+# a:(range (int) "0" "15")
+int:1:0:15:0:a
+# b:(range (int) "0" "15")
+int:1:0:15:0:b
+# no iodecl
+# compilation of process P0
+process:P0
+location:P0:idle{initial:}
+location:P0:reqA{invariant:1 && x0 <= 2}
+location:P0:waitA{}
+location:P0:reqB{invariant:1 && x0 <= 2}
+location:P0:waitB{}
+location:P0:cs{}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:P0:idle:reqA:tau{do:x0=0:provided:(a == 0)}
+edge:P0:reqA:waitA:tau{do:a=1;x0=0}
+edge:P0:waitA:reqB:tau{do:x0=0:provided:x0 > 2 && a == 1 && b == 0}
+edge:P0:waitA:idle:tau{provided:x0 > 2 && a != 1}
+edge:P0:reqB:waitB:tau{do:b=1;x0=0}
+edge:P0:waitB:cs:tau{provided:x0 > 2 && b == 1}
+edge:P0:waitB:idle:tau{do:a=0:provided:x0 > 2 && b != 1}
+edge:P0:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P1
+process:P1
+location:P1:idle{initial:}
+location:P1:reqA{invariant:1 && x1 <= 2}
+location:P1:waitA{}
+location:P1:reqB{invariant:1 && x1 <= 2}
+location:P1:waitB{}
+location:P1:cs{labels:L_P1_cs}
+edge:P1:idle:reqA:tau{do:x1=0:provided:(a == 0)}
+edge:P1:reqA:waitA:tau{do:a=2;x1=0}
+edge:P1:waitA:reqB:tau{do:x1=0:provided:x1 > 2 && a == 2 && b == 0}
+edge:P1:waitA:idle:tau{provided:x1 > 2 && a != 2}
+edge:P1:reqB:waitB:tau{do:b=2;x1=0}
+edge:P1:waitB:cs:tau{provided:x1 > 2 && b == 2}
+edge:P1:waitB:idle:tau{do:a=0:provided:x1 > 2 && b != 2}
+edge:P1:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P2
+process:P2
+location:P2:idle{initial:}
+location:P2:reqA{invariant:1 && x2 <= 2}
+location:P2:waitA{}
+location:P2:reqB{invariant:1 && x2 <= 2}
+location:P2:waitB{}
+location:P2:cs{labels:L_P2_cs}
+edge:P2:idle:reqA:tau{do:x2=0:provided:(a == 0)}
+edge:P2:reqA:waitA:tau{do:a=3;x2=0}
+edge:P2:waitA:reqB:tau{do:x2=0:provided:x2 > 2 && a == 3 && b == 0}
+edge:P2:waitA:idle:tau{provided:x2 > 2 && a != 3}
+edge:P2:reqB:waitB:tau{do:b=3;x2=0}
+edge:P2:waitB:cs:tau{provided:x2 > 2 && b == 3}
+edge:P2:waitB:idle:tau{do:a=0:provided:x2 > 2 && b != 3}
+edge:P2:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P3
+process:P3
+location:P3:idle{initial:}
+location:P3:reqA{invariant:1 && x3 <= 2}
+location:P3:waitA{}
+location:P3:reqB{invariant:1 && x3 <= 2}
+location:P3:waitB{}
+location:P3:cs{}
+edge:P3:idle:reqA:tau{do:x3=0:provided:(a == 0)}
+edge:P3:reqA:waitA:tau{do:a=4;x3=0}
+edge:P3:waitA:reqB:tau{do:x3=0:provided:x3 > 2 && a == 4 && b == 0}
+edge:P3:waitA:idle:tau{provided:x3 > 2 && a != 4}
+edge:P3:reqB:waitB:tau{do:b=4;x3=0}
+edge:P3:waitB:cs:tau{provided:x3 > 2 && b == 4}
+edge:P3:waitB:idle:tau{do:a=0:provided:x3 > 2 && b != 4}
+edge:P3:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P4
+process:P4
+location:P4:idle{initial:}
+location:P4:reqA{invariant:1 && x4 <= 2}
+location:P4:waitA{}
+location:P4:reqB{invariant:1 && x4 <= 2}
+location:P4:waitB{}
+location:P4:cs{}
+edge:P4:idle:reqA:tau{do:x4=0:provided:(a == 0)}
+edge:P4:reqA:waitA:tau{do:a=5;x4=0}
+edge:P4:waitA:reqB:tau{do:x4=0:provided:x4 > 2 && a == 5 && b == 0}
+edge:P4:waitA:idle:tau{provided:x4 > 2 && a != 5}
+edge:P4:reqB:waitB:tau{do:b=5;x4=0}
+edge:P4:waitB:cs:tau{provided:x4 > 2 && b == 5}
+edge:P4:waitB:idle:tau{do:a=0:provided:x4 > 2 && b != 5}
+edge:P4:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P5
+process:P5
+location:P5:idle{initial:}
+location:P5:reqA{invariant:1 && x5 <= 2}
+location:P5:waitA{}
+location:P5:reqB{invariant:1 && x5 <= 2}
+location:P5:waitB{}
+location:P5:cs{}
+edge:P5:idle:reqA:tau{do:x5=0:provided:(a == 0)}
+edge:P5:reqA:waitA:tau{do:a=6;x5=0}
+edge:P5:waitA:reqB:tau{do:x5=0:provided:x5 > 2 && a == 6 && b == 0}
+edge:P5:waitA:idle:tau{provided:x5 > 2 && a != 6}
+edge:P5:reqB:waitB:tau{do:b=6;x5=0}
+edge:P5:waitB:cs:tau{provided:x5 > 2 && b == 6}
+edge:P5:waitB:idle:tau{do:a=0:provided:x5 > 2 && b != 6}
+edge:P5:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P6
+process:P6
+location:P6:idle{initial:}
+location:P6:reqA{invariant:1 && x6 <= 2}
+location:P6:waitA{}
+location:P6:reqB{invariant:1 && x6 <= 2}
+location:P6:waitB{}
+location:P6:cs{}
+edge:P6:idle:reqA:tau{do:x6=0:provided:(a == 0)}
+edge:P6:reqA:waitA:tau{do:a=7;x6=0}
+edge:P6:waitA:reqB:tau{do:x6=0:provided:x6 > 2 && a == 7 && b == 0}
+edge:P6:waitA:idle:tau{provided:x6 > 2 && a != 7}
+edge:P6:reqB:waitB:tau{do:b=7;x6=0}
+edge:P6:waitB:cs:tau{provided:x6 > 2 && b == 7}
+edge:P6:waitB:idle:tau{do:a=0:provided:x6 > 2 && b != 7}
+edge:P6:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P7
+process:P7
+location:P7:idle{initial:}
+location:P7:reqA{invariant:1 && x7 <= 2}
+location:P7:waitA{}
+location:P7:reqB{invariant:1 && x7 <= 2}
+location:P7:waitB{}
+location:P7:cs{}
+edge:P7:idle:reqA:tau{do:x7=0:provided:(a == 0)}
+edge:P7:reqA:waitA:tau{do:a=8;x7=0}
+edge:P7:waitA:reqB:tau{do:x7=0:provided:x7 > 2 && a == 8 && b == 0}
+edge:P7:waitA:idle:tau{provided:x7 > 2 && a != 8}
+edge:P7:reqB:waitB:tau{do:b=8;x7=0}
+edge:P7:waitB:cs:tau{provided:x7 > 2 && b == 8}
+edge:P7:waitB:idle:tau{do:a=0:provided:x7 > 2 && b != 8}
+edge:P7:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P8
+process:P8
+location:P8:idle{initial:}
+location:P8:reqA{invariant:1 && x8 <= 2}
+location:P8:waitA{}
+location:P8:reqB{invariant:1 && x8 <= 2}
+location:P8:waitB{}
+location:P8:cs{}
+edge:P8:idle:reqA:tau{do:x8=0:provided:(a == 0)}
+edge:P8:reqA:waitA:tau{do:a=9;x8=0}
+edge:P8:waitA:reqB:tau{do:x8=0:provided:x8 > 2 && a == 9 && b == 0}
+edge:P8:waitA:idle:tau{provided:x8 > 2 && a != 9}
+edge:P8:reqB:waitB:tau{do:b=9;x8=0}
+edge:P8:waitB:cs:tau{provided:x8 > 2 && b == 9}
+edge:P8:waitB:idle:tau{do:a=0:provided:x8 > 2 && b != 9}
+edge:P8:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P9
+process:P9
+location:P9:idle{initial:}
+location:P9:reqA{invariant:1 && x9 <= 2}
+location:P9:waitA{}
+location:P9:reqB{invariant:1 && x9 <= 2}
+location:P9:waitB{}
+location:P9:cs{}
+edge:P9:idle:reqA:tau{do:x9=0:provided:(a == 0)}
+edge:P9:reqA:waitA:tau{do:a=10;x9=0}
+edge:P9:waitA:reqB:tau{do:x9=0:provided:x9 > 2 && a == 10 && b == 0}
+edge:P9:waitA:idle:tau{provided:x9 > 2 && a != 10}
+edge:P9:reqB:waitB:tau{do:b=10;x9=0}
+edge:P9:waitB:cs:tau{provided:x9 > 2 && b == 10}
+edge:P9:waitB:idle:tau{do:a=0:provided:x9 > 2 && b != 10}
+edge:P9:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P10
+process:P10
+location:P10:idle{initial:}
+location:P10:reqA{invariant:1 && x10 <= 2}
+location:P10:waitA{}
+location:P10:reqB{invariant:1 && x10 <= 2}
+location:P10:waitB{}
+location:P10:cs{}
+edge:P10:idle:reqA:tau{do:x10=0:provided:(a == 0)}
+edge:P10:reqA:waitA:tau{do:a=11;x10=0}
+edge:P10:waitA:reqB:tau{do:x10=0:provided:x10 > 2 && a == 11 && b == 0}
+edge:P10:waitA:idle:tau{provided:x10 > 2 && a != 11}
+edge:P10:reqB:waitB:tau{do:b=11;x10=0}
+edge:P10:waitB:cs:tau{provided:x10 > 2 && b == 11}
+edge:P10:waitB:idle:tau{do:a=0:provided:x10 > 2 && b != 11}
+edge:P10:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P11
+process:P11
+location:P11:idle{initial:}
+location:P11:reqA{invariant:1 && x11 <= 2}
+location:P11:waitA{}
+location:P11:reqB{invariant:1 && x11 <= 2}
+location:P11:waitB{}
+location:P11:cs{}
+edge:P11:idle:reqA:tau{do:x11=0:provided:(a == 0)}
+edge:P11:reqA:waitA:tau{do:a=12;x11=0}
+edge:P11:waitA:reqB:tau{do:x11=0:provided:x11 > 2 && a == 12 && b == 0}
+edge:P11:waitA:idle:tau{provided:x11 > 2 && a != 12}
+edge:P11:reqB:waitB:tau{do:b=12;x11=0}
+edge:P11:waitB:cs:tau{provided:x11 > 2 && b == 12}
+edge:P11:waitB:idle:tau{do:a=0:provided:x11 > 2 && b != 12}
+edge:P11:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P12
+process:P12
+location:P12:idle{initial:}
+location:P12:reqA{invariant:1 && x12 <= 2}
+location:P12:waitA{}
+location:P12:reqB{invariant:1 && x12 <= 2}
+location:P12:waitB{}
+location:P12:cs{}
+edge:P12:idle:reqA:tau{do:x12=0:provided:(a == 0)}
+edge:P12:reqA:waitA:tau{do:a=13;x12=0}
+edge:P12:waitA:reqB:tau{do:x12=0:provided:x12 > 2 && a == 13 && b == 0}
+edge:P12:waitA:idle:tau{provided:x12 > 2 && a != 13}
+edge:P12:reqB:waitB:tau{do:b=13;x12=0}
+edge:P12:waitB:cs:tau{provided:x12 > 2 && b == 13}
+edge:P12:waitB:idle:tau{do:a=0:provided:x12 > 2 && b != 13}
+edge:P12:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P13
+process:P13
+location:P13:idle{initial:}
+location:P13:reqA{invariant:1 && x13 <= 2}
+location:P13:waitA{}
+location:P13:reqB{invariant:1 && x13 <= 2}
+location:P13:waitB{}
+location:P13:cs{}
+edge:P13:idle:reqA:tau{do:x13=0:provided:(a == 0)}
+edge:P13:reqA:waitA:tau{do:a=14;x13=0}
+edge:P13:waitA:reqB:tau{do:x13=0:provided:x13 > 2 && a == 14 && b == 0}
+edge:P13:waitA:idle:tau{provided:x13 > 2 && a != 14}
+edge:P13:reqB:waitB:tau{do:b=14;x13=0}
+edge:P13:waitB:cs:tau{provided:x13 > 2 && b == 14}
+edge:P13:waitB:idle:tau{do:a=0:provided:x13 > 2 && b != 14}
+edge:P13:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P14
+process:P14
+location:P14:idle{initial:}
+location:P14:reqA{invariant:1 && x14 <= 2}
+location:P14:waitA{}
+location:P14:reqB{invariant:1 && x14 <= 2}
+location:P14:waitB{}
+location:P14:cs{}
+edge:P14:idle:reqA:tau{do:x14=0:provided:(a == 0)}
+edge:P14:reqA:waitA:tau{do:a=15;x14=0}
+edge:P14:waitA:reqB:tau{do:x14=0:provided:x14 > 2 && a == 15 && b == 0}
+edge:P14:waitA:idle:tau{provided:x14 > 2 && a != 15}
+edge:P14:reqB:waitB:tau{do:b=15;x14=0}
+edge:P14:waitB:cs:tau{provided:x14 > 2 && b == 15}
+edge:P14:waitB:idle:tau{do:a=0:provided:x14 > 2 && b != 15}
+edge:P14:cs:idle:tau{do:a=0;b=0}
+

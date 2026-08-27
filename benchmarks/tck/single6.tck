@@ -1,0 +1,29 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_single6.xml
+# x0:(clock)
+clock:1:x0
+# x1:(clock)
+clock:1:x1
+# x2:(clock)
+clock:1:x2
+# x3:(clock)
+clock:1:x3
+# x4:(clock)
+clock:1:x4
+# x5:(clock)
+clock:1:x5
+# no iodecl
+# compilation of process P
+process:P
+location:P:A{initial::invariant:1 && x0 <= 6 && x1 <= 6 && x2 <= 6 && x3 <= 6 && x4 <= 6 && x5 <= 6}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:P:A:A:tau{do:x0=0:provided:(x0 >= 1)}
+edge:P:A:A:tau{do:x1=0:provided:(x1 >= 1)}
+edge:P:A:A:tau{do:x2=0:provided:(x2 >= 1)}
+edge:P:A:A:tau{do:x3=0:provided:(x3 >= 1)}
+edge:P:A:A:tau{do:x4=0:provided:(x4 >= 1)}
+edge:P:A:A:tau{do:x5=0:provided:(x5 >= 1)}
+

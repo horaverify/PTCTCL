@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Liveness sweep: every tool, every family with a live query, strictly sequential:
+#   ptctlmc (t16 -> t24 -> t32) -> ltsmin (t16 -> t24 -> t32) -> verifyta -> tchecker
+# Each bench.py invocation is itself sequential across threads and families (see bench.py).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BENCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Liveness results sit BESIDE the reachability results, not inside them: they are a separate
+# measurement (different query set, different tools answering), not a subset of the reach sweep.
+LIVE_DIR="$BENCH_DIR/live_results"
+
+export TMPDIR="$BENCH_DIR/.tmp"
+mkdir -p "$TMPDIR"
+
+PTCTLMC_LIVE_DIR="$LIVE_DIR/ptctlmc"
+LTSMIN_LIVE_DIR="$LIVE_DIR/ltsmin"
+UPPAAL_LIVE_DIR="$LIVE_DIR/uppaal"
+TCHECKER_LIVE_DIR="$LIVE_DIR/tchecker"
+
+mkdir -p "$PTCTLMC_LIVE_DIR" "$LTSMIN_LIVE_DIR" "$UPPAAL_LIVE_DIR" "$TCHECKER_LIVE_DIR"
+
+PTCTLMC_BIN="${PTCTLMC_BIN:-$BENCH_DIR/../build_new_engine/ptctlmc}"
+
+echo "=== Liveness pipeline started: $(date -Iseconds) ==="
+
+echo "[ptctlmc] live, threads 16 -> 24 -> 32 (sequential), all families"
+PTCTLMC_BIN="$PTCTLMC_BIN" python3 "$SCRIPT_DIR/bench.py" run \
+  --tool ptctlmc \
+  --sim g \
+  --queries live \
+  --families all \
+  --threads 16 24 32 \
+  --outdir "$PTCTLMC_LIVE_DIR" \
+  --tag ptctlmc_live \
+  --ptctlmc-bin "$PTCTLMC_BIN"
+
+echo "[ltsmin] live, threads 16 -> 24 -> 32 (sequential), all families"
+python3 "$SCRIPT_DIR/bench.py" run \
+  --tool ltsmin \
+  --queries live \
+  --families all \
+  --threads 16 24 32 \
+  --outdir "$LTSMIN_LIVE_DIR" \
+  --tag ltsmin_live
+
+echo "[verifyta] live, all families"
+python3 "$SCRIPT_DIR/bench.py" run \
+  --tool verifyta \
+  --queries live \
+  --families all \
+  --outdir "$UPPAAL_LIVE_DIR" \
+  --tag verifyta_live
+
+echo "[tchecker] live, all families"
+python3 "$SCRIPT_DIR/bench.py" run \
+  --tool tchecker \
+  --queries live \
+  --families all \
+  --outdir "$TCHECKER_LIVE_DIR" \
+  --tag tchecker_live
+
+echo "=== Liveness pipeline finished: $(date -Iseconds) ==="

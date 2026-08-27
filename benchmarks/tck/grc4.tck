@@ -1,0 +1,122 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_grc4.xml
+# x0:(clock)
+clock:1:x0
+# x1:(clock)
+clock:1:x1
+# x2:(clock)
+clock:1:x2
+# x3:(clock)
+clock:1:x3
+# y:(clock)
+clock:1:y
+# z:(clock)
+clock:1:z
+# approach:(channel)
+# global event: approach
+# leave:(channel)
+# global event: leave
+# lower:(channel)
+# global event: lower
+# raise:(channel)
+# global event: raise
+# no iodecl
+# compilation of process T0
+process:T0
+location:T0:far{initial:}
+location:T0:near{invariant:1 && x0 <= 4}
+location:T0:in{invariant:1 && x0 <= 15}
+event:approach_emit
+edge:T0:far:near:approach_emit{do:x0=0}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:T0:near:in:tau{do:x0=0:provided:(x0 >= 4)}
+event:leave_emit
+edge:T0:in:far:leave_emit{provided:(x0 >= 1)}
+
+# compilation of process T1
+process:T1
+location:T1:far{initial:}
+location:T1:near{invariant:1 && x1 <= 4}
+location:T1:in{invariant:1 && x1 <= 15}
+edge:T1:far:near:approach_emit{do:x1=0}
+edge:T1:near:in:tau{do:x1=0:provided:(x1 >= 4)}
+edge:T1:in:far:leave_emit{provided:(x1 >= 1)}
+
+# compilation of process T2
+process:T2
+location:T2:far{initial:}
+location:T2:near{invariant:1 && x2 <= 4}
+location:T2:in{invariant:1 && x2 <= 15}
+edge:T2:far:near:approach_emit{do:x2=0}
+edge:T2:near:in:tau{do:x2=0:provided:(x2 >= 4)}
+edge:T2:in:far:leave_emit{provided:(x2 >= 1)}
+
+# compilation of process T3
+process:T3
+location:T3:far{initial:}
+location:T3:near{invariant:1 && x3 <= 4}
+location:T3:in{invariant:1 && x3 <= 15}
+edge:T3:far:near:approach_emit{do:x3=0}
+edge:T3:near:in:tau{do:x3=0:provided:(x3 >= 4)}
+edge:T3:in:far:leave_emit{provided:(x3 >= 1)}
+
+# compilation of process G
+process:G
+location:G:up{initial:}
+location:G:low{invariant:1 && y <= 2}
+location:G:down{}
+location:G:rai{invariant:1 && y <= 2}
+event:lower_recv
+edge:G:up:low:lower_recv{do:y=0}
+edge:G:low:down:tau{provided:(y >= 2)}
+event:raise_recv
+edge:G:down:rai:raise_recv{do:y=0}
+edge:G:rai:up:tau{provided:(y >= 2)}
+
+# compilation of process Ctl
+process:Ctl
+location:Ctl:up{initial:}
+location:Ctl:low_1{invariant:1 && z <= 1}
+location:Ctl:low_2{invariant:1 && z <= 1}
+location:Ctl:low_3{invariant:1 && z <= 1}
+location:Ctl:low_4{invariant:1 && z <= 1}
+location:Ctl:dn_1{}
+location:Ctl:dn_2{}
+location:Ctl:dn_3{}
+location:Ctl:dn_4{}
+location:Ctl:rai{invariant:1 && z <= 1}
+event:approach_recv
+edge:Ctl:up:low_1:approach_recv{do:z=0}
+edge:Ctl:low_1:low_2:approach_recv{}
+event:lower_emit
+edge:Ctl:low_1:dn_1:lower_emit{}
+edge:Ctl:low_2:low_3:approach_recv{}
+edge:Ctl:low_2:dn_2:lower_emit{}
+edge:Ctl:low_3:low_4:approach_recv{}
+edge:Ctl:low_3:dn_3:lower_emit{}
+edge:Ctl:low_4:dn_4:lower_emit{}
+event:leave_recv
+edge:Ctl:low_1:up:leave_recv{do:z=0}
+edge:Ctl:dn_1:dn_2:approach_recv{}
+edge:Ctl:dn_2:dn_3:approach_recv{}
+edge:Ctl:dn_2:dn_1:leave_recv{}
+edge:Ctl:dn_3:dn_4:approach_recv{}
+edge:Ctl:dn_3:dn_2:leave_recv{}
+edge:Ctl:dn_4:dn_3:leave_recv{}
+edge:Ctl:dn_1:rai:leave_recv{do:z=0}
+event:raise_emit
+edge:Ctl:rai:up:raise_emit{}
+
+sync:Ctl@approach_recv:T0@approach_emit
+sync:Ctl@approach_recv:T1@approach_emit
+sync:Ctl@approach_recv:T2@approach_emit
+sync:Ctl@approach_recv:T3@approach_emit
+sync:Ctl@leave_recv:T0@leave_emit
+sync:Ctl@leave_recv:T1@leave_emit
+sync:Ctl@leave_recv:T2@leave_emit
+sync:Ctl@leave_recv:T3@leave_emit
+sync:Ctl@lower_emit:G@lower_recv
+sync:Ctl@raise_emit:G@raise_recv

@@ -1,0 +1,36 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_train0.xml
+# N:(const (int))
+int:1:3:3:3:N
+# appr:(array (channel) (range (int) "0" "N - 1"))
+# event to synchronize: appr_0
+# event to synchronize: appr_1
+# event to synchronize: appr_2
+# stop:(array (channel) (range (int) "0" "N - 1"))
+# event to synchronize: stop_0
+# event to synchronize: stop_1
+# event to synchronize: stop_2
+# leave:(array (channel) (range (int) "0" "N - 1"))
+# event to synchronize: leave_0
+# event to synchronize: leave_1
+# event to synchronize: leave_2
+# go:(array (urgent (channel)) (range (int) "0" "N - 1"))
+# event to synchronize: go_0
+# event to synchronize: go_1
+# event to synchronize: go_2
+# no iodecl
+# compilation of process Train
+# instantiation as Train_id_0
+process:Train_id_0
+# x:(clock)
+clock:1:Train_id_0_x
+location:Train_id_0:Safe{initial:}
+location:Train_id_0:Stop{}
+location:Train_id_0:Cross{invariant:1 && Train_id_0_x <= 5}
+location:Train_id_0:Appr{invariant:1 && Train_id_0_x <= 20}
+location:Train_id_0:Start{invariant:1 && Train_id_0_x <= 15}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:Train_id_0:Appr:Cross:tau{do:Train_id_0_x=0:provided:(Train_id_0_x >= 10)}
