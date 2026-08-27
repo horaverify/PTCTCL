@@ -1,3 +1,22 @@
+/// @file uppaal.cpp
+/// @brief Front end: parses model files and query files into the engine's own structures.
+///
+/// Everything here is translation, never analysis. It reads the modelling language's XML format
+/// and produces either a ptctlmc::TimedAutomaton (single automaton) or a ptctlmc::Network
+/// (parallel composition), plus the ptctlmc::Query list a run checks. It also owns the query
+/// routers ::check_query and ::check_net_query, which choose an engine per query kind.
+///
+/// @par What the parser refuses
+/// A construct that cannot be represented faithfully is rejected, so a query over it reports
+/// UNSUPPORTED rather than being answered against different semantics. The one place this rule is
+/// broken today is `urgent chan`, which is accepted and downgraded silently — see
+/// KNOWN_LIMITATION.md §1.
+///
+/// @warning Declarations are matched textually. Any keyword test must therefore check both sides
+///          of the match for identifier characters; testing only the prefix would split an
+///          identifier that merely begins or ends with the keyword and drop the declaration with
+///          no diagnostic.
+
 #include "ptctlmc/uppaal.hpp"
 
 #include "ptctlmc/netreach.hpp"
@@ -14,7 +33,9 @@
 namespace ptctlmc {
 namespace {
 
-// ---- a minimal XML tree (enough for UPPAAL's flat-1_6 format) ----------------
+// ---- a minimal XML tree, sufficient for the flat model format ---------------
+
+/// @brief One XML element: its tag, attributes, text and children.
 struct Xml {
   std::string tag;
   std::vector<std::pair<std::string, std::string>> attrs;
@@ -30,6 +51,9 @@ struct Xml {
   }
 };
 
+/// @brief Expand the XML entity references that appear in model files.
+/// @param s raw attribute or text content
+/// @return @p s with the standard entities replaced
 std::string unescape(const std::string& s) {
   std::string o;
   o.reserve(s.size());
@@ -46,6 +70,8 @@ std::string unescape(const std::string& s) {
   return o;
 }
 
+/// @brief Recursive-descent XML reader producing an ::Xml tree.
+/// @note Handles only the subset the model format uses; it is not a general XML parser.
 struct XmlParser {
   const std::string& s;
   std::size_t i = 0;
@@ -109,6 +135,7 @@ struct XmlParser {
 };
 
 // ---- expression tokenizing / parsing (clock constraints & assignments) -------
+/// @brief Strip leading and trailing whitespace.
 std::string trim(const std::string& s) {
   std::size_t a = 0, b = s.size();
   while (a < b && std::isspace((unsigned char)s[a])) ++a;
@@ -116,11 +143,19 @@ std::string trim(const std::string& s) {
   return s.substr(a, b - a);
 }
 
-// True if c may appear inside an identifier. Used to require that a textual "and" operator is a whole
-// token: without checking BOTH sides, an identifier merely *ending* in "and" (land, command, rand) was
-// split mid-name, silently dropping the declaration and corrupting the model with no diagnostic.
+/// @brief May @p c appear inside an identifier?
+///
+/// @warning Used to require that a textual operator such as `and` is a whole token. Both sides
+///          must be checked: an identifier merely *ending* in the keyword would otherwise be split
+///          mid-name, silently dropping the declaration and corrupting the model with no
+///          diagnostic.
 static inline bool ident_char(unsigned char c) { return std::isalnum(c) != 0 || c == '_'; }
 
+/// @brief Split a textual conjunction into its conjuncts.
+/// @param s the expression text
+/// @return the conjuncts, trimmed; a single-element result when there is no top-level operator
+/// @note Splits on both the symbolic and the word form of conjunction, the latter only when it
+///       stands as a whole token; see ::ident_char.
 std::vector<std::string> split_conjuncts(const std::string& s) {
   std::vector<std::string> out;
   std::string cur;
@@ -142,9 +177,19 @@ using ClockMap = std::unordered_map<std::string, int>;
 
 enum class Cmp { LE, LT, GE, GT, EQ };
 
-// One side of a comparison: a constant, a single clock, or a clock difference.
-struct Side { bool is_const = false; long val = 0; int a = 0, b = -1; };
+/// @brief One side of a comparison: a constant, a single clock, or a clock difference.
+struct Side {
+  bool is_const = false;  ///< the side is a literal constant
+  long val = 0;           ///< its value, when constant
+  int a = 0;              ///< the clock, or the minuend of a difference
+  int b = -1;             ///< the subtrahend of a difference, or -1 for a single clock
+};
 
+/// @brief Parse one side of a clock comparison.
+/// @param raw the text
+/// @param cm  clock name to index
+/// @return the parsed side
+/// @throws UppaalError if the text is neither a constant nor a known clock or clock difference
 Side parse_side(const std::string& raw, const ClockMap& cm) {
   std::string t = trim(raw);
   Side s;
@@ -167,7 +212,15 @@ Side parse_side(const std::string& raw, const ClockMap& cm) {
   return s;
 }
 
-void emit_clock_cmp(int a, int b /*-1 single*/, Cmp op, long k, std::vector<Constraint>& out) {
+/// @brief Emit the DBM constraints encoding one clock comparison.
+/// @param a  the clock, or the minuend of a difference
+/// @param b  the subtrahend, or -1 for a single clock
+/// @param op the comparison operator
+/// @param k  the constant compared against
+/// @param[out] out constraints are appended
+/// @note An equality emits *two* constraints, an upper and a lower bound, since a DBM entry can
+///       express only one direction.
+void emit_clock_cmp(int a, int b, Cmp op, long k, std::vector<Constraint>& out) {
   switch (op) {
     case Cmp::LE: out.push_back(b < 0 ? Constraint{a, 0, le((int)k)} : Constraint{a, b, le((int)k)}); break;
     case Cmp::LT: out.push_back(b < 0 ? Constraint{a, 0, lt((int)k)} : Constraint{a, b, lt((int)k)}); break;
@@ -177,12 +230,17 @@ void emit_clock_cmp(int a, int b /*-1 single*/, Cmp op, long k, std::vector<Cons
   }
 }
 
+/// @brief Reverse a comparison operator, for rewriting `const op x` as `x op' const`.
 Cmp flip(Cmp c) {
   switch (c) { case Cmp::LE: return Cmp::GE; case Cmp::LT: return Cmp::GT;
                case Cmp::GE: return Cmp::LE; case Cmp::GT: return Cmp::LT; default: return Cmp::EQ; }
 }
 
-// Parse "A op B" into constraint(s); returns false if not a clock atom.
+/// @brief Parse a single comparison into clock constraints.
+/// @param atom the atom text
+/// @param cm   clock name to index
+/// @param[out] out constraints are appended on success
+/// @return @c false if @p atom is not a clock comparison, leaving @p out untouched
 bool parse_atom(const std::string& atom, const ClockMap& cm, std::vector<Constraint>& out) {
   static const std::pair<const char*, Cmp> ops[] = {
       {"<=", Cmp::LE}, {">=", Cmp::GE}, {"==", Cmp::EQ}, {"<", Cmp::LT}, {">", Cmp::GT}};
@@ -202,6 +260,10 @@ bool parse_atom(const std::string& atom, const ClockMap& cm, std::vector<Constra
   return true;
 }
 
+/// @brief Parse a conjunction of clock comparisons.
+/// @param expr the expression text
+/// @param cm   clock name to index
+/// @return the conjoined constraints
 std::vector<Constraint> parse_constraints(const std::string& expr, const ClockMap& cm) {
   std::vector<Constraint> out;
   for (const auto& atom : split_conjuncts(expr)) {
@@ -211,6 +273,11 @@ std::vector<Constraint> parse_constraints(const std::string& expr, const ClockMa
   return out;
 }
 
+/// @brief Parse a reset list, i.e. the clock assignments of an edge's update.
+/// @param expr the update text
+/// @param cm   clock name to index
+/// @return the indices of the clocks reset
+/// @note Only assignments to zero are resets; the engine's zone operations support no other form.
 std::vector<int> parse_resets(const std::string& expr, const ClockMap& cm) {
   std::vector<int> out;
   for (auto part : split_conjuncts(expr)) {
@@ -226,6 +293,11 @@ std::vector<int> parse_resets(const std::string& expr, const ClockMap& cm) {
   return out;
 }
 
+/// @brief Register every clock a declaration block declares.
+/// @param decl the declaration text
+/// @param[in,out] cm    clock name to index, extended
+/// @param[in,out] names index to clock name, extended in step with @p cm
+/// @post Clock indices start at 1; index 0 is the reference clock.
 void collect_clocks(const std::string& decl, ClockMap& cm, std::vector<std::string>& names) {
   // find "clock a, b, c;" statements
   std::size_t p = 0;
@@ -247,17 +319,22 @@ void collect_clocks(const std::string& decl, ClockMap& cm, std::vector<std::stri
   }
 }
 
-// ---- the <system> block -----------------------------------------------------
-// It does two things, and ignoring either silently under-models the system:
-//   Viking11 = Viking10();            instantiate a template under a new name
-//   system Viking1, ..., Viking11;    which processes actually form the network
-// A template that is never listed is not part of the system at all.
+// ---- the system block -------------------------------------------------------
+
+/// @brief The system block: template instantiations, and which of them form the network.
+///
+/// The block does two separate things, and ignoring either silently under-models the system: it
+/// instantiates templates under new names, and it lists which processes actually compose. A
+/// template that is never listed is not part of the system at all.
 struct SystemDecl {
   bool has_list = false;
   std::vector<std::string> order;                     // names in `system ...;`
   std::unordered_map<std::string, std::string> inst;  // instance name -> template
 };
 
+/// @brief Remove line and block comments from declaration text.
+/// @note Runs before any keyword matching, so a keyword inside a comment cannot be mistaken for a
+///       declaration.
 std::string strip_comments(const std::string& s) {
   std::string o;
   o.reserve(s.size());
@@ -279,6 +356,11 @@ std::string strip_comments(const std::string& s) {
 
 bool ident_char(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
 
+/// @brief Parse the system block.
+/// @param raw the block text
+/// @return the instantiations and the composed process list
+/// @post When no explicit system line is present, every declared template is taken to compose, so
+///       a model without one still yields a network.
 SystemDecl parse_system(const std::string& raw) {
   SystemDecl sd;
   const std::string s = strip_comments(raw);
@@ -322,6 +404,11 @@ SystemDecl parse_system(const std::string& raw) {
 
 }  // namespace
 
+/// @brief Load a model file as a single timed automaton.
+/// @param path path to the model file
+/// @return the automaton, with its max-constant arrays already computed
+/// @throws UppaalError if the file cannot be opened or the model cannot be represented
+/// @note For a model composing several processes, use ::load_uppaal_network instead.
 TimedAutomaton load_uppaal_xml(const std::string& path) {
   std::ifstream in(path);
   if (!in) throw UppaalError("cannot open model: " + path);
@@ -373,6 +460,15 @@ TimedAutomaton load_uppaal_xml(const std::string& path) {
   return ta;
 }
 
+/// @brief Load a query file.
+/// @param path path to the query file
+/// @return one ptctlmc::Query per query line
+/// @throws UppaalError if the file cannot be opened
+/// @post A query whose operator is not supported is returned with `supported == false` and a note
+///       explaining why, rather than being dropped — so every input line is accounted for in the
+///       output.
+/// @note Each query's condition text is stored raw and resolved later, since resolving it needs
+///       the clock and variable maps of the model it will be checked against.
 std::vector<Query> load_queries(const std::string& path) {
   std::ifstream in(path);
   if (!in) throw UppaalError("cannot open query file: " + path);
@@ -412,6 +508,15 @@ std::vector<Query> load_queries(const std::string& path) {
   return out;
 }
 
+/// @brief Resolve and decide one query against a single timed automaton.
+/// @param ta   the automaton
+/// @param q_in the query, with its condition text unresolved
+/// @param[out] satisfied receives the verdict; written only on @c true
+/// @param backend which expansion backend to run
+/// @param[out] stats optional statistics; unchanged when null
+/// @return @c false if the query is unsupported or its condition does not resolve against @p ta
+/// @note A @c false return is reported to the user as UNSUPPORTED. It never means "not
+///       satisfied", which is why @p satisfied is left untouched.
 bool check_query(const TimedAutomaton& ta, const Query& q_in, bool* satisfied, Backend backend,
                  ReachStats* stats) {
   if (!q_in.supported) return false;
@@ -459,8 +564,18 @@ namespace {
 
 
 enum class SideKind { Const, Clock, ClockDiff, Int };
-struct Side2 { SideKind kind; int a; int b; long val; };
+/// @brief One side of a network-level comparison, which may be a clock, a variable or a constant.
+struct Side2 {
+  SideKind kind;  ///< which of the three forms this side takes
+  int a;          ///< clock or variable index, by @c kind
+  int b;          ///< subtrahend clock for a difference, else unused
+  long val;       ///< the value, when constant
+};
 
+/// @brief Parse one side of a network-level comparison.
+/// @param raw the text
+/// @param cm  clock name to index
+/// @return the parsed side, classified as clock, variable or constant
 Side2 parse_side2(const std::string& raw, const ClockMap& cm,
                   const std::unordered_map<std::string, int>& im) {
   std::string t = trim(raw);
@@ -477,6 +592,13 @@ Side2 parse_side2(const std::string& raw, const ClockMap& cm,
   return {SideKind::Const, 0, -1, v};
 }
 
+/// @brief Parse one network-level atom into either a clock constraint or an integer atom.
+/// @param atom the atom text
+/// @param cm   clock name to index
+/// @param[out] cc clock constraints are appended here
+/// @param[out] ic integer atoms are appended here
+/// @post At most one of @p cc and @p ic grows, which is how callers tell the two kinds apart —
+///       ::build_pred relies on this to refuse a clock constraint in a liveness predicate.
 void parse_net_atom(const std::string& atom, const ClockMap& cm,
                     const std::unordered_map<std::string, int>& im,
                     std::vector<Constraint>& cc, std::vector<IntAtom>& ic) {
@@ -502,12 +624,22 @@ void parse_net_atom(const std::string& atom, const ClockMap& cm,
   }
 }
 
+/// @brief Parse an edge guard into its clock and integer parts.
+/// @param text the guard text
+/// @param cm   clock name to index
+/// @param[out] cc clock constraints
+/// @param[out] ic integer atoms
 void parse_net_guard(const std::string& text, const ClockMap& cm,
                      const std::unordered_map<std::string, int>& im,
                      std::vector<Constraint>& cc, std::vector<IntAtom>& ic) {
   for (auto atom : split_conjuncts(text)) { atom = trim(atom); if (!atom.empty()) parse_net_atom(atom, cm, im, cc, ic); }
 }
 
+/// @brief Parse an edge update into clock resets and integer assignments.
+/// @param text the update text
+/// @param cm   clock name to index
+/// @param[out] resets clock indices reset by this update
+/// @param[out] ia     integer assignments
 void parse_net_assign(const std::string& text, const ClockMap& cm,
                       const std::unordered_map<std::string, int>& im,
                       std::vector<int>& resets, std::vector<IntAsgn>& updates) {
@@ -525,6 +657,11 @@ void parse_net_assign(const std::string& text, const ClockMap& cm,
 
 }  // namespace
 
+/// @brief How many processes a model file composes, without building the network.
+/// @param path path to the model file
+/// @return the number of composed processes, or 1 when the model declares no system block
+/// @note Used to choose between the single-automaton and network engines before paying for a full
+///       parse.
 int uppaal_process_count(const std::string& path) {
   std::ifstream in(path);
   if (!in) throw UppaalError("cannot open model: " + path);
@@ -542,13 +679,13 @@ int uppaal_process_count(const std::string& path) {
 }
 
 // ---- full modelling-language declarations ----------------------------------
-// Everything the modelling language can declare is parsed here: `const int N = 8;`,
-// `typedef int[0,N-1] id_t;`, arrays (`int list[N+1];`, `chan appr[N];`) and user
-// functions, as well as the plain `int[lo,hi] x;` / `chan a, b;` forms. Arrays become
-// consecutive IntVar cells and channel arrays become consecutive channels, so nothing
-// downstream has to know they exist. (Earlier standalone collect_ints/collect_channels
-// scanners handled only the plain forms and were subsumed by this; they are gone.)
+//
+// Everything the language can declare is parsed here: constants, typedefs, arrays of variables
+// and of channels, user functions, and the plain scalar forms. An array becomes consecutive
+// IntVar cells and a channel array becomes consecutive channels, so nothing downstream needs to
+// know arrays exist.
 
+/// @brief Symbol tables threaded through declaration parsing.
 struct DeclCtx {
   SymTab st;                                           // constants, cells, arrays, functions
   std::unordered_map<std::string, std::pair<long, long>> tdefs;  // typedef -> [lo,hi]
@@ -557,8 +694,11 @@ struct DeclCtx {
   std::unordered_map<std::string, std::pair<int, int>> chan_arr;
 };
 
-// Split a declaration block into top-level statements. A function definition
-// ends at its closing brace; everything else at ';'.
+/// @brief Split a declaration block into top-level statements.
+/// @param src the block text, comments already stripped
+/// @return one string per declaration
+/// @note A function definition ends at its closing brace; every other declaration ends at a
+///       semicolon. Nesting is tracked so a semicolon inside a function body does not split it.
 std::vector<std::string> split_decls(const std::string& src) {
   std::vector<std::string> out;
   std::string cur;
@@ -588,14 +728,23 @@ std::vector<std::string> split_decls(const std::string& src) {
   return out;
 }
 
+/// @brief Does @p s begin with the whole word @p w?
+/// @return @c true only when the match is followed by a non-identifier character, so that a
+///         longer identifier beginning with @p w does not match
 bool starts_word(const std::string& s, const char* w) {
   const std::size_t n = std::strlen(w);
   if (s.compare(0, n, w) != 0) return false;
   return s.size() == n || !(std::isalnum((unsigned char)s[n]) || s[n] == '_');
 }
 
-// `int[a,b]` / a typedef name / plain `int`|`bool` -> element range.
-// Returns false if `tok` is not a known type.
+/// @brief Resolve a type token to the value range of one element.
+/// @param tok the declaration text, starting at the type
+/// @param[in,out] pos advanced past the type on success
+/// @param dc  the symbol tables, for typedef names and constants
+/// @return @c false if @p tok does not name a known type
+/// @note An unannotated integer type takes the language's default range, which is wide. That
+///       width is charged to the packed discrete key, so models relying on it can exceed the key
+///       and be rejected; ptctlmc::set_narrow_ranges exists for exactly that case.
 bool type_range(const std::string& tok, std::size_t* pos, const DeclCtx& dc,
                 const std::vector<Func>& funcs, long* lo, long* hi) {
   std::string s = trim(tok);
@@ -632,9 +781,12 @@ bool type_range(const std::string& tok, std::size_t* pos, const DeclCtx& dc,
   return true;
 }
 
-// Parse one declaration block (global or template-local). `prefix` disambiguates
-// per-instance local state: two Train instances each declaring `clock x` become
-// `Train0.x` and `Train1.x`.
+/// @brief Parse one declaration block, global or template-local.
+/// @param text   the block text
+/// @param prefix qualifies per-instance local state, so that two instances of a template each
+///               declaring the same clock get distinct qualified names
+/// @param[in,out] net the network being built, extended with the declared clocks, variables,
+///                    channels and functions
 void parse_decl_block(const std::string& text, const std::string& prefix, Network& net,
                       ClockMap& cm, std::unordered_map<std::string, int>& im,
                       std::unordered_map<std::string, int>& chm, DeclCtx& dc) {
@@ -826,8 +978,12 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
   }
 }
 
-// Split on top-level `&&` (guards) or `,` (assignments), ignoring separators
-// inside brackets or parentheses so `list[i+1]` and `f(a,b)` stay intact.
+/// @brief Split a guard or update into its top-level parts.
+/// @param s      the text
+/// @param andand split on conjunction (a guard) rather than on commas (an update)
+/// @return the parts, in order
+/// @note Separators inside brackets or parentheses are ignored, so an indexed access or a call
+///       with several arguments is not split mid-expression.
 std::vector<std::string> split_parts(const std::string& s, bool andand) {
   std::vector<std::string> out;
   std::string cur;
@@ -848,7 +1004,9 @@ std::vector<std::string> split_parts(const std::string& s, bool andand) {
   return out;
 }
 
-// True if `part` mentions a clock, i.e. belongs on the zone side.
+/// @brief Does @p part mention a clock, i.e. belong on the zone side rather than the integer side?
+/// @param part the expression text
+/// @param cm   clock name to index
 bool mentions_clock(const std::string& part, const ClockMap& cm) {
   for (const auto& kv : cm) {
     const std::string& n = kv.first;
@@ -864,8 +1022,17 @@ bool mentions_clock(const std::string& part, const ClockMap& cm) {
   return false;
 }
 
-// True if the v1 fast path can represent this part: `intvar OP const` /
-// `intvar := const`. Anything with an index, a call, or arithmetic is not.
+/// @brief Can this part be represented as a simple integer atom or assignment?
+///
+/// Simple means `var OP const` or `var := const`. Anything involving an index, a call or
+/// arithmetic is not, and falls back to the general expression path.
+///
+/// @param part the expression text
+/// @param im   variable name to index
+/// @return @c true iff the simple form suffices
+/// @note The distinction is a representation choice, not a semantic one: the general path
+///       evaluates the same thing, but carries an expression tree and so cannot be compared as
+///       cheaply. Keeping the common case simple is what lets most edges avoid it entirely.
 bool part_is_simple(const std::string& part, const std::unordered_map<std::string, int>& im) {
   if (part.find('[') != std::string::npos || part.find('(') != std::string::npos) return false;
   if (part.find('+') != std::string::npos || part.find('-') != std::string::npos ||
@@ -888,6 +1055,8 @@ bool part_is_simple(const std::string& part, const std::unordered_map<std::strin
   return false;
 }
 
+/// @brief Conjoin two expressions, treating a null operand as absent.
+/// @return @p b when @p a is null and vice versa, otherwise their conjunction
 ExprP and_expr(ExprP a, ExprP b) {
   if (!a) return b;
   if (!b) return a;
@@ -897,6 +1066,14 @@ ExprP and_expr(ExprP a, ExprP b) {
   return e;
 }
 
+/// @brief Load a model file as a network of timed automata.
+/// @param path path to the model file
+/// @return the network, fully finalised
+/// @throws UppaalError if the file cannot be opened or the model cannot be represented
+/// @post Every finalisation analysis has run — bounds, per-location bounds, active clocks and
+///       integer liveness — so the network is ready to explore.
+/// @warning `urgent chan` is accepted here and downgraded to an ordinary channel without any
+///          diagnostic. See KNOWN_LIMITATION.md §1.
 Network load_uppaal_network(const std::string& path) {
   std::ifstream in(path);
   if (!in) throw UppaalError("cannot open model: " + path);
@@ -1171,6 +1348,21 @@ Network load_uppaal_network(const std::string& path) {
   return net;
 }
 
+/// @brief Resolve and decide one query against a network, routing it to the right engine.
+///
+/// Reachability and safety go to ptctlmc::reachable_net, deadlock to
+/// ptctlmc::deadlock_reachable, and the liveness forms to the greatest-fixpoint engine.
+///
+/// @param net the network
+/// @param q   the query, with its condition text unresolved
+/// @param[out] satisfied receives the verdict; written only on @c true
+/// @param backend which expansion backend to run
+/// @param[out] stats optional statistics; unchanged when null
+/// @return @c false if the query is unsupported or does not resolve against @p net
+///
+/// @note A @c false return is reported as UNSUPPORTED and never means "not satisfied", which is
+///       why @p satisfied is left untouched. This is the path a liveness predicate mentioning a
+///       clock takes; see KNOWN_LIMITATION.md §3.
 bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backend backend,
                      ReachStats* stats) {
   if (!q.supported) return false;
