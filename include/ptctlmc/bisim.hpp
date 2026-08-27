@@ -1,16 +1,22 @@
-// bisim.hpp — timed (bi)simulation / (weak) simulation between two timed automata.
-//
-// Decides, over the disjoint-clock product X_A ⊎ X_B, whether A and B are timed
-// bisimilar / A is timed-simulated by B, in the strong or weak (τ over a chosen
-// observable alphabet) sense. Greatest-fixpoint partition refinement on federations
-// of zones; see the research blueprint. Diagonal-free; location invariants supported.
-//
-// Semantics (docs/superpowers/specs/weaksim-quotient.md §A.1): (l,v) is a state only when
-// v ⊨ Inv(l); a delay d is available iff v+d ⊨ Inv(l) (convexity of the invariant makes the
-// endpoint test cover the trajectory); an edge is enabled only when the post-reset valuation
-// satisfies the TARGET invariant. A delay challenge is matched by an EQUAL delay on the other
-// side, in the weak case too — so an invariant that stops time on the responder's side kills
-// the pair. Weak relaxes only the action clause, to τ* a τ* with the τs at zero delay.
+/// @file bisim.hpp
+/// @brief Timed (bi)simulation and weak simulation between two timed automata.
+///
+/// Decides, over the disjoint-clock product of the two automata, whether A and B are timed
+/// bisimilar, or whether A is timed-simulated by B, in the strong or the weak sense — weak taking
+/// τ over a chosen observable alphabet. The decision procedure is greatest-fixpoint partition
+/// refinement over federations of zones.
+///
+/// @par Semantics
+/// A pair (l, v) is a state only when `v ⊨ Inv(l)`. A delay d is available iff `v + d ⊨ Inv(l)`;
+/// the invariant is convex, so testing the endpoint covers the whole trajectory. An edge is
+/// enabled only when the *post-reset* valuation satisfies the **target** invariant.
+///
+/// A delay challenge must be matched by an **equal** delay on the other side, in the weak case as
+/// well as the strong one. An invariant that stops time on the responder's side therefore kills
+/// the pair. Weakness relaxes only the action clause, to `τ* a τ*` with the τ steps taken at zero
+/// delay.
+///
+/// @pre Both automata are diagonal-free. Location invariants are supported.
 #pragma once
 
 #include <set>
