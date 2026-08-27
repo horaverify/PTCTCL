@@ -1,3 +1,38 @@
+/// @file netreach.cpp
+/// @brief The forward engine: symbolic reachability over a network of timed automata.
+///
+/// This translation unit implements every "is a state satisfying X reachable?" query in the
+/// build — ptctlmc::reachable_net, ptctlmc::exists_invariant_run and
+/// ptctlmc::deadlock_reachable, all declared in @ref ptctlmc/netreach.hpp — on top of one
+/// engine, ::reach_engine. It also owns ptctlmc::detail::state_has_deadlock, which the liveness
+/// engine in @ref netliveness.cpp calls for its stopping term.
+///
+/// @par Shape of the search
+/// Level-synchronous breadth-first exploration of the symbolic state space. A symbolic state is
+/// a discrete part (a location per process plus the integer variables) and a zone. The discrete
+/// part is packed losslessly into a @c uint64_t key (::DiscKeyCodec); the zone is interned
+/// (ptctlmc::detail::ZoneIntern) and referenced by index, so the frontier and the passed set
+/// carry integers rather than DBMs. The passed set is sharded into stripes
+/// (::StripeLayout) so that workers contend only when they touch the same discrete state.
+///
+/// @par Covering
+/// A newly generated state is discarded when the passed set already holds one that *covers* it.
+/// The default relation is a_LU subsumption on **exact** zones; extrapolation is switched on
+/// only where finiteness would otherwise depend on it, or by the adaptive rule when the
+/// zones-per-discrete-state ratio shows the exact graph is not converging. Diagonal networks
+/// cannot use a_LU at all (Bouyer 2004) and fall back to inclusion on extrapolated zones.
+///
+/// @warning Covering is a simulation, so it preserves existential properties only. Deadlock is a
+///          universally quantified negative property and is *not* preserved;
+///          ptctlmc::deadlock_reachable therefore runs the same engine over a network whose
+///          bound arrays have been collapsed to `L = U = M`, which makes the relation symmetric
+///          and hence a bisimulation. See @c DESIGN.md.
+///
+/// @par Design notes
+/// The correctness arguments and the measurements behind the choices here — why stored zones
+/// must be exact, why deadlock needs a bisimulation, and what was measured and rejected — are
+/// collected in @c DESIGN.md at the repository root.
+
 #include "ptctlmc/netreach.hpp"
 #include "ptctlmc/symmetry.hpp"
 #include <cstdio>
@@ -101,17 +136,29 @@ static std::size_t linux_heap_bytes() {
 
 }  // namespace
 
-// ---- general modelling-language guard/update -------------------------------
-// Only edges that need more than `var OP const` carry these (see NEdge). The
-// common case is a null check, so this costs nothing for Fischer/viking.
-//
-// These two are deliberately OUTSIDE the anonymous namespace: the GPU engines
-// (src/metal, src/cuda) must apply exactly the same semantics as the CPU path,
-// and duplicating them there is how the backends silently diverged before --
-// the Metal expander dropped `gen_update` entirely and explored roughly half of
-// viking's state space. Declared in netreach.hpp.
+/// @name General modelling-language guards and updates
+/// @{
+/// Only edges needing more than `var OP const` carry these; the common case is a null check, so
+/// simple models pay nothing for them.
+///
+/// @warning Both have **external** linkage on purpose. The GPU expanders in @c src/metal and
+///          @c src/cuda must apply exactly these semantics, and duplicating them there is how a
+///          backend once diverged silently — a Metal expander that dropped the general update
+///          explored roughly half of viking's state space and still reported a verdict. One
+///          body, every backend. Declared in @ref ptctlmc/netreach.hpp.
+/// @}
 
-// Scratch buffer so a guard that calls a function cannot perturb the live state.
+/// @brief Evaluate @p e's general guard.
+///
+/// @param net   the network, for its function table
+/// @param e     the edge whose guard is evaluated
+/// @param ints  the integer variables of the source state
+/// @param n     length of @p ints
+/// @return @c true iff @p e has no general guard, or the guard evaluates non-zero without
+///         faulting
+///
+/// @post @p ints is unchanged. The guard runs against a thread-local copy, so a guard that calls
+///       a function with side effects cannot perturb the live state.
 bool gen_ok(const Network& net, const NEdge& e, const long* ints, std::size_t n) {
   if (!e.gen_guard) return true;
   thread_local std::vector<long> scratch;
@@ -123,10 +170,21 @@ bool gen_ok(const Network& net, const NEdge& e, const long* ints, std::size_t n)
   return !cx.fault && v != 0;
 }
 
-// Runs the general update in place. Returns false if it faulted (bad index,
-// division by zero, runaway loop) or if a write left a variable's declared
-// range -- the latter would silently collide in the packed discrete key, so it
-// is refused rather than mis-encoded.
+/// @brief Run @p e's general update over @p ints.
+///
+/// @param net       the network, for its function table and the variables' declared ranges
+/// @param e         the edge whose update is executed
+/// @param[in,out] ints  the integer variables; written only on success
+/// @param n         length of @p ints
+/// @return @c false if the update faulted (bad index, division by zero, runaway loop) or if a
+///         write left a variable's declared range
+///
+/// @post On @c false, @p ints is unchanged: the update runs against a thread-local copy and is
+///       committed only once every value has been range-checked.
+/// @warning An out-of-range write must be refused, not clamped or stored. ::DiscKeyCodec gives
+///          each variable exactly enough bits for its declared range, so an out-of-range value
+///          would alias a different discrete state in the packed key — silent state-space
+///          corruption rather than a detectable error.
 bool gen_apply(const Network& net, const NEdge& e, long* ints, std::size_t n) {
   if (!e.gen_update) return true;
   thread_local std::vector<long> buf;
@@ -146,10 +204,17 @@ bool gen_apply(const Network& net, const NEdge& e, long* ints, std::size_t n) {
   return true;
 }
 
-// Does the network compare two clocks anywhere (a diagonal constraint)? If so, the
-// LU/aLU abstraction is unsound and we fall back to exact zones (diagonals kept exact).
-// EXTERNAL linkage on purpose -- declared in netreach.hpp, so the query router in main.cpp
-// can ask the same question before choosing an engine.
+/// @brief Does @p net compare two clocks anywhere?
+///
+/// @param net  the network to scan; both invariants and edge guards are examined
+/// @return @c true iff some constraint has both indices non-zero, i.e. is diagonal
+///
+/// @note The LU family of abstractions is unsound on diagonal constraints (Bouyer,
+///       *Forward analysis of updatable timed automata*, FMSD 24(3), 2004), so a network for
+///       which this returns @c true must keep diagonals exact: inclusion covering with the
+///       diagonal-preserving extrapolation, never a_LU.
+/// @note External linkage on purpose: the query router asks the same question before choosing an
+///       engine, and the GPU backends ask it through the @c netgpu alias below. One body.
 bool network_has_diagonal(const Network& net) {
   auto diag = [](const std::vector<Constraint>& cs) {
     for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
@@ -162,8 +227,8 @@ bool network_has_diagonal(const Network& net) {
   return false;
 }
 
-// The GPU engines (netengine_metal.mm / netengine_cuda.cu) ask the same question through the
-// `netgpu` declaration in net_gpu_encode.hpp. One body, two names.
+/// @brief Alias of ::ptctlmc::network_has_diagonal for the GPU expanders, which reach it through
+///        the @c netgpu declaration in @ref ptctlmc/net_gpu_encode.hpp. One body, two names.
 namespace netgpu { bool network_has_diagonal(const Network& net) { return ptctlmc::network_has_diagonal(net); } }
 
 namespace {
