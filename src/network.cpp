@@ -1,3 +1,17 @@
+/// @file network.cpp
+/// @brief Static analyses a network is finalised with, before any query runs.
+///
+/// Four analyses, each a least fixpoint computed once per network and thereafter read-only:
+/// the LU bound arrays that parameterise the extrapolation (::Network::compute_bounds,
+/// ::Network::compute_loc_bounds), the active-clock sets driving the continuous reduction
+/// (::Network::compute_active), and the integer-liveness sets driving its discrete counterpart
+/// (::Network::compute_int_live).
+///
+/// @note Every fixpoint here iterates **within one process**, following that process's own edges.
+///       This is the conservative direction for all four: ignoring the ways other processes
+///       constrain a run can only make a bound larger, or a clock or cell look live when it is
+///       not, and each analysis is used only where over-approximating is safe.
+
 #include "ptctlmc/network.hpp"
 
 #include <algorithm>
@@ -5,6 +19,11 @@
 
 namespace ptctlmc {
 
+/// @brief Outgoing edges of a location, computed by scanning.
+/// @param loc the source location index
+/// @return indices into ::NProc::edges of every edge leaving @p loc
+/// @note O(E) per call. The hot paths use ::NProc::edges_of, which reads the prebuilt index; this
+///       form exists for the finalisation analyses below, which run before that index is built.
 std::vector<int> NProc::edges_from(int loc) const {
   std::vector<int> out;
   for (int e = 0; e < static_cast<int>(edges.size()); ++e)
@@ -12,8 +31,11 @@ std::vector<int> NProc::edges_from(int loc) const {
   return out;
 }
 
-// One O(E) pass builds the per-location outgoing-edge lists, so the hot path
-// (successors_net) never scans or allocates to find a location's edges again.
+/// @brief Build the per-location outgoing-edge index in one O(E) pass.
+/// @post ::NProc::edges_of returns each location's edges without scanning or allocating, which is
+///       what keeps successor generation free of both.
+/// @note Edges whose source is out of range are skipped rather than rejected; the parser is
+///       responsible for well-formedness.
 void NProc::build_edge_index() {
   edges_by_loc.assign(locations.size(), {});
   for (int e = 0; e < static_cast<int>(edges.size()); ++e) {
@@ -23,6 +45,17 @@ void NProc::build_edge_index() {
   }
 }
 
+/// @brief Compute the network-wide LU bound arrays and finalise the edge index.
+///
+/// For each clock, the largest constant it is compared against as an upper bound and as a lower
+/// bound, taken over every invariant and every edge guard in the network.
+///
+/// @post `lbound[0] == ubound[0] == 0`, as the a_LU test requires of the reference clock.
+/// @post Every process has its outgoing-edge index built.
+/// @note A diagonal constraint bounds neither clock alone, so its magnitude is applied to both
+///       clocks in both directions — the conservative choice.
+/// @note This is the single network-finalisation entry point, called once after every template
+///       and edge is loaded, which is why the edge index is built here too.
 void Network::compute_bounds() {
   lbound.assign(nclocks + 1, 0);
   ubound.assign(nclocks + 1, 0);
@@ -46,19 +79,34 @@ void Network::compute_bounds() {
   }
   lbound[0] = ubound[0] = 0;
 
-  // compute_bounds() is the single network-finalisation point (called once after
-  // all templates/edges are loaded), so build the outgoing-edge index here too.
   for (auto& p : procs) p.build_edge_index();
 }
 
+/// @brief Compute per-location LU bounds, as a backward least fixpoint over each process.
+///
+/// A clock's bound at a location is the largest constant it is compared against at that location,
+/// or at any location reachable from it without the clock being reset in between. Per-location
+/// bounds are pointwise no larger than the network-wide ones, so the extrapolation they
+/// parameterise is at least as precise.
+///
+/// Two families are produced. `lbound_loc`/`ubound_loc` hold integer constants for the a_LU test;
+/// `lraw_loc`/`uraw_loc` hold the same fixpoint with each bound's **strictness** retained, for the
+/// G-simulation.
+///
+/// @pre ::Network::compute_bounds has run, so the edge index exists.
+/// @post Both families are least fixpoints: a bound propagates backwards across an edge exactly
+///       when the clock survives that edge's resets.
+///
+/// @note Raw bound ordering already places `le(v)` above `lt(v)`, so a raw max is precisely the
+///       "weakest of the two wins" rule the G-simulation requires: given both `x < 5` and
+///       `x <= 5`, the collapsed bound is `x <= 5`.
+/// @note Iterating to a fixpoint rather than taking one pass is necessary because a cycle in the
+///       location graph can propagate a bound backwards any number of times.
 void Network::compute_loc_bounds() {
   lbound_loc.assign(nprocs(), {});
   ubound_loc.assign(nprocs(), {});
   lraw_loc.assign(nprocs(), {});
   uraw_loc.assign(nprocs(), {});
-  // Track the raw bound alongside the integer. Raw ordering already puts le(v) above lt(v), so
-  // `max` on raw is exactly the "weakest of the two" rule Cor. 3.6 needs: given both `x < 5` and
-  // `x <= 5`, the collapsed constraint is `x <= 5`.
   auto rmax = [](raw_t& slot, raw_t r) { if (r != kGNone && (slot == kGNone || r > slot)) slot = r; };
   auto scan = [&](const std::vector<Constraint>& cs, std::vector<std::int32_t>& Lc,
                   std::vector<std::int32_t>& Uc, std::vector<raw_t>& Lr, std::vector<raw_t>& Ur) {
@@ -72,9 +120,10 @@ void Network::compute_loc_bounds() {
         Lc[c.j] = std::max(Lc[c.j], -v);
         rmax(Lr[c.j], strict ? lt(-v) : le(-v));
       } else if (c.i > 0 && c.j > 0) {
-        // Diagonal: G would keep it as a diagonal constraint. We do not (dbm_is_g_le is the
-        // diagonal-free instance), so fall back to the same conservative per-clock widening the
-        // integer path uses, with NON-strict bounds -- the safe choice when strictness is lost.
+        // The G-simulation would keep a diagonal as a diagonal constraint, but the implemented
+        // test is the diagonal-free instance, so this falls back to the same conservative
+        // per-clock widening the integer path uses. The bounds are made non-strict, which is the
+        // safe direction once strictness can no longer be attributed to one clock.
         const int a = std::abs(v);
         Uc[c.i] = std::max(Uc[c.i], a); Uc[c.j] = std::max(Uc[c.j], a);
         Lc[c.i] = std::max(Lc[c.i], a); Lc[c.j] = std::max(Lc[c.j], a);
@@ -123,6 +172,15 @@ void Network::compute_loc_bounds() {
   }
 }
 
+/// @brief Compute the active-clock sets, as a backward least fixpoint over each process.
+///
+/// A clock is *active* at a location when some invariant or guard reachable from that location
+/// reads it before it is reset. A clock that is not active cannot influence any future behaviour,
+/// so ::ptctlmc::detail::reset_inactive may zero it and thereby merge zones differing only in it.
+///
+/// @pre ::Network::compute_bounds has run, so the edge index exists.
+/// @post `active_mask` is populated iff `nclocks <= 63`; wider networks leave it empty and the
+///       consumers fall back to the byte-array form. This is what makes the mask's shifts safe.
 void Network::compute_active() {
   active.assign(nprocs(), {});
   auto read = [&](const std::vector<Constraint>& cs, std::vector<char>& s) {
@@ -151,7 +209,8 @@ void Network::compute_active() {
       }
     }
   }
-  // Bit-pack the fixpoint for the per-successor lookup (see Network::active_mask).
+  // Bit-pack the fixpoint so the per-successor lookup is a handful of OR operations rather than
+  // an nprocs x nclocks byte scan. Only possible while a clock index fits in a word.
   active_mask.clear();
   if (nclocks <= 63) {
     active_mask.resize(nprocs());
@@ -164,6 +223,14 @@ void Network::compute_active() {
   }
 }
 
+/// @brief Resolve a possibly process-qualified location name to indices.
+/// @param proc process name, or empty to search every process
+/// @param loc  location name
+/// @param[out] pi receives the process index
+/// @param[out] li receives the location index
+/// @return @c true if the name resolved; @p pi and @p li are written only then
+/// @note With an empty @p proc the first match in process order wins, so an ambiguous bare
+///       location name resolves rather than being reported as ambiguous.
 bool Network::resolve_location(const std::string& proc, const std::string& loc, int* pi,
                                int* li) const {
   for (int p = 0; p < nprocs(); ++p)
@@ -173,6 +240,9 @@ bool Network::resolve_location(const std::string& proc, const std::string& loc, 
   return false;
 }
 
+/// @brief Index of a declared integer variable by name.
+/// @param name the variable name
+/// @return its index, or -1 if no such variable is declared
 int Network::intvar_index(const std::string& name) const {
   for (int i = 0; i < static_cast<int>(intvars.size()); ++i)
     if (intvars[i].name == name) return i;
@@ -180,8 +250,13 @@ int Network::intvar_index(const std::string& name) const {
 }
 
 
-// Cells mentioned anywhere in a general expression / statement. Those edges are not analysed,
-// so every cell they touch is conservatively live everywhere.
+/// @brief Mark every integer cell an expression mentions.
+/// @param e the expression; a null expression marks nothing
+/// @param[out] s per-cell flags, set but never cleared
+/// @note An indexed access marks the whole array, since the index need not be a constant.
+/// @note Edges carrying general expressions are not analysed further, so every cell they touch is
+///       treated as live everywhere. That is the conservative direction: it can only keep a
+///       reduction from firing, never enable an unsound one.
 static void gen_cells(const ExprP& e, std::vector<char>& s) {
   if (!e) return;
   if (e->op == EOp::Var && e->var >= 0 && e->var < (int)s.size()) s[e->var] = 1;
@@ -190,6 +265,9 @@ static void gen_cells(const ExprP& e, std::vector<char>& s) {
       if (c >= 0) s[c] = 1;
   for (const auto& k : e->kids) gen_cells(k, s);
 }
+/// @brief Mark every integer cell a statement mentions, including its assignment targets.
+/// @param t the statement; a null statement marks nothing
+/// @param[out] s per-cell flags, set but never cleared
 static void gen_cells(const StmtP& t, std::vector<char>& s) {
   if (!t) return;
   if (t->var >= 0) {
@@ -202,14 +280,26 @@ static void gen_cells(const StmtP& t, std::vector<char>& s) {
   for (const auto& k : t->kids) gen_cells(k, s);
 }
 
+/// @brief Compute integer-liveness sets, as a backward least fixpoint over each process.
+///
+/// A cell is *live* at a location when some edge reachable from it reads the cell before
+/// overwriting it. A cell that is not live cannot influence any run from that location, so
+/// ptctlmc::set_slice may canonicalise it and thereby merge states differing only in it. This is
+/// the discrete analogue of ::Network::compute_active.
+///
+/// @pre ::Network::compute_bounds has run, so the edge index exists.
+/// @post Cells touched by any general guard, general update, or user function body are live at
+///       every location, since no analysis covers those.
+/// @post `iread_mask` is populated iff there are at most 63 integer variables.
+/// @note An `x := const` update reads nothing, which is what lets a cell be dead before it.
 void Network::compute_int_live() {
   const int nv = static_cast<int>(intvars.size());
   iread.assign(nprocs(), {});
   iread_mask.clear();
   if (nv == 0) return;
 
-  // Cells no analysis covers: anything a general guard/update mentions, and anything a user
-  // function body touches. Live everywhere, unconditionally.
+  // Cells no analysis covers: anything a general guard or update mentions, and anything a user
+  // function body touches. These are live everywhere, unconditionally.
   std::vector<char> always(nv, 0);
   for (const auto& f : funcs) gen_cells(f.body, always);
   for (const auto& p : procs)
