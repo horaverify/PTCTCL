@@ -179,8 +179,8 @@ inline bool g_apply_inv(threadgroup int* z, int dim, int nprocs, thread const in
 
 // ---- ROW-DISTRIBUTED zone: one SIMD group per zone, lane i owns row i ---------------
 // Third representation, added alongside the private-array and threadgroup ones. The dense
-// dim x dim matrix is UPPAAL's shape and is what creates the working-set dilemma (§2.3 of
-// docs/GPU-FINDINGS.md): 576 ints per thread cannot live in registers, and moving them
+// dim x dim matrix is the conventional shape and is what creates the working-set dilemma:
+// 576 ints per thread cannot live in registers, and moving them
 // on-chip collapses occupancy. Distributing ONE zone across the 32 lanes of a SIMD group
 // makes each lane hold a single ROW -- dim ints, not dim*dim -- a 24x cut in per-lane
 // footprint. Floyd-Warshall still needs d[k][*], which arrives by simd_shuffle
