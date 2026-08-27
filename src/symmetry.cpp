@@ -1,18 +1,25 @@
-// symmetry.cpp — discovery of process-symmetry automorphisms. See symmetry.hpp.
-//
-// Shape of the search:
-//   1. Give every process a SHAPE signature: its template with clock and channel ids replaced by
-//      the order in which they are first used. Two processes can only map to one another if their
-//      signatures are equal, and when they are, matching them position-by-position DETERMINES the
-//      clock and channel correspondence between them.
-//   2. Seed a candidate with "process 0 maps to q" for each q of the same shape. That fixes the
-//      clock/channel permutations on everything process 0 touches.
-//   3. PROPAGATE: a process whose clocks and channels are all already mapped has at most one
-//      possible image (the process using exactly the mapped ones, with the right shape). Fixing
-//      it maps more clocks and channels, which determines more processes, and so on.
-//   4. VERIFY the finished candidate against the network, edge by edge. Everything above is a
-//      heuristic; this step is not. A candidate that survives it IS an automorphism, so a search
-//      that guesses badly costs a missed reduction and never a wrong answer.
+/// @file symmetry.cpp
+/// @brief Discovery of the network's process-symmetry automorphism group.
+///
+/// An automorphism permutes processes, and with them clocks, channels and integer values, while
+/// preserving the transition relation. ptctlmc::set_symmetry then explores one representative per
+/// orbit.
+///
+/// @par Shape of the search
+/// 1. Give every process a **shape signature**: its template with clock and channel identifiers
+///    replaced by the order in which they are first used. Two processes can map to one another
+///    only if their signatures are equal, and when they are, matching them position by position
+///    determines the clock and channel correspondence between them.
+/// 2. **Seed** a candidate with "process 0 maps to q" for each q of the same shape, which fixes
+///    the clock and channel permutations on everything process 0 touches.
+/// 3. **Propagate**: a process whose clocks and channels are already mapped has at most one
+///    possible image. Fixing it maps further clocks and channels, which determines further
+///    processes, and so on.
+/// 4. **Verify** the finished candidate against the network, edge by edge.
+///
+/// @warning Steps 1–3 are heuristics; step 4 is not. Only ::verify decides whether a candidate is
+///          an automorphism, so a search that guesses badly costs a missed reduction and can never
+///          produce a wrong answer. Any future shortcut must preserve that division.
 #include "ptctlmc/symmetry.hpp"
 
 #include <algorithm>
@@ -25,13 +32,19 @@
 namespace ptctlmc {
 namespace {
 
-// Order-of-first-use numbering, shared by the signature builder and the seed matcher.
+/// @brief Order-of-first-use numbering of clocks, channels and integer constants.
+///
+/// Shared by the signature builder and the seed matcher, so that the numbering two processes are
+/// compared under is built the same way for both.
+///
+/// @invariant Clock slot 0 is the reference clock and is never permuted.
 struct Slots {
   std::vector<int> clk, chan;                      // slot -> id
   std::unordered_map<int, int> clk_of, chan_of;    // id -> slot
-  // Per integer variable, the CONSTANTS it is compared with or assigned, in order of first use.
-  // Matching two processes slot-by-slot then pairs `id = 1` in one with `id = 2` in the other,
-  // which is exactly the value permutation the process permutation induces.
+  // Per integer variable, the constants it is compared with or assigned, in order of first use.
+  // Matching two processes slot by slot then pairs a constant in one with the corresponding
+  // constant in the other, which is exactly the value permutation the process permutation
+  // induces — necessary because a variable may hold a process index.
   std::vector<std::vector<long>> val;
   std::vector<std::unordered_map<long, int>> val_of;
   void ensure_vars(std::size_t n) { if (val.size() < n) { val.resize(n); val_of.resize(n); } }
@@ -59,6 +72,9 @@ struct Slots {
   }
 };
 
+/// @brief Append a value to a byte-string key, little-endian and fixed-width.
+/// @note Fixed width matters: a variable-width encoding would let two different automorphisms
+///       serialise to the same bytes and be deduplicated as one.
 void put(std::string& s, long v) {
   s.push_back(static_cast<char>(v & 0xff));
   s.push_back(static_cast<char>((v >> 8) & 0xff));
@@ -66,10 +82,18 @@ void put(std::string& s, long v) {
   s.push_back(static_cast<char>((v >> 24) & 0xff));
 }
 
-// The signature is index-free in clocks and channels but NOT in locations or edges: templates
-// generated from one source enumerate those identically, and requiring that is what keeps the
-// correspondence unambiguous (and the search linear). A model whose copies were written in a
-// different order simply yields no symmetry.
+/// @brief Build a process's shape signature.
+///
+/// @param p     the process
+/// @param[in,out] sl slot numbering, extended as new clocks, channels and constants are seen
+/// @param nvars number of declared integer variables
+/// @return a byte string equal for two processes only if they have the same shape
+///
+/// @note The signature is index-free in clocks and channels but **not** in locations or edges.
+///       Templates instantiated from one source enumerate those identically, and requiring that
+///       is what keeps the correspondence unambiguous and the search linear. A model whose copies
+///       were written in a different order simply yields no symmetry — a missed reduction, not a
+///       wrong result.
 std::string signature(const NProc& p, Slots& sl, std::size_t nvars) {
   sl.ensure_vars(nvars);
   std::string s;
@@ -104,8 +128,18 @@ std::string signature(const NProc& p, Slots& sl, std::size_t nvars) {
   return s;
 }
 
-// Structural equality of process p relabelled by (clk, chan) against process q. This is the
-// verifier: it reads the finished permutation and accepts nothing it cannot check.
+/// @brief Is process @p p, relabelled by the given permutations, structurally equal to @p q?
+///
+/// @param p    the source process
+/// @param q    the candidate image
+/// @param clk  clock permutation
+/// @param chan channel permutation
+/// @param aut  the candidate automorphism, for its integer-value mapping
+/// @param net  the network, for the variables' declared ranges
+/// @return @c true iff every location and every edge corresponds exactly
+///
+/// @note This reads the finished permutation and accepts nothing it cannot check, which is what
+///       makes the heuristic search above safe.
 bool same_under(const NProc& p, const NProc& q, const std::vector<int>& clk,
                 const std::vector<int>& chan, const Automorphism& aut, const Network& net) {
   if (p.locations.size() != q.locations.size() || p.edges.size() != q.edges.size()) return false;
@@ -149,6 +183,11 @@ bool same_under(const NProc& p, const NProc& q, const std::vector<int>& clk,
   return true;
 }
 
+/// @brief Decide whether a candidate really is an automorphism of the network.
+/// @param net the network
+/// @param a   the candidate
+/// @return @c true iff @p a is a bijection on processes and preserves every process's structure
+/// @post A @c true result is a guarantee, not a heuristic: the caller may reduce by @p a.
 bool verify(const Network& net, const Automorphism& a) {
   const int np = net.nprocs();
   std::vector<char> seen(np, 0);
@@ -189,7 +228,16 @@ bool verify(const Network& net, const Automorphism& a) {
   return true;
 }
 
-// Try to complete an automorphism from the seed "process 0 -> q" by propagation.
+/// @brief Try to complete an automorphism from the seed "process 0 maps to q".
+///
+/// @param net   the network
+/// @param sig   per-process shape signatures
+/// @param slots per-process slot numbering
+/// @param q     the image chosen for process 0
+/// @param[out] out receives the automorphism; written only on @c true
+/// @return @c false when propagation stalls, contradicts itself, or the result fails ::verify
+///
+/// @post A @c true result has already passed ::verify, so callers need not re-check it.
 bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
                      std::vector<Slots>& slots, int q, Automorphism& out) {
   const int np = net.nprocs();
@@ -382,6 +430,13 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
   return true;
 }
 
+/// @brief Compose two automorphisms, applying @p f first and then @p g.
+/// @param f   the automorphism applied first
+/// @param g   the automorphism applied second
+/// @param net the network, for the variables' declared ranges
+/// @return the composite
+/// @note Closing the generated set under composition is what makes the result a group, which the
+///       orbit canonicalisation requires.
 Automorphism compose(const Automorphism& f, const Automorphism& g, const Network& net) {
   Automorphism r;                                                       // g after f
   r.proc.resize(f.proc.size());
@@ -404,6 +459,8 @@ Automorphism compose(const Automorphism& f, const Automorphism& g, const Network
   return r;
 }
 
+/// @brief Serialise an automorphism to a byte string, for deduplication during closure.
+/// @return a key equal for two automorphisms exactly when they act identically
 std::string key_of(const Automorphism& a) {
   std::string s;
   for (int v : a.proc) put(s, v);
@@ -414,10 +471,29 @@ std::string key_of(const Automorphism& a) {
 
 }  // namespace
 
+/// @brief Apply an automorphism's process permutation to a location vector.
+/// @param a    the automorphism
+/// @param locs the source location vector
+/// @param np   number of processes
+/// @param[out] out receives the permuted vector; must not alias @p locs
 void permute_locs(const Automorphism& a, const int* locs, int np, int* out) {
   for (int p = 0; p < np; ++p) out[a.proc[p]] = locs[p];
 }
 
+/// @brief Compute the network's automorphism group.
+///
+/// Builds one candidate per admissible seed, keeps those that verify, then closes the survivors
+/// under composition.
+///
+/// @param net the network
+/// @param cap maximum group size
+/// @return the group, or an **empty** vector if the closure exceeded @p cap
+///
+/// @post Every returned element has passed ::verify.
+/// @note On overflow the result is empty rather than a partial subset, and the caller then runs
+///       without symmetry reduction. Returning a partial set would be unsound here: the orbit
+///       canonicalisation needs a set closed under composition to pick a well-defined
+///       representative, which an arbitrary truncation is not.
 std::vector<Automorphism> symmetry_group(const Network& net, std::size_t cap) {
   const int np = net.nprocs();
   Automorphism id;
