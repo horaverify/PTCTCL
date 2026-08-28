@@ -657,6 +657,11 @@ class Otf {
   /// @warning Meaningless if ::was_capped() is true afterwards; the caller retries exactly.
   bool eg_from_initial(GfpStats* gs);
 
+  /// @brief The `E[] psi` verdict on a graph ::Otf::build_forward has already built.
+  /// @note The counterpart of ::Otf::finish_verdict, which does the same for `p --> q`: it pays
+  ///       the backward pass that ::Otf::build_forward deliberately deferred.
+  bool eg_verdict(GfpStats* gs);
+
   /// @brief Drop the forward graph and everything indexed by it.
   ///
   /// After this the instance may not be run, finished or queried again; only destruction is
@@ -2191,6 +2196,10 @@ bool Otf::finish_verdict(GfpStats* gs) {
 bool Otf::eg_from_initial(GfpStats* gs) {
   setup();
   base_forward();
+  return eg_verdict(gs);
+}
+
+bool Otf::eg_verdict(GfpStats* gs) {
   bool res = false;
   if (fwd_ok_ && !node.empty()) {
     grow();
@@ -2323,17 +2332,38 @@ void Otf::fill_stats(GfpStats* gs) {
 bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* gs,
                               const Network* unrestricted,
                               const detail::DelayAvoidSet* avoid) {
-  for (int attempt = 0; attempt < 2; ++attempt) {
-    static const DiscPred kTrue{};
-    Otf e(net, kTrue, nq, /*force_exact=*/attempt == 1, nullptr, unrestricted);
-    e.set_avoid(avoid);
-    const bool r = e.eg_from_initial(gs);
-    if (!e.was_capped()) return r;
-    // The federation width cap makes the verdict unusable. Retry once under exact inclusion
-    // covering, which is sound outright -- the same lane ::leads_to_otf races when its atom
-    // construction cannot be represented.
+  static const DiscPred kTrue{};
+  auto make = [&](bool exact) {
+    auto e = std::make_unique<Otf>(net, kTrue, nq, exact, nullptr, unrestricted);
+    e->set_avoid(avoid);
+    return e;
+  };
+  // Diagonal models never used a_LU at all -- Otf::setup forces inclusion covering there, since
+  // a_LU is unsound on diagonal constraints (Bouyer 2004) -- so this run is already exact.
+  if (network_has_diagonal(net)) return make(false)->eg_from_initial(gs);
+
+  // The SAME staging ::leads_to_otf uses, and for the same reason. Plain a_LU covering is a
+  // simulation, so it preserves an infinite run and time divergence but NOT deadlock, which is
+  // universally quantified: a witness found under it is genuine, the absence of one is not. The
+  // deadlock-completed relation of Definition "deadlock-simulation" repairs exactly that, and it
+  // is what the constraint map installs -- so the answer is to derive the map and search under
+  // it, not to abandon a_LU for exact covering.
+  auto e1 = make(false);
+  e1->build_forward(gs);
+  AtomMap am;
+  if (e1->build_atom_map(am) && am.usable) {
+    // EMPTY MAP: the completion adds nothing, so the covering already used preserved deadlock and
+    // this run's own verdict is the answer. Its backward pass was deferred, not skipped.
+    if (am.diag.empty() && am.bumped == 0) return e1->eg_verdict(gs);
+    e1->release();                                  // one graph resident at a time, not two
+    auto e2 = make(false);
+    e2->set_atoms(&am);
+    return e2->eg_from_initial(gs);
   }
-  return false;
+  // The map could not be represented (more than 64 atoms at one key). Fall back to exact
+  // inclusion covering, which is sound outright. ::leads_to_otf races this against a
+  // deadlock-freedom proof; here it is taken directly, which is slower and never wrong.
+  return make(true)->eg_from_initial(gs);
 }
 
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs) {

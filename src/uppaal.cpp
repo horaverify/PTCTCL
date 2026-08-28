@@ -1702,65 +1702,6 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     return true;
   };
 
-  auto build_maintained = [&](const std::string& text, DiscPred& out, bool want_negated) -> bool {
-    // Fast path: a plain conjunction to be MAINTAINED is convex and becomes a location invariant.
-    if (!want_negated && !has_disjunction(text) && text.find('(') == std::string::npos &&
-        text.find('!') == std::string::npos && text.find("not ") == std::string::npos)
-      return build_pred(text, out);
-
-    // General path. `psi` is what the run must maintain, so the forbidden region is `!psi`, and
-    // that is what goes into DNF. `want_negated` means the caller's text is `phi` with
-    // `psi = !phi`, hence `!psi = phi` and the DNF is taken WITHOUT a further negation.
-    BParse bp(text);
-    BExpr e = bp.parse_or();
-    bp.ws();
-    if (!bp.ok || bp.i != text.size()) return false;
-    for (const auto& term : to_dnf(e, /*neg=*/!want_negated)) {
-      // Positive literals conjoin directly. A NEGATED literal may itself be a disjunction --
-      // `x == 3` parses to two constraints, so `!(x == 3)` is `x < 3 \/ x > 3` -- and a forbidden
-      // term has to stay a conjunction, so the term splits into one copy per alternative. Taking
-      // the cross product over every such literal is the remaining DNF distribution.
-      DiscTerm base;
-      std::vector<std::vector<Constraint>> alts;   // one alternative list per negated clock literal
-      bool bad = false;
-      for (const auto& lit : term) {
-        std::vector<std::string> one{lit.first};
-        if (!lit.second) {                         // positive: straight into the term
-          DiscPred acc;
-          if (!build_atoms(one, acc, false)) { bad = true; break; }
-          base.locs.insert(base.locs.end(), acc.locs.begin(), acc.locs.end());
-          base.ints.insert(base.ints.end(), acc.ints.begin(), acc.ints.end());
-          base.clocks.insert(base.clocks.end(), acc.clocks.begin(), acc.clocks.end());
-          continue;
-        }
-        std::vector<Constraint> cc; std::vector<IntAtom> ic;
-        parse_net_atom(lit.first, cm, im, cc, ic);
-        if (cc.size() > 1) {                       // negation is a disjunction: an alternative each
-          std::vector<Constraint> a;
-          for (const auto& c : cc) a.push_back(negate(c));
-          alts.push_back(std::move(a));
-          continue;
-        }
-        DiscPred acc;                              // single-constraint or discrete: negate in place
-        if (!build_atoms(one, acc, true)) { bad = true; break; }
-        base.locs.insert(base.locs.end(), acc.locs.begin(), acc.locs.end());
-        base.ints.insert(base.ints.end(), acc.ints.begin(), acc.ints.end());
-        base.clocks.insert(base.clocks.end(), acc.clocks.begin(), acc.clocks.end());
-      }
-      if (bad) return false;
-      std::vector<DiscTerm> expanded{base};
-      for (const auto& a : alts) {
-        std::vector<DiscTerm> next;
-        next.reserve(expanded.size() * a.size());
-        for (const auto& t : expanded)
-          for (const auto& c : a) { DiscTerm cp = t; cp.clocks.push_back(c); next.push_back(std::move(cp)); }
-        expanded.swap(next);
-      }
-      for (auto& t : expanded) out.forbid.push_back(std::move(t));
-    }
-    return true;
-  };
-  // Negate a SINGLE-atom predicate (A<> phi = !E[] !phi).
   if (q.kind == Query::EF) {
     if (trim(q.note) == "deadlock") {  // E<> deadlock
       *satisfied = deadlock_reachable(net, backend, stats);
