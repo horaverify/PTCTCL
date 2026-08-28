@@ -2309,13 +2309,18 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   // Rebuild the true delay-closure of this state's zone. The stored zone carries the
   // active-clock reduction, which pins dead clocks to 0 with an upper bound and so is no longer
   // delay-closed; without this step down() could not let time pass those clocks and would invent
-  // spurious deadlocks. Re-opening every upper bound and re-imposing only the real location
-  // invariant restores the closure. Dead clocks become free, which is sound because no guard or
-  // invariant reachable from here reads them. Frozen locations do not delay, so they are left as
-  // they are — see the warning on this function.
+  // spurious deadlocks. Re-opening every upper bound and re-imposing the real location invariant
+  // restores the closure. Dead clocks become free, which is sound because no guard or invariant
+  // reachable from here reads them.
+  //
+  // The invariant is applied whether or not the location is frozen; only the delay is skipped.
+  // A frozen location still constrains its clocks, and omitting the invariant left @p Z as the
+  // bare universe, which reports valuations stuck that the invariant forbids from arising at all.
+  // That was conservative rather than wrong -- a spurious residue only ever costs precision --
+  // but it made the caller decline on keys that cannot deadlock.
   Dbm Z = s.zone;
-  if (!frozen) {
-    Z.delay();
+  {
+    if (!frozen) Z.delay();
     std::vector<Constraint> cinv;
     all_invariants(net, s.locs, cinv);
     if (!apply_all(Z, cinv)) return false;  // real invariant unsatisfiable: no concrete state
