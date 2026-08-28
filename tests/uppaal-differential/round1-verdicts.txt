@@ -1,0 +1,78 @@
+ok   | NOT    NOT    | urgent-basic.xml             | E<> P.Bad
+ok   | NOT    NOT    | urgent-broadcast.xml         | E<> P.Bad
+ok   | SAT    SAT    | urgent-intguard.xml          | E<> P.Bad
+ok   | NOT    NOT    | urgent-intguard.xml          | E<> P.Bad && k==1
+ok   | SAT    SAT    | urgent-live.xml              | P.A --> P.B
+ok   | ERROR  ERROR  | urgent-clip.xml              | E<> P.Bad
+ok   | ERROR  ERROR  | urgent-clip.xml              | E<> P.Ok
+ok   | ERROR  ERROR  | urgent-clip.xml              | E<> P.Late
+ok   | SAT    SAT    | eg-clock.xml                 | E[] x <= 5
+ok   | NOT    NOT    | eg-clock.xml                 | E[] x >= 5
+ok   | SAT    SAT    | eg-clock.xml                 | E[] x >= 0
+ok   | NOT    NOT    | eg-clock.xml                 | A<> x >= 5
+ok   | NOT    NOT    | eg-clock.xml                 | E[] x >= 5 && x <= 10
+DIFF | UNSUP  NOT    | eg-clock.xml                 | A<> x >= 5 && x <= 10
+ok   | NOT    NOT    | eg-clock.xml                 | E[] P.T && x <= 5
+ok   | SAT    SAT    | eg-clock.xml                 | A<> x >= 0
+ok   | SAT    SAT    | eg-clock.xml                 | E[] x < 5
+ok   | NOT    NOT    | eg-clock.xml                 | A<> x > 5
+ok   | NOT    NOT    | cex1.xml                     | P.Q --> P.Live
+ok   | SAT    SAT    | cex2.xml                     | P.U --> P.Live
+ok   | NOT    NOT    | cex3.xml                     | P.U --> P.Live
+ok   | SAT    SAT    | bcast-receiver.xml           | E<> P.T && Q.A
+ok   | SAT    SAT    | bcast-receiver.xml           | E<> P.T && Q.B
+ok   | SAT    SAT    | arbiter4.xml                 | A[] not deadlock
+ok   | SAT    SAT    | arbiter4.xml                 | A[] not (C1.cs && C2.cs)
+ok   | SAT    SAT    | arbiter4.xml                 | C0.cs --> C0.idle
+ok   | SAT    SAT    | arbiter5.xml                 | A[] not deadlock
+ok   | SAT    SAT    | arbiter5.xml                 | A[] not (C1.cs && C2.cs)
+ok   | SAT    SAT    | arbiter5.xml                 | C0.cs --> C0.idle
+ok   | SAT    SAT    | arbiter6.xml                 | A[] not deadlock
+ok   | SAT    SAT    | arbiter6.xml                 | A[] not (C1.cs && C2.cs)
+ok   | SAT    SAT    | arbiter6.xml                 | C0.cs --> C0.idle
+ok   | SAT    SAT    | csma4.xml                    | A[] not deadlock
+ok   | SAT    SAT    | csma4.xml                    | A[] not (S0.Send and S1.Send and Bus.Transmitting)
+ok   | SAT    SAT    | csma4.xml                    | Bus.Transmitting --> Bus.Idle
+ok   | SAT    SAT    | csma5.xml                    | A[] not deadlock
+ok   | SAT    SAT    | csma5.xml                    | A[] not (S0.Send and S1.Send and Bus.Transmitting)
+ok   | SAT    SAT    | csma5.xml                    | Bus.Transmitting --> Bus.Idle
+ok   | SAT    SAT    | csma6.xml                    | A[] not deadlock
+ok   | SAT    SAT    | csma6.xml                    | A[] not (S0.Send and S1.Send and Bus.Transmitting)
+ok   | SAT    SAT    | csma6.xml                    | Bus.Transmitting --> Bus.Idle
+ok   | SAT    SAT    | fischer4.xml                 | A[] not deadlock
+ok   | SAT    SAT    | fischer4.xml                 | A[] not (P1.cs && P2.cs)
+ok   | SAT    SAT    | fischer4.xml                 | P0.req --> P0.wait
+ok   | SAT    SAT    | fischer5.xml                 | A[] not deadlock
+ok   | SAT    SAT    | fischer5.xml                 | A[] not (P1.cs && P2.cs)
+ok   | SAT    SAT    | fischer5.xml                 | P0.req --> P0.wait
+ok   | SAT    SAT    | fischer6.xml                 | A[] not deadlock
+ok   | SAT    SAT    | fischer6.xml                 | A[] not (P1.cs && P2.cs)
+ok   | SAT    SAT    | fischer6.xml                 | P0.req --> P0.wait
+ok   | NOT    NOT    | grc4.xml                     | A[] not deadlock
+ok   | NOT    NOT    | grc4.xml                     | A[] not deadlock
+ok   | NOT    NOT    | grc5.xml                     | A[] not deadlock
+ok   | NOT    NOT    | grc5.xml                     | A[] not deadlock
+ok   | NOT    NOT    | phil4.xml                    | A[] not deadlock
+ok   | SAT    SAT    | phil4.xml                    | A[] not (P0.Eat && P1.Eat)
+ok   | SAT    SAT    | phil4.xml                    | P0.Eat --> P0.Dropped
+ok   | NOT    NOT    | phil5.xml                    | A[] not deadlock
+ok   | SAT    SAT    | phil5.xml                    | A[] not (P0.Eat && P1.Eat)
+ok   | SAT    SAT    | phil5.xml                    | P0.Eat --> P0.Dropped
+ok   | NOT    NOT    | phil6.xml                    | A[] not deadlock
+ok   | SAT    SAT    | phil6.xml                    | A[] not (P0.Eat && P1.Eat)
+ok   | SAT    SAT    | phil6.xml                    | P0.Eat --> P0.Dropped
+ok   | SAT    SAT    | twolock4.xml                 | A[] not deadlock
+ok   | SAT    SAT    | twolock4.xml                 | A[] not (P1.cs && P2.cs)
+ok   | SAT    SAT    | twolock4.xml                 | P0.reqB --> P0.waitB
+ok   | SAT    SAT    | twolock5.xml                 | A[] not deadlock
+ok   | SAT    SAT    | twolock5.xml                 | A[] not (P1.cs && P2.cs)
+ok   | SAT    SAT    | twolock5.xml                 | P0.reqB --> P0.waitB
+ok   | SAT    SAT    | viking4.xml                  | A[] not deadlock
+ok   | SAT    SAT    | viking4.xml                  | A[] not (Viking1.safe && Viking1.unsafe)
+ok   | SAT    SAT    | single4.xml                  | A[] not deadlock
+ok   | SAT    SAT    | single4.xml                  | A[] x0 <= 6
+ok   | SAT    SAT    | single4.xml                  | P.A --> P.A
+ok   | SAT    SAT    | single5.xml                  | A[] not deadlock
+ok   | SAT    SAT    | single5.xml                  | A[] x0 <= 6
+ok   | SAT    SAT    | single5.xml                  | P.A --> P.A
+DONE 77 rows, 1 differences
