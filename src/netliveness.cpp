@@ -715,7 +715,18 @@ class Otf {
   /// @brief Did the federation width cap fire? A verdict from a capped run is not a verdict.
   bool was_capped() const { return capped; }
   /// @brief Install the forbidden region of a non-convex `psi`. Must precede ::Otf::run.
-  void set_avoid(const detail::DelayAvoidSet* a) { avoid_ = a; }
+  ///
+  /// @param a        the region; null clears it
+  /// @param forward  whether the FORWARD pipeline is restricted by it too
+  ///
+  /// `E[] psi` sets @p forward, because there the whole run must stay inside `psi` and a state
+  /// outside it is not reachable for the query at all. `p --> q` must NOT: it is violated by
+  /// `EF(p /\ EG !q)`, and the path to the `p`-state is ordinary reachability that need not stay
+  /// in `!q`. There the region confines only the fixpoint -- the seed, `Pre`, and the stop set.
+  void set_avoid(const detail::DelayAvoidSet* a, bool forward = true) {
+    avoid_ = a;
+    avoid_forward_ = forward;
+  }
 
   /// @brief Derive the deadlock-completion constraint map from this run's finished graph.
   /// @pre The forward graph has been built (::run or ::build_forward).
@@ -738,6 +749,7 @@ class Otf {
   /// @brief The forbidden region of a non-convex `psi`, or null. Used by the successor pipeline
   ///        through ptctlmc::detail::close_succ_zone and, backward, by ::gfp_pre.
   const detail::DelayAvoidSet* avoid_ = nullptr;
+  bool avoid_forward_ = true;   ///< see ::Otf::set_avoid
   bool force_exact_ = false;                   ///< inclusion covering, no a_LU
   const std::atomic<bool>* cancel_ = nullptr;  ///< set by the winner of the race
   bool cancelled_ = false;
@@ -855,6 +867,7 @@ class Otf {
   void setup();
   bool holds(const DiscPred& pr, const SymState& s) const;
   bool is_p(int i);
+  Federation p_region(int i);
   bool is_nq(int i);
   void grow();
   int intern(SymState&& s);
@@ -988,8 +1001,57 @@ void Otf::grow() {
 
 bool Otf::is_p(int i) {
   grow();
-  if (pc[i] == 2) pc[i] = holds(p, node[i]) ? 1 : 0;
+  if (pc[i] != 2) return pc[i] != 0;
+  // The OVER-approximation: does some term's DISCRETE guard hold, so the node could contain a
+  // p-valuation at all? Seeding the accepting closure wide is harmless, because the verdict is
+  // decided by the exact region test in ::Otf::certificate_in.
+  //
+  // ::Otf::holds is deliberately not reused. Its DNF branch SKIPS a term that constrains a clock,
+  // which is right for `q` -- there the clock part is carried by the forbidden region and a term
+  // cannot exclude a whole vertex -- and exactly wrong for `p`, where such a term is the reason
+  // the node is interesting. Reusing it made `x >= 0 --> P.wait` hold vacuously: no term counted,
+  // so no node seeded the closure, so no violation could be found.
+  bool ok;
+  if (p.is_dnf || !p.forbid.empty()) {
+    ok = false;
+    for (const auto& t : p.forbid) {
+      bool all = true;
+      for (const auto& r : t.locs)
+        if ((node[i].locs[r.proc] == r.loc) != r.equal) { all = false; break; }
+      if (all && !int_ok(t.ints, node[i].ints)) all = false;
+      if (all) { ok = true; break; }
+    }
+  } else {
+    ok = holds(p, node[i]);
+  }
+  pc[i] = ok ? 1 : 0;
   return pc[i] != 0;
+}
+
+/// @brief The region of `p` at node @p i, as a federation; empty when `p` cannot hold there.
+///
+/// `p` in DNF is a union of conjunctive terms, each a discrete guard plus a convex clock region.
+/// At a fixed node the discrete guards are decided, so the region is the union of the clock parts
+/// of the terms that survive.
+///
+/// @note Returns the whole zone when `p` constrains no clock, which is the pre-existing case and
+///       makes the intersection in ::Otf::certificate_in a no-op there.
+Federation Otf::p_region(int i) {
+  Federation out;
+  SymState cst;
+  const SymState& sv = sread(i, cst);
+  if (p.forbid.empty()) { out.push_back(sv.zone); return out; }
+  for (const auto& t : p.forbid) {
+    bool guard = true;
+    for (const auto& r : t.locs)
+      if ((sv.locs[r.proc] == r.loc) != r.equal) { guard = false; break; }
+    if (guard && !int_ok(t.ints, sv.ints)) guard = false;
+    if (!guard) continue;
+    Dbm z = sv.zone;
+    if (!apply_all(z, t.clocks) || z.empty()) continue;
+    fed_add(out, z);
+  }
+  return out;
 }
 
 bool Otf::is_nq(int i) {
@@ -1350,7 +1412,8 @@ void Otf::expand(int u) {
   std::vector<GfpTag> tags;
   std::vector<SymState> pieces;
   SymState usc;
-  gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags, avoid_);
+  gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags,
+                  avoid_forward_ ? avoid_ : nullptr);
   for (std::size_t k = 0; k < succ.size(); ++k) {
     pieces.clear();
     if (amap_) {
@@ -1536,6 +1599,27 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     seeded[v] = 1;
     nosucc[v] = stop_set(v);
   }
+  // When the forward graph was NOT restricted, the stored zones still straddle `psi` and the
+  // fixpoint has to do the confining itself: `W[v]` starts at `Z_v /\ psi(v)`, not at `Z_v`. The
+  // seed is otherwise left unmaterialised (see `seeded`), so only the nodes that actually need
+  // cutting are written down here.
+  std::vector<Federation> psi_seed(N);
+  const bool confine = avoid_ && !avoid_forward_;
+  if (confine)
+    for (int v : S) {
+      SymState cst;
+      const SymState& sv = sread(v, cst);
+      if (!avoid_->applies(sv.locs, sv.ints)) continue;
+      Federation cut;
+      avoid_->restrict(sv.zone, sv.locs, sv.ints, cut);
+      psi_seed[v] = std::move(cut);
+      seeded[v] = 0;                       // no longer "logically its own zone"
+      W[v] = psi_seed[v];
+      if (W[v].empty()) { nosucc[v].clear(); continue; }
+      // The stop set was computed against the whole zone; cut it to psi as well, or a valuation
+      // outside psi could stop the run and count as a witness.
+      if (!nosucc[v].empty()) nosucc[v] = fed_intersect(nosucc[v], psi_seed[v]);
+    }
   // Widening scratch, reused across the whole sweep so a narrow-stored zone costs a copy of
   // its entries and never an allocation.
   Dbm vsc, jsc;
@@ -1634,8 +1718,13 @@ bool Otf::certificate_in(const std::vector<int>& S) {
   nonempty = ne;
   fed_avg = ne ? double(tot) / double(ne) : 0.0;
   if (capped) return false;                      // caller checks `capped` before believing this
-  for (int v : S)
-    if (is_p(v) && !gfp_fed_empty(W[v])) return true;
+  for (int v : S) {
+    if (!is_p(v) || gfp_fed_empty(W[v])) continue;
+    // The exact test: a violation needs a valuation that satisfies `p` AND survives the fixpoint.
+    // With a purely discrete `p` the region is the whole zone and this reduces to the old check.
+    if (p.forbid.empty()) return true;
+    if (!gfp_fed_empty(fed_intersect(W[v], p_region(v)))) return true;
+  }
   return false;
 }
 
@@ -1668,7 +1757,7 @@ bool Otf::build_all() {
     // travels through the region first and is only cut afterwards, so the root ends up holding
     // valuations no run can reach without leaving psi. Every verdict is read at the initial
     // vertex, so that alone decides queries wrongly.
-    if (avoid_ && avoid_->applies(s0.locs, s0.ints)) {
+    if (avoid_ && avoid_forward_ && avoid_->applies(s0.locs, s0.ints)) {
       Federation parts;
       if (!c && !u) avoid_->delay(s0.zone, s0.locs, s0.ints, parts);
       else avoid_->restrict(s0.zone, s0.locs, s0.ints, parts);
@@ -2364,6 +2453,92 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
   // inclusion covering, which is sound outright. ::leads_to_otf races this against a
   // deadlock-freedom proof; here it is taken directly, which is slower and never wrong.
   return make(true)->eg_from_initial(gs);
+}
+
+/// @brief `p --> q` where either operand constrains clocks or carries boolean structure.
+///
+/// @param net the network under analysis
+/// @param p   the antecedent, as a positive DNF; evaluated at one valuation under `EF`
+/// @param nq  `!psi` for `psi = !q`, i.e. `q` itself, as the region the run must avoid
+/// @param[out] gs statistics; may be null
+/// @return @c true iff `p --> q` holds
+///
+/// @note The forward graph is NOT restricted. `p --> q` is violated by `EF(p /\ EG !q)`, and the
+///       path to the `p`-state is ordinary reachability that need not stay in `!q` -- so the
+///       region confines the fixpoint only. `E[] psi` is the opposite case and restricts both.
+bool leads_to_clocks(const Network& net, const DiscPred& p, const DiscPred& nq, GfpStats* gs) {
+  detail::DelayAvoidSet av;
+  std::vector<DiscPred> guards;
+  guards.reserve(nq.forbid.size());
+  for (const auto& t : nq.forbid) {
+    if (t.clocks.empty()) continue;                 // purely discrete: the vertex filter has it
+    detail::DelayAvoid one;
+    one.forbid = Dbm::universe(net.nclocks);
+    if (!apply_all(one.forbid, t.clocks) || one.forbid.empty()) continue;
+    one.fup = one.forbid; one.fup.delay();
+    guards.push_back(DiscPred{});
+    guards.back().locs = t.locs;
+    guards.back().ints = t.ints;
+    av.parts.push_back(std::move(one));
+  }
+  for (std::size_t i = 0; i < av.parts.size(); ++i)
+    av.parts[i].when = (guards[i].locs.empty() && guards[i].ints.empty()) ? nullptr : &guards[i];
+
+  // The region's constants must reach the LU bounds and its clocks must stay live, for the same
+  // reason they must in ptctlmc::exists_invariant_run: nothing else tells the abstraction that
+  // the boundary matters, and a_LU would merge zones across it.
+  Network bounded = net;
+  if (!av.parts.empty()) {
+    for (const auto& t : nq.forbid)
+      for (const auto& c : t.clocks) {
+        const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
+        auto bump = [&](int idx, bool lo, bool hi) {
+          if (idx <= 0 || idx >= (int)bounded.lbound.size()) return;
+          if (lo) bounded.lbound[idx] = std::max(bounded.lbound[idx], k);
+          if (hi) bounded.ubound[idx] = std::max(bounded.ubound[idx], k);
+          for (auto& pl : bounded.lbound_loc) for (auto& l : pl)
+            if (lo && idx < (int)l.size()) l[idx] = std::max(l[idx], k);
+          for (auto& pu : bounded.ubound_loc) for (auto& l : pu)
+            if (hi && idx < (int)l.size()) l[idx] = std::max(l[idx], k);
+        };
+        if (c.i && c.j) { bump(c.i, true, true); bump(c.j, true, true); }
+        else if (c.j == 0 && c.i) bump(c.i, false, true);
+        else if (c.i == 0 && c.j) bump(c.j, true, false);
+        for (auto& pa : bounded.active) for (auto& l : pa) {
+          if (c.i > 0 && c.i < (int)l.size()) l[c.i] = 1;
+          if (c.j > 0 && c.j < (int)l.size()) l[c.j] = 1;
+        }
+      }
+    bounded.active_mask.clear();
+    for (const auto& pa : bounded.active) {
+      bounded.active_mask.emplace_back();
+      for (const auto& l : pa) {
+        std::uint64_t m = 0;
+        if (bounded.nclocks <= 63)
+          for (int c = 1; c <= bounded.nclocks; ++c) if (l[c]) m |= std::uint64_t(1) << c;
+        bounded.active_mask.back().push_back(m);
+      }
+    }
+    if (bounded.nclocks > 63) bounded.active_mask.clear();
+  }
+
+  auto make = [&](bool exact) {
+    auto e = std::make_unique<Otf>(bounded, p, nq, exact);
+    e->set_avoid(av.parts.empty() ? nullptr : &av, /*forward=*/false);
+    return e;
+  };
+  if (network_has_diagonal(net)) return make(false)->run(gs);
+  auto e1 = make(false);
+  e1->build_forward(gs);
+  AtomMap am;
+  if (e1->build_atom_map(am) && am.usable) {
+    if (am.diag.empty() && am.bumped == 0) return e1->finish_verdict(gs);
+    e1->release();
+    auto e2 = make(false);
+    e2->set_atoms(&am);
+    return e2->run(gs);
+  }
+  return make(true)->run(gs);
 }
 
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs) {

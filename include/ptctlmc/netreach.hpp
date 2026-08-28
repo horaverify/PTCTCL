@@ -368,6 +368,12 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
                               const Network* unrestricted = nullptr,
                               const detail::DelayAvoidSet* avoid = nullptr);
 
+/// @brief `p --> q` where either operand constrains clocks or carries boolean structure.
+/// @param p   the antecedent as a positive DNF; evaluated at one valuation under `EF`
+/// @param nq  `q` itself, as the region the run must avoid wherever its discrete guard holds
+bool leads_to_clocks(const Network& net, const DiscPred& p, const DiscPred& nq,
+                     GfpStats* gs = nullptr);
+
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q,
                   GfpStats* gs = nullptr);
 

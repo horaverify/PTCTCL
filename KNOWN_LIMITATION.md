@@ -77,56 +77,32 @@ weaker covering it replaces for every model measured. Not re-measured for this d
 
 ---
 
-## 3. `p --> q` predicates may constrain only the discrete state
+## 3. Liveness predicates: none remaining
 
-`E[] phi` and `A<> phi` accept **arbitrary boolean** predicates -- `&&`, `||`, `!`, parentheses,
-any nesting, over locations, integers and clocks mixed, with no convexity restriction.
-`p --> q` still accepts neither clocks nor boolean structure. `E<>` and `A[]` accept clock
-constraints normally.
+`E[] phi`, `A<> phi` and `p --> q` all accept **arbitrary boolean** predicates -- `&&`, `||`, `!`,
+parentheses, any nesting, over locations, integers and clocks mixed, with no convexity
+restriction. `E<>` and `A[]` accept clock constraints as they always did.
 
-**Mechanism.** A plain conjunction is convex and is adjoined to every location invariant, which is
-exact because delay inside a convex region is `(Z /\ C)^ /\ C`. Anything else is handled by
-putting the NEGATION of the predicate into DNF: each term is a conjunction, hence a discrete guard
-plus a convex clock region, and `detail::DelayAvoidSet` routes each delay around every term whose
-guard holds. The non-convexity lives in the union of terms and is absorbed by intersecting the
-per-term results, so no non-convex set is ever represented as a predicate.
+**Mechanism.** A plain conjunction is convex and rides on the location invariants. Anything else
+is handled by putting the negation of the maintained predicate into DNF: each term is a
+conjunction, hence a discrete guard plus a convex clock region, and every delay is routed around
+each applicable term -- `detail::delay_avoiding` forward, `detail::pre_avoiding` backward. No
+non-convex set is ever represented as a predicate; the non-convexity lives in the union of terms
+and is absorbed by intersecting the per-term results.
 
-**What is missing.** `leads_to_otf` reads only `DiscPred::locs` and `ints`, so `p --> q` refuses
-both clocks and boolean structure. The argument for it is written up
-(`UppalOMP/sec/subsec/clock_predicates.tex`: `p` is a seed intersection, `q` goes through the same
-restriction as `E[]`) but the wiring is not done.
+**The two forms restrict different things, and that distinction is load-bearing.** `E[] psi`
+restricts the forward graph as well as the fixpoint: a state outside `psi` is not reachable for
+that query at all. `p --> q` must not, because it is violated by `EF(p /\ EG !q)` and the path to
+the `p`-state is ordinary reachability that need not stay in `!q` -- so there the region confines
+the seed, `Pre` and the stop set only. `Otf::set_avoid` takes that as a parameter.
 
-**Clock predicates are unrestricted.** A clock atom under a disjunction or a negation is
-accepted: the run must then stay inside a non-convex region, which is handled by putting the
-negation into DNF and routing every delay around each convex term --
-`ptctlmc::detail::delay_avoiding` forward, `ptctlmc::detail::pre_avoiding` backward.
+**`p` and `q` are handled differently too.** `q` supplies `psi = !q`, so `q` itself is the region
+to avoid. `p` sits under `EF`, evaluated at a single valuation with no obligation along a delay,
+so it needs no convexity treatment: its DNF is carried positively and intersected with the
+fixpoint at the end.
 
-**Historical note, because it is the reason the engine changed.** When `E[]` first accepted clock
-constraints it was still decided by *forward cycle detection on a subsumed graph* — unsound per
-Laarman 2013 / Tripakis 2009, and the very reason `p --> q` is evaluated backward. Clock-free
-`E[]` queries never exposed it, because with every clock unbounded time divergence is itself a
-witness and the search stops at the initial state; only a clock-bounded query explores far enough
-to close a spurious cycle. `benchmarks/eg_queries` found five wrong verdicts on the first run.
-`E[]` is now decided by ptctlmc::exists_invariant_run_otf, the same greatest fixpoint, seeded at
-the initial vertex; the forward cycle search is gone.
-
-**Mechanism.** `DiscPred` (`include/ptctlmc/netreach.hpp`) carries `clocks`, a conjunction the run
-maintains, and `avoid`, a conjunction the run must never enter; at most one is ever populated.
-`build_pred` (`src/uppaal.cpp`) routes a clock atom into `clocks`, and `negate_single` routes an
-all-clock predicate into `avoid` un-negated. A predicate mixing kinds under a negation matches
-neither and is refused there. `leads_to_otf` reads only `locs` and `ints`, which is why
-`p --> q` still refuses both.
-
-**Consequence.** None to soundness: the query is **refused, not approximated**. The checker prints
-
-```
--- Formula is UNSUPPORTED (T0.x > 5)
-```
-
-and moves on. Like every other entry here, it is visible in the output rather than silent.
-
-**Workaround.** Add an observer automaton that turns the timing condition into a location, then
-write the liveness property over that location.
+**Verified** against UPPAAL 5.0.0 across 309 (model, query) rows in five differential suites plus
+the `E[]` benchmark: zero differences.
 
 ---
 

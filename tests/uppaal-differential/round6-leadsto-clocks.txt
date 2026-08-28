@@ -1,0 +1,85 @@
+ok   | SAT    SAT    | fischer4     | P0.req --> P0.wait
+ok   | SAT    SAT    | fischer4     | P0.req --> x0 >= 0
+ok   | SAT    SAT    | fischer4     | P0.req --> x0 >= 2
+ok   | SAT    SAT    | fischer4     | P0.req --> P0.wait && x0 >= 0
+ok   | SAT    SAT    | fischer4     | P0.req && x0 >= 0 --> P0.wait
+ok   | SAT    SAT    | fischer4     | P0.req || P0.wait --> P0.wait
+ok   | SAT    SAT    | fischer4     | P0.req --> P0.wait || x0 >= 100
+ok   | SAT    SAT    | fischer4     | P0.req --> !(x0 >= 2 && x0 <= 3)
+ok   | NOT    NOT    | fischer4     | x0 >= 0 --> P0.wait
+ok   | SAT    SAT    | fischer5     | P0.req --> P0.wait
+ok   | SAT    SAT    | fischer5     | P0.req --> x0 >= 0
+ok   | SAT    SAT    | fischer5     | P0.req --> x0 >= 2
+ok   | SAT    SAT    | fischer5     | P0.req --> P0.wait && x0 >= 0
+ok   | SAT    SAT    | fischer5     | P0.req && x0 >= 0 --> P0.wait
+ok   | SAT    SAT    | fischer5     | P0.req || P0.wait --> P0.wait
+ok   | SAT    SAT    | fischer5     | P0.req --> P0.wait || x0 >= 100
+ok   | SAT    SAT    | fischer5     | P0.req --> !(x0 >= 2 && x0 <= 3)
+ok   | NOT    NOT    | fischer5     | x0 >= 0 --> P0.wait
+ok   | SAT    SAT    | arbiter4     | C0.cs --> C0.idle
+ok   | SAT    SAT    | arbiter4     | C0.cs --> x0 >= 0
+ok   | SAT    SAT    | arbiter4     | C0.cs --> x0 >= 2
+ok   | SAT    SAT    | arbiter4     | C0.cs --> C0.idle && x0 >= 0
+ok   | SAT    SAT    | arbiter4     | C0.cs && x0 >= 0 --> C0.idle
+ok   | SAT    SAT    | arbiter4     | C0.cs || C0.idle --> C0.idle
+ok   | SAT    SAT    | arbiter4     | C0.cs --> C0.idle || x0 >= 100
+ok   | SAT    SAT    | arbiter4     | C0.cs --> !(x0 >= 2 && x0 <= 3)
+ok   | NOT    NOT    | arbiter4     | x0 >= 0 --> C0.idle
+ok   | SAT    SAT    | csma4        | Bus.Transmitting --> Bus.Idle
+ok   | SAT    SAT    | csma4        | Bus.Transmitting --> y0 >= 0
+ok   | SAT    SAT    | csma4        | Bus.Transmitting --> y0 >= 2
+ok   | SAT    SAT    | csma4        | Bus.Transmitting --> Bus.Idle && y0 >= 0
+ok   | SAT    SAT    | csma4        | Bus.Transmitting && y0 >= 0 --> Bus.Idle
+ok   | SAT    SAT    | csma4        | Bus.Transmitting || Bus.Idle --> Bus.Idle
+ok   | SAT    SAT    | csma4        | Bus.Transmitting --> Bus.Idle || y0 >= 100
+ok   | SAT    SAT    | csma4        | Bus.Transmitting --> !(y0 >= 2 && y0 <= 3)
+ok   | SAT    SAT    | csma4        | y0 >= 0 --> Bus.Idle
+ok   | SAT    SAT    | phil4        | P0.Eat --> P0.Dropped
+ok   | SAT    SAT    | phil4        | P0.Eat --> c0 >= 0
+ok   | NOT    NOT    | phil4        | P0.Eat --> c0 >= 2
+ok   | SAT    SAT    | phil4        | P0.Eat --> P0.Dropped && c0 >= 0
+ok   | SAT    SAT    | phil4        | P0.Eat && c0 >= 0 --> P0.Dropped
+ok   | SAT    SAT    | phil4        | P0.Eat || P0.Dropped --> P0.Dropped
+ok   | SAT    SAT    | phil4        | P0.Eat --> P0.Dropped || c0 >= 100
+ok   | SAT    SAT    | phil4        | P0.Eat --> !(c0 >= 2 && c0 <= 3)
+ok   | NOT    NOT    | phil4        | c0 >= 0 --> P0.Dropped
+ok   | SAT    SAT    | grc4         | T0.in --> T0.far
+ok   | SAT    SAT    | grc4         | T0.in --> x0 >= 0
+ok   | NOT    NOT    | grc4         | T0.in --> x0 >= 2
+ok   | SAT    SAT    | grc4         | T0.in --> T0.far && x0 >= 0
+ok   | SAT    SAT    | grc4         | T0.in && x0 >= 0 --> T0.far
+ok   | SAT    SAT    | grc4         | T0.in || T0.far --> T0.far
+ok   | SAT    SAT    | grc4         | T0.in --> T0.far || x0 >= 100
+ok   | SAT    SAT    | grc4         | T0.in --> !(x0 >= 2 && x0 <= 3)
+ok   | NOT    NOT    | grc4         | x0 >= 0 --> T0.far
+ok   | SAT    SAT    | twolock4     | P0.reqB --> P0.waitB
+ok   | SAT    SAT    | twolock4     | P0.reqB --> x0 >= 0
+ok   | SAT    SAT    | twolock4     | P0.reqB --> x0 >= 2
+ok   | SAT    SAT    | twolock4     | P0.reqB --> P0.waitB && x0 >= 0
+ok   | SAT    SAT    | twolock4     | P0.reqB && x0 >= 0 --> P0.waitB
+ok   | SAT    SAT    | twolock4     | P0.reqB || P0.waitB --> P0.waitB
+ok   | SAT    SAT    | twolock4     | P0.reqB --> P0.waitB || x0 >= 100
+ok   | SAT    SAT    | twolock4     | P0.reqB --> !(x0 >= 2 && x0 <= 3)
+ok   | NOT    NOT    | twolock4     | x0 >= 0 --> P0.waitB
+ok   | SAT    SAT    | af-sat       | P.S --> P.T
+ok   | SAT    SAT    | af-sat       | P.S --> x >= 3
+ok   | SAT    SAT    | af-sat       | P.S --> x >= 100
+ok   | SAT    SAT    | af-sat       | x >= 0 --> P.T
+ok   | SAT    SAT    | af-sat       | P.S --> x <= 2 || x >= 8
+ok   | SAT    SAT    | af-sat       | P.S || P.T --> P.T
+ok   | SAT    SAT    | af-sat       | P.S --> !(x >= 1 && x <= 2)
+ok   | NOT    NOT    | eg-clock     | P.S --> P.T
+ok   | NOT    NOT    | eg-clock     | P.S --> x >= 3
+ok   | NOT    NOT    | eg-clock     | P.S --> x >= 100
+ok   | NOT    NOT    | eg-clock     | x >= 0 --> P.T
+ok   | NOT    NOT    | eg-clock     | P.S --> x <= 2 || x >= 8
+ok   | NOT    NOT    | eg-clock     | P.S || P.T --> P.T
+ok   | NOT    NOT    | eg-clock     | P.S --> !(x >= 1 && x <= 2)
+ok   | NOT    NOT    | zeno         | P.S --> P.T
+ok   | NOT    NOT    | zeno         | P.S --> x >= 3
+ok   | NOT    NOT    | zeno         | P.S --> x >= 100
+ok   | NOT    NOT    | zeno         | x >= 0 --> P.T
+ok   | NOT    NOT    | zeno         | P.S --> x <= 2 || x >= 8
+ok   | NOT    NOT    | zeno         | P.S || P.T --> P.T
+ok   | NOT    NOT    | zeno         | P.S --> !(x >= 1 && x <= 2)
+DONE 84 rows, 0 differences

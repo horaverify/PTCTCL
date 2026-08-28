@@ -1792,6 +1792,53 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   }
   if (q.kind == Query::LEADSTO) {  // p --> q
     DiscPred p, qq;
+    // `p --> q` is violated by EF(p /\ EG !q), so the two operands are handled differently.
+    //
+    // `q` supplies psi = !q, exactly as A<> does: split_psi on the negated text yields the clock
+    // conjunction of psi and the DNF of !psi, which is q itself -- the region the run must AVOID
+    // wherever q's discrete part holds.
+    //
+    // `p` is evaluated at one valuation under EF, with no obligation along a delay, so it needs
+    // no convexity treatment at all: its DNF is carried positively and intersected with the
+    // fixpoint at the end.
+    {
+      std::vector<Constraint> qcc;
+      DiscPred nqp;
+      nqp.is_dnf = true;
+      if (!split_psi("!(" + q.note + ")", qcc, nqp.forbid)) return false;
+      // psi's own clock conjunction must be empty here: psi = !q, and a conjunction in psi would
+      // mean q contributed a disjunction, which split_psi routes through `forbid` instead.
+      if (!qcc.empty()) return false;
+      DiscPred pp;
+      pp.is_dnf = true;
+      {
+        BParse bp(q.lhs);
+        BExpr pe = bp.parse_or();
+        bp.ws();
+        if (!bp.ok || bp.i != q.lhs.size()) return false;
+        for (const auto& term : to_dnf(pe, /*neg=*/false)) {
+          DiscTerm t;
+          DiscPred acc;
+          std::vector<std::string> pos, negs;
+          for (const auto& lit : term) (lit.second ? negs : pos).push_back(lit.first);
+          if (!build_atoms(pos, acc, false) || !build_atoms(negs, acc, true)) return false;
+          t.locs = std::move(acc.locs); t.ints = std::move(acc.ints); t.clocks = std::move(acc.clocks);
+          pp.forbid.push_back(std::move(t));
+        }
+      }
+      const bool has_clocks = [&] {
+        for (const auto& t : pp.forbid) if (!t.clocks.empty()) return true;
+        for (const auto& t : nqp.forbid) if (!t.clocks.empty()) return true;
+        return false;
+      }();
+      if (has_clocks || pp.forbid.size() > 1 || nqp.forbid.size() > 1) {
+        GfpStats gs2;
+        *satisfied = leads_to_clocks(net, pp, nqp, &gs2);
+        if (stats) stats->explored = gs2.outer_nodes;
+        return true;
+      }
+      // Purely discrete and single-term on both sides: the long-standing path, untouched.
+    }
     if (!build_pred(q.lhs, p) || !build_pred(q.note, qq)) return false;
     // THE BACKWARD GREATEST FIXPOINT IS THE ENGINE. Forward SCC search closes cycles that
     // subsumption invented; the backward fixpoint only ever reads a target's W as an upper
