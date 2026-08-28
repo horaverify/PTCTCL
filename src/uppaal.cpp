@@ -1639,10 +1639,18 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     std::vector<const BExpr*> disc;
     for (const BExpr* k : conj) {
       if (!has_clock(*k)) { disc.push_back(k); continue; }
-      if (k->kind != BExpr::Atom) return false;      // clock under a disjunction or a negation
-      std::vector<Constraint> a; std::vector<IntAtom> ic;
-      parse_net_atom(k->atom, cm, im, a, ic);
-      cc.insert(cc.end(), a.begin(), a.end());
+      if (k->kind == BExpr::Atom) {                  // a bare clock atom: convex, an invariant
+        std::vector<Constraint> a; std::vector<IntAtom> ic;
+        parse_net_atom(k->atom, cm, im, a, ic);
+        cc.insert(cc.end(), a.begin(), a.end());
+        continue;
+      }
+      // A clock under a disjunction or a negation: the run must stay inside a NON-CONVEX region.
+      // detail::pre_avoiding is the backward operator that case needs and it is implemented and
+      // validated, but wiring it produced unstable verdicts on multi-clock models -- the LU and
+      // active-clock side conditions have no invariant to ride on here, and patching them by hand
+      // moved which queries were wrong rather than fixing them. Refused until that is settled.
+      return false;
     }
     // The discrete conjuncts, negated and put in DNF: that is exactly `!psi_discrete`.
     for (const BExpr* k : disc)
@@ -1733,7 +1741,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     DiscPred nq;
     nq.is_dnf = true;   // empty means psi's discrete part never fails, not that it always does
     if (!split_psi(q.note, cc, nq.forbid)) return false;
-    *satisfied = exists_invariant_run(net, cc, nq, stats);
+    *satisfied = exists_invariant_run(net, cc, nq, stats, &nq.forbid);
     return true;
   }
   if (q.kind == Query::AF) {  // A<> phi = !E[] !phi
@@ -1749,7 +1757,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
       // clock conjunction of `psi` is the negation of phi's single clock atom.
       std::string neg = "!(" + q.note + ")";
       if (!split_psi(neg, cc, nq.forbid)) return false;
-      *satisfied = !exists_invariant_run(net, cc, nq, stats);
+      *satisfied = !exists_invariant_run(net, cc, nq, stats, &nq.forbid);
       return true;
     }
   }

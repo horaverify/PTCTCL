@@ -121,8 +121,22 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
                             const std::vector<std::int32_t>& L,
                             const std::vector<std::int32_t>& U,
                             const std::vector<char>& qmask, int emode,
-                            std::vector<SymState>& out, std::vector<GfpTag>& tags) {
+                            std::vector<SymState>& out, std::vector<GfpTag>& tags,
+                            const detail::DelayAvoidSet* avoid = nullptr) {
   std::vector<Constraint> inv;
+  // A routed delay can split, so one transition may yield several successors. They share the
+  // transition, hence the tag, which is duplicated alongside each extra piece.
+  std::vector<Dbm> split;
+  auto extra = [&]() -> std::vector<Dbm>* { return avoid ? (split.clear(), &split) : nullptr; };
+  auto emit_extra = [&](const SymState& ns, const GfpTag& t) {
+    for (Dbm& pz : split) {
+      SymState c; c.locs = ns.locs; c.ints = ns.ints; c.zone = std::move(pz);
+      if (c.zone.empty()) continue;
+      out.push_back(std::move(c));
+      tags.push_back(t);
+    }
+    split.clear();
+  };
   bool src_committed, src_urgent;
   frozen_flags(net, s.locs, s.ints, &src_committed, &src_urgent);
 
@@ -141,11 +155,13 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
       ns.ints = s.ints;
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
       if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
-      if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
+      if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode, avoid, extra())) continue;
+      GfpTag t; t.parts.push_back({p, ei});
+      emit_extra(ns, t);
       if (z1.empty()) continue;
       ns.zone = std::move(z1);
       out.push_back(std::move(ns));
-      GfpTag t; t.parts.push_back({p, ei}); tags.push_back(std::move(t));
+      tags.push_back(std::move(t));
     }
   }
 
@@ -176,11 +192,13 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
           if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) ||
               !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
-          if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
+          if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode, avoid, extra())) continue;
+          GfpTag t; t.parts.push_back({i, ei}); t.parts.push_back({j, ej});
+          emit_extra(ns, t);
           if (z1.empty()) continue;
           ns.zone = std::move(z1);
           out.push_back(std::move(ns));
-          GfpTag t; t.parts.push_back({i, ei}); t.parts.push_back({j, ej}); tags.push_back(std::move(t));
+          tags.push_back(std::move(t));
         }
       }
     }
@@ -229,10 +247,13 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
               for (int r : re.clock_resets) z1.reset(r);
               tg.parts.push_back({pj, ej});
             }
-            if (close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode) && !z1.empty()) {
-              ns.zone = std::move(z1);
-              out.push_back(std::move(ns));
-              tags.push_back(std::move(tg));
+            if (close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode, avoid, extra())) {
+              emit_extra(ns, tg);
+              if (!z1.empty()) {
+                ns.zone = std::move(z1);
+                out.push_back(std::move(ns));
+                tags.push_back(std::move(tg));
+              }
             }
           }
         }
@@ -335,6 +356,90 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
   if (!sc && !su) { Y.down(); }
   if (!apply_all(Y, sinv)) return gfp_empty(net.nclocks);
   return Y;
+}
+
+/// @brief ::gfp_pre for a run confined to a NON-CONVEX predicate.
+///
+/// @param avoid the forbidden region; must be non-null
+/// @param[in,out] out  the pieces of the predecessor are appended
+///
+/// @par Why this is federation-valued
+/// ::gfp_pre takes two time-predecessors, one at the target and one at the source. With a region
+/// to avoid, each of them routes around it and each can therefore SPLIT, so the predecessor of a
+/// single zone is in general several zones. Collapsing them to one -- by hull, or by keeping the
+/// largest -- under-approximates `Pre`, and `Pre` occurs positively in the fixpoint, so that
+/// silently loses witnesses: it turned `E[] x <= 2 || x >= 8` on a model whose witness is an
+/// infinite zero-time loop from satisfied into NOT satisfied.
+///
+/// @note Every step other than the two time-predecessors maps a zone to a zone, so the federation
+///       is threaded through mechanically and only the two routed steps branch.
+static void gfp_pre_avoid(const Network& net, const GfpTag& t, const SymState& src,
+                          const SymState& tgt, const Dbm& X,
+                          const detail::DelayAvoidSet& avoid, Federation& out) {
+  Federation cur{X};
+  auto map_each = [&](auto&& fn) {                     // zone -> bool(zone&), dropping failures
+    Federation next;
+    for (Dbm& z : cur) { Dbm y = z; if (fn(y) && !y.empty()) next.push_back(std::move(y)); }
+    cur.swap(next);
+  };
+  auto route = [&](const LocVec& locs, const IntVec& ints) {
+    if (!avoid.applies(locs, ints)) { map_each([](Dbm& y) { y.down(); return true; }); return; }
+    Federation next;
+    Federation scratch;
+    for (const Dbm& z : cur) {
+      Federation acc;
+      bool first = true;
+      for (const auto& part : avoid.parts) {
+        if (!part.applies(locs, ints)) continue;
+        detail::pre_avoiding(z, part.forbid, part.fup, scratch);
+        if (first) { acc = scratch; first = false; }
+        else acc = fed_intersect(acc, scratch);
+        if (acc.empty()) break;
+      }
+      if (first) { Dbm y = z; y.down(); fed_add(next, y); continue; }
+      for (Dbm& q : acc) if (!q.empty()) fed_add(next, q);
+    }
+    cur.swap(next);
+  };
+
+  if (!net.active.empty())
+    map_each([&](Dbm& Y) {
+      for (int c = 1; c <= net.nclocks; ++c) {
+        bool live = false;
+        for (int pr = 0; pr < net.nprocs() && !live; ++pr)
+          if (net.active[pr][tgt.locs[pr]][c]) live = true;
+        if (!live) Y.free(c);
+      }
+      return true;
+    });
+
+  std::vector<Constraint> inv;
+  all_invariants(net, tgt.locs, inv);
+  bool nc, nu; frozen_flags(net, tgt.locs, tgt.ints, &nc, &nu);
+  map_each([&](Dbm& Y) { return apply_all(Y, inv); });
+  if (!nc && !nu) {
+    route(tgt.locs, tgt.ints);
+    map_each([&](Dbm& Y) { return apply_all(Y, inv); });
+  }
+  map_each([&](Dbm& Y) {
+    for (const auto& pe : t.parts)
+      for (int r : net.procs[pe.first].edges[pe.second].clock_resets) {
+        if (!Y.constrain(r, 0, le(0))) return false;
+        if (!Y.constrain(0, r, le(0))) return false;
+      }
+    for (const auto& pe : t.parts)
+      for (int r : net.procs[pe.first].edges[pe.second].clock_resets) Y.free(r);
+    for (const auto& pe : t.parts)
+      if (!apply_all(Y, net.procs[pe.first].edges[pe.second].clock_guard)) return false;
+    if (!t.abstain.empty() && !apply_all(Y, t.abstain)) return false;
+    return true;
+  });
+  std::vector<Constraint> sinv;
+  all_invariants(net, src.locs, sinv);
+  bool sc, su; frozen_flags(net, src.locs, src.ints, &sc, &su);
+  if (!sc && !su) route(src.locs, src.ints);
+  map_each([&](Dbm& Y) { return apply_all(Y, sinv); });
+  for (Dbm& z : cur) if (!z.empty()) out.push_back(std::move(z));
 }
 
 // ---- small federation helpers (Federation = std::vector<Dbm>, union semantics) ----
@@ -604,6 +709,8 @@ class Otf {
   bool was_cancelled() const { return cancelled_; }
   /// @brief Did the federation width cap fire? A verdict from a capped run is not a verdict.
   bool was_capped() const { return capped; }
+  /// @brief Install the forbidden region of a non-convex `psi`. Must precede ::Otf::run.
+  void set_avoid(const detail::DelayAvoidSet* a) { avoid_ = a; }
 
   /// @brief Derive the deadlock-completion constraint map from this run's finished graph.
   /// @pre The forward graph has been built (::run or ::build_forward).
@@ -623,6 +730,9 @@ class Otf {
   /// @brief The network deadlock is judged against; see ::Otf::stop_set. Equals @ref net unless
   ///        `E[] psi` supplied the unrestricted network alongside the psi-restricted one.
   const Network* dead_net;
+  /// @brief The forbidden region of a non-convex `psi`, or null. Used by the successor pipeline
+  ///        through ptctlmc::detail::close_succ_zone and, backward, by ::gfp_pre.
+  const detail::DelayAvoidSet* avoid_ = nullptr;
   bool force_exact_ = false;                   ///< inclusion covering, no a_LU
   const std::atomic<bool>* cancel_ = nullptr;  ///< set by the winner of the race
   bool cancelled_ = false;
@@ -843,6 +953,9 @@ bool Otf::holds(const DiscPred& pr, const SymState& s) const {
   // which for an arbitrary boolean `psi` is a disjunction and has no conjunctive form.
   if (pr.is_dnf || !pr.forbid.empty()) {
     for (const auto& t : pr.forbid) {
+      // A term constraining a clock forbids only part of the vertex, so it cannot exclude the
+      // vertex outright; detail::DelayAvoidSet carries it and cuts the zone instead.
+      if (!t.clocks.empty()) continue;
       bool all = true;
       for (const auto& r : t.locs)
         if ((s.locs[r.proc] == r.loc) != r.equal) { all = false; break; }
@@ -1232,7 +1345,7 @@ void Otf::expand(int u) {
   std::vector<GfpTag> tags;
   std::vector<SymState> pieces;
   SymState usc;
-  gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags);
+  gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags, avoid_);
   for (std::size_t k = 0; k < succ.size(); ++k) {
     pieces.clear();
     if (amap_) {
@@ -1272,10 +1385,25 @@ void Otf::expand(int u) {
 bool Otf::time_diverges(const SymState& s) const {
   if (net.nclocks == 0) return false;
   { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
-  Dbm z = s.zone;
-  z.delay();
   std::vector<Constraint> inv;
   all_invariants(net, s.locs, inv);
+  // With a forbidden region the delay is routed, and divergence must be witnessed by a piece of
+  // the routed delay: a trajectory that would run into the region stops there rather than
+  // diverging, and one that already lies past it may still run away.
+  if (avoid_ && avoid_->applies(s.locs, s.ints)) {
+    Federation parts;
+    avoid_->delay(s.zone, s.locs, s.ints, parts);
+    for (Dbm& p : parts) {
+      if (!apply_all(p, inv) || p.empty()) continue;
+      bool unbounded = true;
+      for (int i = 1; i <= net.nclocks && unbounded; ++i)
+        if (p.get(i, 0) != kInf) unbounded = false;
+      if (unbounded) return true;
+    }
+    return false;
+  }
+  Dbm z = s.zone;
+  z.delay();
   apply_all(z, inv);
   if (z.empty()) return false;
   for (int i = 1; i <= net.nclocks; ++i)
@@ -1331,7 +1459,10 @@ Federation Otf::stop_set(int u) {
   // merged. Unrestricted -- every `p --> q` run -- keeps the original reading exactly: psi is
   // discrete there, a delay can never leave it, so a node with no discrete successor always ends
   // a maximal run.
-  if (dead_net == &net) {
+  // A psi-restriction may arrive as a restricted network (psi's clock part convex, folded into
+  // the invariants) or as a forbidden region (non-convex, routed around). Either one changes what
+  // maximality means, so both take the second branch.
+  if (dead_net == &net && !avoid_) {
     if (adj[u].empty() || time_diverges(su)) { f.push_back(su.zone); return f; }
     Federation d0;
     if (state_has_deadlock(net, su, &d0)) f.swap(d0);
@@ -1430,8 +1561,12 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
         for (std::size_t yi = 0; yi < ny; ++yi) {
           const Dbm& Y = one ? *one : W[j][yi];
           ++pre_calls;
-          Dbm pz = gfp_pre(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y);
-          if (!pz.empty()) cand.push_back(std::move(pz));
+          if (avoid_) {
+            gfp_pre_avoid(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y, *avoid_, cand);
+          } else {
+            Dbm pz = gfp_pre(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y);
+            if (!pz.empty()) cand.push_back(std::move(pz));
+          }
         }
       }
       // Materialise v's own seed now, for this one node only: the swap below overwrites it with
@@ -1525,6 +1660,27 @@ bool Otf::build_all() {
     if (!c && !u) {
       s0.zone.delay();
       apply_all(s0.zone, inv);
+    }
+    // The forbidden region applies to the ROOT as well. This construction does not go through
+    // close_succ_zone, so without this the initial zone escapes psi entirely -- and since every
+    // verdict is read at the initial vertex, that alone decides queries wrongly.
+    if (avoid_ && avoid_->applies(s0.locs, s0.ints)) {
+      Federation parts;
+      if (!c && !u) avoid_->delay(s0.zone, s0.locs, s0.ints, parts);
+      else avoid_->restrict(s0.zone, s0.locs, s0.ints, parts);
+      // The root must be a single zone. Keep the pieces that survive as one only when their union
+      // is exactly convex; otherwise take the largest, which under-approximates the root and can
+      // only lose a witness, never invent one.
+      Dbm merged;
+      bool have = false;
+      for (Dbm& pz : parts) {
+        if (pz.empty()) continue;
+        if (!apply_all(pz, inv) || pz.empty()) continue;
+        if (!have) { merged = pz; have = true; continue; }
+        if (!merged.try_union(pz) && pz.includes(merged)) merged = pz;
+      }
+      if (!have) return false;
+      s0.zone = std::move(merged);
     }
     reset_inactive(net, s0.locs, s0.zone, qmask);
     if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);
@@ -2163,10 +2319,12 @@ void Otf::fill_stats(GfpStats* gs) {
 ///       invariant of the restricted network and its discrete part cannot change during a delay,
 ///       so that delay stays inside `psi`.
 bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* gs,
-                              const Network* unrestricted) {
+                              const Network* unrestricted,
+                              const detail::DelayAvoidSet* avoid) {
   for (int attempt = 0; attempt < 2; ++attempt) {
     static const DiscPred kTrue{};
     Otf e(net, kTrue, nq, /*force_exact=*/attempt == 1, nullptr, unrestricted);
+    e.set_avoid(avoid);
     const bool r = e.eg_from_initial(gs);
     if (!e.was_capped()) return r;
     // The federation width cap makes the verdict unusable. Retry once under exact inclusion

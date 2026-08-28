@@ -2223,7 +2223,8 @@ static bool use_loc_lu() {
 }
 
 bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& psi_clocks,
-                          const DiscPred& nq, ReachStats* stats) {
+                          const DiscPred& nq, ReachStats* stats,
+                          const std::vector<DiscTerm>* forbid) {
   // The psi-restricted network: psi's clock conjunction adjoined to every location invariant.
   // Convex, so this is exact -- delay inside a convex C is (Z /\ C)^ /\ C -- and it makes the
   // two side conditions automatic rather than hand-maintained: compute_bounds derives the LU
@@ -2242,8 +2243,81 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   }
   const Network& net = psi_clocks.empty() ? net_in : restricted;
 
+  // The non-convex part of psi, if any: terms of `!psi` that constrain clocks. Each is a
+  // conjunction, hence a convex region with a discrete guard, and the run must avoid every term
+  // whose guard holds. Empty for a psi whose clock part is a plain conjunction -- that one is
+  // already in the invariants above and costs nothing here.
+  detail::DelayAvoidSet av;
+  std::vector<DiscPred> guards;
+  if (forbid && !forbid->empty()) {
+    guards.reserve(forbid->size());
+    for (const auto& t : *forbid) {
+      if (t.clocks.empty()) continue;             // purely discrete: handled by the vertex filter
+      detail::DelayAvoid one;
+      one.forbid = Dbm::universe(net.nclocks);
+      if (!apply_all(one.forbid, t.clocks) || one.forbid.empty()) continue;
+      one.fup = one.forbid; one.fup.delay();
+      guards.push_back(DiscPred{});
+      guards.back().locs = t.locs;
+      guards.back().ints = t.ints;
+      av.parts.push_back(std::move(one));
+    }
+    for (std::size_t i = 0; i < av.parts.size(); ++i)     // bind after the vector stops growing
+      av.parts[i].when = (guards[i].locs.empty() && guards[i].ints.empty()) ? nullptr : &guards[i];
+  }
+
+  // The avoided region's constants must reach the LU bounds, and its clocks must stay live.
+  //
+  // For a CONVEX psi this is automatic: the conjunction became a location invariant above, so
+  // compute_bounds derived the bounds from it and compute_active saw the clocks read everywhere.
+  // A non-convex psi has no such invariant -- the region is routed around, not conjoined -- so
+  // nothing tells the abstraction about it, and a_LU subsumption or Extra_LU+ then merges zones
+  // lying on opposite sides of the very boundary the region draws. Measured: without this,
+  // `A<> x0 >= 1 && x0 <= 3` on fischer4 and eight sibling queries flip.
+  Network bounded;
+  const Network* engine_net = &net;
+  if (!av.parts.empty()) {
+    bounded = net;
+    for (const auto& t : *forbid) {
+      for (const auto& c : t.clocks) {
+        const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
+        auto bump = [&](int idx, bool lo, bool hi) {
+          if (idx <= 0 || idx >= (int)bounded.lbound.size()) return;
+          if (lo) bounded.lbound[idx] = std::max(bounded.lbound[idx], k);
+          if (hi) bounded.ubound[idx] = std::max(bounded.ubound[idx], k);
+          for (auto& pl : bounded.lbound_loc) for (auto& l : pl)
+            if (idx < (int)l.size() && lo) l[idx] = std::max(l[idx], k);
+          for (auto& pu : bounded.ubound_loc) for (auto& l : pu)
+            if (idx < (int)l.size() && hi) l[idx] = std::max(l[idx], k);
+        };
+        if (c.i && c.j) { bump(c.i, true, true); bump(c.j, true, true); }
+        else if (c.j == 0 && c.i) bump(c.i, false, true);
+        else if (c.i == 0 && c.j) bump(c.j, true, false);
+        // The region reads these clocks at every location, so the active-clock reduction must
+        // not zero them. Marking them active everywhere is the analogue of qmask on this path.
+        for (auto& pa : bounded.active) for (auto& l : pa) {
+          if (c.i > 0 && c.i < (int)l.size()) l[c.i] = 1;
+          if (c.j > 0 && c.j < (int)l.size()) l[c.j] = 1;
+        }
+      }
+    }
+    bounded.active_mask.clear();          // rebuilt from `active` below
+    for (const auto& pa : bounded.active) {
+      bounded.active_mask.emplace_back();
+      for (const auto& l : pa) {
+        std::uint64_t m = 0;
+        if (bounded.nclocks <= 63)
+          for (int c = 1; c <= bounded.nclocks; ++c) if (l[c]) m |= std::uint64_t(1) << c;
+        bounded.active_mask.back().push_back(m);
+      }
+    }
+    if (bounded.nclocks > 63) bounded.active_mask.clear();
+    engine_net = &bounded;
+  }
+
   GfpStats gs;
-  const bool r = exists_invariant_run_otf(net, nq, &gs, &net_in);
+  const bool r = exists_invariant_run_otf(*engine_net, nq, &gs, &net_in,
+                                          av.parts.empty() ? nullptr : &av);
   if (stats) stats->explored = gs.outer_nodes;
   return r;
 }

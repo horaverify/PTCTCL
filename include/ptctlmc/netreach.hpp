@@ -227,6 +227,10 @@ struct LocReq { int proc; int loc; bool equal; };
 ///
 /// @invariant Clock constraints are not representable here. The query layer rejects a liveness
 ///            formula whose operands mention clocks as unsupported rather than approximating it.
+
+
+namespace detail { struct DelayAvoidSet; }   // include detail/net_semantics.hpp to use one
+
 /// @brief One conjunctive term: locations, integers and a convex clock region.
 /// @see DiscPred::forbid
 struct DiscTerm {
@@ -297,7 +301,8 @@ struct DiscPred {
 /// @note Decided by ptctlmc::exists_invariant_run_otf, i.e. backward. The forward cycle search
 ///       that used to live here was unsound on a subsumed graph; see KNOWN_LIMITATION.md.
 bool exists_invariant_run(const Network& net, const std::vector<Constraint>& psi_clocks,
-                          const DiscPred& nq, ReachStats* stats = nullptr);
+                          const DiscPred& nq, ReachStats* stats = nullptr,
+                          const std::vector<DiscTerm>* forbid = nullptr);
 
 // ---- p --> q  (leads-to) --------------------------------------------------
 
@@ -360,7 +365,8 @@ struct GfpStats {
 ///       realises, so forward cycle detection on the stored graph is unsound (Laarman 2013,
 ///       Tripakis 2009) — the same reason `p --> q` is evaluated backward.
 bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* gs = nullptr,
-                              const Network* unrestricted = nullptr);
+                              const Network* unrestricted = nullptr,
+                              const detail::DelayAvoidSet* avoid = nullptr);
 
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q,
                   GfpStats* gs = nullptr);
