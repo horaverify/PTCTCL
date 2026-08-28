@@ -747,6 +747,7 @@ class Otf {
   void expand(int u);
   bool time_diverges(const SymState& s) const;
   Federation stop_set(int u);                  ///< exact NoSucc; requires `expanded[u]`
+  bool orig_time_open(const SymState& s) const;  ///< can time run away in the UNRESTRICTED system?
 
   void gfp_on(const std::vector<int>& S, std::vector<Federation>& W);
   bool certificate_in(const std::vector<int>& S);
@@ -1298,11 +1299,57 @@ bool Otf::time_diverges(const SymState& s) const {
 ///       whole. Only the third — partial deadlock — needs the per-valuation subtraction, and
 ///       ptctlmc::detail::state_has_deadlock supplies it, rebuilding the delay closure first so
 ///       that the active-clock reduction cannot leave the stored zone unclosed.
+/// @brief Can time run away for ever here in the UNRESTRICTED system?
+///
+/// @param s the state; only its location vector and integers are read
+/// @return @c true iff the original invariant leaves every clock unbounded after a delay, so a
+///         valuation with no enabled transition continues by delaying rather than stopping
+///
+/// @note Only meaningful when a `psi`-restriction is in force. It is what separates a genuine
+///       TIMELOCK -- a state that truly cannot be extended, and therefore ends a maximal run --
+///       from a state that merely cannot be extended *inside psi*.
+bool Otf::orig_time_open(const SymState& s) const {
+  if (net.nclocks == 0) return false;
+  bool c, u;
+  frozen_flags(*dead_net, s.locs, s.ints, &c, &u);
+  if (c || u) return false;                       // frozen: no positive delay at all
+  Dbm z = Dbm::universe(net.nclocks);
+  z.delay();
+  std::vector<Constraint> inv;
+  all_invariants(*dead_net, s.locs, inv);
+  if (!apply_all(z, inv)) return false;
+  for (int i = 1; i <= net.nclocks; ++i)
+    if (z.get(i, 0) != kInf) return false;        // some clock is capped: time cannot run away
+  return true;
+}
+
 Federation Otf::stop_set(int u) {
   Federation f;
   SymState usc;
   const SymState& su = sread(u, usc);
-  if (adj[u].empty() || time_diverges(su)) { f.push_back(su.zone); return f; }
+  // A psi-restriction changes what "maximal" means, so the two cases are kept apart rather than
+  // merged. Unrestricted -- every `p --> q` run -- keeps the original reading exactly: psi is
+  // discrete there, a delay can never leave it, so a node with no discrete successor always ends
+  // a maximal run.
+  if (dead_net == &net) {
+    if (adj[u].empty() || time_diverges(su)) { f.push_back(su.zone); return f; }
+    Federation d0;
+    if (state_has_deadlock(net, su, &d0)) f.swap(d0);
+    return f;
+  }
+  // Restricted: `adj[u].empty()` no longer implies maximality. The successors may all have been
+  // dropped for leaving psi, and a run that can only continue by leaving psi is not maximal, it
+  // is simply not a witness. Two things genuinely end a maximal psi-run:
+  //
+  //   (i)  time diverges INSIDE psi -- judged on the restricted invariant, which is `net`;
+  //   (ii) the state is timelocked in the ORIGINAL system -- no transition is ever enabled AND
+  //        the original invariant caps the delay, so there is no divergent continuation either.
+  //
+  // Dropping (ii)'s second half is what made `E[] x <= 3` on af-sat.xml report satisfied: the
+  // sink location is deadlocked, but the original bounds no clock there, so its maximal run is
+  // the divergent one -- which carries x past 3 and out of psi.
+  if (time_diverges(su)) { f.push_back(su.zone); return f; }
+  if (orig_time_open(su)) return f;               // a deadlock here continues by delaying
   Federation d;
   // Deadlock is judged in `dead_net`, which is the UNRESTRICTED network when `E[] psi` supplied
   // one. Maximality is a property of the original system: a run that can only continue by
