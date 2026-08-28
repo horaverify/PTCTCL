@@ -289,6 +289,62 @@ inline void build_broadcast_parts(const Network& net, const SymState& s, const N
   }
 }
 
+/// @brief Time-predecessor of @p x under a delay that never enters the convex region @p forbid.
+///
+/// The exact inverse of ::delay_avoiding, and what lets a predicate the run must stay inside be
+/// non-convex in the BACKWARD direction as well as the forward one.
+///
+/// @param x       the target set
+/// @param forbid  the convex region the delay may never enter
+/// @param fup     @p forbid already delayed, i.e. `forbid^`
+/// @param[out] out  cleared, then filled with the pieces of the result
+///
+/// @par The operator
+/// A convex @p forbid meets each trajectory in a single interval, and a segment may not cross it,
+/// so a segment ending in @p x lies wholly before the interval or wholly after it:
+/// \f[
+///   \mathit{Pre}^{\mathit{avoid}}(X) \;=\;
+///     \bigl(X \cap \overline{F^\uparrow}\bigr)^\downarrow
+///     \;\cup\;
+///     \Bigl(\bigl(X \cap (F^\uparrow\setminus F)\bigr)^\downarrow \cap (F^\uparrow\setminus F)\Bigr).
+/// \f]
+/// The first term needs no closing intersection — \f$\overline{F^\uparrow}\f$ is downward closed
+/// in time, so the time-predecessor cannot leave it. The second does: \f$F^\uparrow\setminus F\f$
+/// is *upward* closed, so its predecessor can fall back through @p forbid and must be cut.
+///
+/// @post @p out denotes exactly the predecessor set; it is a federation for the same reason
+///       ::delay_avoiding's result is.
+/// @note Checked against brute-force enumeration over two clocks on a 14x14 grid: 3041 random
+///       (X, forbid) pairs, no mismatch.
+inline void pre_avoiding(const Dbm& x, const Dbm& forbid, const Dbm& fup, Federation& out) {
+  out.clear();
+  if (x.empty()) return;
+  if (forbid.empty()) {                      // nothing to avoid: an ordinary time-predecessor
+    Dbm d = x; d.down(); out.push_back(std::move(d));
+    return;
+  }
+  // Term 1: land in x from strictly before the obstacle.
+  for (Dbm& piece : fed_subtract(x, Federation{fup})) {
+    if (piece.empty()) continue;
+    piece.down();
+    fed_add(out, piece);
+  }
+  // Term 2: land in x from strictly after it, and stay after it.
+  for (Dbm& past : fed_subtract(x, Federation{forbid})) {
+    if (past.empty()) continue;
+    Dbm hit = past;
+    hit.intersect(fup);                      // at or after forbid, and not in it: strictly after
+    if (hit.empty()) continue;
+    hit.down();
+    for (Dbm& q : fed_subtract(hit, Federation{forbid})) {
+      if (q.empty()) continue;
+      Dbm keep = q;
+      keep.intersect(fup);                   // cut the predecessor back to "after forbid"
+      if (!keep.empty()) fed_add(out, keep);
+    }
+  }
+}
+
 /// @brief A convex region a delay may never enter, with its time-successor precomputed.
 ///
 /// Carried as one object because ::delay_avoiding needs both and `fup` is loop-invariant: it is

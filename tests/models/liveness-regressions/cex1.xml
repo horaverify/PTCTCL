@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x,y,t;</declaration>
+<template><name>P</name>
+<location id="p_S"><name>S</name></location>
+<location id="p_W"><name>W</name></location>
+<location id="p_Q"><name>Q</name><label kind="invariant">y&lt;=3</label></location>
+<location id="p_Live"><name>Live</name></location>
+<init ref="p_S"/>
+<transition><source ref="p_S"/><target ref="p_Q"/><label kind="assignment">x=0, y=0</label></transition>
+<transition><source ref="p_S"/><target ref="p_W"/><label kind="guard">t&gt;=8</label></transition>
+<transition><source ref="p_W"/><target ref="p_Q"/><label kind="assignment">y=0</label></transition>
+<transition><source ref="p_Q"/><target ref="p_Live"/><label kind="guard">x&lt;=3</label></transition>
+<transition><source ref="p_Live"/><target ref="p_Live"/></transition>
+</template>
+<system>system P;</system>
+</nta>

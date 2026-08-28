@@ -173,8 +173,54 @@ void test_delay_avoiding() {
   (void)members;
 }
 
+// ---- pre_avoiding: the exact inverse of delay_avoiding ----
+void test_pre_avoiding() {
+  using detail::pre_avoiding;
+  using detail::delay_avoiding;
+  auto covers = [](const Federation& f, const Dbm& probe) { return fed_covers(f, probe); };
+
+  Dbm forbid = zone1(5, 10);                 // avoid 5 <= x <= 10
+  Dbm fup = forbid; fup.delay();
+  Federation out;
+
+  // Landing at x = 12 is possible only from strictly after the obstacle.
+  pre_avoiding(zone1(12, 12), forbid, fup, out);
+  CHECK(covers(out, zone1(11, 11)));
+  CHECK(covers(out, zone1(12, 12)));
+  CHECK(!covers(out, zone1(10, 10)));        // inside forbid
+  CHECK(!covers(out, zone1(3, 3)));          // would have to cross forbid
+
+  // Landing at x = 3 is possible only from before it.
+  pre_avoiding(zone1(3, 3), forbid, fup, out);
+  CHECK(covers(out, zone1(0, 0)));
+  CHECK(covers(out, zone1(3, 3)));
+  CHECK(!covers(out, zone1(4, 4)));          // 4 > 3: time does not run backwards
+  CHECK(!covers(out, zone1(12, 12)));
+
+  // A target inside the forbidden region has no predecessor at all.
+  pre_avoiding(zone1(7, 7), forbid, fup, out);
+  CHECK(out.empty() || !covers(out, zone1(7, 7)));
+
+  // Round trip: every point delay_avoiding reaches from 0 has 0 as a predecessor.
+  Federation fwd;
+  delay_avoiding(zone1(0, 0), forbid, fup, fwd);
+  for (const auto& z : fwd) {
+    if (z.empty()) continue;
+    Federation back;
+    pre_avoiding(z, forbid, fup, back);
+    CHECK(covers(back, zone1(0, 0)));
+  }
+
+  // Degenerate: nothing forbidden is an ordinary time-predecessor.
+  Dbm none(1);
+  pre_avoiding(zone1(4, 4), none, none, out);
+  CHECK(out.size() == 1);
+  CHECK(covers(out, zone1(0, 0)));
+}
+
 int main() {
   test_delay_avoiding();
+  test_pre_avoiding();
   test_basic();
   test_reset_delay();
   test_inclusion();
