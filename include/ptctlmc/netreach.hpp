@@ -265,6 +265,13 @@ struct DiscPred {
   ///       non-convex set as a predicate: the non-convexity lives in the union of terms, which
   ///       ptctlmc::detail::DelayAvoidSet handles by intersecting per-term results.
   std::vector<DiscTerm> forbid;
+  /// @brief Read @ref forbid as the predicate even when it is EMPTY, i.e. as `false`.
+  ///
+  /// Without this an empty predicate is an empty conjunction, which is `true`. The `E[]` entry
+  /// point needs the opposite reading: it passes "where psi's discrete part FAILS", and a psi
+  /// with no discrete part fails nowhere. Read as a conjunction that would hold everywhere and
+  /// empty `V_psi`, turning every such query into NOT satisfied.
+  bool is_dnf = false;
 
 };
 
@@ -280,8 +287,17 @@ struct DiscPred {
 /// @param[out] stats optional exploration counters; may be null
 /// @return @c true if such a run exists
 /// @note The search is sequential; @p backend is accepted for interface uniformity and ignored.
-bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backend = Backend::Seq,
-                          ReachStats* stats = nullptr);
+/// @brief `E[] psi` where `psi` is a boolean over discrete atoms conjoined with a clock
+///        conjunction.
+/// @param net         the network under analysis
+/// @param psi_clocks  `psi`'s clock conjunction; adjoined to every location invariant
+/// @param nq          holds exactly where `psi`'s discrete part fails
+/// @param[out] stats  optional counters; may be null
+/// @return @c true iff the initial state admits a maximal `psi`-execution
+/// @note Decided by ptctlmc::exists_invariant_run_otf, i.e. backward. The forward cycle search
+///       that used to live here was unsound on a subsumed graph; see KNOWN_LIMITATION.md.
+bool exists_invariant_run(const Network& net, const std::vector<Constraint>& psi_clocks,
+                          const DiscPred& nq, ReachStats* stats = nullptr);
 
 // ---- p --> q  (leads-to) --------------------------------------------------
 
@@ -330,6 +346,22 @@ struct GfpStats {
 ///       query must be reported as unresolved rather than answered.
 /// @see netliveness.cpp for the engine, and DESIGN.md for why a partial backward pass is already
 ///      a certificate.
+/// @brief `E[] psi` from the initial state, on the backward greatest-fixpoint engine.
+///
+/// @param net the network, already restricted by `psi`'s clock conjunction if it had one
+/// @param nq  holds exactly where `psi`'s DISCRETE part fails, so `V_psi` is its complement;
+///            an arbitrary boolean travels in ptctlmc::DiscPred::forbid
+/// @param[out] gs statistics; may be null
+/// @return @c true iff the initial state admits a maximal execution all of whose states satisfy
+///         `psi`
+///
+/// @note Replaces the forward cycle search this header used to expose. Subsumption can redirect
+///       a successor to a strictly larger covering zone and close a cycle no concrete run
+///       realises, so forward cycle detection on the stored graph is unsound (Laarman 2013,
+///       Tripakis 2009) — the same reason `p --> q` is evaluated backward.
+bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* gs = nullptr,
+                              const Network* unrestricted = nullptr);
+
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q,
                   GfpStats* gs = nullptr);
 

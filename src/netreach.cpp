@@ -2222,268 +2222,30 @@ static bool use_loc_lu() {
   return v;
 }
 
-bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend backend,
-                          ReachStats* stats) {
-  (void)backend;  // the cycle detection below is sequential
-
-  // The psi-restricted network. Built only when the predicate mentions a clock, so a purely
-  // discrete predicate runs on `net` itself and is unaffected down to the last stored zone.
+bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& psi_clocks,
+                          const DiscPred& nq, ReachStats* stats) {
+  // The psi-restricted network: psi's clock conjunction adjoined to every location invariant.
+  // Convex, so this is exact -- delay inside a convex C is (Z /\ C)^ /\ C -- and it makes the
+  // two side conditions automatic rather than hand-maintained: compute_bounds derives the LU
+  // bounds from it, so no extrapolation merges zones across the boundary, and compute_active sees
+  // the clocks read at every location, so the reduction cannot zero them.
   Network restricted;
-  if (!phi.clocks.empty() && phi.forbid.empty()) {
+  if (!psi_clocks.empty()) {
     restricted = net_in;
     for (auto& proc : restricted.procs)
       for (auto& loc : proc.locations)
-        loc.invariant.insert(loc.invariant.end(), phi.clocks.begin(), phi.clocks.end());
-    // Recomputed, not patched: these analyses are exactly what the two side conditions ask for,
-    // and deriving them from the restricted invariants is what keeps them consistent with it.
+        loc.invariant.insert(loc.invariant.end(), psi_clocks.begin(), psi_clocks.end());
     restricted.compute_bounds();
     restricted.compute_loc_bounds();
     restricted.compute_active();
     restricted.compute_int_live();
   }
-  const Network& net = (phi.clocks.empty() || !phi.forbid.empty()) ? net_in : restricted;
+  const Network& net = psi_clocks.empty() ? net_in : restricted;
 
-  std::vector<std::int32_t> L = net.lbound, U = net.ubound;
-  const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;  // diagonals: keep exact
-  // Clocks the predicate reads. `compute_active` above already marks them active at every
-  // location, since they now appear in every invariant; this is the belt to that braces, and
-  // stays all-zero -- maximal reduction -- for a purely discrete predicate.
-  std::vector<char> qmask(net.nclocks + 1, 0);
-  for (const auto& c : phi.clocks) { if (c.i) qmask[c.i] = 1; if (c.j) qmask[c.j] = 1; }
-
-  // The forbidden region, one entry per term of the DNF of the negated predicate. Each term is a
-  // conjunction, so its clock part is convex and ::detail::delay_avoiding can route a delay
-  // around it; its discrete part is constant across a vertex and becomes the term's guard. The
-  // union over terms is where the non-convexity lives, and ::detail::DelayAvoidSet absorbs it by
-  // intersecting the per-term results. `fup` and the guards are precomputed once; none of them
-  // vary with the state being expanded.
-  detail::DelayAvoidSet av;
-  std::vector<DiscPred> guards;                 // stable storage for the terms' discrete guards
-  const detail::DelayAvoidSet* avoid = nullptr;
-  if (!phi.forbid.empty()) {
-    guards.reserve(phi.forbid.size());
-    for (const auto& t : phi.forbid) {
-      detail::DelayAvoid one;
-      one.forbid = Dbm::universe(net.nclocks);
-      // A term whose clock part is unsatisfiable forbids nothing at all and is simply dropped.
-      if (!apply_all(one.forbid, t.clocks) || one.forbid.empty()) continue;
-      one.fup = one.forbid; one.fup.delay();
-      guards.push_back(DiscPred{});
-      guards.back().locs = t.locs;
-      guards.back().ints = t.ints;
-      av.parts.push_back(std::move(one));
-      // The avoided constants must reach the LU arrays for the same reason a maintained
-      // predicate's do: Extra_LU+ would otherwise merge zones on opposite sides of the boundary.
-      // Same direction rule as the query flooring below: an upper bound raises U, a lower bound
-      // raises L, and only a diagonal raises both.
-      for (const auto& c : t.clocks) {
-        const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
-        if (c.i) qmask[c.i] = 1;
-        if (c.j) qmask[c.j] = 1;
-        if (c.i && c.j) {
-          L[c.i] = std::max(L[c.i], k); U[c.i] = std::max(U[c.i], k);
-          L[c.j] = std::max(L[c.j], k); U[c.j] = std::max(U[c.j], k);
-        } else if (c.j == 0 && c.i) {
-          U[c.i] = std::max(U[c.i], k);
-        } else if (c.i == 0 && c.j) {
-          L[c.j] = std::max(L[c.j], k);
-        }
-      }
-    }
-    // Bound AFTER the vector has stopped growing, or the pointers would dangle.
-    for (std::size_t i = 0; i < av.parts.size(); ++i)
-      av.parts[i].when = (guards[i].locs.empty() && guards[i].ints.empty()) ? nullptr : &guards[i];
-    if (!av.parts.empty()) avoid = &av;
-  }
-
-  // Per-LOCATION LU bounds for the extrapolation, instead of one global pair.
-  //
-  // `lbound_loc[p][l][c]` is the largest constant clock c is compared against on any path leaving
-  // process p's location l before c is reset; it is at most the global bound and usually far
-  // less, so Extra_LU+ under it merges strictly more zones. The forward reachability engine has
-  // used these since they were computed; this path did not, and on a clock-bounded E[] query --
-  // the only kind that explores at all, since an unbounded one finds time divergence at the root
-  // and stops -- the global bound is exactly the wrong one, because the query's own constant
-  // floors it at every location whether or not that location can reach a guard.
-  //
-  // The query's constants must still floor the result. A state satisfying the property may not be
-  // abstracted away, and `lbound_loc` knows nothing about the query.
-  std::vector<std::int32_t> qL(net.nclocks + 1, kAluNegInf), qU(net.nclocks + 1, kAluNegInf);
-  {
-    // Direction matters. A constraint is `x_i - x_j <= bound`, so with j == 0 it is an UPPER
-    // bound on x_i and floors U alone, and with i == 0 it is a LOWER bound on x_j and floors L
-    // alone. Flooring both from every constraint is sound but badly imprecise: `x0 <= 100` would
-    // raise L(x0) from 2 to 100, and Extra_LU+ under an inflated L merges almost nothing --
-    // measured at 55x the state count on fischer4. A diagonal constrains neither clock on its
-    // own, so it floors both, conservatively.
-    auto floor_with = [&](const std::vector<Constraint>& cs) {
-      for (const auto& c : cs) {
-        const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
-        if (c.i && c.j) {                     // diagonal
-          qL[c.i] = std::max(qL[c.i], k); qU[c.i] = std::max(qU[c.i], k);
-          qL[c.j] = std::max(qL[c.j], k); qU[c.j] = std::max(qU[c.j], k);
-        } else if (c.j == 0 && c.i) {         // x_i <= k
-          qU[c.i] = std::max(qU[c.i], k);
-        } else if (c.i == 0 && c.j) {         // x_j >= k
-          qL[c.j] = std::max(qL[c.j], k);
-        }
-      }
-    };
-    floor_with(phi.clocks);
-    for (const auto& t : phi.forbid) floor_with(t.clocks);
-  }
-  const bool loclu = !net.lbound_loc.empty() && emode == ExLuPlus && use_loc_lu();
-  const bool lu_identity = [] { const char* e = std::getenv("PTCTLMC_EG_LUIDENT"); return e && *e == '1'; }();
-  auto loc_lu = [&](const LocVec& locs, std::vector<std::int32_t>& L2, std::vector<std::int32_t>& U2) {
-    if (lu_identity) { L2 = L; U2 = U; return; }   // diagnostic: must reproduce the global run
-    L2.assign(net.nclocks + 1, kAluNegInf);
-    U2.assign(net.nclocks + 1, kAluNegInf);
-    for (int p = 0; p < net.nprocs(); ++p)
-      for (int c = 1; c <= net.nclocks; ++c) {
-        L2[c] = std::max(L2[c], net.lbound_loc[p][locs[p]][c]);
-        U2[c] = std::max(U2[c], net.ubound_loc[p][locs[p]][c]);
-      }
-    for (int c = 1; c <= net.nclocks; ++c) { L2[c] = std::max(L2[c], qL[c]); U2[c] = std::max(U2[c], qU[c]); }
-    // kAluNegInf is the sentinel of the aLU SUBSUMPTION test, not of the extrapolation, and the
-    // two do not share a convention. dbm_extrapolate_lu_plus reads U[j] through `lt(-U[j])`, so a
-    // sentinel of -2^29 becomes a huge FINITE bound rather than freeing the entry, and the zone
-    // graph fills with distinct enormous constants -- measured at 408x the state count on
-    // fischer5. A clock with no guard from here has no constants to dominate, so 0 dominates them
-    // vacuously and is both sound and maximally coarse.
-    for (int c = 0; c <= net.nclocks; ++c) {
-      if (L2[c] < 0) L2[c] = 0;
-      if (U2[c] < 0) U2[c] = 0;
-    }
-    L2[0] = U2[0] = 0;
-  };
-  // With per-location bounds the extrapolation cannot happen inside the successor pipeline, which
-  // sees one L/U for the whole expansion. It is deferred instead: the pipeline runs with ExNone
-  // and each successor is extrapolated here under its OWN target's bounds. The order is
-  // unchanged -- extrapolation still comes last, after the invariant, the delay and the
-  // active-clock reduction.
-  const int succ_emode = loclu ? ExNone : emode;
-  std::vector<std::int32_t> eL, eU;
-  auto extrap = [&](SymState& s) { if (!loclu) return; loc_lu(s.locs, eL, eU); s.zone.extrapolate_lu_plus(eL, eU); };
-
-  // Does any valuation of this vertex satisfy the maintained predicate?
-  //
-  // For the conjunction fast path that is `phi`'s discrete half; the clock half is already in the
-  // invariants. For the general path the zone restriction has done all the work already -- a term
-  // that forbids a whole vertex has an empty clock part, which makes its forbidden region the
-  // universe, which empties the zone -- so no vertex filter is needed at all.
-  auto sat = [&](const SymState& s) -> bool {
-    if (!phi.forbid.empty()) return true;
-    for (const auto& r : phi.locs) {
-      const bool eq = (s.locs[r.proc] == r.loc);
-      if (eq != r.equal) return false;
-    }
-    return int_ok(phi.ints, s.ints);
-  };
-  auto key = [&](const SymState& s) -> std::string {
-    std::string k = disc_key_bytes(s.locs, s.ints);
-    const auto& d = s.zone.data();
-    k.append(reinterpret_cast<const char*>(d.data()), d.size() * sizeof(raw_t));
-    return k;
-  };
-
-  SymState s0;
-  std::vector<Dbm> root_split;
-  if (!initial_symbolic_state(net, qmask, L, U, succ_emode, &s0, avoid, avoid ? &root_split : nullptr))
-    return false;
-  extrap(s0);
-  for (Dbm& rz : root_split) { SymState t; t.locs = s0.locs; t.ints = s0.ints; t.zone = std::move(rz); extrap(t); rz = std::move(t.zone); }
-  if (!sat(s0)) return false;  // no run from the initial state can stay in phi
-
-  // Build the phi-restricted extrapolated zone graph (nodes deduped by exact zone).
-  std::unordered_map<std::string, int> id;
-  std::vector<SymState> node;
-  std::vector<std::vector<int>> adj;
-  auto intern = [&](SymState&& s) -> int {
-    std::string k = key(s);
-    auto it = id.find(k);
-    if (it != id.end()) return it->second;
-    const int n = static_cast<int>(node.size());
-    id.emplace(std::move(k), n);
-    node.push_back(std::move(s));
-    adj.emplace_back();
-    return n;
-  };
-  // A location where every clock can grow without bound (after delay + invariant) lets
-  // time diverge => an infinite run that stays put — an E[] witness on its own.
-  auto time_diverges = [&](const SymState& s) -> bool {
-    if (net.nclocks == 0) return false;
-    // FROZEN LOCATIONS DO NOT DELAY. Delaying unconditionally reports divergence at a
-    // committed/urgent location, where no positive delay is legal at all -- inventing a
-    // maximal-run witness out of nothing.
-    { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
-    std::vector<Constraint> inv;
-    all_invariants(net, s.locs, inv);
-    // With a forbidden region the delay cannot simply be taken: a trajectory that would run into
-    // it stops there and does NOT diverge. Divergence therefore has to be witnessed by one piece
-    // of the routed delay, which is exactly the piece lying past the region.
-    if (avoid && av.applies(s.locs, s.ints)) {
-      Federation parts;
-      av.delay(s.zone, s.locs, s.ints, parts);
-      for (Dbm& z : parts) {
-        if (!apply_all(z, inv) || z.empty()) continue;
-        bool unbounded = true;
-        for (int i = 1; i <= net.nclocks && unbounded; ++i)
-          if (z.get(i, 0) != kInf) unbounded = false;
-        if (unbounded) return true;
-      }
-      return false;
-    }
-    Dbm z = s.zone;
-    z.delay();
-    apply_all(z, inv);
-    if (z.empty()) return false;
-    for (int i = 1; i <= net.nclocks; ++i)
-      if (z.get(i, 0) != kInf) return false;
-    return true;
-  };
-
-  for (Dbm& rz : root_split) {          // the root delay split too; every piece is a start state
-    SymState r; r.locs = s0.locs; r.ints = s0.ints; r.zone = std::move(rz);
-    if (!r.zone.empty()) intern(std::move(r));
-  }
-  intern(std::move(s0));
-  for (int u = 0; u < static_cast<int>(node.size()); ++u) {
-    if (stats) ++stats->explored;
-    if (time_diverges(node[u])) return true;
-    std::vector<SymState> succ;
-    successors_net(net, node[u], node[u].zone, L, U, qmask, succ_emode, succ, avoid);
-    for (auto& ns : succ) {
-      if (!sat(ns)) continue;
-      extrap(ns);
-      if (ns.zone.empty()) continue;
-      const int v = intern(std::move(ns));
-      adj[u].push_back(v);
-    }
-  }
-
-  // Reachable cycle? Iterative three-colour DFS; a back edge (to a GREY node) = cycle.
-  enum { White, Grey, Black };
-  std::vector<char> color(node.size(), White);
-  std::vector<std::pair<int, std::size_t>> stk;
-  for (int root = 0; root < static_cast<int>(node.size()); ++root) {
-    if (color[root] != White) continue;
-    stk.push_back({root, 0});
-    color[root] = Grey;
-    while (!stk.empty()) {
-      const int u = stk.back().first;
-      const std::size_t idx = stk.back().second;
-      if (idx < adj[u].size()) {
-        stk.back().second = idx + 1;
-        const int v = adj[u][idx];
-        if (color[v] == Grey) return true;
-        if (color[v] == White) { color[v] = Grey; stk.push_back({v, 0}); }
-      } else {
-        color[u] = Black;
-        stk.pop_back();
-      }
-    }
-  }
-  return false;
+  GfpStats gs;
+  const bool r = exists_invariant_run_otf(net, nq, &gs, &net_in);
+  if (stats) stats->explored = gs.outer_nodes;
+  return r;
 }
 
 /// @brief Does the symbolic state @p s contain a valuation with no outgoing action transition?

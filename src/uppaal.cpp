@@ -1602,6 +1602,63 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   // engine represents; a disjunction is turned into the negation of a conjunction of negated
   // atoms, which flips the flag. Mixing `&&` and `||` in one predicate is refused: the result
   // would be neither shape.
+  // Split `psi` into an arbitrary boolean over DISCRETE atoms and a CONJUNCTION of clock atoms.
+  //
+  // This is the fragment the backward engine decides. The clock conjunction is convex, so it
+  // becomes an invariant of a restricted network and the run stays inside it by construction; the
+  // discrete part is constant across a vertex, so any boolean structure in it is a vertex filter
+  // and needs no convexity at all. What is refused is a clock atom under a disjunction or a
+  // negation, because that is a non-convex region the run must stay inside, and the backward
+  // operator for it -- Pre through a delay routed around an obstacle -- does not exist yet.
+  //
+  // @param[out] cc  the clock conjunction
+  // @param[out] ndnf  DNF of the NEGATED discrete part, i.e. where V_psi does NOT hold
+  std::function<bool(const BExpr&, std::vector<const BExpr*>&)> flatten_and =
+      [&](const BExpr& e, std::vector<const BExpr*>& out) -> bool {
+    if (e.kind == BExpr::And) return flatten_and(e.kids[0], out) && flatten_and(e.kids[1], out);
+    out.push_back(&e);
+    return true;
+  };
+  std::function<bool(const BExpr&)> has_clock = [&](const BExpr& e) -> bool {
+    if (e.kind == BExpr::Atom) {
+      std::vector<Constraint> cc; std::vector<IntAtom> ic;
+      parse_net_atom(e.atom, cm, im, cc, ic);
+      return !cc.empty();
+    }
+    for (const auto& k : e.kids) if (has_clock(k)) return true;
+    return false;
+  };
+  auto split_psi = [&](const std::string& text, std::vector<Constraint>& cc,
+                       std::vector<DiscTerm>& ndnf) -> bool {
+    BParse bp(text);
+    BExpr e = bp.parse_or();
+    bp.ws();
+    if (!bp.ok || bp.i != text.size()) return false;
+    std::vector<const BExpr*> conj;
+    flatten_and(e, conj);
+    std::vector<const BExpr*> disc;
+    for (const BExpr* k : conj) {
+      if (!has_clock(*k)) { disc.push_back(k); continue; }
+      if (k->kind != BExpr::Atom) return false;      // clock under a disjunction or a negation
+      std::vector<Constraint> a; std::vector<IntAtom> ic;
+      parse_net_atom(k->atom, cm, im, a, ic);
+      cc.insert(cc.end(), a.begin(), a.end());
+    }
+    // The discrete conjuncts, negated and put in DNF: that is exactly `!psi_discrete`.
+    for (const BExpr* k : disc)
+      for (const auto& term : to_dnf(*k, /*neg=*/true)) {
+        DiscTerm t;
+        DiscPred acc;
+        std::vector<std::string> pos, negs;
+        for (const auto& lit : term) (lit.second ? negs : pos).push_back(lit.first);
+        if (!build_atoms(pos, acc, false) || !build_atoms(negs, acc, true)) return false;
+        if (!acc.clocks.empty()) return false;       // should not happen: `disc` has no clocks
+        t.locs = std::move(acc.locs); t.ints = std::move(acc.ints);
+        ndnf.push_back(std::move(t));
+      }
+    return true;
+  };
+
   auto build_maintained = [&](const std::string& text, DiscPred& out, bool want_negated) -> bool {
     // Fast path: a plain conjunction to be MAINTAINED is convex and becomes a location invariant.
     if (!want_negated && !has_disjunction(text) && text.find('(') == std::string::npos &&
@@ -1672,21 +1729,29 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     return true;
   }
   if (q.kind == Query::EG) {  // E[] phi
-    DiscPred phi;
-    if (!build_maintained(q.note, phi, /*want_negated=*/false)) return false;
-    *satisfied = exists_invariant_run(net, phi, backend, stats);
+    std::vector<Constraint> cc;
+    DiscPred nq;
+    nq.is_dnf = true;   // empty means psi's discrete part never fails, not that it always does
+    if (!split_psi(q.note, cc, nq.forbid)) return false;
+    *satisfied = exists_invariant_run(net, cc, nq, stats);
     return true;
   }
   if (q.kind == Query::AF) {  // A<> phi = !E[] !phi
-    // The negation is NOT pushed inwards here. `phi` is handed over whole with `negated` set and
-    // ::exists_invariant_run interprets it per vertex, where the discrete part is constant and
-    // the disjunction therefore collapses. Pushing it inwards is what used to force a
-    // single-atom restriction: `!(a && b)` has no conjunctive form, so anything wider than one
-    // atom had to be refused.
-    DiscPred phi;
-    if (!build_maintained(q.note, phi, /*want_negated=*/true)) return false;
-    *satisfied = !exists_invariant_run(net, phi, backend, stats);
-    return true;
+    // `!phi` is what the run must maintain. Its clock part is a conjunction only when `phi`'s is
+    // a single atom, so the split below refuses the rest -- a regression in reach against the
+    // forward path, taken deliberately: the forward path decided them by cycle detection on a
+    // subsumed graph, which is unsound.
+    {
+      std::vector<Constraint> cc;
+      DiscPred nq;
+      nq.is_dnf = true;
+      // psi = !phi, so psi's negation is phi itself: the DNF of `phi` is what nq wants, and the
+      // clock conjunction of `psi` is the negation of phi's single clock atom.
+      std::string neg = "!(" + q.note + ")";
+      if (!split_psi(neg, cc, nq.forbid)) return false;
+      *satisfied = !exists_invariant_run(net, cc, nq, stats);
+      return true;
+    }
   }
   auto neg_int = [](IntOp o) {
     switch (o) {

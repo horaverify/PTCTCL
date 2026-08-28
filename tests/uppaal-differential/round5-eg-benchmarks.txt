@@ -1,0 +1,29 @@
+ok   | SAT    SAT    |       248 | fischer4  E[] x0 <= 40
+ok   | SAT    SAT    |       248 | fischer4  E[] x0 <= 40 && !P1.cs
+ok   | NOT    NOT    |       248 | fischer4  E[] (P0.idle || P0.wait) && x0 <= 40
+DIFF | UNSUP  SAT    |         ? | fischer4  E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+ok   | SAT    SAT    |       248 | fischer4  E[] !(P1.cs && P2.cs) && x0 <= 40
+ok   | SAT    SAT    |        48 | arbiter4  E[] x0 <= 40
+ok   | SAT    SAT    |        48 | arbiter4  E[] x0 <= 40 && !C1.cs
+ok   | NOT    NOT    |        48 | arbiter4  E[] (C0.idle || C0.want) && x0 <= 40
+DIFF | UNSUP  SAT    |         ? | arbiter4  E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+ok   | SAT    SAT    |        48 | arbiter4  E[] !(C1.cs && C2.cs) && x0 <= 40
+ok   | SAT    SAT    |       172 | csma4     E[] y0 <= 40
+ok   | SAT    SAT    |       172 | csma4     E[] y0 <= 40 && !Bus.Collided
+ok   | SAT    SAT    |       172 | csma4     E[] (S0.Wait || S0.Send) && y0 <= 40
+DIFF | UNSUP  SAT    |         ? | csma4     E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+ok   | SAT    SAT    |       172 | csma4     E[] !(S0.Send && S1.Send) && y0 <= 40
+ok   | SAT    SAT    |        82 | phil4     E[] c0 <= 40
+ok   | SAT    SAT    |        82 | phil4     E[] c0 <= 40 && !P1.Eat
+DIFF | UNSUP  SAT    |         ? | phil4     E[] c0 <= 40 && (c1 <= 30 || c1 >= 35)
+ok   | SAT    SAT    |        82 | phil4     E[] !(P0.Eat && P1.Eat) && c0 <= 40
+ok   | SAT    SAT    |      1031 | grc4      E[] x0 <= 15
+ok   | SAT    SAT    |      1031 | grc4      E[] x0 <= 15 && !T0.in
+ok   | SAT    SAT    |      1031 | grc4      E[] (T0.far || T0.near) && x0 <= 15
+DIFF | UNSUP  SAT    |         ? | grc4      E[] x0 <= 15 && (y <= 10 || y >= 12)
+ok   | SAT    SAT    |      1031 | grc4      E[] !(T0.in && T1.in) && x0 <= 15
+ok   | SAT    SAT    |       312 | twolock4  E[] x0 <= 30
+ok   | SAT    SAT    |       312 | twolock4  E[] x0 <= 30 && !P1.cs
+ok   | NOT    NOT    |       312 | twolock4  E[] (P0.idle || P0.waitA) && x0 <= 30
+DIFF | UNSUP  SAT    |         ? | twolock4  E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+DONE 28 rows, 6 differences

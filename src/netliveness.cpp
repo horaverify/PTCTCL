@@ -537,13 +537,20 @@ class Otf {
   /// @param force_exact  use plain inclusion covering instead of a_LU (sound outright, larger)
   /// @param cancel       polled during the search; when it is set the run abandons itself
   Otf(const Network& n, const DiscPred& pp, const DiscPred& qq,
-      bool force_exact = false, const std::atomic<bool>* cancel = nullptr)
-      : net(n), p(pp), q(qq), force_exact_(force_exact), cancel_(cancel) {}
+      bool force_exact = false, const std::atomic<bool>* cancel = nullptr,
+      const Network* dead = nullptr)
+      : net(n), p(pp), q(qq), force_exact_(force_exact), cancel_(cancel),
+        dead_net(dead ? dead : &n) {}
 
   /// @brief Build the graph and decide the query.
   /// @return @c true iff `p --> q` holds
   /// @warning The result is meaningless if ::was_cancelled() is true afterwards.
   bool run(GfpStats* gs);
+
+  /// @brief Decide `E[] psi` from the initial state, with `psi`'s discrete part as `!q`.
+  /// @return @c true iff the initial state admits a maximal `psi`-execution
+  /// @warning Meaningless if ::was_capped() is true afterwards; the caller retries exactly.
+  bool eg_from_initial(GfpStats* gs);
 
   /// @brief Drop the forward graph and everything indexed by it.
   ///
@@ -595,6 +602,8 @@ class Otf {
   /// @note A cancelled run's verdict is not a verdict. A racing caller must consult this before
   ///       publishing a result.
   bool was_cancelled() const { return cancelled_; }
+  /// @brief Did the federation width cap fire? A verdict from a capped run is not a verdict.
+  bool was_capped() const { return capped; }
 
   /// @brief Derive the deadlock-completion constraint map from this run's finished graph.
   /// @pre The forward graph has been built (::run or ::build_forward).
@@ -611,6 +620,9 @@ class Otf {
   const Network& net;
   const DiscPred& p;
   const DiscPred& q;
+  /// @brief The network deadlock is judged against; see ::Otf::stop_set. Equals @ref net unless
+  ///        `E[] psi` supplied the unrestricted network alongside the psi-restricted one.
+  const Network* dead_net;
   bool force_exact_ = false;                   ///< inclusion covering, no a_LU
   const std::atomic<bool>* cancel_ = nullptr;  ///< set by the winner of the race
   bool cancelled_ = false;
@@ -816,6 +828,19 @@ void Otf::setup() {
 }
 
 bool Otf::holds(const DiscPred& pr, const SymState& s) const {
+  // A predicate carrying a DNF denotes the DISJUNCTION of its terms, not a conjunction. Only the
+  // E[] entry point builds one, and only ever from discrete literals: it needs `!psi_discrete`,
+  // which for an arbitrary boolean `psi` is a disjunction and has no conjunctive form.
+  if (pr.is_dnf || !pr.forbid.empty()) {
+    for (const auto& t : pr.forbid) {
+      bool all = true;
+      for (const auto& r : t.locs)
+        if ((s.locs[r.proc] == r.loc) != r.equal) { all = false; break; }
+      if (all && !int_ok(t.ints, s.ints)) all = false;
+      if (all) return true;
+    }
+    return false;
+  }
   for (const auto& r : pr.locs) {
     const bool eq = (s.locs[r.proc] == r.loc);
     if (eq != r.equal) return false;
@@ -1270,7 +1295,16 @@ Federation Otf::stop_set(int u) {
   const SymState& su = sread(u, usc);
   if (adj[u].empty() || time_diverges(su)) { f.push_back(su.zone); return f; }
   Federation d;
-  if (state_has_deadlock(net, su, &d)) f.swap(d);
+  // Deadlock is judged in `dead_net`, which is the UNRESTRICTED network when `E[] psi` supplied
+  // one. Maximality is a property of the original system: a run that can only continue by
+  // LEAVING psi is not maximal, it is simply not a witness. Judging it against the psi-restricted
+  // network instead reads "psi stops holding" as "time stops" and reports the resulting timelock
+  // as a maximal run -- `E[] P0.idle && x0 <= 40` on fischer4 becomes satisfied, where the true
+  // answer is that every continuation past x0 = 40 leaves psi.
+  //
+  // Divergence is the other way round and stays on `net`: the run must diverge INSIDE psi, so the
+  // restricted invariant is exactly the right one to consult.
+  if (state_has_deadlock(*dead_net, su, &d)) f.swap(d);
   return f;
 }
 
@@ -1940,6 +1974,38 @@ bool Otf::finish_verdict(GfpStats* gs) {
   return !violated;
 }
 
+bool Otf::eg_from_initial(GfpStats* gs) {
+  setup();
+  base_forward();
+  bool res = false;
+  if (fwd_ok_ && !node.empty()) {
+    grow();
+    // The psi-closure REACHED FROM THE INITIAL VERTEX. ::Otf::accepting_closure seeds from every
+    // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
+    // state, so a node reachable only by leaving psi and coming back must not be admitted.
+    std::vector<int> S;
+    if (expanded[0] && is_nq(0)) {
+      std::vector<char> in(node.size(), 0);
+      std::vector<int> stk{0};
+      in[0] = 1;
+      while (!stk.empty()) {
+        const int v = stk.back();
+        stk.pop_back();
+        S.push_back(v);
+        for (const auto& e : adj[v])
+          if (!in[e.tgt] && expanded[e.tgt] && is_nq(e.tgt)) { in[e.tgt] = 1; stk.push_back(e.tgt); }
+      }
+    }
+    if (!S.empty()) {
+      std::vector<Federation> W;
+      gfp_on(S, W);
+      if (!capped) res = !gfp_fed_empty(W[0]);
+    }
+  }
+  fill_stats(gs);
+  return res;
+}
+
 bool Otf::run(GfpStats* gs) {
   setup();
   base_forward();
@@ -2013,6 +2079,47 @@ void Otf::fill_stats(GfpStats* gs) {
 /// @note Both lanes are cancellable. Lane B polls ::Otf::cancelled from ::Otf::expand, the choke
 ///       point for every forward step, and at the head of each backward sweep, so the pair
 ///       really does finish in `min(A, B)` rather than always in B's time.
+/// @brief `E[] psi` from the initial state, decided by the backward greatest fixpoint.
+///
+/// @param net the network, already restricted by `psi`'s clock conjunction if it had one
+/// @param nq  a predicate holding exactly where `psi`'s DISCRETE part fails, so `V_psi` is its
+///            complement; carry an arbitrary boolean through ptctlmc::DiscPred::forbid
+/// @param[out] gs statistics; may be null
+/// @return @c true iff the initial state admits a maximal execution all of whose states satisfy
+///         `psi`
+///
+/// @par Why this replaces a forward cycle search
+/// The forward construction subsumes, and redirecting a successor to a strictly larger covering
+/// zone can close a cycle that no concrete run realises — the unsoundness of forward cycle
+/// detection on a subsumed graph (Laarman 2013, Tripakis 2009) that this engine exists to avoid.
+/// `E[] psi` is the paper's own normal form for every liveness query, so it needs no machinery
+/// that `p --> q` did not already need; it needs a different QUESTION asked of the same fixpoint.
+///
+/// @par The question
+/// ::leads_to_otf asks whether SOME `p`-node has a surviving valuation, because `p --> q` is
+/// violated by a witness anywhere. `E[] psi` is anchored at the initial state instead, so the
+/// closure is seeded at the initial vertex rather than at every `p`-node, and the verdict reads
+/// `W` at that vertex alone.
+///
+/// @note Testing `W[v0]` for non-emptiness, rather than for membership of the all-zero valuation,
+///       is exact here. The initial zone is the delay-closure of the origin under the invariant,
+///       so every valuation in it is reachable from the origin by delay; `psi`'s clock part is an
+///       invariant of the restricted network and its discrete part cannot change during a delay,
+///       so that delay stays inside `psi`.
+bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* gs,
+                              const Network* unrestricted) {
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    static const DiscPred kTrue{};
+    Otf e(net, kTrue, nq, /*force_exact=*/attempt == 1, nullptr, unrestricted);
+    const bool r = e.eg_from_initial(gs);
+    if (!e.was_capped()) return r;
+    // The federation width cap makes the verdict unusable. Retry once under exact inclusion
+    // covering, which is sound outright -- the same lane ::leads_to_otf races when its atom
+    // construction cannot be represented.
+  }
+  return false;
+}
+
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs) {
   Otf e1(net, p, q);
 
