@@ -262,7 +262,7 @@ namespace {
 void successors_net(const Network& net, const SymState& s, const Dbm& szone,
                     const std::vector<std::int32_t>& L,
                     const std::vector<std::int32_t>& U, const std::vector<char>& qmask, int emode, std::vector<SymState>& out,
-                    const detail::DelayAvoid* avoid = nullptr) {
+                    const detail::DelayAvoidSet* avoid = nullptr) {
   thread_local std::vector<Constraint> inv;  // reused invariant scratch (see all_invariants)
   // Extra pieces produced when a delay had to route around a forbidden region and split; empty,
   // and never even looked at, unless `avoid` is non-null.
@@ -1302,7 +1302,7 @@ static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
 static bool initial_symbolic_state(const Network& net, const std::vector<char>& qmask,
                                    const std::vector<std::int32_t>& L,
                                    const std::vector<std::int32_t>& U, int emode, SymState* s0,
-                                   const detail::DelayAvoid* avoid = nullptr,
+                                   const detail::DelayAvoidSet* avoid = nullptr,
                                    std::vector<Dbm>* extra = nullptr) {
   s0->locs.resize(net.nprocs());
   for (int p = 0; p < net.nprocs(); ++p) s0->locs[p] = net.procs[p].initial;
@@ -2204,7 +2204,7 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
   // The psi-restricted network. Built only when the predicate mentions a clock, so a purely
   // discrete predicate runs on `net` itself and is unaffected down to the last stored zone.
   Network restricted;
-  if (!phi.clocks.empty() && !phi.negated) {
+  if (!phi.clocks.empty() && phi.forbid.empty()) {
     restricted = net_in;
     for (auto& proc : restricted.procs)
       for (auto& loc : proc.locations)
@@ -2216,7 +2216,7 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
     restricted.compute_active();
     restricted.compute_int_live();
   }
-  const Network& net = (phi.clocks.empty() || phi.negated) ? net_in : restricted;
+  const Network& net = (phi.clocks.empty() || !phi.forbid.empty()) ? net_in : restricted;
 
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;  // diagonals: keep exact
@@ -2226,48 +2226,54 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
   std::vector<char> qmask(net.nclocks + 1, 0);
   for (const auto& c : phi.clocks) { if (c.i) qmask[c.i] = 1; if (c.j) qmask[c.j] = 1; }
 
-  // For a NEGATED predicate the run must maintain `!phi`, i.e. avoid `phi`. `phi`'s clock part is
-  // a conjunction and so convex, and its discrete part is constant across a vertex -- so the
-  // region is forbidden exactly at the vertices where the discrete part holds, and
-  // ::detail::delay_avoiding routes the delay around it there. `fup` and the condition are
-  // precomputed once; neither varies with the state being expanded.
-  detail::DelayAvoid av;
-  const detail::DelayAvoid* avoid = nullptr;
-  if (phi.negated && !phi.clocks.empty()) {
-    av.forbid = Dbm::universe(net.nclocks);
-    if (apply_all(av.forbid, phi.clocks) && !av.forbid.empty()) {
-      av.fup = av.forbid; av.fup.delay();
-      av.when = (phi.locs.empty() && phi.ints.empty()) ? nullptr : &phi;
-      avoid = &av;
-      // The avoided region's constants must reach the LU arrays for the same reason a maintained
-      // predicate's do: Extra_LU+ would otherwise merge zones lying on opposite sides of it.
-      for (const auto& c : phi.clocks) {
+  // The forbidden region, one entry per term of the DNF of the negated predicate. Each term is a
+  // conjunction, so its clock part is convex and ::detail::delay_avoiding can route a delay
+  // around it; its discrete part is constant across a vertex and becomes the term's guard. The
+  // union over terms is where the non-convexity lives, and ::detail::DelayAvoidSet absorbs it by
+  // intersecting the per-term results. `fup` and the guards are precomputed once; none of them
+  // vary with the state being expanded.
+  detail::DelayAvoidSet av;
+  std::vector<DiscPred> guards;                 // stable storage for the terms' discrete guards
+  const detail::DelayAvoidSet* avoid = nullptr;
+  if (!phi.forbid.empty()) {
+    guards.reserve(phi.forbid.size());
+    for (const auto& t : phi.forbid) {
+      detail::DelayAvoid one;
+      one.forbid = Dbm::universe(net.nclocks);
+      // A term whose clock part is unsatisfiable forbids nothing at all and is simply dropped.
+      if (!apply_all(one.forbid, t.clocks) || one.forbid.empty()) continue;
+      one.fup = one.forbid; one.fup.delay();
+      guards.push_back(DiscPred{});
+      guards.back().locs = t.locs;
+      guards.back().ints = t.ints;
+      av.parts.push_back(std::move(one));
+      // The avoided constants must reach the LU arrays for the same reason a maintained
+      // predicate's do: Extra_LU+ would otherwise merge zones on opposite sides of the boundary.
+      for (const auto& c : t.clocks) {
         const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
-        if (c.i) { L[c.i] = std::max(L[c.i], k); U[c.i] = std::max(U[c.i], k); }
-        if (c.j) { L[c.j] = std::max(L[c.j], k); U[c.j] = std::max(U[c.j], k); }
+        if (c.i) { L[c.i] = std::max(L[c.i], k); U[c.i] = std::max(U[c.i], k); qmask[c.i] = 1; }
+        if (c.j) { L[c.j] = std::max(L[c.j], k); U[c.j] = std::max(U[c.j], k); qmask[c.j] = 1; }
       }
     }
-    // An unsatisfiable `phi` forbids nothing, and `avoid` stays null: the ordinary delay is right.
+    // Bound AFTER the vector has stopped growing, or the pointers would dangle.
+    for (std::size_t i = 0; i < av.parts.size(); ++i)
+      av.parts[i].when = (guards[i].locs.empty() && guards[i].ints.empty()) ? nullptr : &guards[i];
+    if (!av.parts.empty()) avoid = &av;
   }
 
-  // The discrete half of `phi`, which is constant across a vertex.
-  auto disc = [&](const SymState& s) -> bool {
+  // Does any valuation of this vertex satisfy the maintained predicate?
+  //
+  // For the conjunction fast path that is `phi`'s discrete half; the clock half is already in the
+  // invariants. For the general path the zone restriction has done all the work already -- a term
+  // that forbids a whole vertex has an empty clock part, which makes its forbidden region the
+  // universe, which empties the zone -- so no vertex filter is needed at all.
+  auto sat = [&](const SymState& s) -> bool {
+    if (!phi.forbid.empty()) return true;
     for (const auto& r : phi.locs) {
       const bool eq = (s.locs[r.proc] == r.loc);
       if (eq != r.equal) return false;
     }
     return int_ok(phi.ints, s.ints);
-  };
-  // Does any valuation of this vertex satisfy the maintained predicate?
-  //
-  // Un-negated, that is `phi`'s discrete half: the clock half is already in the invariants.
-  // Negated, the run maintains `!phi`, so a vertex is excluded only when `phi` holds there
-  // IDENTICALLY -- its discrete half holds and it constrains no clock. Where it holds and does
-  // constrain clocks, the obligation is `!clocks` and `avoid` has already enforced it on the
-  // zone; where its discrete half fails, `!phi` holds outright and nothing is required.
-  auto sat = [&](const SymState& s) -> bool {
-    if (!phi.negated) return disc(s);
-    return !(disc(s) && phi.clocks.empty());
   };
   auto key = [&](const SymState& s) -> std::string {
     std::string k = disc_key_bytes(s.locs, s.ints);
@@ -2311,7 +2317,7 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
     // of the routed delay, which is exactly the piece lying past the region.
     if (avoid && av.applies(s.locs, s.ints)) {
       Federation parts;
-      detail::delay_avoiding(s.zone, av.forbid, av.fup, parts);
+      av.delay(s.zone, s.locs, s.ints, parts);
       for (Dbm& z : parts) {
         if (!apply_all(z, inv) || z.empty()) continue;
         bool unbounded = true;

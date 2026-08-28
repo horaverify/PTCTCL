@@ -318,6 +318,57 @@ struct DelayAvoid {
   }
 };
 
+inline void delay_avoiding(const Dbm& z, const Dbm& forbid, const Dbm& fup, Federation& out);
+
+/// @brief The whole forbidden region, as the disjunctive normal form of the negated predicate.
+///
+/// A predicate that is a plain conjunction is convex and rides on the location invariants; this
+/// is for everything else. `!psi` in DNF is a union of convex terms, each with a discrete guard,
+/// and the run must avoid **all** of the terms that apply at the state it is in.
+///
+/// @note The delay operator distributes over that union rather than needing a new one. A segment
+///       avoids a union exactly when it avoids every member, and for a fixed endpoint the best
+///       start is the latest point of `Z` on its trajectory whichever member is being avoided —
+///       so the reachable set is the INTERSECTION of the per-member results, each of which
+///       ::delay_avoiding already computes exactly.
+struct DelayAvoidSet {
+  std::vector<DelayAvoid> parts;
+
+  /// @brief Does any member forbid anything at this discrete state?
+  bool applies(const LocVec& locs, const IntVec& ints) const {
+    for (const auto& p : parts) if (p.applies(locs, ints)) return true;
+    return false;
+  }
+
+  /// @brief Let time pass from @p z, entering no applicable member.
+  /// @param[out] out cleared, then filled with the pieces of the result
+  void delay(const Dbm& z, const LocVec& locs, const IntVec& ints, Federation& out) const {
+    out.clear();
+    bool first = true;
+    Federation scratch;
+    for (const auto& p : parts) {
+      if (!p.applies(locs, ints)) continue;
+      delay_avoiding(z, p.forbid, p.fup, scratch);
+      if (first) { out = scratch; first = false; }
+      else out = fed_intersect(out, scratch);
+      if (out.empty()) return;
+    }
+    if (first) { Dbm d = z; d.delay(); out.push_back(std::move(d)); }  // nothing applies here
+  }
+
+  /// @brief Cut @p z down to the valuations outside every applicable member; no delay.
+  /// @param[out] out cleared, then filled with the pieces of the result
+  void restrict(const Dbm& z, const LocVec& locs, const IntVec& ints, Federation& out) const {
+    out.clear();
+    out.push_back(z);
+    for (const auto& p : parts) {
+      if (!p.applies(locs, ints)) continue;
+      out = fed_difference(out, Federation{p.forbid});
+      if (out.empty()) return;
+    }
+  }
+};
+
 /// @brief Let time pass from @p z while never entering the convex region @p forbid.
 ///
 /// The delay operator for a predicate that must be *avoided* rather than maintained. Where
@@ -404,7 +455,7 @@ close_succ_zone(const Network& net, const LocVec& tgt_locs, const IntVec& tgt_in
                             std::vector<Constraint>& inv, const std::vector<char>& qmask,
                             const std::vector<std::int32_t>& L,
                             const std::vector<std::int32_t>& U, int emode,
-                            const DelayAvoid* avoid = nullptr, std::vector<Dbm>* extra = nullptr) {
+                            const DelayAvoidSet* avoid = nullptr, std::vector<Dbm>* extra = nullptr) {
   all_invariants(net, tgt_locs, inv);
   if (!apply_all(z, inv)) return false;
   bool tgt_committed, tgt_urgent;
@@ -412,18 +463,18 @@ close_succ_zone(const Network& net, const LocVec& tgt_locs, const IntVec& tgt_in
   // Is a region forbidden HERE? `avoid->when` makes this a property of the target's discrete
   // state, which is what lets one operator serve a predicate mixing discrete and clock atoms.
   const bool av = avoid && avoid->applies(tgt_locs, tgt_ints);
-  thread_local Federation parts;
+  Federation parts;
   if (!tgt_committed && !tgt_urgent) {
     if (av) {
-      // The delay must not pass through `avoid->forbid`, so it can split.
-      delay_avoiding(z, avoid->forbid, avoid->fup, parts);
+      // The delay must enter no applicable forbidden term, so it can split.
+      avoid->delay(z, tgt_locs, tgt_ints, parts);
     } else {
       z.delay(); apply_all(z, inv);
     }
   } else if (av) {
-    // Frozen: no delay to route, but the state itself must still lie outside the region, and
-    // the complement of a zone is not a zone -- so this splits too.
-    parts = fed_subtract(z, Federation{avoid->forbid});
+    // Frozen: no delay to route, but the state itself must still lie outside every applicable
+    // term, and the complement of a zone is not a zone -- so this splits too.
+    avoid->restrict(z, tgt_locs, tgt_ints, parts);
   }
   if (av) {
     // The first piece stays in `z` and the rest go to `extra`; all of them still owe the

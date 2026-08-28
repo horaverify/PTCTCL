@@ -1,0 +1,63 @@
+ok   | SAT    SAT    | eg-clock     | E[] x < 5 || x > 10
+ok   | SAT    SAT    | eg-clock     | A<> x < 5 || x > 10
+ok   | NOT    NOT    | eg-clock     | E[] (x >= 1 && x <= 2) || (x >= 5 && x <= 6)
+ok   | NOT    NOT    | eg-clock     | A<> (x >= 1 && x <= 2) || (x >= 5 && x <= 6)
+ok   | SAT    SAT    | eg-clock     | E[] (x < 2) || (x > 3 && x < 7)
+ok   | SAT    SAT    | eg-clock     | A<> (x < 2) || (x > 3 && x < 7)
+ok   | SAT    SAT    | eg-clock     | E[] !(x >= 5)
+ok   | SAT    SAT    | eg-clock     | A<> !(x >= 5)
+ok   | SAT    SAT    | eg-clock     | E[] !(x >= 5 && x <= 10)
+ok   | SAT    SAT    | eg-clock     | A<> !(x >= 5 && x <= 10)
+ok   | NOT    NOT    | eg-clock     | E[] P.T || (x >= 1 && x <= 3)
+ok   | SAT    SAT    | eg-clock     | A<> P.T || (x >= 1 && x <= 3)
+ok   | NOT    NOT    | eg-clock     | E[] !P.T && x <= 4
+ok   | SAT    SAT    | eg-clock     | A<> !P.T && x <= 4
+ok   | SAT    SAT    | eg-clock     | E[] (P.S && x <= 2) || (P.T && x >= 1)
+ok   | SAT    SAT    | eg-clock     | A<> (P.S && x <= 2) || (P.T && x >= 1)
+ok   | NOT    NOT    | eg-clock     | E[] x == 3
+ok   | NOT    NOT    | eg-clock     | A<> x == 3
+ok   | SAT    SAT    | eg-clock     | E[] !(x == 3)
+ok   | SAT    SAT    | eg-clock     | A<> !(x == 3)
+ok   | SAT    SAT    | eg-clock     | E[] x <= 2 && (x >= 0 || x >= 1)
+ok   | SAT    SAT    | eg-clock     | A<> (x >= 2 || x <= 1) && x <= 100
+ok   | NOT    NOT    | af-sat       | E[] x < 5 || x > 10
+ok   | SAT    SAT    | af-sat       | A<> x < 5 || x > 10
+ok   | NOT    NOT    | af-sat       | E[] (x >= 1 && x <= 2) || (x >= 5 && x <= 6)
+ok   | SAT    SAT    | af-sat       | A<> (x >= 1 && x <= 2) || (x >= 5 && x <= 6)
+ok   | NOT    NOT    | af-sat       | E[] (x < 2) || (x > 3 && x < 7)
+ok   | SAT    SAT    | af-sat       | A<> (x < 2) || (x > 3 && x < 7)
+ok   | NOT    NOT    | af-sat       | E[] !(x >= 5)
+ok   | SAT    SAT    | af-sat       | A<> !(x >= 5)
+ok   | NOT    NOT    | af-sat       | E[] !(x >= 5 && x <= 10)
+ok   | SAT    SAT    | af-sat       | A<> !(x >= 5 && x <= 10)
+ok   | NOT    NOT    | af-sat       | E[] P.T || (x >= 1 && x <= 3)
+ok   | SAT    SAT    | af-sat       | A<> P.T || (x >= 1 && x <= 3)
+ok   | NOT    NOT    | af-sat       | E[] !P.T && x <= 4
+ok   | SAT    SAT    | af-sat       | A<> !P.T && x <= 4
+ok   | NOT    NOT    | af-sat       | E[] (P.S && x <= 2) || (P.T && x >= 1)
+ok   | SAT    SAT    | af-sat       | A<> (P.S && x <= 2) || (P.T && x >= 1)
+ok   | NOT    NOT    | af-sat       | E[] x == 3
+ok   | SAT    SAT    | af-sat       | A<> x == 3
+ok   | NOT    NOT    | af-sat       | E[] !(x == 3)
+ok   | SAT    SAT    | af-sat       | A<> !(x == 3)
+ok   | NOT    NOT    | af-sat       | E[] x <= 2 && (x >= 0 || x >= 1)
+ok   | SAT    SAT    | af-sat       | A<> (x >= 2 || x <= 1) && x <= 100
+ok   | NOT    NOT    | fischer4     | E[] x0 <= 2 || x0 >= 8
+ok   | SAT    SAT    | fischer4     | A<> x0 <= 2 || x0 >= 8
+ok   | NOT    NOT    | fischer4     | E[] (x0 >= 1 && x0 <= 2) || (x0 >= 5 && x0 <= 6)
+ok   | SAT    SAT    | fischer4     | A<> (x0 >= 1 && x0 <= 2) || (x0 >= 5 && x0 <= 6)
+ok   | SAT    SAT    | fischer4     | E[] !(x0 >= 3)
+ok   | SAT    SAT    | fischer4     | A<> !(x0 >= 3 && x0 <= 4)
+ok   | SAT    SAT    | phil4        | E[] c0 <= 2 || c0 >= 8
+ok   | SAT    SAT    | phil4        | A<> c0 <= 2 || c0 >= 8
+ok   | NOT    NOT    | phil4        | E[] (c0 >= 1 && c0 <= 2) || (c0 >= 5 && c0 <= 6)
+ok   | SAT    SAT    | phil4        | A<> (c0 >= 1 && c0 <= 2) || (c0 >= 5 && c0 <= 6)
+ok   | SAT    SAT    | phil4        | E[] !(c0 >= 3)
+ok   | SAT    SAT    | phil4        | A<> !(c0 >= 3 && c0 <= 4)
+ok   | NOT    NOT    | grc4         | E[] x0 <= 2 || x0 >= 8
+ok   | SAT    SAT    | grc4         | A<> x0 <= 2 || x0 >= 8
+ok   | NOT    NOT    | grc4         | E[] (x0 >= 1 && x0 <= 2) || (x0 >= 5 && x0 <= 6)
+ok   | SAT    SAT    | grc4         | A<> (x0 >= 1 && x0 <= 2) || (x0 >= 5 && x0 <= 6)
+ok   | NOT    NOT    | grc4         | E[] !(x0 >= 3)
+ok   | SAT    SAT    | grc4         | A<> !(x0 >= 3 && x0 <= 4)
+DONE 62 rows, 0 differences

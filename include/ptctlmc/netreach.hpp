@@ -227,6 +227,14 @@ struct LocReq { int proc; int loc; bool equal; };
 ///
 /// @invariant Clock constraints are not representable here. The query layer rejects a liveness
 ///            formula whose operands mention clocks as unsupported rather than approximating it.
+/// @brief One conjunctive term: locations, integers and a convex clock region.
+/// @see DiscPred::forbid
+struct DiscTerm {
+  std::vector<LocReq> locs;
+  std::vector<IntAtom> ints;
+  std::vector<Constraint> clocks;
+};
+
 struct DiscPred {
   std::vector<LocReq> locs;    ///< location atoms, all of which must hold
   std::vector<IntAtom> ints;   ///< integer atoms, all of which must hold
@@ -244,23 +252,20 @@ struct DiscPred {
   /// @note Because the atoms become invariants, the LU bounds and the active-clock sets are
   ///       recomputed from them rather than adjusted by hand; see ::exists_invariant_run.
   std::vector<Constraint> clocks;
-  /// @brief When set, the predicate denotes the NEGATION of the conjunction above.
+  /// @brief The negation of the predicate, in disjunctive normal form; empty when unused.
   ///
-  /// `A<> phi` is `!E[] !phi`, so the predicate the run must maintain is `!phi` — a disjunction,
-  /// which is neither a vertex filter nor an invariant. Rather than push the negation inwards and
-  /// refuse whatever does not survive, the predicate is stored un-negated and the negation is
-  /// interpreted where it is cheap to interpret: at a vertex.
+  /// A predicate that is a plain conjunction rides on @ref locs, @ref ints and @ref clocks, which
+  /// is the cheap path: the clock part is convex and becomes a location invariant. Everything
+  /// else -- a disjunction, a negation, or any mix -- is carried here instead, as `!psi` put into
+  /// DNF. Each term is a conjunction, so each is a discrete guard plus a **convex** clock region,
+  /// and the run must avoid every term whose guard holds where it is.
   ///
-  /// The discrete part of `phi` is constant across a vertex, which is what makes this work. At a
-  /// vertex where @ref locs or @ref ints fail, `!phi` already holds and no clock restriction
-  /// applies at all; at a vertex where they hold, `!phi` reduces to `!clocks`, and @ref clocks is
-  /// a conjunction, hence convex, hence a region ptctlmc::detail::delay_avoiding can route a
-  /// delay around. The disjunction never has to be represented as one.
-  ///
-  /// @note This subsumes three cases that used to be separate: an all-discrete `phi` becomes a
-  ///       plain vertex filter (with no single-atom restriction), an all-clock `phi` becomes an
-  ///       unconditional avoided region, and a mixed one becomes a conditionally avoided region.
-  bool negated = false;
+  /// @note This is the general representation and the other three fields are then empty. It is
+  ///       what lets the engine take an arbitrary boolean combination without ever representing a
+  ///       non-convex set as a predicate: the non-convexity lives in the union of terms, which
+  ///       ptctlmc::detail::DelayAvoidSet handles by intersecting per-term results.
+  std::vector<DiscTerm> forbid;
+
 };
 
 /// @brief `E[] phi` — does @p net have an infinite, time-divergent run all of whose states

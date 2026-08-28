@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <unordered_map>
 
@@ -172,6 +173,29 @@ std::vector<std::string> split_conjuncts(const std::string& s) {
   if (!trim(cur).empty()) out.push_back(trim(cur));
   return out;
 }
+
+/// @brief Split on top-level `||` / `or`, the disjunctive counterpart of ::split_conjuncts.
+/// @note Used only by the liveness predicates. A disjunction is admissible there precisely when
+///       its negation is a conjunction, which is the shape both engine mechanisms can represent;
+///       see ::build_pred_parts.
+std::vector<std::string> split_disjuncts(const std::string& s) {
+  std::vector<std::string> out;
+  std::string cur;
+  for (std::size_t i = 0; i < s.size();) {
+    if (s.compare(i, 2, "||") == 0) { out.push_back(trim(cur)); cur.clear(); i += 2; }
+    else if (s.compare(i, 2, "or") == 0
+             && (i == 0 || !ident_char((unsigned char)s[i - 1]))
+             && (i + 2 >= s.size() || !ident_char((unsigned char)s[i + 2]))) {
+      out.push_back(trim(cur)); cur.clear(); i += 2;
+    }
+    else cur += s[i++];
+  }
+  if (!trim(cur).empty()) out.push_back(trim(cur));
+  return out;
+}
+
+/// @brief Does @p s contain a top-level `||` or `or`?
+bool has_disjunction(const std::string& s) { return split_disjuncts(s).size() > 1; }
 
 using ClockMap = std::unordered_map<std::string, int>;
 
@@ -1427,8 +1451,15 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     return true;
   };
   // Conjunction of LOCATION/INT atoms -> DiscPred (liveness; clock atoms rejected).
-  auto build_pred = [&](const std::string& text, DiscPred& out) -> bool {
-    for (auto atom : split_conjuncts(text)) {
+  // Parse a list of atoms into `out`, optionally negating each one as it is pushed.
+  //
+  // Negating atom by atom is what lets a DISJUNCTION be accepted: `a \/ b` is `!(!a /\ !b)`, and
+  // the engine represents a conjunction and the negation of a conjunction, so a disjunction of
+  // single atoms lands in the second class. It does not represent anything wider, which is why an
+  // atom whose own negation is not a single atom -- a clock equality, since `x == 5` parses to
+  // TWO constraints and negates to a disjunction -- is refused here rather than approximated.
+  auto build_atoms = [&](const std::vector<std::string>& atoms, DiscPred& out, bool neg) -> bool {
+    for (auto atom : atoms) {
       atom = trim(atom);
       if (atom.empty() || atom == "true") continue;
       std::vector<Constraint> cc; std::vector<IntAtom> ic;
@@ -1436,8 +1467,28 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
       // A clock atom is kept, not refused: ::exists_invariant_run adjoins the conjunction to
       // every location invariant, which is the psi-restricted semantics and is exact because a
       // conjunction of constraints is convex.
-      if (!cc.empty()) { out.clocks.insert(out.clocks.end(), cc.begin(), cc.end()); continue; }
-      if (!ic.empty()) { out.ints.insert(out.ints.end(), ic.begin(), ic.end()); continue; }
+      if (!cc.empty()) {
+        if (neg) {
+          if (cc.size() != 1) return false;   // `x == 5` negates to a disjunction
+          out.clocks.push_back(negate(cc[0]));
+        } else {
+          out.clocks.insert(out.clocks.end(), cc.begin(), cc.end());
+        }
+        continue;
+      }
+      if (!ic.empty()) {
+        for (const auto& a : ic) {
+          if (!neg) { out.ints.push_back(a); continue; }
+          IntOp n = a.op;
+          switch (a.op) {
+            case IntOp::Eq: n = IntOp::Ne; break; case IntOp::Ne: n = IntOp::Eq; break;
+            case IntOp::Lt: n = IntOp::Ge; break; case IntOp::Ge: n = IntOp::Lt; break;
+            case IntOp::Le: n = IntOp::Gt; break; case IntOp::Gt: n = IntOp::Le; break;
+          }
+          out.ints.push_back({a.var, n, a.val});
+        }
+        continue;
+      }
       bool eq = true;
       std::string a = atom;
       if (!a.empty() && a[0] == '!') { eq = false; a = trim(a.substr(1)); }
@@ -1447,7 +1498,165 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
       std::string loc = dot == std::string::npos ? a : a.substr(dot + 1);
       int pi, li;
       if (!net.resolve_location(proc, loc, &pi, &li)) return false;
-      out.locs.push_back({pi, li, eq});
+      out.locs.push_back({pi, li, neg ? !eq : eq});
+    }
+    return true;
+  };
+  auto build_pred = [&](const std::string& text, DiscPred& out) -> bool {
+    return build_atoms(split_conjuncts(text), out, false);
+  };
+  // ---- general boolean predicates -------------------------------------------------------
+  //
+  // Anything that is not a plain conjunction is handled by putting the NEGATION of the predicate
+  // into disjunctive normal form. Each resulting term is a conjunction, hence a discrete guard
+  // plus a convex clock region, which is the only shape the engine ever has to represent; the
+  // non-convexity lives in the union of terms and is absorbed by intersecting the per-term delay
+  // results. See ptctlmc::detail::DelayAvoidSet.
+  //
+  // Grammar: or := and ('||' and)* ; and := unary ('&&' unary)* ; unary := '!' unary | '(' or ')'
+  //          | atom. `and`/`or`/`not` spell the operators too, and ',' reads as '&&'.
+  struct BExpr {
+    enum Kind { Atom, Not, And, Or } kind = Atom;
+    std::string atom;
+    std::vector<BExpr> kids;
+  };
+  // A hand-rolled parser rather than reuse of parse_expression: that one yields an arithmetic
+  // ExprP over integer state, while what is needed here is the boolean SKELETON, with the leaves
+  // left as text for parse_net_atom to interpret as a location, integer or clock atom.
+  struct BParse {
+    const std::string& t; std::size_t i = 0; bool ok = true;
+    explicit BParse(const std::string& s) : t(s) {}
+    void ws() { while (i < t.size() && std::isspace((unsigned char)t[i])) ++i; }
+    bool word(const char* w) {
+      ws(); const std::size_t n = std::strlen(w);
+      if (t.compare(i, n, w) != 0) return false;
+      const bool alpha = std::isalpha((unsigned char)w[0]);
+      if (alpha && i + n < t.size() && ident_char((unsigned char)t[i + n])) return false;
+      if (alpha && i > 0 && ident_char((unsigned char)t[i - 1])) return false;
+      i += n; return true;
+    }
+    BExpr parse_or() {
+      BExpr a = parse_and();
+      while (true) { const std::size_t save = i; if (word("||") || word("or")) {
+          BExpr b = parse_and(); BExpr n; n.kind = BExpr::Or; n.kids = {a, b}; a = n;
+        } else { i = save; break; } }
+      return a;
+    }
+    BExpr parse_and() {
+      BExpr a = parse_unary();
+      while (true) { const std::size_t save = i; if (word("&&") || word("and") || word(",")) {
+          BExpr b = parse_unary(); BExpr n; n.kind = BExpr::And; n.kids = {a, b}; a = n;
+        } else { i = save; break; } }
+      return a;
+    }
+    BExpr parse_unary() {
+      ws();
+      if (word("!") || word("not")) { BExpr k = parse_unary(); BExpr n; n.kind = BExpr::Not; n.kids = {k}; return n; }
+      if (word("(")) { BExpr k = parse_or(); if (!word(")")) ok = false; return k; }
+      // An atom runs to the next top-level boolean operator or close-paren.
+      const std::size_t start = i; int depth = 0;
+      while (i < t.size()) {
+        if (t[i] == '(') ++depth;
+        else if (t[i] == ')') { if (depth == 0) break; --depth; }
+        else if (depth == 0) {
+          if (t.compare(i, 2, "||") == 0 || t.compare(i, 2, "&&") == 0 || t[i] == ',') break;
+          if ((t.compare(i, 2, "or") == 0 || t.compare(i, 3, "and") == 0) &&
+              (i == 0 || !ident_char((unsigned char)t[i - 1]))) {
+            const std::size_t n = t.compare(i, 2, "or") == 0 ? 2 : 3;
+            if (i + n >= t.size() || !ident_char((unsigned char)t[i + n])) break;
+          }
+        }
+        ++i;
+      }
+      BExpr a; a.kind = BExpr::Atom; a.atom = trim(t.substr(start, i - start));
+      if (a.atom.empty()) ok = false;
+      return a;
+    }
+  };
+  // Push negations to the leaves, then distribute. Returns the DNF of the expression as a list of
+  // terms, each a list of (atom text, negated) literals.
+  using Lit = std::pair<std::string, bool>;
+  std::function<std::vector<std::vector<Lit>>(const BExpr&, bool)> to_dnf =
+      [&](const BExpr& e, bool neg) -> std::vector<std::vector<Lit>> {
+    switch (e.kind) {
+      case BExpr::Atom: return {{{e.atom, neg}}};
+      case BExpr::Not:  return to_dnf(e.kids[0], !neg);
+      case BExpr::And: case BExpr::Or: {
+        // De Morgan: negating swaps the connective.
+        const bool as_or = (e.kind == BExpr::Or) != neg;
+        auto a = to_dnf(e.kids[0], neg), b = to_dnf(e.kids[1], neg);
+        if (as_or) { for (auto& t : b) a.push_back(std::move(t)); return a; }
+        std::vector<std::vector<Lit>> out;
+        for (const auto& x : a)
+          for (const auto& y : b) { auto t = x; t.insert(t.end(), y.begin(), y.end()); out.push_back(std::move(t)); }
+        return out;
+      }
+    }
+    return {};
+  };
+
+  // Build the predicate a liveness query must MAINTAIN, from the query text.
+  //
+  // `want_negated` says whether the caller wants `!text` (as `A<>` does) rather than `text`.
+  // Either way the result is a conjunction plus a flag, because those are the two shapes the
+  // engine represents; a disjunction is turned into the negation of a conjunction of negated
+  // atoms, which flips the flag. Mixing `&&` and `||` in one predicate is refused: the result
+  // would be neither shape.
+  auto build_maintained = [&](const std::string& text, DiscPred& out, bool want_negated) -> bool {
+    // Fast path: a plain conjunction to be MAINTAINED is convex and becomes a location invariant.
+    if (!want_negated && !has_disjunction(text) && text.find('(') == std::string::npos &&
+        text.find('!') == std::string::npos && text.find("not ") == std::string::npos)
+      return build_pred(text, out);
+
+    // General path. `psi` is what the run must maintain, so the forbidden region is `!psi`, and
+    // that is what goes into DNF. `want_negated` means the caller's text is `phi` with
+    // `psi = !phi`, hence `!psi = phi` and the DNF is taken WITHOUT a further negation.
+    BParse bp(text);
+    BExpr e = bp.parse_or();
+    bp.ws();
+    if (!bp.ok || bp.i != text.size()) return false;
+    for (const auto& term : to_dnf(e, /*neg=*/!want_negated)) {
+      // Positive literals conjoin directly. A NEGATED literal may itself be a disjunction --
+      // `x == 3` parses to two constraints, so `!(x == 3)` is `x < 3 \/ x > 3` -- and a forbidden
+      // term has to stay a conjunction, so the term splits into one copy per alternative. Taking
+      // the cross product over every such literal is the remaining DNF distribution.
+      DiscTerm base;
+      std::vector<std::vector<Constraint>> alts;   // one alternative list per negated clock literal
+      bool bad = false;
+      for (const auto& lit : term) {
+        std::vector<std::string> one{lit.first};
+        if (!lit.second) {                         // positive: straight into the term
+          DiscPred acc;
+          if (!build_atoms(one, acc, false)) { bad = true; break; }
+          base.locs.insert(base.locs.end(), acc.locs.begin(), acc.locs.end());
+          base.ints.insert(base.ints.end(), acc.ints.begin(), acc.ints.end());
+          base.clocks.insert(base.clocks.end(), acc.clocks.begin(), acc.clocks.end());
+          continue;
+        }
+        std::vector<Constraint> cc; std::vector<IntAtom> ic;
+        parse_net_atom(lit.first, cm, im, cc, ic);
+        if (cc.size() > 1) {                       // negation is a disjunction: an alternative each
+          std::vector<Constraint> a;
+          for (const auto& c : cc) a.push_back(negate(c));
+          alts.push_back(std::move(a));
+          continue;
+        }
+        DiscPred acc;                              // single-constraint or discrete: negate in place
+        if (!build_atoms(one, acc, true)) { bad = true; break; }
+        base.locs.insert(base.locs.end(), acc.locs.begin(), acc.locs.end());
+        base.ints.insert(base.ints.end(), acc.ints.begin(), acc.ints.end());
+        base.clocks.insert(base.clocks.end(), acc.clocks.begin(), acc.clocks.end());
+      }
+      if (bad) return false;
+      std::vector<DiscTerm> expanded{base};
+      for (const auto& a : alts) {
+        std::vector<DiscTerm> next;
+        next.reserve(expanded.size() * a.size());
+        for (const auto& t : expanded)
+          for (const auto& c : a) { DiscTerm cp = t; cp.clocks.push_back(c); next.push_back(std::move(cp)); }
+        expanded.swap(next);
+      }
+      for (auto& t : expanded) out.forbid.push_back(std::move(t));
     }
     return true;
   };
@@ -1464,7 +1673,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   }
   if (q.kind == Query::EG) {  // E[] phi
     DiscPred phi;
-    if (!build_pred(q.note, phi)) return false;
+    if (!build_maintained(q.note, phi, /*want_negated=*/false)) return false;
     *satisfied = exists_invariant_run(net, phi, backend, stats);
     return true;
   }
@@ -1475,8 +1684,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     // single-atom restriction: `!(a && b)` has no conjunctive form, so anything wider than one
     // atom had to be refused.
     DiscPred phi;
-    if (!build_pred(q.note, phi)) return false;
-    phi.negated = true;
+    if (!build_maintained(q.note, phi, /*want_negated=*/true)) return false;
     *satisfied = !exists_invariant_run(net, phi, backend, stats);
     return true;
   }
