@@ -1433,7 +1433,10 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
       if (atom.empty() || atom == "true") continue;
       std::vector<Constraint> cc; std::vector<IntAtom> ic;
       parse_net_atom(atom, cm, im, cc, ic);
-      if (!cc.empty()) return false;  // clock constraint in a liveness predicate: unsupported
+      // A clock atom is kept, not refused: ::exists_invariant_run adjoins the conjunction to
+      // every location invariant, which is the psi-restricted semantics and is exact because a
+      // conjunction of constraints is convex.
+      if (!cc.empty()) { out.clocks.insert(out.clocks.end(), cc.begin(), cc.end()); continue; }
       if (!ic.empty()) { out.ints.insert(out.ints.end(), ic.begin(), ic.end()); continue; }
       bool eq = true;
       std::string a = atom;
@@ -1449,8 +1452,12 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     return true;
   };
   // Negate a SINGLE-atom predicate (A<> phi = !E[] !phi).
+  // The single-atom restriction is what keeps the NEGATED predicate convex, which is what the
+  // delay-inside-a-convex-region argument needs: the complement of a conjunction of two or more
+  // clock atoms is a disjunction, and a run may leave it and re-enter it during one delay.
   auto negate_single = [&](const DiscPred& phi, DiscPred& out) -> bool {
-    if (phi.locs.size() + phi.ints.size() != 1) return false;
+    if (phi.locs.size() + phi.ints.size() + phi.clocks.size() != 1) return false;
+    if (phi.clocks.size() == 1) { out.clocks.push_back(negate(phi.clocks[0])); return true; }
     if (phi.locs.size() == 1) {
       out.locs.push_back({phi.locs[0].proc, phi.locs[0].loc, !phi.locs[0].equal});
       return true;

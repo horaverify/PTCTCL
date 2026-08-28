@@ -230,6 +230,20 @@ struct LocReq { int proc; int loc; bool equal; };
 struct DiscPred {
   std::vector<LocReq> locs;    ///< location atoms, all of which must hold
   std::vector<IntAtom> ints;   ///< integer atoms, all of which must hold
+  /// @brief Clock atoms, all of which must hold; empty for a purely discrete predicate.
+  ///
+  /// A clock atom does not partition the vertices of the zone graph the way a location or
+  /// integer atom does: one stored zone can hold valuations on both sides of it. It is handled
+  /// by restricting the zones rather than by filtering the vertices — the conjunction is
+  /// adjoined to every location invariant, which is exact because a conjunction of constraints
+  /// is convex and delay inside a convex region is `(Z /\ C)^ /\ C`. Intersecting only AFTER
+  /// the delay would be unsound: for `Z = {x=0}` and this predicate `x>=5`, it yields
+  /// `[5,inf)` where the true answer is empty, since every run leaving `x=0` passes through
+  /// valuations violating the predicate.
+  ///
+  /// @note Because the atoms become invariants, the LU bounds and the active-clock sets are
+  ///       recomputed from them rather than adjusted by hand; see ::exists_invariant_run.
+  std::vector<Constraint> clocks;
 };
 
 /// @brief `E[] phi` — does @p net have an infinite, time-divergent run all of whose states

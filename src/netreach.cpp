@@ -2168,18 +2168,52 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 /// @param[out] stats  optional statistics; unchanged when null
 /// @return @c true iff a @p phi-invariant infinite run exists
 ///
-/// @warning ptctlmc::DiscPred constrains only the **discrete** state. A liveness predicate
-///          therefore cannot mention clocks, and @c qmask below is empty for that reason. See
-///          KNOWN_LIMITATION.md.
+/// @note A clock atom in @p phi is handled by the **psi-restricted semantics**: the conjunction
+///       `phi.clocks` is adjoined to every location invariant of a private copy of the network,
+///       and the search then runs unchanged on that copy. This is exact rather than merely sound
+///       because a conjunction of constraints is convex, and the set reachable by delay while
+///       STAYING in a convex `C` is `(Z /\ C)^ /\ C` — every intermediate point of the segment
+///       is a convex combination of its endpoints. Restricting only after the delay would
+///       over-approximate: for `Z = {x=0}` and `phi = (x>=5)` it gives `[5,inf)` where the true
+///       answer is empty, and the search would report a witness that does not exist.
+/// @note Making the atoms invariants also discharges the two side conditions automatically
+///       rather than by hand. `compute_bounds` then derives the LU bounds from them, so the
+///       extrapolation cannot merge zones across the predicate boundary; and `compute_active`
+///       sees the clocks read at every location, so the active-clock reduction cannot zero them.
+///       `time_diverges` and `state_has_deadlock` read the invariant too, so both are restricted
+///       as well — the first matters, since with `phi = (x<=5)` time diverges nowhere and an
+///       unrestricted test would manufacture exactly the maximal run this query looks for.
 /// @note Zones must be extrapolated here rather than kept exact, because termination of the
 ///       cycle search depends on the zone graph being finite; a_LU pruning alone does not give
 ///       that for a greatest-fixpoint search.
-bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backend,
+bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend backend,
                           ReachStats* stats) {
   (void)backend;  // the cycle detection below is sequential
+
+  // The psi-restricted network. Built only when the predicate mentions a clock, so a purely
+  // discrete predicate runs on `net` itself and is unaffected down to the last stored zone.
+  Network restricted;
+  if (!phi.clocks.empty()) {
+    restricted = net_in;
+    for (auto& proc : restricted.procs)
+      for (auto& loc : proc.locations)
+        loc.invariant.insert(loc.invariant.end(), phi.clocks.begin(), phi.clocks.end());
+    // Recomputed, not patched: these analyses are exactly what the two side conditions ask for,
+    // and deriving them from the restricted invariants is what keeps them consistent with it.
+    restricted.compute_bounds();
+    restricted.compute_loc_bounds();
+    restricted.compute_active();
+    restricted.compute_int_live();
+  }
+  const Network& net = phi.clocks.empty() ? net_in : restricted;
+
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   const int emode = network_has_diagonal(net) ? ExNoDiag : ExLuPlus;  // diagonals: keep exact
-  const std::vector<char> qmask(net.nclocks + 1, 0);  // a DiscPred never mentions a clock
+  // Clocks the predicate reads. `compute_active` above already marks them active at every
+  // location, since they now appear in every invariant; this is the belt to that braces, and
+  // stays all-zero -- maximal reduction -- for a purely discrete predicate.
+  std::vector<char> qmask(net.nclocks + 1, 0);
+  for (const auto& c : phi.clocks) { if (c.i) qmask[c.i] = 1; if (c.j) qmask[c.j] = 1; }
 
   auto sat = [&](const SymState& s) -> bool {
     for (const auto& r : phi.locs) {
