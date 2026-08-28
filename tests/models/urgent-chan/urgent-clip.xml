@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>urgent chan go; clock x;</declaration>
+<template><name>P</name>
+<location id="p_A"><name>A</name></location>
+<location id="p_B"><name>B</name></location>
+<location id="p_Ok"><name>Ok</name></location>
+<location id="p_Late"><name>Late</name></location>
+<location id="p_Bad"><name>Bad</name></location>
+<init ref="p_A"/>
+<transition><source ref="p_A"/><target ref="p_B"/><label kind="synchronisation">go!</label></transition>
+<transition><source ref="p_A"/><target ref="p_Ok"/><label kind="guard">x&gt;=3</label></transition>
+<transition><source ref="p_A"/><target ref="p_Late"/><label kind="guard">x&gt;3</label></transition>
+<transition><source ref="p_A"/><target ref="p_Bad"/><label kind="guard">x&gt;=5</label></transition>
+<transition><source ref="p_B"/><target ref="p_B"/></transition>
+<transition><source ref="p_Ok"/><target ref="p_Ok"/></transition>
+<transition><source ref="p_Late"/><target ref="p_Late"/></transition>
+<transition><source ref="p_Bad"/><target ref="p_Bad"/></transition>
+</template>
+<template><name>Q</name>
+<location id="q_C"><name>C</name></location>
+<location id="q_D"><name>D</name></location>
+<init ref="q_C"/>
+<transition><source ref="q_C"/><target ref="q_D"/><label kind="synchronisation">go?</label><label kind="guard">x&gt;=3</label></transition>
+<transition><source ref="q_D"/><target ref="q_D"/></transition>
+</template>
+<system>system P, Q;</system>
+</nta>

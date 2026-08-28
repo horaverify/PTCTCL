@@ -1,0 +1,60 @@
+=== BASELINE (HEAD d4fb785) Fri Aug 28 15:02:57 CEST 2026 ===
+--- A[] not deadlock, seq ---
+## fischer6
+*** PTCTLMC — backend: seq | network: 6 procs, 6 clocks, 1 int vars
+Verifying formula: A[] not deadlock
+-- Formula is satisfied.  [explored 11889 symbolic states]
+## arbiter6
+*** PTCTLMC — backend: seq | network: 7 procs, 6 clocks, 0 int vars
+Verifying formula: A[] not deadlock
+-- Formula is satisfied.  [explored 6537 symbolic states]
+## csma6
+*** PTCTLMC — backend: seq | network: 7 procs, 7 clocks, 0 int vars
+Verifying formula: A[] not deadlock
+-- Formula is satisfied.  [explored 6259 symbolic states]
+## phil4
+*** PTCTLMC — backend: seq | network: 8 procs, 4 clocks, 0 int vars
+Verifying formula: A[] not deadlock
+-- Formula is NOT satisfied.  [explored 31 symbolic states]
+## grc4
+*** PTCTLMC — backend: seq | network: 6 procs, 6 clocks, 0 int vars
+Verifying formula: A[] not deadlock
+-- Formula is NOT satisfied.  [explored 576 symbolic states]
+--- grc4 leadsto ---
+*** PTCTLMC — backend: seq | network: 6 procs, 6 clocks, 0 int vars
+Verifying formula: T0.in --> T0.far
+-- Formula is satisfied.  [explored 1121 symbolic states]
+--- unit ---
+dbm+reach tests: 105 checks, 0 failures
+--- liveness regressions ---
+## cex1 /private/tmp/claude-501/-Users-brdlcu-Documents-Github-PTCTLMC/0206a6ad-f8e7-42c3-b6c1-73a249aed5e9/scratchpad/c1.q
+       --chunking: expand the frontier in batches of N states (default 65536),
+                   capping peak GPU memory independently of BFS level width
+       ptctlmc --bisim <spec>   decide timed (bi)simulation between two automata
+       ptctlmc [--version] [--selftest] [--dump <model.xml>]
+## cex2 /private/tmp/claude-501/-Users-brdlcu-Documents-Github-PTCTLMC/0206a6ad-f8e7-42c3-b6c1-73a249aed5e9/scratchpad/c2.q
+       --chunking: expand the frontier in batches of N states (default 65536),
+                   capping peak GPU memory independently of BFS level width
+       ptctlmc --bisim <spec>   decide timed (bi)simulation between two automata
+       ptctlmc [--version] [--selftest] [--dump <model.xml>]
+## cex3 /private/tmp/claude-501/-Users-brdlcu-Documents-Github-PTCTLMC/0206a6ad-f8e7-42c3-b6c1-73a249aed5e9/scratchpad/c2.q
+       --chunking: expand the frontier in batches of N states (default 65536),
+                   capping peak GPU memory independently of BFS level width
+       ptctlmc --bisim <spec>   decide timed (bi)simulation between two automata
+       ptctlmc [--version] [--selftest] [--dump <model.xml>]
+## bcast-receiver
+*** PTCTLMC — backend: seq | network: 2 procs, 1 clocks, 0 int vars
+Verifying formula: E<> P.T && Q.A
+-- Formula is satisfied.  [explored 1 symbolic states]
+## cex1
+*** PTCTLMC — backend: seq | 4 locations, 3 clocks, 5 edges
+Verifying formula: P.Q --> P.Live
+-- Formula is NOT satisfied.  [explored 5 symbolic states]
+## cex2
+*** PTCTLMC — backend: seq | 3 locations, 1 clocks, 3 edges
+Verifying formula: P.U --> P.Live
+-- Formula is satisfied.  [explored 3 symbolic states]
+## cex3
+*** PTCTLMC — backend: seq | 4 locations, 2 clocks, 5 edges
+Verifying formula: P.U --> P.Live
+-- Formula is NOT satisfied.  [explored 5 symbolic states]
