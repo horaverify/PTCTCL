@@ -244,6 +244,15 @@ struct DiscPred {
   /// @note Because the atoms become invariants, the LU bounds and the active-clock sets are
   ///       recomputed from them rather than adjusted by hand; see ::exists_invariant_run.
   std::vector<Constraint> clocks;
+  /// @brief A convex region the run must never ENTER, i.e. the complement of a conjunction.
+  ///
+  /// `A<> phi` is `!E[] !phi`, so for a `phi` over clocks the predicate to maintain is `!phi` —
+  /// a disjunction, which is not convex and so cannot be adjoined to the invariants the way
+  /// @ref clocks is. Stored in its un-negated form instead, because `phi` itself IS convex, and
+  /// consumed by ptctlmc::detail::delay_avoiding, which lets time pass around it.
+  ///
+  /// @note At most one of @ref clocks and @ref avoid is ever non-empty.
+  std::vector<Constraint> avoid;
 };
 
 /// @brief `E[] phi` — does @p net have an infinite, time-divergent run all of whose states

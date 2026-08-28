@@ -1456,6 +1456,11 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   // delay-inside-a-convex-region argument needs: the complement of a conjunction of two or more
   // clock atoms is a disjunction, and a run may leave it and re-enter it during one delay.
   auto negate_single = [&](const DiscPred& phi, DiscPred& out) -> bool {
+    // A conjunction of CLOCK atoms negates to a disjunction, which is not an invariant. It is
+    // carried un-negated in `avoid` instead and handled by the delay-around operator, so any
+    // number of clock atoms is admissible here — provided they are the only atoms, since a
+    // negation mixing a clock atom with a discrete one is a disjunction across both kinds.
+    if (!phi.clocks.empty() && phi.locs.empty() && phi.ints.empty()) { out.avoid = phi.clocks; return true; }
     if (phi.locs.size() + phi.ints.size() + phi.clocks.size() != 1) return false;
     if (phi.clocks.size() == 1) { out.clocks.push_back(negate(phi.clocks[0])); return true; }
     if (phi.locs.size() == 1) {

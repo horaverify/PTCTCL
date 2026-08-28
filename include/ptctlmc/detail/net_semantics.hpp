@@ -289,6 +289,20 @@ inline void build_broadcast_parts(const Network& net, const SymState& s, const N
   }
 }
 
+/// @brief A convex region a delay may never enter, with its time-successor precomputed.
+///
+/// Carried as one object because ::delay_avoiding needs both and `fup` is loop-invariant: it is
+/// derived from the query, not from the state being expanded, so recomputing it once per
+/// generated successor would be pure waste.
+///
+/// @note A null `DelayAvoid*` is the ordinary delay. Every caller outside the `E[]`/`A<>` path
+///       passes null, so the delay they perform is the same instruction sequence as before this
+///       parameter existed.
+struct DelayAvoid {
+  Dbm forbid;  ///< the convex region to avoid
+  Dbm fup;     ///< `forbid` delayed, i.e. `forbid^`
+};
+
 /// @brief Let time pass from @p z while never entering the convex region @p forbid.
 ///
 /// The delay operator for a predicate that must be *avoided* rather than maintained. Where
@@ -374,12 +388,35 @@ inline __attribute__((always_inline)) bool
 close_succ_zone(const Network& net, const LocVec& tgt_locs, const IntVec& tgt_ints, Dbm& z,
                             std::vector<Constraint>& inv, const std::vector<char>& qmask,
                             const std::vector<std::int32_t>& L,
-                            const std::vector<std::int32_t>& U, int emode) {
+                            const std::vector<std::int32_t>& U, int emode,
+                            const DelayAvoid* avoid = nullptr, std::vector<Dbm>* extra = nullptr) {
   all_invariants(net, tgt_locs, inv);
   if (!apply_all(z, inv)) return false;
   bool tgt_committed, tgt_urgent;
   frozen_flags(net, tgt_locs, tgt_ints, &tgt_committed, &tgt_urgent);
-  if (!tgt_committed && !tgt_urgent) { z.delay(); apply_all(z, inv); }
+  if (!tgt_committed && !tgt_urgent) {
+    if (avoid) {
+      // The delay must not pass through `avoid->forbid`, so it can split. The first piece stays
+      // in `z` and the rest go to `extra`; both still owe the invariant, the active-clock
+      // reduction and the extrapolation, so they are finished together below.
+      thread_local Federation parts;
+      delay_avoiding(z, avoid->forbid, avoid->fup, parts);
+      if (parts.empty()) return false;   // no legal delay at all: the transition dies
+      z = parts[0];
+      apply_all(z, inv);
+      if (extra)
+        for (std::size_t i = 1; i < parts.size(); ++i) {
+          Dbm p = parts[i];
+          if (!apply_all(p, inv) || p.empty()) continue;
+          reset_inactive(net, tgt_locs, p, qmask);
+          if (emode == ExLuPlus) p.extrapolate_lu_plus(L, U);
+          else if (emode == ExNoDiag) p.extrapolate_lu_plus_nodiag(L, U);
+          if (!p.empty()) extra->push_back(std::move(p));
+        }
+    } else {
+      z.delay(); apply_all(z, inv);
+    }
+  }
   reset_inactive(net, tgt_locs, z, qmask);
   if (emode == ExLuPlus) z.extrapolate_lu_plus(L, U);
   else if (emode == ExNoDiag) z.extrapolate_lu_plus_nodiag(L, U);

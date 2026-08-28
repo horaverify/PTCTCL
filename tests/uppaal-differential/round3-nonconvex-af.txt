@@ -1,0 +1,59 @@
+ok   | NOT    NOT    | eg-clock.xml   | A<> x >= 5 && x <= 10
+ok   | NOT    NOT    | eg-clock.xml   | A<> x >= 5 && x <= 6
+ok   | NOT    NOT    | eg-clock.xml   | A<> x > 5 && x < 10
+ok   | SAT    SAT    | eg-clock.xml   | A<> x >= 0 && x <= 0
+ok   | NOT    NOT    | eg-clock.xml   | A<> x >= 1 && x <= 2
+ok   | NOT    NOT    | eg-clock.xml   | A<> x >= 100 && x <= 101
+ok   | NOT    NOT    | eg-clock.xml   | A<> x >= 2 && x <= 3 && x <= 9
+ok   | NOT    NOT    | eg-clock.xml   | A<> x > 0 && x <= 1000
+ok   | NOT    NOT    | eg-clock.xml   | E[] x >= 4 && x <= 8
+ok   | SAT    SAT    | eg-clock.xml   | E[] x <= 3
+ok   | SAT    SAT    | eg-clock.xml   | E[] x >= 0 && x <= 100
+ok   | NOT    NOT    | eg-clock.xml   | A<> x >= 3
+ok   | SAT    SAT    | eg-clock.xml   | A<> x <= 3
+ok   | NOT    NOT    | eg-clock.xml   | E[] x >= 1
+ok   | SAT    SAT    | af-sat.xml     | A<> x >= 5 && x <= 10
+ok   | SAT    SAT    | af-sat.xml     | A<> x >= 5 && x <= 6
+ok   | SAT    SAT    | af-sat.xml     | A<> x > 5 && x < 10
+ok   | SAT    SAT    | af-sat.xml     | A<> x >= 0 && x <= 0
+ok   | SAT    SAT    | af-sat.xml     | A<> x >= 1 && x <= 2
+ok   | SAT    SAT    | af-sat.xml     | A<> x >= 100 && x <= 101
+ok   | SAT    SAT    | af-sat.xml     | A<> x >= 2 && x <= 3 && x <= 9
+ok   | SAT    SAT    | af-sat.xml     | A<> x > 0 && x <= 1000
+ok   | NOT    NOT    | af-sat.xml     | E[] x >= 4 && x <= 8
+ok   | NOT    NOT    | af-sat.xml     | E[] x <= 3
+ok   | NOT    NOT    | af-sat.xml     | E[] x >= 0 && x <= 100
+ok   | SAT    SAT    | af-sat.xml     | A<> x >= 3
+ok   | SAT    SAT    | af-sat.xml     | A<> x <= 3
+ok   | NOT    NOT    | af-sat.xml     | E[] x >= 1
+ok   | SAT    SAT    | fischer4.xml   | A<> x0 >= 1 && x0 <= 3
+ok   | SAT    SAT    | fischer4.xml   | A<> x0 >= 0 && x0 <= 100
+ok   | SAT    SAT    | fischer4.xml   | A<> x0 > 2 && x0 < 5
+ok   | NOT    NOT    | fischer4.xml   | A<> x0 >= 5 && x0 <= 5
+ok   | NOT    NOT    | fischer4.xml   | E[] x0 >= 1 && x0 <= 4
+ok   | SAT    SAT    | fischer5.xml   | A<> x0 >= 1 && x0 <= 3
+ok   | SAT    SAT    | fischer5.xml   | A<> x0 >= 0 && x0 <= 100
+ok   | SAT    SAT    | fischer5.xml   | A<> x0 > 2 && x0 < 5
+ok   | NOT    NOT    | fischer5.xml   | A<> x0 >= 5 && x0 <= 5
+ok   | NOT    NOT    | fischer5.xml   | E[] x0 >= 1 && x0 <= 4
+ok   | SAT    SAT    | phil4.xml      | A<> c0 >= 1 && c0 <= 3
+ok   | SAT    SAT    | phil4.xml      | A<> c0 >= 0 && c0 <= 100
+ok   | NOT    NOT    | phil4.xml      | A<> c0 > 2 && c0 < 5
+ok   | NOT    NOT    | phil4.xml      | A<> c0 >= 5 && c0 <= 5
+ok   | NOT    NOT    | phil4.xml      | E[] c0 >= 1 && c0 <= 4
+ok   | SAT    SAT    | grc4.xml       | A<> x0 >= 1 && x0 <= 3
+ok   | SAT    SAT    | grc4.xml       | A<> x0 >= 0 && x0 <= 100
+ok   | SAT    SAT    | grc4.xml       | A<> x0 > 2 && x0 < 5
+ok   | NOT    NOT    | grc4.xml       | A<> x0 >= 5 && x0 <= 5
+ok   | NOT    NOT    | grc4.xml       | E[] x0 >= 1 && x0 <= 4
+ok   | SAT    SAT    | csma4.xml      | A<> y0 >= 1 && y0 <= 3
+ok   | SAT    SAT    | csma4.xml      | A<> y0 >= 0 && y0 <= 100
+ok   | NOT    NOT    | csma4.xml      | A<> y0 > 2 && y0 < 5
+ok   | NOT    NOT    | csma4.xml      | A<> y0 >= 5 && y0 <= 5
+ok   | NOT    NOT    | csma4.xml      | E[] y0 >= 1 && y0 <= 4
+ok   | SAT    SAT    | arbiter4.xml   | A<> x0 >= 1 && x0 <= 3
+ok   | SAT    SAT    | arbiter4.xml   | A<> x0 >= 0 && x0 <= 100
+ok   | NOT    NOT    | arbiter4.xml   | A<> x0 > 2 && x0 < 5
+ok   | NOT    NOT    | arbiter4.xml   | A<> x0 >= 5 && x0 <= 5
+ok   | NOT    NOT    | arbiter4.xml   | E[] x0 >= 1 && x0 <= 4
+DONE 58 rows, 0 differences

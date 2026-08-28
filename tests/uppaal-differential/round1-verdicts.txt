@@ -11,7 +11,7 @@ ok   | NOT    NOT    | eg-clock.xml                 | E[] x >= 5
 ok   | SAT    SAT    | eg-clock.xml                 | E[] x >= 0
 ok   | NOT    NOT    | eg-clock.xml                 | A<> x >= 5
 ok   | NOT    NOT    | eg-clock.xml                 | E[] x >= 5 && x <= 10
-DIFF | UNSUP  NOT    | eg-clock.xml                 | A<> x >= 5 && x <= 10
+ok   | NOT    NOT    | eg-clock.xml                 | A<> x >= 5 && x <= 10
 ok   | NOT    NOT    | eg-clock.xml                 | E[] P.T && x <= 5
 ok   | SAT    SAT    | eg-clock.xml                 | A<> x >= 0
 ok   | SAT    SAT    | eg-clock.xml                 | E[] x < 5
@@ -75,4 +75,4 @@ ok   | SAT    SAT    | single4.xml                  | P.A --> P.A
 ok   | SAT    SAT    | single5.xml                  | A[] not deadlock
 ok   | SAT    SAT    | single5.xml                  | A[] x0 <= 6
 ok   | SAT    SAT    | single5.xml                  | P.A --> P.A
-DONE 77 rows, 1 differences
+DONE 77 rows, 0 differences

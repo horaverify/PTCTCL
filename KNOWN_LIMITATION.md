@@ -77,16 +77,30 @@ weaker covering it replaces for every model measured. Not re-measured for this d
 
 ---
 
-## 3. Liveness predicates may constrain only the discrete state
+## 3. `p --> q` predicates may constrain only the discrete state
 
-`E[] phi`, `A<> phi` and `p --> q` accept predicates over locations and integer variables only.
+`E[] phi` and `A<> phi` accept clock constraints. `p --> q` does not, and neither form accepts a
+predicate mixing a clock atom with a location or integer atom under a negation.
 `E<>` and `A[]` accept clock constraints normally.
 
-**Mechanism.** These queries are carried by `DiscPred` (`include/ptctlmc/netreach.hpp`), which holds
-a `LocReq` list and an `IntAtom` list and has no field for clock constraints. `build_pred`
-(`src/uppaal.cpp`) parses each conjunct and returns failure the moment `parse_net_atom` yields a
-clock constraint. Correspondingly `exists_invariant_run` builds an all-zero `qmask`, since no
-liveness predicate can name a clock that would need protecting from the active-clock reduction.
+**What works.** `E[] phi` takes any conjunction of clock atoms: the conjunction is convex, so it
+is adjoined to every location invariant, which is exact because delay inside a convex region is
+`(Z /\ C)^ /\ C`. `A<> phi` takes any conjunction of clock atoms too, by a different route --
+`A<> phi` is `!E[] !phi`, and the negation of a conjunction is a *disjunction*, hence not an
+invariant, so `phi` is kept un-negated and `detail::delay_avoiding` routes each delay around it.
+
+**What does not.** `A<> (P.T && x >= 0)` -- a negation spanning both a discrete and a clock atom
+-- is a disjunction across two different kinds of state, which neither mechanism represents. It
+is refused, and UPPAAL decides it. Likewise `p --> q` refuses clock atoms in either position; the
+argument it needs is in place (`p` is a seed intersection, `q` goes through the same restriction
+as `E[]` -- see `UppalOMP/sec/subsec/clock_predicates.tex`), but the wiring is not done.
+
+**Mechanism.** `DiscPred` (`include/ptctlmc/netreach.hpp`) carries `clocks`, a conjunction the run
+maintains, and `avoid`, a conjunction the run must never enter; at most one is ever populated.
+`build_pred` (`src/uppaal.cpp`) routes a clock atom into `clocks`, and `negate_single` routes an
+all-clock predicate into `avoid` un-negated. A predicate mixing kinds under a negation matches
+neither and is refused there. `leads_to_otf` reads only `locs` and `ints`, which is why
+`p --> q` still refuses both.
 
 **Consequence.** None to soundness: the query is **refused, not approximated**. The checker prints
 

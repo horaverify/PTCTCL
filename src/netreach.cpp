@@ -261,8 +261,23 @@ namespace {
 ///       committed-location semantics: such a state must be left before time can pass.
 void successors_net(const Network& net, const SymState& s, const Dbm& szone,
                     const std::vector<std::int32_t>& L,
-                    const std::vector<std::int32_t>& U, const std::vector<char>& qmask, int emode, std::vector<SymState>& out) {
+                    const std::vector<std::int32_t>& U, const std::vector<char>& qmask, int emode, std::vector<SymState>& out,
+                    const detail::DelayAvoid* avoid = nullptr) {
   thread_local std::vector<Constraint> inv;  // reused invariant scratch (see all_invariants)
+  // Extra pieces produced when a delay had to route around a forbidden region and split; empty,
+  // and never even looked at, unless `avoid` is non-null.
+  std::vector<Dbm> split;
+  auto extra = [&]() -> std::vector<Dbm>* { return avoid ? (split.clear(), &split) : nullptr; };
+  // Emit `ns` carrying `z1`, plus one clone per extra piece. The clones differ only in the zone:
+  // the pieces partition one delay of one transition, so they share its target locations and
+  // integers exactly.
+  auto emit = [&](SymState& ns, Dbm& z1) {
+    for (Dbm& p : split) { SymState c; c.locs = ns.locs; c.ints = ns.ints; c.zone = std::move(p); out.push_back(std::move(c)); }
+    split.clear();
+    if (z1.empty()) return;
+    ns.zone = std::move(z1);
+    out.push_back(std::move(ns));
+  };
   bool src_committed, src_urgent;
   frozen_flags(net, s.locs, s.ints, &src_committed, &src_urgent);
   for (int p = 0; p < net.nprocs(); ++p) {
@@ -282,10 +297,8 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
       if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
 
-      if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
-      if (z1.empty()) continue;
-      ns.zone = std::move(z1);
-      out.push_back(std::move(ns));
+      if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode, avoid, extra())) continue;
+      emit(ns, z1);
     }
   }
 
@@ -317,10 +330,8 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
           for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;  // sender then receiver
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
           if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) || !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
-          if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
-          if (z1.empty()) continue;
-          ns.zone = std::move(z1);
-          out.push_back(std::move(ns));
+          if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode, avoid, extra())) continue;
+          emit(ns, z1);
         }
       }
     }
@@ -362,10 +373,8 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) z1.reset(r);
             }
-            if (close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode) && !z1.empty()) {
-              ns.zone = std::move(z1);
-              out.push_back(std::move(ns));
-            }
+            if (close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode, avoid, extra()))
+              emit(ns, z1);
           }
         }
         if (parts.empty()) break;
@@ -1292,14 +1301,16 @@ static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
 ///       to subsume states it ought to.
 static bool initial_symbolic_state(const Network& net, const std::vector<char>& qmask,
                                    const std::vector<std::int32_t>& L,
-                                   const std::vector<std::int32_t>& U, int emode, SymState* s0) {
+                                   const std::vector<std::int32_t>& U, int emode, SymState* s0,
+                                   const detail::DelayAvoid* avoid = nullptr,
+                                   std::vector<Dbm>* extra = nullptr) {
   s0->locs.resize(net.nprocs());
   for (int p = 0; p < net.nprocs(); ++p) s0->locs[p] = net.procs[p].initial;
   s0->ints.resize(net.intvars.size());
   for (std::size_t v = 0; v < net.intvars.size(); ++v) s0->ints[v] = net.intvars[v].init;
   s0->zone = Dbm(net.nclocks);
   std::vector<Constraint> inv;
-  return close_succ_zone(net, s0->locs, s0->ints, s0->zone, inv, qmask, L, U, emode);
+  return close_succ_zone(net, s0->locs, s0->ints, s0->zone, inv, qmask, L, U, emode, avoid, extra);
 }
 
 /// @brief The shared symbolic-reachability engine.
@@ -2214,6 +2225,30 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
   // stays all-zero -- maximal reduction -- for a purely discrete predicate.
   std::vector<char> qmask(net.nclocks + 1, 0);
   for (const auto& c : phi.clocks) { if (c.i) qmask[c.i] = 1; if (c.j) qmask[c.j] = 1; }
+  for (const auto& c : phi.avoid)  { if (c.i) qmask[c.i] = 1; if (c.j) qmask[c.j] = 1; }
+
+  // The region the run must never enter. Non-empty only for `A<> phi` over a conjunction of two
+  // or more clock atoms, where the maintained predicate `!phi` is a disjunction: `phi` itself is
+  // convex, so it is carried un-negated and routed around by ::detail::delay_avoiding rather
+  // than adjoined to the invariants. `fup` is precomputed once because it does not vary with the
+  // state being expanded.
+  detail::DelayAvoid av;
+  const detail::DelayAvoid* avoid = nullptr;
+  if (!phi.avoid.empty()) {
+    av.forbid = Dbm::universe(net.nclocks);
+    if (apply_all(av.forbid, phi.avoid) && !av.forbid.empty()) {
+      av.fup = av.forbid; av.fup.delay();
+      avoid = &av;
+      // The avoided region's constants must reach the LU arrays for the same reason phi.clocks'
+      // do: Extra_LU+ would otherwise merge zones lying on opposite sides of it.
+      for (const auto& c : phi.avoid) {
+        const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
+        if (c.i) { L[c.i] = std::max(L[c.i], k); U[c.i] = std::max(U[c.i], k); }
+        if (c.j) { L[c.j] = std::max(L[c.j], k); U[c.j] = std::max(U[c.j], k); }
+      }
+    }
+    // An unsatisfiable `phi` forbids nothing, and `avoid` stays null: the ordinary delay is right.
+  }
 
   auto sat = [&](const SymState& s) -> bool {
     for (const auto& r : phi.locs) {
@@ -2230,7 +2265,9 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
   };
 
   SymState s0;
-  if (!initial_symbolic_state(net, qmask, L, U, emode, &s0)) return false;
+  std::vector<Dbm> root_split;
+  if (!initial_symbolic_state(net, qmask, L, U, emode, &s0, avoid, avoid ? &root_split : nullptr))
+    return false;
   if (!sat(s0)) return false;  // no run from the initial state can stay in phi
 
   // Build the phi-restricted extrapolated zone graph (nodes deduped by exact zone).
@@ -2255,10 +2292,25 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
     // committed/urgent location, where no positive delay is legal at all -- inventing a
     // maximal-run witness out of nothing.
     { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
-    Dbm z = s.zone;
-    z.delay();
     std::vector<Constraint> inv;
     all_invariants(net, s.locs, inv);
+    // With a forbidden region the delay cannot simply be taken: a trajectory that would run into
+    // it stops there and does NOT diverge. Divergence therefore has to be witnessed by one piece
+    // of the routed delay, which is exactly the piece lying past the region.
+    if (avoid) {
+      Federation parts;
+      detail::delay_avoiding(s.zone, av.forbid, av.fup, parts);
+      for (Dbm& z : parts) {
+        if (!apply_all(z, inv) || z.empty()) continue;
+        bool unbounded = true;
+        for (int i = 1; i <= net.nclocks && unbounded; ++i)
+          if (z.get(i, 0) != kInf) unbounded = false;
+        if (unbounded) return true;
+      }
+      return false;
+    }
+    Dbm z = s.zone;
+    z.delay();
     apply_all(z, inv);
     if (z.empty()) return false;
     for (int i = 1; i <= net.nclocks; ++i)
@@ -2266,12 +2318,16 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
     return true;
   };
 
+  for (Dbm& rz : root_split) {          // the root delay split too; every piece is a start state
+    SymState r; r.locs = s0.locs; r.ints = s0.ints; r.zone = std::move(rz);
+    if (!r.zone.empty()) intern(std::move(r));
+  }
   intern(std::move(s0));
   for (int u = 0; u < static_cast<int>(node.size()); ++u) {
     if (stats) ++stats->explored;
     if (time_diverges(node[u])) return true;
     std::vector<SymState> succ;
-    successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ);
+    successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ, avoid);
     for (auto& ns : succ) {
       if (!sat(ns)) continue;
       const int v = intern(std::move(ns));
