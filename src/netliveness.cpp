@@ -750,6 +750,8 @@ class Otf {
   ///        through ptctlmc::detail::close_succ_zone and, backward, by ::gfp_pre.
   const detail::DelayAvoidSet* avoid_ = nullptr;
   bool avoid_forward_ = true;   ///< see ::Otf::set_avoid
+  /// @brief Iterate the fixpoint component-wise; see ::Otf::gfp_on. Set by the `E[]` path only.
+  bool scc_iter_ = false;
   bool force_exact_ = false;                   ///< inclusion covering, no a_LU
   const std::atomic<bool>* cancel_ = nullptr;  ///< set by the winner of the race
   bool cancelled_ = false;
@@ -1631,13 +1633,103 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // `fedcap` is a resource bound on those. The lockstep sweep acts as a de-facto normaliser.
   // See DESIGN.md, "Measured and rejected", for the numbers -- and KNOWN_LIMITATION.md for why
   // the same sensitivity is what blocks a parallel schedule here.
-  bool changed = true;
+  // SCC-DECOMPOSED LOCKSTEP. The sweep above is kept verbatim; what changes is the SET it is
+  // swept over.
+  //
+  // A node's `cand` reads only its SUCCESSORS' W, so the descent propagates emptiness one edge
+  // per global round and the round count tracks the graph's DIAMETER, not anything about the
+  // property. grc5 `E[] x0 <= 15 && !T0.in` needed 47 rounds over 14610 nodes -- 1.59M Pre calls
+  // -- where its satisfied sibling needed 6 on the identical graph.
+  //
+  // Iterating strongly connected components in reverse topological order removes exactly that.
+  // When a component is reached its successors outside it are already final, so it converges
+  // against fixed outside values and is never revisited; the result is the same greatest fixpoint
+  // because the operator is local and Tarjan emits components successors-first.
+  //
+  // This is NOT the chaotic worklist recorded as measured and rejected. That one reordered the
+  // visits and changed the intermediate federation SHAPES, which `fedcap` bounds -- it turned
+  // grc4 `T0.in --> T0.far` UNUSABLE. Here the lockstep round-robin survives INSIDE each
+  // component, so the de-facto normalisation it provides is kept where the iteration actually
+  // happens; only the outer partition into components is new.
+  // Enabled for `E[] psi` and not for `p --> q`, which is a measured split rather than a
+  // preference. `E[] psi` reads ONE node, so emptiness has to propagate the full diameter back to
+  // it and the round count is dominated by that; `p --> q` reads every p-node and settles long
+  // before diameter matters. Best of two runs, decomposed / undecomposed:
+  //
+  //     E[]        grc5 x0<=15 && !T0.in  0.69     fischer7 x0<=40   0.75
+  //                fischer6 x0<=40        0.76     grc5 x0<=15       0.98
+  //     leads-to   fischer6 P0.req        0.77     csma6 Bus         0.91
+  //                arbiter8 C0.cs         1.00     grc4 T0.in        1.02
+  //                phil6 P0.Eat           1.06     grc5 T0.in        1.26  <-- the one loss
+  //
+  // grc5 leads-to is the biggest leads-to case in the suite and it loses a quarter, so the
+  // decomposition does not go there. PTCTLMC_GFP_SCC=0 or =1 overrides either way, for measuring.
+  const bool scc_on = [&] {
+    const char* e = std::getenv("PTCTLMC_GFP_SCC");
+    if (e) return *e == '1';
+    return scc_iter_;
+  }();
+  std::vector<std::vector<int>> sccs;
+  if (!scc_on) {
+    sccs.push_back(S);                     // one component: exactly the undecomposed sweep
+  } else {
+    std::vector<int> idx(N, -1), low(N, 0), stk;
+    std::vector<char> on(N, 0);
+    int next = 0;
+    // Iterative Tarjan: the graphs here reach 10^5 nodes and the recursive form would not survive
+    // the stack.
+    std::vector<std::pair<int, std::size_t>> call;
+    for (int root : S) {
+      if (idx[root] != -1) continue;
+      call.push_back({root, 0});
+      idx[root] = low[root] = next++;
+      stk.push_back(root);
+      on[root] = 1;
+      while (!call.empty()) {
+        auto& [v, ei] = call.back();
+        if (ei < adj[v].size()) {
+          const int w = adj[v][ei++].tgt;
+          if (!inS[w]) continue;
+          if (idx[w] == -1) {
+            idx[w] = low[w] = next++;
+            stk.push_back(w);
+            on[w] = 1;
+            call.push_back({w, 0});
+          } else if (on[w]) {
+            low[v] = std::min(low[v], idx[w]);
+          }
+        } else {
+          if (low[v] == idx[v]) {
+            std::vector<int> comp;
+            for (;;) {
+              const int w = stk.back();
+              stk.pop_back();
+              on[w] = 0;
+              comp.push_back(w);
+              if (w == v) break;
+            }
+            // Restore S's own order inside the component, so the lockstep sweep walks it exactly
+            // as the undecomposed one did.
+            std::sort(comp.begin(), comp.end());
+            sccs.push_back(std::move(comp));
+          }
+          const int child = v;
+          call.pop_back();
+          if (!call.empty()) low[call.back().first] = std::min(low[call.back().first], low[child]);
+        }
+      }
+    }
+  }
+
   std::size_t it = 0;
-  while (changed && !capped) {
+  for (const auto& comp : sccs) {
+   if (capped || cancelled()) break;
+   bool changed = true;
+   while (changed && !capped) {
     if (cancelled()) break;
     changed = false;
     ++it;
-    for (int v : S) {
+    for (int v : comp) {
       if (!seeded[v] && gfp_fed_empty(W[v])) continue;
       Federation cand = nosucc[v];
       for (const auto& e : adj[v]) {
@@ -1682,6 +1774,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
       if (capped) break;
     }
     if (it > 100000) break;
+   }
   }
   // Restore the documented postcondition on every exit path. A converged sweep materialised
   // every seed as it went, so this loop does nothing; an aborted one (capped or cancelled) can
@@ -2289,6 +2382,7 @@ bool Otf::eg_from_initial(GfpStats* gs) {
 }
 
 bool Otf::eg_verdict(GfpStats* gs) {
+  scc_iter_ = true;             // the verdict is one node's, so diameter is what costs here
   bool res = false;
   if (fwd_ok_ && !node.empty()) {
     grow();
