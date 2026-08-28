@@ -21,16 +21,17 @@ Four shapes per family, chosen so the predicate machinery is exercised rather th
 search: a bare clock bound; a clock bound with a negated location; a location **disjunction** with
 a clock bound; and a **negated conjunction** with a clock bound.
 
-## What is deliberately absent
+## The non-convex row
 
-A clock atom under a disjunction or a negation — `E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)`. The
-run must then stay inside a non-convex region, and the backward engine's `Pre` through a delay
-routed around an obstacle does not exist. Those queries are **refused**, and were removed from the
-suite so that every row here actually runs. See KNOWN_LIMITATION.md §3.
+Each family carries one query putting a clock under a **disjunction** —
+`E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)`. The run must stay inside a non-convex region, so it
+exercises the routed delay (`delay_avoiding` forward, `pre_avoiding` backward) rather than the
+invariant path every other row takes. It is also the most expensive row in each family, since the
+forbidden region splits zones: fischer4 goes from 248 stored states to 334.
 
 ## Status
 
-Validated. Across arbiter/csma/fischer/grc/phil/twolock these queries agree with UPPAAL 5.0.0 on
+Validated: 28 rows, zero verdict mismatches against UPPAAL 5.0.0. Across arbiter/csma/fischer/grc/phil/twolock these queries agree with UPPAAL 5.0.0 on
 every row. That was not true when the suite was written: it immediately exposed five wrong
 verdicts, which is what the suite is for. The cause was that `E[]` was decided by forward cycle
 detection on a subsumed graph — unsound, per Laarman 2013 / Tripakis 2009, and the very reason

@@ -1,47 +1,59 @@
 model       ptctlmc   uppaal     states  t_ptctlmc   t_uppaal  query
-fischer4        SAT      SAT        248      0.012      0.063  E[] x0 <= 40
-fischer4        SAT      SAT        248      0.008      0.058  E[] x0 <= 40 && !P1.cs
-fischer4        NOT      NOT        248      0.025      0.083  E[] (P0.idle || P0.wait) && x0 <= 40
-fischer4        SAT      SAT        248      0.009      0.059  E[] !(P1.cs && P2.cs) && x0 <= 40
-fischer5        SAT      SAT        937      0.043      0.059  E[] x0 <= 40
-fischer5        SAT      SAT        937      0.039      0.061  E[] x0 <= 40 && !P1.cs
-fischer5        NOT      NOT        937      0.194      0.254  E[] (P0.idle || P0.wait) && x0 <= 40
-fischer5        SAT      SAT        937      0.043      0.060  E[] !(P1.cs && P2.cs) && x0 <= 40
-arbiter4        SAT      SAT         48      0.005      0.051  E[] x0 <= 40
-arbiter4        SAT      SAT         48      0.004      0.063  E[] x0 <= 40 && !C1.cs
-arbiter4        NOT      NOT         48      0.004      0.235  E[] (C0.idle || C0.want) && x0 <= 40
-arbiter4        SAT      SAT         48      0.005      0.052  E[] !(C1.cs && C2.cs) && x0 <= 40
-arbiter5        SAT      SAT        112      0.006      0.053  E[] x0 <= 40
-arbiter5        SAT      SAT        112      0.006      0.062  E[] x0 <= 40 && !C1.cs
-arbiter5        NOT      NOT        112      0.005      1.797  E[] (C0.idle || C0.want) && x0 <= 40
-arbiter5        SAT      SAT        112      0.006      0.053  E[] !(C1.cs && C2.cs) && x0 <= 40
-csma4           SAT      SAT        172      0.008      0.315  E[] y0 <= 40
-csma4           SAT      SAT        172      0.005      0.047  E[] y0 <= 40 && !Bus.Collided
-csma4           SAT      SAT        172      0.006      0.045  E[] (S0.Wait || S0.Send) && y0 <= 40
-csma4           SAT      SAT        172      0.007      0.295  E[] !(S0.Send && S1.Send) && y0 <= 40
-csma5           SAT      SAT        546      0.726      0.325  E[] y0 <= 40
-csma5           SAT      SAT        546      0.006      0.047  E[] y0 <= 40 && !Bus.Collided
-csma5           SAT      SAT        546      0.048      0.046  E[] (S0.Wait || S0.Send) && y0 <= 40
-csma5           SAT      SAT        546      0.635      0.296  E[] !(S0.Send && S1.Send) && y0 <= 40
-phil4           SAT      SAT         82      0.005      0.146  E[] c0 <= 40
-phil4           SAT      SAT         82      0.016      0.356  E[] c0 <= 40 && !P1.Eat
-phil4           SAT      SAT         82      0.005      0.160  E[] !(P0.Eat && P1.Eat) && c0 <= 40
-phil5           SAT      SAT        256      0.014      0.152  E[] c0 <= 40
-phil5           SAT      SAT        256      0.120      0.565  E[] c0 <= 40 && !P1.Eat
-phil5           SAT      SAT        256      0.014      0.155  E[] !(P0.Eat && P1.Eat) && c0 <= 40
-grc4            SAT      SAT       1031      0.033      0.045  E[] x0 <= 15
-grc4            SAT      SAT       1031      0.079      0.055  E[] x0 <= 15 && !T0.in
-grc4            SAT      SAT       1031      0.079      0.056  E[] (T0.far || T0.near) && x0 <= 15
-grc4            SAT      SAT       1031      0.086      0.045  E[] !(T0.in && T1.in) && x0 <= 15
-grc5            SAT      SAT      17636      2.087      0.045  E[] x0 <= 15
-grc5            SAT      SAT      17636      6.591      0.716  E[] x0 <= 15 && !T0.in
-grc5            SAT      SAT      17636      6.641      0.715  E[] (T0.far || T0.near) && x0 <= 15
-grc5            SAT      SAT      17636      4.240      0.047  E[] !(T0.in && T1.in) && x0 <= 15
-twolock4        SAT      SAT        312      0.014      0.047  E[] x0 <= 30
-twolock4        SAT      SAT        312      0.012      0.048  E[] x0 <= 30 && !P1.cs
-twolock4        NOT      NOT        312      0.017      0.054  E[] (P0.idle || P0.waitA) && x0 <= 30
-twolock5        SAT      SAT       1097      0.070      0.048  E[] x0 <= 30
-twolock5        SAT      SAT       1097      0.062      0.049  E[] x0 <= 30 && !P1.cs
-twolock5        NOT      NOT       1097      0.105      0.093  E[] (P0.idle || P0.waitA) && x0 <= 30
+fischer4        SAT      SAT        248      0.010      0.058  E[] x0 <= 40
+fischer4        SAT      SAT        248      0.008      0.057  E[] x0 <= 40 && !P1.cs
+fischer4        NOT      NOT        248      0.024      0.082  E[] (P0.idle || P0.wait) && x0 <= 40
+fischer4        SAT      SAT        248      0.009      0.057  E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer4        SAT      SAT        334      0.069      0.049  E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer5        SAT      SAT        937      0.039      0.057  E[] x0 <= 40
+fischer5        SAT      SAT        937      0.035      0.058  E[] x0 <= 40 && !P1.cs
+fischer5        NOT      NOT        937      0.181      0.246  E[] (P0.idle || P0.wait) && x0 <= 40
+fischer5        SAT      SAT        937      0.040      0.060  E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer5        SAT      SAT       1312      0.493      0.051  E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+arbiter4        SAT      SAT         48      0.005      0.049  E[] x0 <= 40
+arbiter4        SAT      SAT         48      0.005      0.058  E[] x0 <= 40 && !C1.cs
+arbiter4        NOT      NOT         48      0.005      0.217  E[] (C0.idle || C0.want) && x0 <= 40
+arbiter4        SAT      SAT         48      0.005      0.050  E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter4        SAT      SAT        109      0.007      0.043  E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter5        SAT      SAT        112      0.006      0.049  E[] x0 <= 40
+arbiter5        SAT      SAT        112      0.006      0.059  E[] x0 <= 40 && !C1.cs
+arbiter5        NOT      NOT        112      0.005      1.709  E[] (C0.idle || C0.want) && x0 <= 40
+arbiter5        SAT      SAT        112      0.006      0.050  E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter5        SAT      SAT        268      0.013      0.043  E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+csma4           SAT      SAT        172      0.007      0.296  E[] y0 <= 40
+csma4           SAT      SAT        172      0.005      0.045  E[] y0 <= 40 && !Bus.Collided
+csma4           SAT      SAT        172      0.006      0.043  E[] (S0.Wait || S0.Send) && y0 <= 40
+csma4           SAT      SAT        172      0.007      0.282  E[] !(S0.Send && S1.Send) && y0 <= 40
+csma4           SAT      SAT        266      0.021      0.057  E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma5           SAT      SAT        546      0.690      0.287  E[] y0 <= 40
+csma5           SAT      SAT        546      0.006      0.045  E[] y0 <= 40 && !Bus.Collided
+csma5           SAT      SAT        546      0.045      0.044  E[] (S0.Wait || S0.Send) && y0 <= 40
+csma5           SAT      SAT        546      0.605      0.285  E[] !(S0.Send && S1.Send) && y0 <= 40
+csma5           SAT      SAT       1108      0.145      0.131  E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+phil4           SAT      SAT         82      0.005      0.138  E[] c0 <= 40
+phil4           SAT      SAT         82      0.015      0.340  E[] c0 <= 40 && !P1.Eat
+phil4           SAT      SAT         82      0.005      0.137  E[] !(P0.Eat && P1.Eat) && c0 <= 40
+phil4           SAT      SAT        101      0.012      0.379  E[] c0 <= 40 && (c1 <= 30 || c1 >= 35)
+phil5           SAT      SAT        256      0.014      0.149  E[] c0 <= 40
+phil5           SAT      SAT        256      0.119      0.462  E[] c0 <= 40 && !P1.Eat
+phil5           SAT      SAT        256      0.013      0.155  E[] !(P0.Eat && P1.Eat) && c0 <= 40
+phil5           SAT      SAT        325      0.107      0.392  E[] c0 <= 40 && (c1 <= 30 || c1 >= 35)
+grc4            SAT      SAT       1031      0.031      0.043  E[] x0 <= 15
+grc4            SAT      SAT       1031      0.075      0.056  E[] x0 <= 15 && !T0.in
+grc4            SAT      SAT       1031      0.075      0.054  E[] (T0.far || T0.near) && x0 <= 15
+grc4            SAT      SAT       1031      0.082      0.044  E[] !(T0.in && T1.in) && x0 <= 15
+grc4            SAT      SAT       3390      1.196      0.048  E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc5            SAT      SAT      17636      1.977      0.044  E[] x0 <= 15
+grc5            SAT      SAT      17636      6.331      0.708  E[] x0 <= 15 && !T0.in
+grc5            SAT      SAT      17636      6.348      0.692  E[] (T0.far || T0.near) && x0 <= 15
+grc5            SAT      SAT      17636      4.061      0.045  E[] !(T0.in && T1.in) && x0 <= 15
+grc5        timeout      SAT          -     30.000      0.085  E[] x0 <= 15 && (y <= 10 || y >= 12)
+twolock4        SAT      SAT        312      0.013      0.047  E[] x0 <= 30
+twolock4        SAT      SAT        312      0.011      0.047  E[] x0 <= 30 && !P1.cs
+twolock4        NOT      NOT        312      0.017      0.053  E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock4        SAT      SAT        431      0.037      0.047  E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+twolock5        SAT      SAT       1097      0.067      0.047  E[] x0 <= 30
+twolock5        SAT      SAT       1097      0.060      0.048  E[] x0 <= 30 && !P1.cs
+twolock5        NOT      NOT       1097      0.101      0.092  E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock5        SAT      SAT       1561      0.225      0.051  E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
 
 verdict mismatches: 0
