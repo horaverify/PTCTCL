@@ -301,6 +301,21 @@ inline void build_broadcast_parts(const Network& net, const SymState& s, const N
 struct DelayAvoid {
   Dbm forbid;  ///< the convex region to avoid
   Dbm fup;     ///< `forbid` delayed, i.e. `forbid^`
+  /// @brief The discrete condition under which the region is forbidden at all; null means always.
+  ///
+  /// For `A<> phi` with a `phi` mixing discrete and clock atoms, the maintained predicate is
+  /// `!phi_d \/ !phi_c`. That disjunction never needs representing, because `phi_d` is constant
+  /// across a vertex: where it fails the run is already inside the predicate and nothing is
+  /// forbidden, and where it holds the obligation is exactly `!phi_c`. This is that test.
+  const DiscPred* when = nullptr;
+
+  /// @brief Is the region forbidden at this discrete state?
+  bool applies(const LocVec& locs, const IntVec& ints) const {
+    if (!when) return true;
+    for (const auto& r : when->locs)
+      if ((locs[r.proc] == r.loc) != r.equal) return false;
+    return int_ok(when->ints, ints);
+  }
 };
 
 /// @brief Let time pass from @p z while never entering the convex region @p forbid.
@@ -394,28 +409,37 @@ close_succ_zone(const Network& net, const LocVec& tgt_locs, const IntVec& tgt_in
   if (!apply_all(z, inv)) return false;
   bool tgt_committed, tgt_urgent;
   frozen_flags(net, tgt_locs, tgt_ints, &tgt_committed, &tgt_urgent);
+  // Is a region forbidden HERE? `avoid->when` makes this a property of the target's discrete
+  // state, which is what lets one operator serve a predicate mixing discrete and clock atoms.
+  const bool av = avoid && avoid->applies(tgt_locs, tgt_ints);
+  thread_local Federation parts;
   if (!tgt_committed && !tgt_urgent) {
-    if (avoid) {
-      // The delay must not pass through `avoid->forbid`, so it can split. The first piece stays
-      // in `z` and the rest go to `extra`; both still owe the invariant, the active-clock
-      // reduction and the extrapolation, so they are finished together below.
-      thread_local Federation parts;
+    if (av) {
+      // The delay must not pass through `avoid->forbid`, so it can split.
       delay_avoiding(z, avoid->forbid, avoid->fup, parts);
-      if (parts.empty()) return false;   // no legal delay at all: the transition dies
-      z = parts[0];
-      apply_all(z, inv);
-      if (extra)
-        for (std::size_t i = 1; i < parts.size(); ++i) {
-          Dbm p = parts[i];
-          if (!apply_all(p, inv) || p.empty()) continue;
-          reset_inactive(net, tgt_locs, p, qmask);
-          if (emode == ExLuPlus) p.extrapolate_lu_plus(L, U);
-          else if (emode == ExNoDiag) p.extrapolate_lu_plus_nodiag(L, U);
-          if (!p.empty()) extra->push_back(std::move(p));
-        }
     } else {
       z.delay(); apply_all(z, inv);
     }
+  } else if (av) {
+    // Frozen: no delay to route, but the state itself must still lie outside the region, and
+    // the complement of a zone is not a zone -- so this splits too.
+    parts = fed_subtract(z, Federation{avoid->forbid});
+  }
+  if (av) {
+    // The first piece stays in `z` and the rest go to `extra`; all of them still owe the
+    // invariant, the active-clock reduction and the extrapolation.
+    if (parts.empty()) return false;   // nothing legal here at all: the transition dies
+    z = parts[0];
+    apply_all(z, inv);
+    if (extra)
+      for (std::size_t i = 1; i < parts.size(); ++i) {
+        Dbm p = parts[i];
+        if (!apply_all(p, inv) || p.empty()) continue;
+        reset_inactive(net, tgt_locs, p, qmask);
+        if (emode == ExLuPlus) p.extrapolate_lu_plus(L, U);
+        else if (emode == ExNoDiag) p.extrapolate_lu_plus_nodiag(L, U);
+        if (!p.empty()) extra->push_back(std::move(p));
+      }
   }
   reset_inactive(net, tgt_locs, z, qmask);
   if (emode == ExLuPlus) z.extrapolate_lu_plus(L, U);

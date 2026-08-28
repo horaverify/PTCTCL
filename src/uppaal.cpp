@@ -1452,31 +1452,6 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     return true;
   };
   // Negate a SINGLE-atom predicate (A<> phi = !E[] !phi).
-  // The single-atom restriction is what keeps the NEGATED predicate convex, which is what the
-  // delay-inside-a-convex-region argument needs: the complement of a conjunction of two or more
-  // clock atoms is a disjunction, and a run may leave it and re-enter it during one delay.
-  auto negate_single = [&](const DiscPred& phi, DiscPred& out) -> bool {
-    // A conjunction of CLOCK atoms negates to a disjunction, which is not an invariant. It is
-    // carried un-negated in `avoid` instead and handled by the delay-around operator, so any
-    // number of clock atoms is admissible here — provided they are the only atoms, since a
-    // negation mixing a clock atom with a discrete one is a disjunction across both kinds.
-    if (!phi.clocks.empty() && phi.locs.empty() && phi.ints.empty()) { out.avoid = phi.clocks; return true; }
-    if (phi.locs.size() + phi.ints.size() + phi.clocks.size() != 1) return false;
-    if (phi.clocks.size() == 1) { out.clocks.push_back(negate(phi.clocks[0])); return true; }
-    if (phi.locs.size() == 1) {
-      out.locs.push_back({phi.locs[0].proc, phi.locs[0].loc, !phi.locs[0].equal});
-      return true;
-    }
-    IntAtom a = phi.ints[0]; IntOp n = a.op;
-    switch (a.op) {
-      case IntOp::Eq: n = IntOp::Ne; break; case IntOp::Ne: n = IntOp::Eq; break;
-      case IntOp::Lt: n = IntOp::Ge; break; case IntOp::Ge: n = IntOp::Lt; break;
-      case IntOp::Le: n = IntOp::Gt; break; case IntOp::Gt: n = IntOp::Le; break;
-    }
-    out.ints.push_back({a.var, n, a.val});
-    return true;
-  };
-
   if (q.kind == Query::EF) {
     if (trim(q.note) == "deadlock") {  // E<> deadlock
       *satisfied = deadlock_reachable(net, backend, stats);
@@ -1493,10 +1468,16 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     *satisfied = exists_invariant_run(net, phi, backend, stats);
     return true;
   }
-  if (q.kind == Query::AF) {  // A<> phi = !E[] !phi   (single-atom phi)
-    DiscPred phi, nphi;
-    if (!build_pred(q.note, phi) || !negate_single(phi, nphi)) return false;
-    *satisfied = !exists_invariant_run(net, nphi, backend, stats);
+  if (q.kind == Query::AF) {  // A<> phi = !E[] !phi
+    // The negation is NOT pushed inwards here. `phi` is handed over whole with `negated` set and
+    // ::exists_invariant_run interprets it per vertex, where the discrete part is constant and
+    // the disjunction therefore collapses. Pushing it inwards is what used to force a
+    // single-atom restriction: `!(a && b)` has no conjunctive form, so anything wider than one
+    // atom had to be refused.
+    DiscPred phi;
+    if (!build_pred(q.note, phi)) return false;
+    phi.negated = true;
+    *satisfied = !exists_invariant_run(net, phi, backend, stats);
     return true;
   }
   auto neg_int = [](IntOp o) {

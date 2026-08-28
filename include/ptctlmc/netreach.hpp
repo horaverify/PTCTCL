@@ -244,15 +244,23 @@ struct DiscPred {
   /// @note Because the atoms become invariants, the LU bounds and the active-clock sets are
   ///       recomputed from them rather than adjusted by hand; see ::exists_invariant_run.
   std::vector<Constraint> clocks;
-  /// @brief A convex region the run must never ENTER, i.e. the complement of a conjunction.
+  /// @brief When set, the predicate denotes the NEGATION of the conjunction above.
   ///
-  /// `A<> phi` is `!E[] !phi`, so for a `phi` over clocks the predicate to maintain is `!phi` —
-  /// a disjunction, which is not convex and so cannot be adjoined to the invariants the way
-  /// @ref clocks is. Stored in its un-negated form instead, because `phi` itself IS convex, and
-  /// consumed by ptctlmc::detail::delay_avoiding, which lets time pass around it.
+  /// `A<> phi` is `!E[] !phi`, so the predicate the run must maintain is `!phi` — a disjunction,
+  /// which is neither a vertex filter nor an invariant. Rather than push the negation inwards and
+  /// refuse whatever does not survive, the predicate is stored un-negated and the negation is
+  /// interpreted where it is cheap to interpret: at a vertex.
   ///
-  /// @note At most one of @ref clocks and @ref avoid is ever non-empty.
-  std::vector<Constraint> avoid;
+  /// The discrete part of `phi` is constant across a vertex, which is what makes this work. At a
+  /// vertex where @ref locs or @ref ints fail, `!phi` already holds and no clock restriction
+  /// applies at all; at a vertex where they hold, `!phi` reduces to `!clocks`, and @ref clocks is
+  /// a conjunction, hence convex, hence a region ptctlmc::detail::delay_avoiding can route a
+  /// delay around. The disjunction never has to be represented as one.
+  ///
+  /// @note This subsumes three cases that used to be separate: an all-discrete `phi` becomes a
+  ///       plain vertex filter (with no single-atom restriction), an all-clock `phi` becomes an
+  ///       unconditional avoided region, and a mixed one becomes a conditionally avoided region.
+  bool negated = false;
 };
 
 /// @brief `E[] phi` — does @p net have an infinite, time-divergent run all of whose states
