@@ -23,6 +23,12 @@ mkdir -p "$PTCTLMC_LIVE_DIR" "$LTSMIN_LIVE_DIR" "$UPPAAL_LIVE_DIR" "$TCHECKER_LI
 
 PTCTLMC_BIN="${PTCTLMC_BIN:-$BENCH_DIR/../build_shipping/ptctlmc}"
 
+# The tchecker liveness models carry a leads-to observer generated from live_queries/, so they
+# go stale the moment a query changes. Regenerate before measuring rather than trusting the
+# checked-in copies -- tck-liveness would happily answer the old property.
+echo "[tchecker] regenerating the leads-to observer models"
+python3 "$SCRIPT_DIR/gen_tck_live.py"
+
 echo "=== Liveness pipeline started: $(date -Iseconds) ==="
 
 # ONE THREAD COUNT, not three. The liveness engine has no OpenMP in it at all (see
@@ -30,10 +36,9 @@ echo "=== Liveness pipeline started: $(date -Iseconds) ==="
 # t16/t24/t32 sweep measures the same sequential run three times and triples a multi-day job for
 # no information. t16 is kept rather than t1 because it is the column live_results/ptctlmc_old
 # holds for the previous engine, so the two stay directly comparable.
-echo "[ptctlmc] live, threads 16 only -- the liveness engine is sequential, all families"
+echo "[ptctlmc] live, threads 1 -- the liveness engine is sequential, all families"
 PTCTLMC_BIN="$PTCTLMC_BIN" python3 "$SCRIPT_DIR/bench.py" run \
   --tool ptctlmc \
-  --sim g \
   --queries live \
   --families all \
   --threads 1 \

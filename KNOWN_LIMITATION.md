@@ -169,32 +169,4 @@ step, and is not implemented.
 three times. `benchmarks/scripts/run_live_pipeline.sh` therefore runs ptctlmc liveness at one thread
 count only; running three would triple a multi-day sweep for no information.
 
----
 
-## 7. Stored zones are dense, and minimal-graph packing cannot back the covering test
-
-**Mechanism.** Zones dominate this engine's memory: on `arbiter14`, 109.8 MB of 178 MB live, 62%.
-`HDBM/include/ptctlmc/mindbm.hpp` already packs a zone into its minimal graph and would cut that
-term **15.2x** (112.5 MB -> 7.4 MB measured on the same graph), and `ZoneIntern` in the reachability
-engine uses exactly that. The liveness engine cannot.
-
-`dbm_is_alu_le` reads the covering zone as `Zp[y][x]` at an *arbitrary* `(y, x)`. A minimal-graph
-record stores only the non-redundant edges; the value at a redundant entry is the shortest path
-through the others, which is what `mindbm_unpack`'s `O(dim^3)` closure reconstructs. Substituting
-"the stored edge, `+inf` where absent" is not conservative in the safe direction: that bound is too
-*large*, which makes the witness test `Zp[y][x] < Z[y][x]` harder to satisfy, which reports **more**
-zones subsumed than truly are — dropped states and a possibly wrong verdict. `mindbm_includes_dense`
-avoids the closure only because inclusion needs the stored zone's own constraints and nothing else;
-aLU has no such formulation.
-
-**What is done instead.** Entries are narrowed rather than the graph packed: stored zones live in a
-chunked `int16` arena (`Otf::zs_`), keeping the dense layout and its `O(1)` index. No new kernel was
-needed — the predicates are templated on their operands' entry type and read through `zget`, so
-`dbm_is_alu_le` and `dbm_includes` take a narrow stored operand directly and the hot covering path
-never widens anything. Bounds outside `int16` keep a dense copy for that node alone (`Otf::nok_`);
-truncating would silently move the zone.
-
-**Consequence.** Half the zone term, not a fifteenth of it. Measured end to end against the engine
-before this work, at identical verdicts and identical stored-state counts: `arbiter14` 439 MB ->
-272 MB, `arbiter16` 2329 MB -> 1438 MB, both **-38%**. Closing the rest needs an aLU kernel that
-works on a minimal graph without reconstructing it, which is an open problem here, not a tuning knob.

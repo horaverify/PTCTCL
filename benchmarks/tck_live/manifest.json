@@ -1,0 +1,415 @@
+{
+  "pending_label": "TC_LIVE_PENDING",
+  "models": {
+    "arbiter10.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter10.tck"
+    },
+    "arbiter11.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter11.tck"
+    },
+    "arbiter12.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter12.tck"
+    },
+    "arbiter13.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter13.tck"
+    },
+    "arbiter14.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter14.tck"
+    },
+    "arbiter15.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter15.tck"
+    },
+    "arbiter16.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter16.tck"
+    },
+    "arbiter17.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter17.tck"
+    },
+    "arbiter18.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter18.tck"
+    },
+    "arbiter19.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter19.tck"
+    },
+    "arbiter20.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter20.tck"
+    },
+    "arbiter4.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter4.tck"
+    },
+    "arbiter5.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter5.tck"
+    },
+    "arbiter6.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter6.tck"
+    },
+    "arbiter7.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter7.tck"
+    },
+    "arbiter8.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter8.tck"
+    },
+    "arbiter9.tck": {
+      "query": "C0.cs --> C0.idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/arbiter9.tck"
+    },
+    "csma10.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma10.tck"
+    },
+    "csma11.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma11.tck"
+    },
+    "csma12.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma12.tck"
+    },
+    "csma13.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma13.tck"
+    },
+    "csma14.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma14.tck"
+    },
+    "csma15.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma15.tck"
+    },
+    "csma16.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma16.tck"
+    },
+    "csma17.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma17.tck"
+    },
+    "csma18.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma18.tck"
+    },
+    "csma20.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma20.tck"
+    },
+    "csma22.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma22.tck"
+    },
+    "csma4.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma4.tck"
+    },
+    "csma5.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma5.tck"
+    },
+    "csma6.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma6.tck"
+    },
+    "csma7.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma7.tck"
+    },
+    "csma8.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma8.tck"
+    },
+    "csma9.tck": {
+      "query": "Bus.Transmitting --> Bus.Idle",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/csma9.tck"
+    },
+    "fischer10.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer10.tck"
+    },
+    "fischer11.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer11.tck"
+    },
+    "fischer12.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer12.tck"
+    },
+    "fischer13.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer13.tck"
+    },
+    "fischer14.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer14.tck"
+    },
+    "fischer15.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer15.tck"
+    },
+    "fischer16.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer16.tck"
+    },
+    "fischer17.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer17.tck"
+    },
+    "fischer4.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer4.tck"
+    },
+    "fischer5.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer5.tck"
+    },
+    "fischer6.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer6.tck"
+    },
+    "fischer7.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer7.tck"
+    },
+    "fischer8.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer8.tck"
+    },
+    "fischer9.tck": {
+      "query": "P0.req --> P0.wait",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/fischer9.tck"
+    },
+    "phil10.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil10.tck"
+    },
+    "phil11.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil11.tck"
+    },
+    "phil12.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil12.tck"
+    },
+    "phil13.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil13.tck"
+    },
+    "phil14.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil14.tck"
+    },
+    "phil15.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil15.tck"
+    },
+    "phil16.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil16.tck"
+    },
+    "phil17.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil17.tck"
+    },
+    "phil4.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil4.tck"
+    },
+    "phil5.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil5.tck"
+    },
+    "phil6.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil6.tck"
+    },
+    "phil7.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil7.tck"
+    },
+    "phil8.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil8.tck"
+    },
+    "phil9.tck": {
+      "query": "P0.Eat --> P0.Dropped",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/phil9.tck"
+    },
+    "single4.tck": {
+      "query": "P.A --> P.A",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/single4.tck"
+    },
+    "single5.tck": {
+      "query": "P.A --> P.A",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/single5.tck"
+    },
+    "single6.tck": {
+      "query": "P.A --> P.A",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/single6.tck"
+    },
+    "single7.tck": {
+      "query": "P.A --> P.A",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/single7.tck"
+    },
+    "single8.tck": {
+      "query": "P.A --> P.A",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/single8.tck"
+    },
+    "single9.tck": {
+      "query": "P.A --> P.A",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/single9.tck"
+    },
+    "twolock10.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock10.tck"
+    },
+    "twolock11.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock11.tck"
+    },
+    "twolock12.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock12.tck"
+    },
+    "twolock13.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock13.tck"
+    },
+    "twolock14.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock14.tck"
+    },
+    "twolock15.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock15.tck"
+    },
+    "twolock16.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock16.tck"
+    },
+    "twolock17.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock17.tck"
+    },
+    "twolock4.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock4.tck"
+    },
+    "twolock5.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock5.tck"
+    },
+    "twolock6.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock6.tck"
+    },
+    "twolock7.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock7.tck"
+    },
+    "twolock8.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock8.tck"
+    },
+    "twolock9.tck": {
+      "query": "P0.reqB --> P0.waitB",
+      "accepting_label": "TC_LIVE_PENDING",
+      "command": "tck-liveness -a couvscc -l TC_LIVE_PENDING /home/luca/Documents/ParallelCTLModelChecker/PTCTCL/benchmarks/tck_live/twolock9.tck"
+    }
+  }
+}

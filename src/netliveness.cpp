@@ -48,6 +48,7 @@
 
 #include "ptctlmc/fed.hpp"
 #include "ptctlmc/mindbm.hpp"
+#include "ptctlmc/zone_store.hpp"
 #include "ptctlmc/detail/sym_state.hpp"
 #include "ptctlmc/detail/net_semantics.hpp"
 
@@ -555,10 +556,9 @@ class Otf {
   void release() {
     std::vector<SymState>().swap(node);
     std::vector<std::vector<OtfEdge>>().swap(adj);
-    std::unordered_map<std::string, std::vector<int>>().swap(bucket);
+    std::unordered_map<std::uint64_t, std::vector<int>>().swap(bucket);
     std::vector<GfpTag>().swap(tags_);
-    std::vector<std::vector<nraw_t>>().swap(zs_);
-    std::vector<char>().swap(nok_);
+    zs_.reset(zdim_);
     std::unordered_map<std::uint64_t, std::vector<int>>().swap(tagidx_);
     std::vector<char>().swap(expanded);
     std::vector<char>().swap(pc);
@@ -651,97 +651,69 @@ class Otf {
   // is not a broadcast with guarded receivers. Interned, an edge costs one int.
   std::vector<GfpTag> tags_;                   ///< the pool; ::OtfEdge::tag indexes it
   std::unordered_map<std::uint64_t, std::vector<int>> tagidx_;  ///< hash -> candidate pool slots
-  std::unordered_map<std::string, std::vector<int>> bucket;  ///< discrete key -> node indices
+  // KEYED BY HASH, NOT BY THE KEY. The discrete state is already stored, once, in
+  // node[i].locs/ints; keeping a std::string copy of it as the map key stored it a second time
+  // and cost 25 MB of the 178 MB live on arbiter14 -- one heap string plus one map node per
+  // distinct discrete state. The map is keyed by a hash of (locs, ints) instead, and every
+  // candidate is checked for exact discrete equality against the stored node before any zone
+  // comparison, so a collision costs one extra vector compare and never merges two states.
+  //
+  // @note ::GfpStats::disc_keys therefore counts occupied hash buckets. Collisions make it a
+  //       lower bound on the number of distinct discrete states, not an exact count.
+  std::unordered_map<std::uint64_t, std::vector<int>> bucket;  ///< disc-state hash -> node indices
   std::vector<char> expanded;                  ///< 1 once ::expand has computed the out-edges
   std::vector<char> pc, qc;                    ///< p/q predicate caches; 2 = not yet evaluated
   bool intern_grew = false;                    ///< last ::intern rewrote a stored zone
 
-  // NARROW ZONE STORE. A stored zone dominates this engine's memory -- 62% of everything live
-  // on arbiter14 -- and the obvious cure, the minimal-graph record mindbm.hpp already packs, is
-  // not usable HERE: dbm_is_alu_le reads the covering zone at an ARBITRARY (y,x), a minimal
-  // graph keeps only the non-redundant edges, and recovering an arbitrary entry from one is the
-  // O(dim^3) closure mindbm_unpack runs. Reading it "as stored, +inf where absent" would use a
-  // bound that is too LARGE, which makes the witness test harder, which reports MORE zones
-  // subsumed than truly are -- dropped states and a possibly wrong verdict. See
-  // KNOWN_LIMITATION.md.
-  //
-  // Narrowing the ENTRIES instead keeps the dense layout and its O(1) index while halving the
-  // bill, and needs no new kernel: the predicates are templated on their operands' entry type
-  // and read through zget, so a narrow stored operand drops straight into dbm_is_alu_le and
-  // dbm_includes -- the hot covering path never widens anything.
-  //
-  // A bound outside int16 keeps its dense copy in node[i].zone instead (nok_[i] == 0).
-  // Truncating would silently move the zone, so the escape is not optional; it simply never
-  // fires on models whose constants sit far inside the range.
-  // CHUNKED, not one growing vector. A single std::vector doubles, so the arena can sit at up
-  // to 2x the entries it holds and a reallocation transiently needs both copies -- on arbiter16
-  // that over-allocation ate 80% of what narrowing had just saved. Fixed chunks allocate what
-  // they use, never copy, and never invalidate a pointer into an earlier chunk.
-  static constexpr std::size_t kZChunk = 1024;   ///< nodes per chunk
-  std::vector<std::vector<nraw_t>> zs_;          ///< chunk c holds nodes [c*kZChunk, ...)
-  std::vector<char> nok_;          ///< 1 iff node i's zone lives in ::zs_, not in node[i].zone
-  std::size_t zd2_ = 0;            ///< dim * dim
-  int zdim_ = 0;                   ///< nclocks + 1
+  // THE STORED ZONES. ptctlmc::ZoneStore keeps them dense -- the covering predicates read the
+  // stored operand at an arbitrary (i, j), which a minimal-graph record cannot answer without
+  // re-running its O(dim^3) closure -- while adapting the ENTRY WIDTH to the bounds the model
+  // actually produces: one byte, then two, then four, widening in place rather than refusing a
+  // model or keeping a per-zone dense fallback. Every model in this suite fits one byte (the
+  // widest stored bound measured is |raw| = 9).
+  ptctlmc::ZoneStore zs_;
+  int zdim_ = 0;                               ///< nclocks + 1
 
-  const nraw_t* zp(int i) const {
-    return zs_[std::size_t(i) / kZChunk].data() + (std::size_t(i) % kZChunk) * zd2_;
-  }
-
-  /// @brief Store node @p i's zone narrow, or keep it dense if any bound does not fit.
-  /// @param z  consumed; on the dense path it becomes @c node[i].zone
+  /// @brief Store node @p i's zone, and drop the dense copy the node was carrying.
   void zstore(int i, Dbm&& z) {
-    if (zdim_ <= 0 || z.dim() != zdim_) { node[i].zone = std::move(z); nok_[i] = 0; return; }
-    const raw_t* d = z.data().data();
-    for (std::size_t k = 0; k < zd2_; ++k)
-      if (!mindbm_fits16(d[k])) { node[i].zone = std::move(z); nok_[i] = 0; return; }
-    const std::size_t c = std::size_t(i) / kZChunk;
-    if (zs_.size() <= c) zs_.resize(c + 1);
-    if (zs_[c].empty()) zs_[c].resize(kZChunk * zd2_);
-    nraw_t* o = zs_[c].data() + (std::size_t(i) % kZChunk) * zd2_;
-    for (std::size_t k = 0; k < zd2_; ++k) zput(o, static_cast<int>(k), d[k]);
-    nok_[i] = 1;
-    node[i].zone = Dbm();                       // the narrow copy is now the only one
+    zs_.store(i, z);
+    node[i].zone = Dbm();                      // the store owns it now
   }
 
-  /// @brief Node @p i's zone as a dense matrix, widened into @p sc only when it is stored narrow.
+  /// @brief Node @p i's zone, widened into @p sc.
   const Dbm& zread(int i, Dbm& sc) const {
-    if (!nok_[i]) return node[i].zone;
-    if (sc.dim() != zdim_) sc = Dbm(zdim_ - 1);
-    raw_t* o = sc.data().data();
-    const nraw_t* d = zp(i);
-    for (std::size_t k = 0; k < zd2_; ++k) o[k] = zget(d, static_cast<int>(k));
+    zs_.load(i, sc);
     return sc;
   }
 
   /// @brief Node @p i as a whole state; @p sc is reused, so its buffers survive between calls.
   const SymState& sread(int i, SymState& sc) const {
-    if (!nok_[i]) return node[i];
     sc.locs.assign(node[i].locs.begin(), node[i].locs.end());
     sc.ints.assign(node[i].ints.begin(), node[i].ints.end());
     zread(i, sc.zone);
     return sc;
   }
 
-  // The four covering tests, each dispatching once on where the stored zone lives. Both arms
-  // are the same kernel at a different entry type, so the narrow arm is not an approximation.
+  // The covering tests, each instantiated against the stored operand at its ACTUAL entry type.
+  // ZoneStore::with does the dispatch; it is the same kernel either way, so a narrow operand is
+  // not an approximation of a wide one.
   bool alu_le_stored(const Dbm& z, int j) const {
-    return nok_[j] ? dbm_is_alu_le(z.data().data(), zp(j), zdim_, bL.data(), bU.data())
-                   : dbm_is_alu_le(z.data().data(), node[j].zone.data().data(), zdim_,
-                                   bL.data(), bU.data());
+    return zs_.with(j, [&](const auto* p) {
+      return dbm_is_alu_le(z.data().data(), p, zdim_, bL.data(), bU.data());
+    });
   }
   bool alu_le_new(int j, const Dbm& z) const {
-    return nok_[j] ? dbm_is_alu_le(zp(j), z.data().data(), zdim_, bL.data(), bU.data())
-                   : dbm_is_alu_le(node[j].zone.data().data(), z.data().data(), zdim_,
-                                   bL.data(), bU.data());
+    return zs_.with(j, [&](const auto* p) {
+      return dbm_is_alu_le(p, z.data().data(), zdim_, bL.data(), bU.data());
+    });
   }
   bool stored_includes(int j, const Dbm& z) const {
-    return nok_[j] ? dbm_includes(zp(j), z.data().data(), zdim_)
-                   : dbm_includes(node[j].zone.data().data(), z.data().data(), zdim_);
+    return zs_.with(j, [&](const auto* p) { return dbm_includes(p, z.data().data(), zdim_); });
   }
   bool includes_stored(const Dbm& z, int j) const {
-    return nok_[j] ? dbm_includes(z.data().data(), zp(j), zdim_)
-                   : dbm_includes(z.data().data(), node[j].zone.data().data(), zdim_);
+    return zs_.with(j, [&](const auto* p) { return dbm_includes(z.data().data(), p, zdim_); });
   }
+
   const AtomMap* amap_ = nullptr;              ///< null = ordinary a_LU, no cells
 
   /// @brief Per-node "In" mask: bit @c a is set iff the node's zone lies wholly inside atom @c a.
@@ -806,7 +778,7 @@ class Otf {
 ///       inclusion covering and extrapolation stays load-bearing there.
 void Otf::setup() {
   zdim_ = net.nclocks + 1;
-  zd2_ = std::size_t(zdim_) * std::size_t(zdim_);
+  zs_.reset(zdim_);
   L = net.lbound;
   U = net.ubound;
   use_alu = !force_exact_ && !network_has_diagonal(net);
@@ -859,7 +831,6 @@ void Otf::grow() {
   if (adj.size() < n) adj.resize(n);
   if (ntag_.size() < n) ntag_.resize(n, 0);
   if (ntag_out_.size() < n) ntag_out_.resize(n, 0);
-  if (nok_.size() < n) nok_.resize(n, 0);
 }
 
 bool Otf::is_p(int i) {
@@ -991,6 +962,18 @@ bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t
 ///       backward work only on vertices known not to change" wants, but it pays for that with
 ///       an antichain of zones the rewriting version collapses. Rewriting is kept, and the
 ///       invalidation above is what makes it safe.
+/// @brief Hash of a discrete state, computed without materialising its byte key.
+static std::uint64_t disc_hash(const LocVec& locs, const IntVec& ints) {
+  std::uint64_t h = 1469598103934665603ULL;
+  const auto mix = [&h](std::uint64_t v) {
+    h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  };
+  for (int l : locs) mix(std::uint64_t(std::uint32_t(l)));
+  mix(0x5bf03635ULL);
+  for (long v : ints) mix(std::uint64_t(std::int64_t(v)));
+  return h;
+}
+
 int Otf::intern(SymState&& s) {
   intern_grew = false;
   std::string bkey = disc_key_bytes(s.locs, s.ints);
@@ -1016,7 +999,18 @@ int Otf::intern(SymState&& s) {
       classify_atoms(s.zone, as, &tag, &tag_out);
     }
   }
-  auto& b = bucket[bkey];
+  auto& b = bucket[disc_hash(s.locs, s.ints)];
+  // Exact discrete equality, checked before any zone test: the bucket is a hash bucket, so it
+  // may hold nodes of a different discrete state.
+  auto same_disc = [&](int j) {
+    const SymState& n = node[j];
+    if (n.locs.size() != s.locs.size() || n.ints.size() != s.ints.size()) return false;
+    for (std::size_t t = 0; t < s.locs.size(); ++t)
+      if (n.locs[t] != s.locs[t]) return false;
+    for (std::size_t t = 0; t < s.ints.size(); ++t)
+      if (n.ints[t] != s.ints[t]) return false;
+    return true;
+  };
   if (use_alu) {
     bL.assign(net.nclocks + 1, kAluNegInf);
     bU.assign(net.nclocks + 1, kAluNegInf);
@@ -1081,9 +1075,9 @@ int Otf::intern(SymState&& s) {
     return use_alu ? alu_le_new(j, s.zone) : includes_stored(s.zone, j);
   };
   for (int j : b)
-    if (covered(j)) return j;
+    if (same_disc(j) && covered(j)) return j;
   for (std::size_t k = 0; k < b.size(); ++k)
-      if (covers(b[k])) {
+      if (same_disc(b[k]) && covers(b[k])) {
         zstore(b[k], Dbm(s.zone));
         if (reccheck) { ntag_[b[k]] = tag; ntag_out_[b[k]] = tag_out; }
         intern_grew = true;
@@ -1100,6 +1094,7 @@ int Otf::intern(SymState&& s) {
   // pairwise unions happen to be convex.
   {
     for (int j : b) {
+      if (!same_disc(j)) continue;
       Dbm t = zread(j, zsc);              // copy: try_union rewrites its left operand
       if (t.dim() != dim2) continue;
       if (t.try_union(s.zone)) {          // union is exactly convex: absorb, no approximation
@@ -1118,7 +1113,6 @@ int Otf::intern(SymState&& s) {
   if (ntag_out_.size() <= static_cast<std::size_t>(id)) ntag_out_.resize(id + 1, 0);
   ntag_[id] = tag;
   ntag_out_[id] = tag_out;
-  if (nok_.size() <= static_cast<std::size_t>(id)) nok_.resize(id + 1, 0);
   zstore(id, std::move(znew));
   b.push_back(id);
   ++outer_nodes;
@@ -1590,6 +1584,21 @@ bool Otf::dtheta_empty() {
 ///       at the target only ever *relaxes* the clause at the source, so the seed drops stay safe
 ///       under closure. Guard atoms need no seeding: a_LU is already a simulation for the
 ///       original automaton, and the only edge this construction adds is the sink's.
+/// @brief Rebuild a discrete key's invariant zone `Inv(q)` from any node carrying that key.
+///
+/// Must reproduce, step for step, what ::Otf::build_atom_map's seed loop computes: universe,
+/// delay unless the key is frozen, then the invariants. A key whose invariant is unsatisfiable
+/// is "vacuous" and the seed loop skips it, which is what a @c false return reports.
+static bool key_invariant(const Network& net, const SymState& rep, int nc, Dbm& out) {
+  out = Dbm::universe(nc);
+  bool fc, fu;
+  frozen_flags(net, rep.locs, &fc, &fu);
+  std::vector<Constraint> ci;
+  all_invariants(net, rep.locs, ci);
+  if (!fc && !fu) out.delay();
+  return apply_all(out, ci);
+}
+
 bool Otf::build_atom_map(AtomMap& am) {
   const int nc = net.nclocks;
   am.diag.clear();
@@ -1604,12 +1613,23 @@ bool Otf::build_atom_map(AtomMap& am) {
   // 3.4s.
   constexpr std::size_t kMaxAtoms = 64;
 
-  std::unordered_map<std::string, Dbm> invof;
+  // A REPRESENTATIVE, NOT THE ZONE. This map used to hold `Inv(q)` as a dense Dbm per discrete
+  // key, and it was the largest single allocation the engine made -- 130 MB on arbiter14 and
+  // 733 MB on arbiter16, against 107 MB and 542 MB for the entire stored graph. It is read in
+  // exactly one place, the pre-closure below, and the pre-closure does not run at all unless
+  // some key seeded an atom: on every arbiter size the seed is empty, the function returns at
+  // "NOTHING TO CLOSE", and every one of those zones was built and thrown away unread.
+  //
+  // The key's invariant is a function of its location vector, so a node index is a complete
+  // stand-in for it at four bytes. ::key_invariant rebuilds the zone from that node, and the
+  // pre-closure memoises the handful of keys it actually queries.
+  std::unordered_map<std::string, int> invrep;
+  std::unordered_map<std::string, Dbm> invmemo;   // rebuilt on demand, only in the pre-closure
 
   // ---- seed ---------------------------------------------------------------
   for (std::size_t i = 0; i < node.size(); ++i) {
     const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
-    if (invof.count(k)) continue;
+    if (invrep.count(k)) continue;
     SymState u;
     u.locs = node[i].locs;
     u.ints = node[i].ints;
@@ -1621,7 +1641,7 @@ bool Otf::build_atom_map(AtomMap& am) {
     all_invariants(net, u.locs, ci);
     if (!fc && !fu) inv.delay();
     if (!apply_all(inv, ci)) continue;                       // vacuous key
-    invof.emplace(k, inv);
+    invrep.emplace(k, static_cast<int>(i));
     Federation stuck, esc;
     if (!state_has_deadlock(net, u, &stuck, &esc)) continue;  // Dead(q) = empty
     bool open = true;
@@ -1794,15 +1814,28 @@ bool Otf::build_atom_map(AtomMap& am) {
         const int j2 = (a.j > 0 && ((e.r >> a.j) & 1)) ? 0 : a.j;
         if (i2 == j2) continue;                    // both reset: a constant, not an atom
         if (i2 > 0 && j2 > 0) {
-          auto iv = invof.find(e.s);
-          if (iv != invof.end()) {
-            if (iv->second.get(i2, j2) <= a.b) continue;                      // Inv(q) implies
+          const Dbm* ivp = nullptr;
+          {
+            auto mit = invmemo.find(e.s);
+            if (mit == invmemo.end()) {
+              auto rit = invrep.find(e.s);
+              if (rit != invrep.end()) {
+                Dbm rebuilt;
+                if (key_invariant(net, node[rit->second], nc, rebuilt))
+                  mit = invmemo.emplace(e.s, std::move(rebuilt)).first;
+              }
+            }
+            if (mit != invmemo.end()) ivp = &mit->second;
+          }
+          if (ivp) {
+            const Dbm& iv2 = *ivp;
+            if (iv2.get(i2, j2) <= a.b) continue;                             // Inv(q) implies
             // ...and, symmetrically, Inv(q) refutes: the pullback lands outside the source key's
             // invariant, so no zone stored there can ever satisfy it. A closure atom is a
             // constraint from some OTHER key's deadlock, and the further it is pulled back the
             // less it has to do with the invariant it arrives at, so this drop matters more here
             // than at the seed.
-            if (raw_add(iv->second.get(j2, i2), a.b) < kZeroLe) {
+            if (raw_add(iv2.get(j2, i2), a.b) < kZeroLe) {
               ++am.dropped_disjoint;
               continue;
             }

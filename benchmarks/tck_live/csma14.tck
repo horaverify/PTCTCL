@@ -1,0 +1,238 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_csma14.xml
+# y0:(clock)
+clock:1:y0
+# y1:(clock)
+clock:1:y1
+# y2:(clock)
+clock:1:y2
+# y3:(clock)
+clock:1:y3
+# y4:(clock)
+clock:1:y4
+# y5:(clock)
+clock:1:y5
+# y6:(clock)
+clock:1:y6
+# y7:(clock)
+clock:1:y7
+# y8:(clock)
+clock:1:y8
+# y9:(clock)
+clock:1:y9
+# y10:(clock)
+clock:1:y10
+# y11:(clock)
+clock:1:y11
+# y12:(clock)
+clock:1:y12
+# y13:(clock)
+clock:1:y13
+# c:(clock)
+clock:1:c
+# cd:(broadcast (channel))
+# global event: cd
+# begin:(channel)
+# global event: begin
+# end:(channel)
+# global event: end
+# no iodecl
+# compilation of process Bus
+process:Bus
+location:Bus:Idle__clear{initial:}
+location:Bus:Idle__pending{labels:TC_LIVE_PENDING}
+location:Bus:Active__clear{invariant:1 && c <= 1}
+location:Bus:Active__pending{invariant:1 && c <= 1:labels:TC_LIVE_PENDING}
+location:Bus:Transmitting__clear{labels:L_Bus_Transmitting}
+location:Bus:Transmitting__pending{labels:L_Bus_Transmitting,TC_LIVE_PENDING}
+location:Bus:Collided__clear{}
+location:Bus:Collided__pending{labels:TC_LIVE_PENDING}
+event:begin_recv
+edge:Bus:Idle__clear:Active__clear:begin_recv{do:c=0}
+edge:Bus:Idle__pending:Active__pending:begin_recv{do:c=0}
+edge:Bus:Active__clear:Collided__clear:begin_recv{provided:(c <= 1)}
+edge:Bus:Active__pending:Collided__pending:begin_recv{provided:(c <= 1)}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:Bus:Active__clear:Transmitting__clear:tau{provided:(c >= 1)}
+edge:Bus:Active__clear:Transmitting__pending:tau{provided:(c >= 1)}
+edge:Bus:Active__pending:Transmitting__pending:tau{provided:(c >= 1)}
+event:end_recv
+edge:Bus:Transmitting__clear:Idle__clear:end_recv{}
+event:cd_emit
+edge:Bus:Collided__clear:Idle__clear:cd_emit{}
+
+# compilation of process S0
+process:S0
+location:S0:Wait{initial:}
+location:S0:Send{invariant:1 && y0 <= 4:labels:L_S0_Send}
+location:S0:Retry{}
+event:begin_emit
+edge:S0:Wait:Send:begin_emit{do:y0=0}
+event:cd_recv
+edge:S0:Send:Retry:cd_recv{do:y0=0}
+event:end_emit
+edge:S0:Send:Wait:end_emit{provided:(y0 >= 4)}
+edge:S0:Retry:Wait:tau{provided:(y0 >= 1)}
+
+# compilation of process S1
+process:S1
+location:S1:Wait{initial:}
+location:S1:Send{invariant:1 && y1 <= 4:labels:L_S1_Send}
+location:S1:Retry{}
+edge:S1:Wait:Send:begin_emit{do:y1=0}
+edge:S1:Send:Retry:cd_recv{do:y1=0}
+edge:S1:Send:Wait:end_emit{provided:(y1 >= 4)}
+edge:S1:Retry:Wait:tau{provided:(y1 >= 1)}
+
+# compilation of process S2
+process:S2
+location:S2:Wait{initial:}
+location:S2:Send{invariant:1 && y2 <= 4}
+location:S2:Retry{}
+edge:S2:Wait:Send:begin_emit{do:y2=0}
+edge:S2:Send:Retry:cd_recv{do:y2=0}
+edge:S2:Send:Wait:end_emit{provided:(y2 >= 4)}
+edge:S2:Retry:Wait:tau{provided:(y2 >= 1)}
+
+# compilation of process S3
+process:S3
+location:S3:Wait{initial:}
+location:S3:Send{invariant:1 && y3 <= 4}
+location:S3:Retry{}
+edge:S3:Wait:Send:begin_emit{do:y3=0}
+edge:S3:Send:Retry:cd_recv{do:y3=0}
+edge:S3:Send:Wait:end_emit{provided:(y3 >= 4)}
+edge:S3:Retry:Wait:tau{provided:(y3 >= 1)}
+
+# compilation of process S4
+process:S4
+location:S4:Wait{initial:}
+location:S4:Send{invariant:1 && y4 <= 4}
+location:S4:Retry{}
+edge:S4:Wait:Send:begin_emit{do:y4=0}
+edge:S4:Send:Retry:cd_recv{do:y4=0}
+edge:S4:Send:Wait:end_emit{provided:(y4 >= 4)}
+edge:S4:Retry:Wait:tau{provided:(y4 >= 1)}
+
+# compilation of process S5
+process:S5
+location:S5:Wait{initial:}
+location:S5:Send{invariant:1 && y5 <= 4}
+location:S5:Retry{}
+edge:S5:Wait:Send:begin_emit{do:y5=0}
+edge:S5:Send:Retry:cd_recv{do:y5=0}
+edge:S5:Send:Wait:end_emit{provided:(y5 >= 4)}
+edge:S5:Retry:Wait:tau{provided:(y5 >= 1)}
+
+# compilation of process S6
+process:S6
+location:S6:Wait{initial:}
+location:S6:Send{invariant:1 && y6 <= 4}
+location:S6:Retry{}
+edge:S6:Wait:Send:begin_emit{do:y6=0}
+edge:S6:Send:Retry:cd_recv{do:y6=0}
+edge:S6:Send:Wait:end_emit{provided:(y6 >= 4)}
+edge:S6:Retry:Wait:tau{provided:(y6 >= 1)}
+
+# compilation of process S7
+process:S7
+location:S7:Wait{initial:}
+location:S7:Send{invariant:1 && y7 <= 4}
+location:S7:Retry{}
+edge:S7:Wait:Send:begin_emit{do:y7=0}
+edge:S7:Send:Retry:cd_recv{do:y7=0}
+edge:S7:Send:Wait:end_emit{provided:(y7 >= 4)}
+edge:S7:Retry:Wait:tau{provided:(y7 >= 1)}
+
+# compilation of process S8
+process:S8
+location:S8:Wait{initial:}
+location:S8:Send{invariant:1 && y8 <= 4}
+location:S8:Retry{}
+edge:S8:Wait:Send:begin_emit{do:y8=0}
+edge:S8:Send:Retry:cd_recv{do:y8=0}
+edge:S8:Send:Wait:end_emit{provided:(y8 >= 4)}
+edge:S8:Retry:Wait:tau{provided:(y8 >= 1)}
+
+# compilation of process S9
+process:S9
+location:S9:Wait{initial:}
+location:S9:Send{invariant:1 && y9 <= 4}
+location:S9:Retry{}
+edge:S9:Wait:Send:begin_emit{do:y9=0}
+edge:S9:Send:Retry:cd_recv{do:y9=0}
+edge:S9:Send:Wait:end_emit{provided:(y9 >= 4)}
+edge:S9:Retry:Wait:tau{provided:(y9 >= 1)}
+
+# compilation of process S10
+process:S10
+location:S10:Wait{initial:}
+location:S10:Send{invariant:1 && y10 <= 4}
+location:S10:Retry{}
+edge:S10:Wait:Send:begin_emit{do:y10=0}
+edge:S10:Send:Retry:cd_recv{do:y10=0}
+edge:S10:Send:Wait:end_emit{provided:(y10 >= 4)}
+edge:S10:Retry:Wait:tau{provided:(y10 >= 1)}
+
+# compilation of process S11
+process:S11
+location:S11:Wait{initial:}
+location:S11:Send{invariant:1 && y11 <= 4}
+location:S11:Retry{}
+edge:S11:Wait:Send:begin_emit{do:y11=0}
+edge:S11:Send:Retry:cd_recv{do:y11=0}
+edge:S11:Send:Wait:end_emit{provided:(y11 >= 4)}
+edge:S11:Retry:Wait:tau{provided:(y11 >= 1)}
+
+# compilation of process S12
+process:S12
+location:S12:Wait{initial:}
+location:S12:Send{invariant:1 && y12 <= 4}
+location:S12:Retry{}
+edge:S12:Wait:Send:begin_emit{do:y12=0}
+edge:S12:Send:Retry:cd_recv{do:y12=0}
+edge:S12:Send:Wait:end_emit{provided:(y12 >= 4)}
+edge:S12:Retry:Wait:tau{provided:(y12 >= 1)}
+
+# compilation of process S13
+process:S13
+location:S13:Wait{initial:}
+location:S13:Send{invariant:1 && y13 <= 4}
+location:S13:Retry{}
+edge:S13:Wait:Send:begin_emit{do:y13=0}
+edge:S13:Send:Retry:cd_recv{do:y13=0}
+edge:S13:Send:Wait:end_emit{provided:(y13 >= 4)}
+edge:S13:Retry:Wait:tau{provided:(y13 >= 1)}
+
+sync:Bus@begin_recv:S0@begin_emit
+sync:Bus@begin_recv:S1@begin_emit
+sync:Bus@begin_recv:S10@begin_emit
+sync:Bus@begin_recv:S11@begin_emit
+sync:Bus@begin_recv:S12@begin_emit
+sync:Bus@begin_recv:S13@begin_emit
+sync:Bus@begin_recv:S2@begin_emit
+sync:Bus@begin_recv:S3@begin_emit
+sync:Bus@begin_recv:S4@begin_emit
+sync:Bus@begin_recv:S5@begin_emit
+sync:Bus@begin_recv:S6@begin_emit
+sync:Bus@begin_recv:S7@begin_emit
+sync:Bus@begin_recv:S8@begin_emit
+sync:Bus@begin_recv:S9@begin_emit
+sync:Bus@cd_emit:S0@cd_recv?:S1@cd_recv?:S10@cd_recv?:S11@cd_recv?:S12@cd_recv?:S13@cd_recv?:S2@cd_recv?:S3@cd_recv?:S4@cd_recv?:S5@cd_recv?:S6@cd_recv?:S7@cd_recv?:S8@cd_recv?:S9@cd_recv?
+sync:Bus@end_recv:S0@end_emit
+sync:Bus@end_recv:S1@end_emit
+sync:Bus@end_recv:S10@end_emit
+sync:Bus@end_recv:S11@end_emit
+sync:Bus@end_recv:S12@end_emit
+sync:Bus@end_recv:S13@end_emit
+sync:Bus@end_recv:S2@end_emit
+sync:Bus@end_recv:S3@end_emit
+sync:Bus@end_recv:S4@end_emit
+sync:Bus@end_recv:S5@end_emit
+sync:Bus@end_recv:S6@end_emit
+sync:Bus@end_recv:S7@end_emit
+sync:Bus@end_recv:S8@end_emit
+sync:Bus@end_recv:S9@end_emit
