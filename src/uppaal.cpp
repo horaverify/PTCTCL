@@ -849,6 +849,9 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
       continue;
     }
 
+    // `urgent` and `broadcast` are independent prefixes: `urgent chan`, `broadcast chan` and
+    // `urgent broadcast chan` are all legal, and each keyword is recorded rather than peeled
+    // and dropped.
     const bool urgent = starts_word(s, "urgent");
     std::string cs = urgent ? trim(s.substr(6)) : s;
     const bool bcast = starts_word(cs, "broadcast");
@@ -876,6 +879,8 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
           chm[full] = static_cast<int>(net.channels.size());
           net.channels.push_back(full);
           net.chan_broadcast.push_back(bcast ? 1 : 0);
+          net.chan_urgent.push_back(urgent ? 1 : 0);
+          if (urgent) net.has_urgent_chan = true;
         }
         if (br != std::string::npos) dc.chan_arr[nm] = {first, static_cast<int>(count)};
       }
@@ -1066,14 +1071,41 @@ ExprP and_expr(ExprP a, ExprP b) {
   return e;
 }
 
+/// @brief Reject clock guards on edges that synchronise over an urgent channel.
+///
+/// An urgent channel stops time exactly while a synchronisation on it is enabled. Enabledness is
+/// therefore consulted at every state, and the whole design rests on it being decidable from the
+/// discrete state alone: locations plus the integer valuation. A clock guard on such an edge
+/// would make enabledness a property of the ZONE, and worse, one that can switch on partway
+/// through a delay — the delay would then have to be clipped at that instant, a zone subtraction
+/// whose result is in general non-convex.
+///
+/// UPPAAL imposes exactly this restriction on its modelling language, so no model that UPPAAL
+/// itself accepts is refused here. Rejecting is the point: the alternative is the silent
+/// downgrade this replaces, which verified the model against semantics it did not declare.
+///
+/// @param net the finalised network
+/// @throws UppaalError naming the process, edge and channel of the first offending edge
+static void check_urgent_chan_guards(const Network& net) {
+  if (!net.has_urgent_chan) return;
+  for (const auto& proc : net.procs)
+    for (const auto& e : proc.edges) {
+      if (e.sync_chan < 0 || e.sync_chan >= (int)net.chan_urgent.size()) continue;
+      if (!net.chan_urgent[e.sync_chan] || e.clock_guard.empty()) continue;
+      throw UppaalError(
+          "clock guard on an edge synchronising over the urgent channel '" +
+          net.channels[e.sync_chan] + "' (process " + proc.name + ", " +
+          proc.locations[e.src].name + " -> " + proc.locations[e.tgt].name +
+          "). Urgent-channel synchronisation may not be clock-guarded; see KNOWN_LIMITATION.md.");
+    }
+}
+
 /// @brief Load a model file as a network of timed automata.
 /// @param path path to the model file
 /// @return the network, fully finalised
 /// @throws UppaalError if the file cannot be opened or the model cannot be represented
 /// @post Every finalisation analysis has run — bounds, per-location bounds, active clocks and
 ///       integer liveness — so the network is ready to explore.
-/// @warning `urgent chan` is accepted here and downgraded to an ordinary channel without any
-///          diagnostic. See KNOWN_LIMITATION.md §1.
 Network load_uppaal_network(const std::string& path) {
   std::ifstream in(path);
   if (!in) throw UppaalError("cannot open model: " + path);
@@ -1340,6 +1372,7 @@ Network load_uppaal_network(const std::string& path) {
   // laid out, since the key spends bits(hi-lo+1) per cell. Opt-in (--narrow) while it is new:
   // it is an over-approximation and therefore sound, but it changes the packing of every model
   // with integer state, so the parity gate decides when it becomes the default.
+  check_urgent_chan_guards(net);
   if (narrow_ranges_on()) narrow_int_ranges(net);
   net.compute_bounds();
   net.compute_loc_bounds();

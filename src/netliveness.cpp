@@ -124,7 +124,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
                             std::vector<SymState>& out, std::vector<GfpTag>& tags) {
   std::vector<Constraint> inv;
   bool src_committed, src_urgent;
-  frozen_flags(net, s.locs, &src_committed, &src_urgent);
+  frozen_flags(net, s.locs, s.ints, &src_committed, &src_urgent);
 
   // ---- local edges ----
   for (int p = 0; p < net.nprocs(); ++p) {
@@ -141,7 +141,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
       ns.ints = s.ints;
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
       if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
-      if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
+      if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
       if (z1.empty()) continue;
       ns.zone = std::move(z1);
       out.push_back(std::move(ns));
@@ -176,7 +176,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
           if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) ||
               !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
-          if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
+          if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
           if (z1.empty()) continue;
           ns.zone = std::move(z1);
           out.push_back(std::move(ns));
@@ -229,7 +229,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
               for (int r : re.clock_resets) z1.reset(r);
               tg.parts.push_back({pj, ej});
             }
-            if (close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode) && !z1.empty()) {
+            if (close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode) && !z1.empty()) {
               ns.zone = std::move(z1);
               out.push_back(std::move(ns));
               tags.push_back(std::move(tg));
@@ -306,7 +306,7 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
 
   std::vector<Constraint> inv;
   all_invariants(net, tgt.locs, inv);
-  bool nc, nu; frozen_flags(net, tgt.locs, &nc, &nu);
+  bool nc, nu; frozen_flags(net, tgt.locs, tgt.ints, &nc, &nu);
   if (!apply_all(Y, inv)) return gfp_empty(net.nclocks);
   if (!nc && !nu) { Y.down(); if (!apply_all(Y, inv)) return gfp_empty(net.nclocks); }
 
@@ -331,7 +331,7 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
   // operator may write `Z /\ g`; a single valuation may still have to let time pass first.
   std::vector<Constraint> sinv;
   all_invariants(net, src.locs, sinv);
-  bool sc, su; frozen_flags(net, src.locs, &sc, &su);
+  bool sc, su; frozen_flags(net, src.locs, src.ints, &sc, &su);
   if (!sc && !su) { Y.down(); }
   if (!apply_all(Y, sinv)) return gfp_empty(net.nclocks);
   return Y;
@@ -1236,7 +1236,7 @@ void Otf::expand(int u) {
 ///       maximal-run witness out of nothing.
 bool Otf::time_diverges(const SymState& s) const {
   if (net.nclocks == 0) return false;
-  { bool fc, fu; frozen_flags(net, s.locs, &fc, &fu); if (fc || fu) return false; }
+  { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
   Dbm z = s.zone;
   z.delay();
   std::vector<Constraint> inv;
@@ -1431,7 +1431,7 @@ bool Otf::build_all() {
     all_invariants(net, s0.locs, inv);
     if (!apply_all(s0.zone, inv)) return false;     // unreachable init: caller sees no nodes
     bool c, u;
-    frozen_flags(net, s0.locs, &c, &u);
+    frozen_flags(net, s0.locs, s0.ints, &c, &u);
     if (!c && !u) {
       s0.zone.delay();
       apply_all(s0.zone, inv);
@@ -1515,7 +1515,7 @@ bool Otf::dtheta_empty() {
     SymState u; u.locs = node[i].locs; u.ints = node[i].ints;
     u.zone = Dbm::universe(net.nclocks);
     Dbm inv = Dbm::universe(net.nclocks);
-    bool c2, u2; frozen_flags(net, u.locs, &c2, &u2);
+    bool c2, u2; frozen_flags(net, u.locs, u.ints, &c2, &u2);
     std::vector<Constraint> ci; all_invariants(net, u.locs, ci);
     if (!c2 && !u2) inv.delay();
     if (!apply_all(inv, ci)) continue;                        // vacuous key
@@ -1592,7 +1592,7 @@ bool Otf::dtheta_empty() {
 static bool key_invariant(const Network& net, const SymState& rep, int nc, Dbm& out) {
   out = Dbm::universe(nc);
   bool fc, fu;
-  frozen_flags(net, rep.locs, &fc, &fu);
+  frozen_flags(net, rep.locs, rep.ints, &fc, &fu);
   std::vector<Constraint> ci;
   all_invariants(net, rep.locs, ci);
   if (!fc && !fu) out.delay();
@@ -1636,7 +1636,7 @@ bool Otf::build_atom_map(AtomMap& am) {
     u.zone = Dbm::universe(nc);                 // NOT Dbm(nc), which is the ZERO zone
     Dbm inv = Dbm::universe(nc);
     bool fc, fu;
-    frozen_flags(net, u.locs, &fc, &fu);
+    frozen_flags(net, u.locs, u.ints, &fc, &fu);
     std::vector<Constraint> ci;
     all_invariants(net, u.locs, ci);
     if (!fc && !fu) inv.delay();

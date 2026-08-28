@@ -83,23 +83,76 @@ inline void all_invariants(const Network& net, const LocVec& locs, std::vector<C
     for (const auto& c : net.procs[p].locations[locs[p]].invariant) inv.push_back(c);
 }
 
-/// @brief Determine whether a location vector is frozen, i.e. whether time may pass in it.
+/// @brief Is a synchronisation over an urgent channel enabled in this discrete state?
+///
+/// An urgent channel forbids the passage of time exactly while a synchronisation on it is
+/// enabled — the channel analogue of an urgent location, but conditioned on a whole
+/// synchronisation being available rather than on where one process happens to sit.
 ///
 /// @param net  the network under analysis
 /// @param locs the location vector
+/// @param ints the integer variables of the state
+/// @return @c true iff some `a!` over an urgent channel has a partner, i.e. an integer-enabled
+///         `a?` in another process, or — for an urgent *broadcast* channel — is integer-enabled
+///         at all, since a broadcast send fires with zero receivers
+///
+/// @pre Edges synchronising over an urgent channel carry no clock guard. This is checked once at
+///      load time (`check_urgent_chan_guards`) and is what makes the answer a function of the
+///      discrete state alone, with no zone argument: were it zone-dependent, enabledness could
+///      switch on partway through a delay and the delay would need clipping at that instant.
+/// @note Returns immediately when the network declares no urgent channel, which is every model
+///       in the benchmark suite. The whole feature is therefore off the hot path unless used.
+inline bool urgent_sync_enabled(const Network& net, const LocVec& locs, const IntVec& ints) {
+  if (!net.has_urgent_chan) return false;
+  const int nch = static_cast<int>(net.chan_urgent.size());
+  for (int i = 0; i < net.nprocs(); ++i) {
+    for (int ei : net.procs[i].edges_of(locs[i])) {
+      const NEdge& se = net.procs[i].edges[ei];
+      if (se.sync_chan < 0 || se.sync_dir != 1) continue;
+      if (se.sync_chan >= nch || !net.chan_urgent[se.sync_chan]) continue;
+      if (!int_ok(se.int_guard, ints) || !gen_ok(net, se, ints.data(), ints.size())) continue;
+      if (net.chan_broadcast[se.sync_chan]) return true;   // fires with zero receivers
+      for (int j = 0; j < net.nprocs(); ++j) {
+        if (j == i) continue;
+        for (int ej : net.procs[j].edges_of(locs[j])) {
+          const NEdge& re = net.procs[j].edges[ej];
+          if (re.sync_chan != se.sync_chan || re.sync_dir != -1) continue;
+          if (int_ok(re.int_guard, ints) && gen_ok(net, re, ints.data(), ints.size())) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/// @brief Determine whether a discrete state is frozen, i.e. whether time may pass in it.
+///
+/// @param net  the network under analysis
+/// @param locs the location vector
+/// @param ints the integer variables of the state
 /// @param[out] committed  set iff some process sits in a committed location
-/// @param[out] urgent     set iff some process sits in an urgent location
+/// @param[out] urgent     set iff some process sits in an urgent location, or a synchronisation
+///                        over an urgent channel is enabled
 ///
 /// @note Either flag forbids delay. They are reported separately because committed additionally
 ///       restricts *which* edges may fire — only edges leaving a committed location — whereas
 ///       urgent only stops time.
-inline void frozen_flags(const Network& net, const LocVec& locs, bool* committed, bool* urgent) {
+/// @note An enabled urgent-channel synchronisation is reported through the @p urgent flag
+///       precisely because its consequence is the same: time stops, but every edge that was
+///       enabled stays enabled. It is folded in here rather than tested separately at each call
+///       site so that the two engines cannot drift on it; see the file-level warning.
+/// @note This takes the integer valuation as well as the location vector, which an urgent
+///       LOCATION never needed. An urgent channel's urgency depends on a synchronisation being
+///       enabled, and the participants' integer guards are part of that.
+inline void frozen_flags(const Network& net, const LocVec& locs, const IntVec& ints,
+                         bool* committed, bool* urgent) {
   *committed = *urgent = false;
   for (int p = 0; p < net.nprocs(); ++p) {
     const Location& l = net.procs[p].locations[locs[p]];
     if (l.committed) *committed = true;
     if (l.urgent) *urgent = true;
   }
+  if (!*urgent && urgent_sync_enabled(net, locs, ints)) *urgent = true;
 }
 
 /// @brief Reset the clocks whose value can no longer be observed.
@@ -243,6 +296,7 @@ inline void build_broadcast_parts(const Network& net, const SymState& s, const N
 ///
 /// @param net       the network under analysis
 /// @param tgt_locs  the target location vector
+/// @param tgt_ints  the target integer valuation, read only by the frozen test
 /// @param[in,out] z the successor zone, closed in place
 /// @param[out] inv  caller-owned scratch; left holding the target invariant
 /// @param qmask     clocks the query reads, preserved by the active-clock reduction
@@ -261,14 +315,14 @@ inline void build_broadcast_parts(const Network& net, const SymState& s, const N
 ///       successor generator, and across that many call sites the inliner's cost model begins
 ///       declining the larger ones.
 inline __attribute__((always_inline)) bool
-close_succ_zone(const Network& net, const LocVec& tgt_locs, Dbm& z,
+close_succ_zone(const Network& net, const LocVec& tgt_locs, const IntVec& tgt_ints, Dbm& z,
                             std::vector<Constraint>& inv, const std::vector<char>& qmask,
                             const std::vector<std::int32_t>& L,
                             const std::vector<std::int32_t>& U, int emode) {
   all_invariants(net, tgt_locs, inv);
   if (!apply_all(z, inv)) return false;
   bool tgt_committed, tgt_urgent;
-  frozen_flags(net, tgt_locs, &tgt_committed, &tgt_urgent);
+  frozen_flags(net, tgt_locs, tgt_ints, &tgt_committed, &tgt_urgent);
   if (!tgt_committed && !tgt_urgent) { z.delay(); apply_all(z, inv); }
   reset_inactive(net, tgt_locs, z, qmask);
   if (emode == ExLuPlus) z.extrapolate_lu_plus(L, U);

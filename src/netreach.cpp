@@ -264,7 +264,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
                     const std::vector<std::int32_t>& U, const std::vector<char>& qmask, int emode, std::vector<SymState>& out) {
   thread_local std::vector<Constraint> inv;  // reused invariant scratch (see all_invariants)
   bool src_committed, src_urgent;
-  frozen_flags(net, s.locs, &src_committed, &src_urgent);
+  frozen_flags(net, s.locs, s.ints, &src_committed, &src_urgent);
   for (int p = 0; p < net.nprocs(); ++p) {
     if (src_committed && !net.procs[p].locations[s.locs[p]].committed) continue;
     for (int ei : net.procs[p].edges_of(s.locs[p])) {
@@ -282,7 +282,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
       for (const auto& a : e.int_updates) ns.ints[a.var] = a.val;
       if (!gen_apply(net, e, ns.ints.data(), ns.ints.size())) continue;
 
-      if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
+      if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
       if (z1.empty()) continue;
       ns.zone = std::move(z1);
       out.push_back(std::move(ns));
@@ -317,7 +317,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
           for (const auto& a : se.int_updates) ns.ints[a.var] = a.val;  // sender then receiver
           for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
           if (!gen_apply(net, se, ns.ints.data(), ns.ints.size()) || !gen_apply(net, re, ns.ints.data(), ns.ints.size())) continue;
-          if (!close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode)) continue;
+          if (!close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode)) continue;
           if (z1.empty()) continue;
           ns.zone = std::move(z1);
           out.push_back(std::move(ns));
@@ -362,7 +362,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) z1.reset(r);
             }
-            if (close_succ_zone(net, ns.locs, z1, inv, qmask, L, U, emode) && !z1.empty()) {
+            if (close_succ_zone(net, ns.locs, ns.ints, z1, inv, qmask, L, U, emode) && !z1.empty()) {
               ns.zone = std::move(z1);
               out.push_back(std::move(ns));
             }
@@ -554,11 +554,17 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
                            int szidx) {
   thread_local std::vector<Constraint> inv;
   SuccMemo& sm = tls_succ_memo();
-  const bool memo = memo_enabled() && szidx >= 0;
+  // The memo key is (source zone, edge, target LOCATION signature) — it does not carry the
+  // integer valuation, which was sound while the closing pipeline read only the target locations
+  // and the zone. With urgent channels the delay in close_succ_zone additionally depends on the
+  // target INTEGER valuation, so two states agreeing on all three key components but differing
+  // in their integers would alias to one entry with the wrong delay. Widening the key would tax
+  // every model; disabling the memo taxes only models that declare an urgent channel.
+  const bool memo = memo_enabled() && szidx >= 0 && !net.has_urgent_chan;
   std::size_t on = 0;
   auto slot = [&]() -> SymState& { if (on == out.size()) out.emplace_back(); return out[on]; };
   bool src_committed, src_urgent;
-  frozen_flags(net, s.locs, &src_committed, &src_urgent);
+  frozen_flags(net, s.locs, s.ints, &src_committed, &src_urgent);
 
   // ---- location edges ----
   for (int p = 0; p < net.nprocs(); ++p) {
@@ -591,7 +597,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
         ns.zone = szone;
         if (!apply_all(ns.zone, e.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
         for (int r : e.clock_resets) ns.zone.reset(r);
-        if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) {
+        if (!close_succ_zone(net, ns.locs, ns.ints, ns.zone, inv, qmask, L, U, emode)) {
           sm.m.emplace(mk, Dbm()); continue;
         }
         sm.m.emplace(mk, ns.zone);                       // records empty zones too
@@ -602,7 +608,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
       ns.zone = szone;                                    // into reused capacity
       if (!apply_all(ns.zone, e.clock_guard)) continue;
       for (int r : e.clock_resets) ns.zone.reset(r);
-      if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) continue;
+      if (!close_succ_zone(net, ns.locs, ns.ints, ns.zone, inv, qmask, L, U, emode)) continue;
       if (ns.zone.empty()) continue;
       ++on;
     }
@@ -650,7 +656,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
             if (!apply_all(ns.zone, re.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
             for (int r : se.clock_resets) ns.zone.reset(r);
             for (int r : re.clock_resets) ns.zone.reset(r);
-            if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) {
+            if (!close_succ_zone(net, ns.locs, ns.ints, ns.zone, inv, qmask, L, U, emode)) {
               sm.m.emplace(mk, Dbm()); continue;
             }
             sm.m.emplace(mk, ns.zone);
@@ -662,7 +668,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
           if (!apply_all(ns.zone, re.clock_guard)) continue;
           for (int r : se.clock_resets) ns.zone.reset(r);
           for (int r : re.clock_resets) ns.zone.reset(r);
-          if (!close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode)) continue;
+          if (!close_succ_zone(net, ns.locs, ns.ints, ns.zone, inv, qmask, L, U, emode)) continue;
           if (ns.zone.empty()) continue;
           ++on;
         }
@@ -707,7 +713,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
               for (const auto& a : re.int_updates) ns.ints[a.var] = a.val;
               for (int r : re.clock_resets) ns.zone.reset(r);
             }
-            if (close_succ_zone(net, ns.locs, ns.zone, inv, qmask, L, U, emode) &&
+            if (close_succ_zone(net, ns.locs, ns.ints, ns.zone, inv, qmask, L, U, emode) &&
                 !ns.zone.empty()) ++on;
           }
         }
@@ -1293,7 +1299,7 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
   for (std::size_t v = 0; v < net.intvars.size(); ++v) s0->ints[v] = net.intvars[v].init;
   s0->zone = Dbm(net.nclocks);
   std::vector<Constraint> inv;
-  return close_succ_zone(net, s0->locs, s0->zone, inv, qmask, L, U, emode);
+  return close_succ_zone(net, s0->locs, s0->ints, s0->zone, inv, qmask, L, U, emode);
 }
 
 /// @brief The shared symbolic-reachability engine.
@@ -2214,7 +2220,7 @@ bool exists_invariant_run(const Network& net, const DiscPred& phi, Backend backe
     // FROZEN LOCATIONS DO NOT DELAY. Delaying unconditionally reports divergence at a
     // committed/urgent location, where no positive delay is legal at all -- inventing a
     // maximal-run witness out of nothing.
-    { bool fc, fu; frozen_flags(net, s.locs, &fc, &fu); if (fc || fu) return false; }
+    { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
     Dbm z = s.zone;
     z.delay();
     std::vector<Constraint> inv;
@@ -2303,7 +2309,7 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
                                 Federation* stuck, Federation* escapes) {
   if (s.zone.empty()) return false;
   bool src_committed, src_urgent;
-  frozen_flags(net, s.locs, &src_committed, &src_urgent);
+  frozen_flags(net, s.locs, s.ints, &src_committed, &src_urgent);
   const bool frozen = src_committed || src_urgent;  // no delay allowed from this state
 
   // Rebuild the true delay-closure of this state's zone. The stored zone carries the

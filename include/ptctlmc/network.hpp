@@ -70,6 +70,21 @@ struct Network {
   std::vector<IntVar> intvars;
   std::vector<std::string> channels;
   std::vector<char> chan_broadcast;  // 1 if declared `broadcast chan` (fires with 0+ receivers)
+  // 1 if declared `urgent chan`: time may not pass in any state where a synchronisation on this
+  // channel is enabled. Unlike an urgent LOCATION, whose urgency is a property of the location
+  // vector alone, this is a property of the whole discrete state -- which processes sit where AND
+  // the integer valuation, since the participants' integer guards decide enabledness.
+  //
+  // It is NOT a property of the zone, and that is a language restriction rather than an accident:
+  // an edge synchronising on an urgent channel may not carry a clock guard (the same restriction
+  // UPPAAL imposes). load_uppaal_network rejects a model that breaks it. Were clock guards
+  // allowed, enabledness could switch on partway through a delay and the delay would have to be
+  // clipped at that instant, which is a zone subtraction with a non-convex result. See
+  // KNOWN_LIMITATION.md.
+  std::vector<char> chan_urgent;
+  // True iff any entry of `chan_urgent` is set. Every urgency test is gated on this first, so a
+  // network without urgent channels runs exactly the code it ran before they existed.
+  bool has_urgent_chan = false;
   std::vector<NProc> procs;
   // User functions referenced by NEdge::gen_guard / gen_update. Arrays are
   // flattened into consecutive `intvars` cells, so a function body addresses
