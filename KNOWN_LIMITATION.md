@@ -94,7 +94,7 @@ liveness predicate can name a clock that would need protecting from the active-c
 -- Formula is UNSUPPORTED (T0.x > 5)
 ```
 
-and moves on. This limitation is visible in the output, which is what separates it from item 1.
+and moves on. Like every other entry here, it is visible in the output rather than silent.
 
 **Workaround.** Add an observer automaton that turns the timing condition into a location, then
 write the liveness property over that location.
