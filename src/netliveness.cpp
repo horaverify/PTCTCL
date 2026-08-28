@@ -795,6 +795,15 @@ void Otf::setup() {
   U = net.ubound;
   use_alu = !force_exact_ && !network_has_diagonal(net);
   emode = network_has_diagonal(net) ? ExNoDiag : (use_alu ? ExNone : ExLuPlus);
+  // EXPERIMENT ONLY (PTCTLMC_GFP_EXTRAP=1): keep a_LU covering but extrapolate the stored zones
+  // as well, i.e. local Extra_LU+ PLUS subsumption. The invariant above says this is unsound, and
+  // says why -- a spurious stop valuation enters the fixpoint positively and fabricates a
+  // counterexample. The switch exists to measure the claim, not to be used.
+  static const bool force_extrap = [] {
+    const char* e = std::getenv("PTCTLMC_GFP_EXTRAP");
+    return e && *e == '1';
+  }();
+  if (force_extrap && use_alu) emode = ExLuPlus;
   // Clocks the query forces to stay live. A leads-to predicate carries no clock constraints, so
   // this starts all-zero; reset_inactive reads it as "additionally keep alive", so all-zero is
   // MAXIMAL reduction, not none. The reduction is safe for a backward analysis because gfp_pre
