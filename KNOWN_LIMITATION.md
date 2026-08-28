@@ -80,8 +80,9 @@ weaker covering it replaces for every model measured. Not re-measured for this d
 ## 3. `p --> q` predicates may constrain only the discrete state
 
 `E[] phi` and `A<> phi` accept **arbitrary boolean** predicates -- `&&`, `||`, `!`, parentheses,
-any nesting, over locations, integers and clocks mixed. `p --> q` still accepts neither clocks nor
-boolean structure. `E<>` and `A[]` accept clock constraints normally.
+any nesting, over locations, integers and clocks mixed, with no convexity restriction.
+`p --> q` still accepts neither clocks nor boolean structure. `E<>` and `A[]` accept clock
+constraints normally.
 
 **Mechanism.** A plain conjunction is convex and is adjoined to every location invariant, which is
 exact because delay inside a convex region is `(Z /\ C)^ /\ C`. Anything else is handled by
@@ -95,11 +96,10 @@ both clocks and boolean structure. The argument for it is written up
 (`UppalOMP/sec/subsec/clock_predicates.tex`: `p` is a seed intersection, `q` goes through the same
 restriction as `E[]`) but the wiring is not done.
 
-**What a clock predicate cannot be.** A clock atom under a **disjunction** or a **negation** is
-refused. The run must then stay inside a non-convex region, and the backward engine's `Pre`
-through a delay routed around an obstacle does not exist. `E[] x <= 2 || x >= 8` is refused;
-`E[] x <= 2 && !P.T` is not, because the non-convexity is discrete and a delay cannot leave a
-discrete region. UPPAAL decides both.
+**Clock predicates are unrestricted.** A clock atom under a disjunction or a negation is
+accepted: the run must then stay inside a non-convex region, which is handled by putting the
+negation into DNF and routing every delay around each convex term --
+`ptctlmc::detail::delay_avoiding` forward, `ptctlmc::detail::pre_avoiding` backward.
 
 **Historical note, because it is the reason the engine changed.** When `E[]` first accepted clock
 constraints it was still decided by *forward cycle detection on a subsumed graph* — unsound per

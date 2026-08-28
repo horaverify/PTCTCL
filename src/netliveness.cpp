@@ -1657,20 +1657,19 @@ bool Otf::build_all() {
     if (!apply_all(s0.zone, inv)) return false;     // unreachable init: caller sees no nodes
     bool c, u;
     frozen_flags(net, s0.locs, s0.ints, &c, &u);
-    if (!c && !u) {
-      s0.zone.delay();
-      apply_all(s0.zone, inv);
-    }
-    // The forbidden region applies to the ROOT as well. This construction does not go through
-    // close_succ_zone, so without this the initial zone escapes psi entirely -- and since every
-    // verdict is read at the initial vertex, that alone decides queries wrongly.
+    // The forbidden region applies to the ROOT too, and it must REPLACE the delay rather than
+    // follow it. This construction does not go through close_succ_zone, and a plain delay
+    // followed by a restriction is the very error the psi-restriction exists to avoid: the zone
+    // travels through the region first and is only cut afterwards, so the root ends up holding
+    // valuations no run can reach without leaving psi. Every verdict is read at the initial
+    // vertex, so that alone decides queries wrongly.
     if (avoid_ && avoid_->applies(s0.locs, s0.ints)) {
       Federation parts;
       if (!c && !u) avoid_->delay(s0.zone, s0.locs, s0.ints, parts);
       else avoid_->restrict(s0.zone, s0.locs, s0.ints, parts);
-      // The root must be a single zone. Keep the pieces that survive as one only when their union
-      // is exactly convex; otherwise take the largest, which under-approximates the root and can
-      // only lose a witness, never invent one.
+      // The root must be a single zone. Merge only where the union is exactly convex; otherwise
+      // keep the largest piece, which UNDER-approximates the root and so can lose a witness but
+      // never invent one.
       Dbm merged;
       bool have = false;
       for (Dbm& pz : parts) {
@@ -1681,6 +1680,9 @@ bool Otf::build_all() {
       }
       if (!have) return false;
       s0.zone = std::move(merged);
+    } else if (!c && !u) {
+      s0.zone.delay();
+      apply_all(s0.zone, inv);
     }
     reset_inactive(net, s0.locs, s0.zone, qmask);
     if (emode == ExLuPlus) s0.zone.extrapolate_lu_plus(L, U);

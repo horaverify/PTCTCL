@@ -1636,7 +1636,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     if (!bp.ok || bp.i != text.size()) return false;
     std::vector<const BExpr*> conj;
     flatten_and(e, conj);
-    std::vector<const BExpr*> disc;
+    std::vector<const BExpr*> disc, nonconvex;
     for (const BExpr* k : conj) {
       if (!has_clock(*k)) { disc.push_back(k); continue; }
       if (k->kind == BExpr::Atom) {                  // a bare clock atom: convex, an invariant
@@ -1645,13 +1645,48 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
         cc.insert(cc.end(), a.begin(), a.end());
         continue;
       }
-      // A clock under a disjunction or a negation: the run must stay inside a NON-CONVEX region.
-      // detail::pre_avoiding is the backward operator that case needs and it is implemented and
-      // validated, but wiring it produced unstable verdicts on multi-clock models -- the LU and
-      // active-clock side conditions have no invariant to ride on here, and patching them by hand
-      // moved which queries were wrong rather than fixing them. Refused until that is settled.
-      return false;
+      nonconvex.push_back(k);                        // clock under a disjunction or a negation
     }
+    // A conjunct putting a clock under a disjunction or a negation is not an invariant: the run
+    // must stay inside a non-convex region. Its NEGATION goes into DNF, giving convex terms with
+    // discrete guards that detail::DelayAvoidSet routes each delay around -- forward through
+    // delay_avoiding, backward through pre_avoiding.
+    for (const BExpr* k : nonconvex)
+      for (const auto& term : to_dnf(*k, /*neg=*/true)) {
+        // A negated literal can itself be a disjunction -- `x == 3` parses to TWO constraints, so
+        // `!(x == 3)` is `x < 3 \/ x > 3` -- and a forbidden term must stay a conjunction, so the
+        // term splits into one copy per alternative, cross-producted over every such literal.
+        DiscTerm base;
+        std::vector<std::vector<Constraint>> alts;
+        for (const auto& lit : term) {
+          std::vector<std::string> one{lit.first};
+          DiscPred acc;
+          if (!lit.second) {
+            if (!build_atoms(one, acc, false)) return false;
+          } else {
+            std::vector<Constraint> cc2; std::vector<IntAtom> ic2;
+            parse_net_atom(lit.first, cm, im, cc2, ic2);
+            if (cc2.size() > 1) {
+              std::vector<Constraint> a;
+              for (const auto& c : cc2) a.push_back(negate(c));
+              alts.push_back(std::move(a));
+              continue;
+            }
+            if (!build_atoms(one, acc, true)) return false;
+          }
+          base.locs.insert(base.locs.end(), acc.locs.begin(), acc.locs.end());
+          base.ints.insert(base.ints.end(), acc.ints.begin(), acc.ints.end());
+          base.clocks.insert(base.clocks.end(), acc.clocks.begin(), acc.clocks.end());
+        }
+        std::vector<DiscTerm> expanded{base};
+        for (const auto& a : alts) {
+          std::vector<DiscTerm> next;
+          for (const auto& tt : expanded)
+            for (const auto& c : a) { DiscTerm cp = tt; cp.clocks.push_back(c); next.push_back(std::move(cp)); }
+          expanded.swap(next);
+        }
+        for (auto& tt : expanded) ndnf.push_back(std::move(tt));
+      }
     // The discrete conjuncts, negated and put in DNF: that is exactly `!psi_discrete`.
     for (const BExpr* k : disc)
       for (const auto& term : to_dnf(*k, /*neg=*/true)) {
