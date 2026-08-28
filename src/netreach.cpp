@@ -2197,6 +2197,31 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 /// @note Zones must be extrapolated here rather than kept exact, because termination of the
 ///       cycle search depends on the zone graph being finite; a_LU pruning alone does not give
 ///       that for a greatest-fixpoint search.
+/// @brief Opt IN to per-location LU bounds in ::exists_invariant_run (PTCTLMC_EG_LOCLU=1).
+///
+/// Off by default because it was measured and it loses. Per-location bounds are pointwise coarser
+/// than the global pair, so they relax each individual zone further -- but this search dedups
+/// nodes by EXACT zone equality and has no subsumption at all, so what it needs from an
+/// abstraction is not that each zone be relaxed further, it is that many zones be mapped onto the
+/// SAME representative. One global L/U puts every zone in one lattice; per-location bounds give
+/// each discrete state its own, and zones that would have become identical no longer do.
+///
+/// Measured, `E[] <clock bound>`, states explored, per-location / global:
+///
+///     fischer4 x0<=100   55.8x      arbiter4 x0<=50   5.2x
+///     fischer5 x0<=100  413.4x      twolock4 x0<=50   9.1x
+///     fischer5 x0<=20     7.1x      phil4    c0<=50   1.00x
+///     fischer6 x0<=20    12.0x      grc4     x0<=50   0.62x
+///
+/// grc4 is the one model that gains, and phil4 is indifferent; everything else loses heavily.
+/// Verdicts are unchanged throughout, so this is a cost question and not a soundness one. Kept
+/// behind the switch because the grc4 direction suggests the picture depends on how much the
+/// per-location bounds actually vary across the location vector, which is worth revisiting.
+static bool use_loc_lu() {
+  static const bool v = [] { const char* e = std::getenv("PTCTLMC_EG_LOCLU"); return e && *e == '1'; }();
+  return v;
+}
+
 bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend backend,
                           ReachStats* stats) {
   (void)backend;  // the cycle detection below is sequential
@@ -2249,10 +2274,20 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
       av.parts.push_back(std::move(one));
       // The avoided constants must reach the LU arrays for the same reason a maintained
       // predicate's do: Extra_LU+ would otherwise merge zones on opposite sides of the boundary.
+      // Same direction rule as the query flooring below: an upper bound raises U, a lower bound
+      // raises L, and only a diagonal raises both.
       for (const auto& c : t.clocks) {
         const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
-        if (c.i) { L[c.i] = std::max(L[c.i], k); U[c.i] = std::max(U[c.i], k); qmask[c.i] = 1; }
-        if (c.j) { L[c.j] = std::max(L[c.j], k); U[c.j] = std::max(U[c.j], k); qmask[c.j] = 1; }
+        if (c.i) qmask[c.i] = 1;
+        if (c.j) qmask[c.j] = 1;
+        if (c.i && c.j) {
+          L[c.i] = std::max(L[c.i], k); U[c.i] = std::max(U[c.i], k);
+          L[c.j] = std::max(L[c.j], k); U[c.j] = std::max(U[c.j], k);
+        } else if (c.j == 0 && c.i) {
+          U[c.i] = std::max(U[c.i], k);
+        } else if (c.i == 0 && c.j) {
+          L[c.j] = std::max(L[c.j], k);
+        }
       }
     }
     // Bound AFTER the vector has stopped growing, or the pointers would dangle.
@@ -2260,6 +2295,75 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
       av.parts[i].when = (guards[i].locs.empty() && guards[i].ints.empty()) ? nullptr : &guards[i];
     if (!av.parts.empty()) avoid = &av;
   }
+
+  // Per-LOCATION LU bounds for the extrapolation, instead of one global pair.
+  //
+  // `lbound_loc[p][l][c]` is the largest constant clock c is compared against on any path leaving
+  // process p's location l before c is reset; it is at most the global bound and usually far
+  // less, so Extra_LU+ under it merges strictly more zones. The forward reachability engine has
+  // used these since they were computed; this path did not, and on a clock-bounded E[] query --
+  // the only kind that explores at all, since an unbounded one finds time divergence at the root
+  // and stops -- the global bound is exactly the wrong one, because the query's own constant
+  // floors it at every location whether or not that location can reach a guard.
+  //
+  // The query's constants must still floor the result. A state satisfying the property may not be
+  // abstracted away, and `lbound_loc` knows nothing about the query.
+  std::vector<std::int32_t> qL(net.nclocks + 1, kAluNegInf), qU(net.nclocks + 1, kAluNegInf);
+  {
+    // Direction matters. A constraint is `x_i - x_j <= bound`, so with j == 0 it is an UPPER
+    // bound on x_i and floors U alone, and with i == 0 it is a LOWER bound on x_j and floors L
+    // alone. Flooring both from every constraint is sound but badly imprecise: `x0 <= 100` would
+    // raise L(x0) from 2 to 100, and Extra_LU+ under an inflated L merges almost nothing --
+    // measured at 55x the state count on fischer4. A diagonal constrains neither clock on its
+    // own, so it floors both, conservatively.
+    auto floor_with = [&](const std::vector<Constraint>& cs) {
+      for (const auto& c : cs) {
+        const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
+        if (c.i && c.j) {                     // diagonal
+          qL[c.i] = std::max(qL[c.i], k); qU[c.i] = std::max(qU[c.i], k);
+          qL[c.j] = std::max(qL[c.j], k); qU[c.j] = std::max(qU[c.j], k);
+        } else if (c.j == 0 && c.i) {         // x_i <= k
+          qU[c.i] = std::max(qU[c.i], k);
+        } else if (c.i == 0 && c.j) {         // x_j >= k
+          qL[c.j] = std::max(qL[c.j], k);
+        }
+      }
+    };
+    floor_with(phi.clocks);
+    for (const auto& t : phi.forbid) floor_with(t.clocks);
+  }
+  const bool loclu = !net.lbound_loc.empty() && emode == ExLuPlus && use_loc_lu();
+  const bool lu_identity = [] { const char* e = std::getenv("PTCTLMC_EG_LUIDENT"); return e && *e == '1'; }();
+  auto loc_lu = [&](const LocVec& locs, std::vector<std::int32_t>& L2, std::vector<std::int32_t>& U2) {
+    if (lu_identity) { L2 = L; U2 = U; return; }   // diagnostic: must reproduce the global run
+    L2.assign(net.nclocks + 1, kAluNegInf);
+    U2.assign(net.nclocks + 1, kAluNegInf);
+    for (int p = 0; p < net.nprocs(); ++p)
+      for (int c = 1; c <= net.nclocks; ++c) {
+        L2[c] = std::max(L2[c], net.lbound_loc[p][locs[p]][c]);
+        U2[c] = std::max(U2[c], net.ubound_loc[p][locs[p]][c]);
+      }
+    for (int c = 1; c <= net.nclocks; ++c) { L2[c] = std::max(L2[c], qL[c]); U2[c] = std::max(U2[c], qU[c]); }
+    // kAluNegInf is the sentinel of the aLU SUBSUMPTION test, not of the extrapolation, and the
+    // two do not share a convention. dbm_extrapolate_lu_plus reads U[j] through `lt(-U[j])`, so a
+    // sentinel of -2^29 becomes a huge FINITE bound rather than freeing the entry, and the zone
+    // graph fills with distinct enormous constants -- measured at 408x the state count on
+    // fischer5. A clock with no guard from here has no constants to dominate, so 0 dominates them
+    // vacuously and is both sound and maximally coarse.
+    for (int c = 0; c <= net.nclocks; ++c) {
+      if (L2[c] < 0) L2[c] = 0;
+      if (U2[c] < 0) U2[c] = 0;
+    }
+    L2[0] = U2[0] = 0;
+  };
+  // With per-location bounds the extrapolation cannot happen inside the successor pipeline, which
+  // sees one L/U for the whole expansion. It is deferred instead: the pipeline runs with ExNone
+  // and each successor is extrapolated here under its OWN target's bounds. The order is
+  // unchanged -- extrapolation still comes last, after the invariant, the delay and the
+  // active-clock reduction.
+  const int succ_emode = loclu ? ExNone : emode;
+  std::vector<std::int32_t> eL, eU;
+  auto extrap = [&](SymState& s) { if (!loclu) return; loc_lu(s.locs, eL, eU); s.zone.extrapolate_lu_plus(eL, eU); };
 
   // Does any valuation of this vertex satisfy the maintained predicate?
   //
@@ -2284,8 +2388,10 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
 
   SymState s0;
   std::vector<Dbm> root_split;
-  if (!initial_symbolic_state(net, qmask, L, U, emode, &s0, avoid, avoid ? &root_split : nullptr))
+  if (!initial_symbolic_state(net, qmask, L, U, succ_emode, &s0, avoid, avoid ? &root_split : nullptr))
     return false;
+  extrap(s0);
+  for (Dbm& rz : root_split) { SymState t; t.locs = s0.locs; t.ints = s0.ints; t.zone = std::move(rz); extrap(t); rz = std::move(t.zone); }
   if (!sat(s0)) return false;  // no run from the initial state can stay in phi
 
   // Build the phi-restricted extrapolated zone graph (nodes deduped by exact zone).
@@ -2345,9 +2451,11 @@ bool exists_invariant_run(const Network& net_in, const DiscPred& phi, Backend ba
     if (stats) ++stats->explored;
     if (time_diverges(node[u])) return true;
     std::vector<SymState> succ;
-    successors_net(net, node[u], node[u].zone, L, U, qmask, emode, succ, avoid);
+    successors_net(net, node[u], node[u].zone, L, U, qmask, succ_emode, succ, avoid);
     for (auto& ns : succ) {
       if (!sat(ns)) continue;
+      extrap(ns);
+      if (ns.zone.empty()) continue;
       const int v = intern(std::move(ns));
       adj[u].push_back(v);
     }
