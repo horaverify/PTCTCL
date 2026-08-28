@@ -105,3 +105,7 @@ benchmarks/results_complete/complete.pgid
 old_stuff/
 
 .tmp/
+
+# Deliberately untracked regression models (see tests/models/liveness-regressions/README.md).
+# Ignored so a broad `git add -A tests` cannot re-add them; this has happened twice.
+/tests/models/liveness-regressions/
