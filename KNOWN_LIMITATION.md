@@ -95,8 +95,20 @@ both clocks and boolean structure. The argument for it is written up
 (`UppalOMP/sec/subsec/clock_predicates.tex`: `p` is a seed intersection, `q` goes through the same
 restriction as `E[]`) but the wiring is not done.
 
-**See also §7** -- `E[]` accepting clock constraints made a pre-existing soundness weakness in
-the `E[]` search reachable, and that is currently the more serious problem of the two.
+**What a clock predicate cannot be.** A clock atom under a **disjunction** or a **negation** is
+refused. The run must then stay inside a non-convex region, and the backward engine's `Pre`
+through a delay routed around an obstacle does not exist. `E[] x <= 2 || x >= 8` is refused;
+`E[] x <= 2 && !P.T` is not, because the non-convexity is discrete and a delay cannot leave a
+discrete region. UPPAAL decides both.
+
+**Historical note, because it is the reason the engine changed.** When `E[]` first accepted clock
+constraints it was still decided by *forward cycle detection on a subsumed graph* — unsound per
+Laarman 2013 / Tripakis 2009, and the very reason `p --> q` is evaluated backward. Clock-free
+`E[]` queries never exposed it, because with every clock unbounded time divergence is itself a
+witness and the search stops at the initial state; only a clock-bounded query explores far enough
+to close a spurious cycle. `benchmarks/eg_queries` found five wrong verdicts on the first run.
+`E[]` is now decided by ptctlmc::exists_invariant_run_otf, the same greatest fixpoint, seeded at
+the initial vertex; the forward cycle search is gone.
 
 **Mechanism.** `DiscPred` (`include/ptctlmc/netreach.hpp`) carries `clocks`, a conjunction the run
 maintains, and `avoid`, a conjunction the run must never enter; at most one is ever populated.
@@ -206,45 +218,3 @@ three times. `benchmarks/scripts/run_live_pipeline.sh` therefore runs ptctlmc li
 count only; running three would triple a multi-day sweep for no information.
 
 ---
-
-## 7. `E[]` on a clock-bounded predicate disagrees with UPPAAL, in both directions
-
-**This is the currently open soundness issue.** Discovered by `benchmarks/eg_queries`, which is
-committed as NOT VALIDATED for that reason.
-
-| model | query | ptctlmc | UPPAAL |
-|---|---|---|---|
-| fischer4 | `E[] (P0.idle \|\| P0.wait) && x0 <= 40` | satisfied | **NOT** |
-| arbiter4 | `E[] (C0.idle \|\| C0.want) && x0 <= 40` | satisfied | **NOT** |
-| twolock4 | `E[] (P0.idle \|\| P0.waitA) && x0 <= 30` | satisfied | **NOT** |
-| grc4 | `E[] x0 <= 15 && !T0.in` | **NOT** | satisfied |
-| grc4 | `E[] (T0.far \|\| T0.near) && x0 <= 15` | **NOT** | satisfied |
-
-**Mechanism, for the first three.** `exists_invariant_run` decides `E[]` by forward cycle
-detection on an **extrapolated** zone graph. `UppalOMP/sec/subsec/liveness.tex` states, citing
-Laarman 2013 and Tripakis 2009, that redirecting a successor to a strictly larger covering zone
-can introduce cycles corresponding to no concrete execution — which is precisely why the leads-to
-engine evaluates backward over the same graph instead. Extra_LU+ frees the bounds on the clocks
-the query does not mention, so a cycle can close on an abstracted zone that no run realises.
-Spurious cycles add witnesses, which is the direction these three run.
-
-**The grc4 pair is not explained by that** and is a separate, undiagnosed defect: a spurious cycle
-can only turn NOT into satisfied, never the reverse, so those two are a *missing* witness.
-
-**Not introduced by the clock-predicate work; made reachable by it.** Every clock-free `E[]` query
-terminates at the initial state, because with no clock constrained `time_diverges` is itself a
-witness — `E[] !(P1.cs && P2.cs)` on fischer5 explores 1 symbolic state. Only a clock bound forbids
-that trivial witness and drives the search deep enough to close a cycle. The `d4fb785` binary
-agrees with UPPAAL on every clock-free `E[]` query tried and cannot run these at all.
-
-**The predicate machinery is exonerated.** The DNF and the LU arrays were dumped for the fischer4
-query and are correct: two terms, one carrying the two negated locations and one the negated clock
-atom, with `L(x0)` correctly floored to 40.
-
-**Consequence.** `E[]` and `A<>` verdicts on predicates that constrain a clock are not
-trustworthy. `E<>`, `A[]` and `p --> q` are unaffected — they do not go through this search.
-
-**Fix direction.** The same one the leads-to engine already took: decide `E[]` by a backward
-greatest fixpoint over the stored graph rather than by forward cycle detection, reusing
-`netliveness.cpp` rather than `exists_invariant_run`. `E[] psi` is the paper's own normal form, so
-the engine is already the right shape for it.
