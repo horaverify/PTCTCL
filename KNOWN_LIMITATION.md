@@ -79,21 +79,24 @@ weaker covering it replaces for every model measured. Not re-measured for this d
 
 ## 3. `p --> q` predicates may constrain only the discrete state
 
-`E[] phi` and `A<> phi` accept clock constraints. `p --> q` does not, and neither form accepts a
-predicate mixing a clock atom with a location or integer atom under a negation.
-`E<>` and `A[]` accept clock constraints normally.
+`E[] phi` and `A<> phi` accept **arbitrary boolean** predicates -- `&&`, `||`, `!`, parentheses,
+any nesting, over locations, integers and clocks mixed. `p --> q` still accepts neither clocks nor
+boolean structure. `E<>` and `A[]` accept clock constraints normally.
 
-**What works.** `E[] phi` takes any conjunction of clock atoms: the conjunction is convex, so it
-is adjoined to every location invariant, which is exact because delay inside a convex region is
-`(Z /\ C)^ /\ C`. `A<> phi` takes any conjunction of clock atoms too, by a different route --
-`A<> phi` is `!E[] !phi`, and the negation of a conjunction is a *disjunction*, hence not an
-invariant, so `phi` is kept un-negated and `detail::delay_avoiding` routes each delay around it.
+**Mechanism.** A plain conjunction is convex and is adjoined to every location invariant, which is
+exact because delay inside a convex region is `(Z /\ C)^ /\ C`. Anything else is handled by
+putting the NEGATION of the predicate into DNF: each term is a conjunction, hence a discrete guard
+plus a convex clock region, and `detail::DelayAvoidSet` routes each delay around every term whose
+guard holds. The non-convexity lives in the union of terms and is absorbed by intersecting the
+per-term results, so no non-convex set is ever represented as a predicate.
 
-**What does not.** `A<> (P.T && x >= 0)` -- a negation spanning both a discrete and a clock atom
--- is a disjunction across two different kinds of state, which neither mechanism represents. It
-is refused, and UPPAAL decides it. Likewise `p --> q` refuses clock atoms in either position; the
-argument it needs is in place (`p` is a seed intersection, `q` goes through the same restriction
-as `E[]` -- see `UppalOMP/sec/subsec/clock_predicates.tex`), but the wiring is not done.
+**What is missing.** `leads_to_otf` reads only `DiscPred::locs` and `ints`, so `p --> q` refuses
+both clocks and boolean structure. The argument for it is written up
+(`UppalOMP/sec/subsec/clock_predicates.tex`: `p` is a seed intersection, `q` goes through the same
+restriction as `E[]`) but the wiring is not done.
+
+**See also §7** -- `E[]` accepting clock constraints made a pre-existing soundness weakness in
+the `E[]` search reachable, and that is currently the more serious problem of the two.
 
 **Mechanism.** `DiscPred` (`include/ptctlmc/netreach.hpp`) carries `clocks`, a conjunction the run
 maintains, and `avoid`, a conjunction the run must never enter; at most one is ever populated.
@@ -202,4 +205,46 @@ step, and is not implemented.
 three times. `benchmarks/scripts/run_live_pipeline.sh` therefore runs ptctlmc liveness at one thread
 count only; running three would triple a multi-day sweep for no information.
 
+---
 
+## 7. `E[]` on a clock-bounded predicate disagrees with UPPAAL, in both directions
+
+**This is the currently open soundness issue.** Discovered by `benchmarks/eg_queries`, which is
+committed as NOT VALIDATED for that reason.
+
+| model | query | ptctlmc | UPPAAL |
+|---|---|---|---|
+| fischer4 | `E[] (P0.idle \|\| P0.wait) && x0 <= 40` | satisfied | **NOT** |
+| arbiter4 | `E[] (C0.idle \|\| C0.want) && x0 <= 40` | satisfied | **NOT** |
+| twolock4 | `E[] (P0.idle \|\| P0.waitA) && x0 <= 30` | satisfied | **NOT** |
+| grc4 | `E[] x0 <= 15 && !T0.in` | **NOT** | satisfied |
+| grc4 | `E[] (T0.far \|\| T0.near) && x0 <= 15` | **NOT** | satisfied |
+
+**Mechanism, for the first three.** `exists_invariant_run` decides `E[]` by forward cycle
+detection on an **extrapolated** zone graph. `UppalOMP/sec/subsec/liveness.tex` states, citing
+Laarman 2013 and Tripakis 2009, that redirecting a successor to a strictly larger covering zone
+can introduce cycles corresponding to no concrete execution — which is precisely why the leads-to
+engine evaluates backward over the same graph instead. Extra_LU+ frees the bounds on the clocks
+the query does not mention, so a cycle can close on an abstracted zone that no run realises.
+Spurious cycles add witnesses, which is the direction these three run.
+
+**The grc4 pair is not explained by that** and is a separate, undiagnosed defect: a spurious cycle
+can only turn NOT into satisfied, never the reverse, so those two are a *missing* witness.
+
+**Not introduced by the clock-predicate work; made reachable by it.** Every clock-free `E[]` query
+terminates at the initial state, because with no clock constrained `time_diverges` is itself a
+witness — `E[] !(P1.cs && P2.cs)` on fischer5 explores 1 symbolic state. Only a clock bound forbids
+that trivial witness and drives the search deep enough to close a cycle. The `d4fb785` binary
+agrees with UPPAAL on every clock-free `E[]` query tried and cannot run these at all.
+
+**The predicate machinery is exonerated.** The DNF and the LU arrays were dumped for the fischer4
+query and are correct: two terms, one carrying the two negated locations and one the negated clock
+atom, with `L(x0)` correctly floored to 40.
+
+**Consequence.** `E[]` and `A<>` verdicts on predicates that constrain a clock are not
+trustworthy. `E<>`, `A[]` and `p --> q` are unaffected — they do not go through this search.
+
+**Fix direction.** The same one the leads-to engine already took: decide `E[]` by a backward
+greatest fixpoint over the stored graph rather than by forward cycle detection, reusing
+`netliveness.cpp` rather than `exists_invariant_run`. `E[] psi` is the paper's own normal form, so
+the engine is already the right shape for it.
