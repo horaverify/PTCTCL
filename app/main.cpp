@@ -94,13 +94,20 @@ int run(const char* model, const char* query, ptctlmc::Backend backend) {
         net_loaded = true;
         try { net_fb = load_uppaal_network(model); net_ok = true; } catch (...) { net_ok = false; }
       }
-      const bool prefer_net = net_ok && !network_has_diagonal(net_fb);
+      // A model declaring an `urgent chan` must take the network route whatever else is true of
+      // it. The single-TA engine in reach.cpp has no notion of channels at all -- it drops the
+      // synchronisation label and treats the edge as local -- so it cannot see that a
+      // synchronisation is enabled and would let time pass where the model forbids it. That is
+      // exactly the silent wrong verdict urgent channels were added to remove, so the diagonal
+      // preference below yields to it: weaker covering is a cost, a wrong verdict is not.
+      const bool urgent_chan = net_ok && net_fb.has_urgent_chan;
+      const bool prefer_net = net_ok && (!network_has_diagonal(net_fb) || urgent_chan);
       bool net_tried = false, done = false;
       if (prefer_net) {
         net_tried = true;
         done = check_net_query(net_fb, q, &sat, backend, &st);
       }
-      if (!done && check_query(ta, q, &sat, backend, &st)) done = true;
+      if (!done && !urgent_chan && check_query(ta, q, &sat, backend, &st)) done = true;
       // E[] / A<> / A[] / leads-to on a single automaton land here when the route above declined.
       else if (!done && net_ok && !net_tried)
         done = check_net_query(net_fb, q, &sat, backend, &st);
