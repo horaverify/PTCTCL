@@ -4,6 +4,7 @@
 #include "ptctlmc/dbm.hpp"
 #include "ptctlmc/reach.hpp"
 #include "ptctlmc/ta.hpp"
+#include "ptctlmc/detail/net_semantics.hpp"
 
 namespace {
 int g_fail = 0, g_checks = 0;
@@ -124,7 +125,56 @@ void test_reachability() {
 
 }  // namespace
 
+// ---- delay_avoiding: time may pass, but never through the convex region `forbid` ----
+//
+// The operator behind a liveness predicate that must be AVOIDED rather than maintained, i.e.
+// the complement of a conjunction, which is a disjunction and so is not an invariant.
+void test_delay_avoiding() {
+  using detail::delay_avoiding;
+  auto members = [](const Federation& f) {  // total measure as [lo,hi] pairs, for 1 clock
+    std::vector<std::pair<int,int>> v;
+    for (const auto& z : f) if (!z.empty()) v.push_back({-raw_bound(z.get(0,1)), raw_bound(z.get(1,0))});
+    return v;
+  };
+  auto covers = [](const Federation& f, const Dbm& probe) { return fed_covers(f, probe); };
+
+  Dbm forbid = zone1(5, 10);              // avoid 5 <= x <= 10
+  Dbm fup = forbid; fup.delay();          // forbid^ = x >= 5
+  Federation out;
+
+  // From x = 0: may delay up to but NOT into [5,10]; x=4 reachable, x=5 and x=12 are not.
+  delay_avoiding(zone1(0, 0), forbid, fup, out);
+  CHECK(!out.empty());
+  CHECK(covers(out, zone1(4, 4)));
+  CHECK(!covers(out, zone1(5, 5)));
+  CHECK(!covers(out, zone1(12, 12)));
+
+  // From x = 12 -- already past the obstacle -- time is unconstrained.
+  delay_avoiding(zone1(12, 12), forbid, fup, out);
+  CHECK(covers(out, zone1(12, 12)));
+  CHECK(covers(out, zone1(99, 99)));
+  CHECK(!covers(out, zone1(7, 7)));
+
+  // A zone straddling the obstacle keeps both sides and joins neither: the result is genuinely
+  // non-convex, which is the whole reason this returns a federation.
+  delay_avoiding(zone1(0, 20), forbid, fup, out);
+  CHECK(covers(out, zone1(4, 4)));
+  CHECK(covers(out, zone1(11, 11)));
+  CHECK(covers(out, zone1(99, 99)));
+  CHECK(!covers(out, zone1(5, 5)));
+  CHECK(!covers(out, zone1(10, 10)));
+  CHECK(out.size() >= 2);                 // no single zone denotes that set
+
+  // Degenerate: nothing forbidden is an ordinary delay.
+  Dbm none(1);                            // empty
+  delay_avoiding(zone1(3, 3), none, none, out);
+  CHECK(out.size() == 1);
+  CHECK(covers(out, zone1(99, 99)));
+  (void)members;
+}
+
 int main() {
+  test_delay_avoiding();
   test_basic();
   test_reset_delay();
   test_inclusion();
