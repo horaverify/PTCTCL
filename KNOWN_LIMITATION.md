@@ -3,35 +3,54 @@
 What this engine does *not* do, and why. Each entry gives the mechanism, not just the symptom, so
 that a surprising result can be matched against the cause.
 
-Ordered by how easily the limitation goes unnoticed. The first one is silent.
+Ordered by how easily the limitation goes unnoticed. None of them is silent: each is
+reported, refused or visible in the output.
 
 ---
 
-## 1. `urgent chan` is accepted and silently downgraded to an ordinary channel
+## 1. An urgent-channel synchronisation may not be clock-guarded
 
-**This is the one that fails silently.** A model declaring `urgent chan` is verified against
-different semantics than it declares, and nothing in the output says so.
+`urgent chan` is implemented. What is **rejected**, with a diagnostic naming the process, edge and
+channel, is a clock guard on an edge that synchronises over one:
 
-**Mechanism.** The declaration parser strips the keyword purely to let the rest of the declaration
-parse (`src/uppaal.cpp`, the `urgent`/`broadcast`/`chan` prefix peel). The resulting flag is used
-only to compute the remaining substring and is then discarded: there is no urgent-channel field
-anywhere in `Network`, so nothing downstream could consult it even in principle.
+```
+error: clock guard on an edge synchronising over the urgent channel 'go'
+       (process Q, C -> D). Urgent-channel synchronisation may not be clock-guarded
+```
 
-**Consequence.** An urgent channel must force a synchronisation to happen without delay whenever it
-is enabled. Downgraded to an ordinary channel, that obligation disappears: the engine explores runs
-in which time passes while the urgent synchronisation is enabled. Those runs do not exist in the
-declared model.
+**Mechanism.** An urgent channel stops time exactly while a synchronisation on it is enabled, so
+enabledness is consulted at every state, by both engines, on the hot successor path. The
+implementation rests on it being decidable from the **discrete** state alone — locations plus the
+integer valuation — which is what lets `urgent_sync_enabled` fold into `frozen_flags` beside the
+urgent-*location* test and cost a single predictable branch on models that declare no urgent
+channel. Integer guards on the participants are fully supported, since they are part of the
+discrete state.
 
-The error is **not** one-sided. The extra runs can reach states the real model cannot, so an
-`A[]` safety property can be reported violated when it holds; and the missing urgency can leave a
-run available that the real model would have forced to progress, so a liveness property can be
-reported satisfied when it fails.
+A **clock** guard would break that. Enabledness would become a property of the zone, and worse, one
+that can switch on partway through a delay: correct handling would have to clip the delay at the
+instant the guard opens. Two things make that expensive rather than merely fiddly. The clip is a
+zone subtraction whose result is in general **non-convex**, so a single transition would yield
+several successor zones. And the exact operator is not the obvious one — the set reachable by delay
+from `Z` while avoiding an urgent region `U` is *not* `Z↑ \ strictfuture(U ∩ Z↑)`. That formula
+under-approximates whenever `Z` is thick in the time direction and `U` is a slab strictly inside it:
+for `Z = [0,5]`, `U = {x = 2}` it yields `[0,5]`, while the true answer is `[0,∞)`, because a
+valuation starting at `x = 3` never meets `U` at all and may delay forever. Under-approximating the
+reachable set is the **unsafe** direction — it turns `A[]` violations invisible — so no
+approximation is applied and the model is refused instead.
 
-**Detection.** Grep the model for `urgent chan` before trusting a verdict. There is no runtime
-warning.
+**Why this costs nothing in practice.** UPPAAL imposes exactly this restriction on its own
+modelling language, so no model UPPAAL accepts is refused here.
 
-**Workaround.** Encode urgency explicitly — give each sender a committed location, or add a clock
-`u` with invariant `u <= 0` reset on entry to the sending location.
+**Workaround.** Move the clock guard onto a separate, non-urgent edge, or push the timing condition
+into a location invariant.
+
+**Related routing.** A model declaring an urgent channel is always verified by the network engine,
+even when it is diagonal and one process wide. The single-automaton engine in `src/reach.cpp` drops
+synchronisation labels entirely and would let time pass where the model forbids it, so the
+diagonal preference in `app/main.cpp` yields to urgency (see §2 for what that costs).
+
+**Test models.** `tests/models/urgent-chan/` — `urgent-basic.xml`, `urgent-broadcast.xml`,
+`urgent-intguard.xml`, `urgent-live.xml`, plus `urgent-clip.xml`, which is the rejected case.
 
 ---
 

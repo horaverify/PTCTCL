@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>urgent chan go; clock x; int[0,1] k = 0;</declaration>
+<template><name>P</name>
+<location id="p_A"><name>A</name></location>
+<location id="p_B"><name>B</name></location>
+<location id="p_Bad"><name>Bad</name></location>
+<init ref="p_A"/>
+<transition><source ref="p_A"/><target ref="p_B"/><label kind="synchronisation">go!</label></transition>
+<transition><source ref="p_A"/><target ref="p_Bad"/><label kind="guard">x&gt;=5</label></transition>
+<transition><source ref="p_B"/><target ref="p_B"/></transition>
+<transition><source ref="p_Bad"/><target ref="p_Bad"/></transition>
+</template>
+<template><name>Q</name>
+<location id="q_C"><name>C</name></location>
+<location id="q_D"><name>D</name></location>
+<init ref="q_C"/>
+<transition><source ref="q_C"/><target ref="q_D"/><label kind="synchronisation">go?</label><label kind="guard">k==1</label></transition>
+<transition><source ref="q_D"/><target ref="q_D"/></transition>
+</template>
+<template><name>R</name>
+<location id="r_R0"><name>R0</name><label kind="invariant">x&lt;=2</label></location>
+<location id="r_R1"><name>R1</name></location>
+<init ref="r_R0"/>
+<transition><source ref="r_R0"/><target ref="r_R1"/><label kind="assignment">k=1</label></transition>
+<transition><source ref="r_R0"/><target ref="r_R1"/></transition>
+<transition><source ref="r_R1"/><target ref="r_R1"/></transition>
+</template>
+<system>system P, Q, R;</system>
+</nta>
