@@ -1,63 +1,55 @@
 # `E[]` benchmark queries
 
-Non-trivial `E[]` queries, for comparing PTCTLMC against UPPAAL and TChecker.
+Non-trivial `E[]` queries for comparing PTCTLMC against UPPAAL (and, with a generator, TChecker).
 
-## Why they need a clock bound
+    python3 benchmarks/scripts/bench_eg.py --sizes 4,5,6 --repeat 3
 
-An `E[]` query with no clock constraint is not a benchmark. `time_diverges` fires at the initial
-state — every clock can grow without bound, so time divergence is itself a witness — and the
-search stops at **1 symbolic state**. `E[] !(P1.cs && P2.cs)` on fischer5 explores 1 state;
-`E[] x0 <= 100` explores 157563. The clock bound is what forbids the trivial witness and forces
-the search to build the whole psi-restricted zone graph.
+Reports per (model, query): both verdicts, PTCTLMC's stored-state count, and best-of-N wall time
+for each tool. A verdict mismatch is flagged loudly; `unsup` is a refusal, not a wrong answer.
 
-That also makes these queries genuinely harder than the safety ones: `A[] not deadlock` on
-fischer5 explores 2068 states against 157563 here, because the query constant defeats the
-extrapolation that keeps the safety search small.
+## Why every query carries a clock bound
 
-Each file holds five queries per family, mixing the shapes: a bare clock bound, a clock bound
-with a negated location, a location disjunction, a clock disjunction, and a negated conjunction.
+An `E[]` query with no clock constraint is not a benchmark. Time divergence is itself a witness,
+so with every clock unbounded the search succeeds at the initial state and stops:
+`E[] !(P1.cs && P2.cs)` on fischer5 explores **1** symbolic state. A clock bound forbids that
+trivial witness and forces the whole psi-restricted graph to be built.
 
-## STATUS: NOT VALIDATED — these queries found a disagreement with UPPAAL
+The bound also makes these harder than the safety queries on the same models, because the query
+constant defeats the extrapolation that keeps the safety search small.
 
-Five of the queries below disagree with UPPAAL 5.0.0, **in both directions**:
+Four shapes per family, chosen so the predicate machinery is exercised rather than just the
+search: a bare clock bound; a clock bound with a negated location; a location **disjunction** with
+a clock bound; and a **negated conjunction** with a clock bound.
 
-| model | query | ptctlmc | UPPAAL |
-|---|---|---|---|
-| fischer4 | `E[] (P0.idle \|\| P0.wait) && x0 <= 40` | satisfied | **NOT** |
-| arbiter4 | `E[] (C0.idle \|\| C0.want) && x0 <= 40` | satisfied | **NOT** |
-| twolock4 | `E[] (P0.idle \|\| P0.waitA) && x0 <= 30` | satisfied | **NOT** |
-| grc4 | `E[] x0 <= 15 && !T0.in` | **NOT** | satisfied |
-| grc4 | `E[] (T0.far \|\| T0.near) && x0 <= 15` | **NOT** | satisfied |
+## What is deliberately absent
 
-The predicate machinery is not the cause — dumping the internal state for the first query shows
-the DNF is exactly right (two terms: one with the two negated locations, one with the negated
-clock atom) and the LU flooring is correct (`L(x0) = 40`).
+A clock atom under a disjunction or a negation — `E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)`. The
+run must then stay inside a non-convex region, and the backward engine's `Pre` through a delay
+routed around an obstacle does not exist. Those queries are **refused**, and were removed from the
+suite so that every row here actually runs. See KNOWN_LIMITATION.md §3.
 
-**The first three look like the unsoundness the paper already documents.** `exists_invariant_run`
-decides `E[]` by *forward cycle detection on an extrapolated zone graph*, and
-`UppalOMP/sec/subsec/liveness.tex` states plainly, citing Laarman 2013 and Tripakis 2009, that
-"redirecting an exact successor to a strictly larger covering zone may introduce cycles in `G`
-that do not correspond to concrete executions, yielding spurious liveness witnesses" — which is
-exactly why the leads-to engine evaluates backward instead. Extrapolation frees the bounds on the
-clocks the query does *not* mention, so a cycle can close on an abstracted zone that no concrete
-run realises. Spurious cycles add witnesses, which matches the direction of these three.
+## Status
 
-**The grc4 pair is the opposite direction and is NOT explained by that** — a spurious cycle can
-only turn NOT into satisfied. A missing witness is a separate defect and is not yet diagnosed.
+Validated. Across arbiter/csma/fischer/grc/phil/twolock these queries agree with UPPAAL 5.0.0 on
+every row. That was not true when the suite was written: it immediately exposed five wrong
+verdicts, which is what the suite is for. The cause was that `E[]` was decided by forward cycle
+detection on a subsumed graph — unsound, per Laarman 2013 / Tripakis 2009, and the very reason
+`p --> q` is evaluated backward. `E[]` is now decided backward too, on the same greatest fixpoint.
 
-This is a **pre-existing** weakness that this work made reachable rather than introduced: before
-`E[]` accepted clock constraints there was no query that explored far enough to close a spurious
-cycle, because every clock-free `E[]` query terminates at the root on time divergence. The
-`d4fb785` binary agrees with UPPAAL on every clock-free query tried, and cannot run these at all.
+The state counts moved by orders of magnitude in the process, because the backward engine uses
+a_LU subsumption with **per-location** bounds where the forward one could only extrapolate under a
+single global pair:
 
-Do not use these numbers as a benchmark until both directions are resolved.
+| query | forward (old) | backward (now) |
+|---|---|---|
+| fischer4 `E[] x0 <= 40` | 9188 | **248** |
+| grc4 `E[] x0 <= 15` | 1221269 | **1031** |
 
 ## TChecker
 
-Not runnable as-is. TChecker's liveness tool is label-based Buchi
-(`tck-liveness -a couvscc -l LABEL`), not TCTL, so `E[] psi` needs the psi-restricted model
-generated up front — psi's clock part as an invariant on every location, psi's discrete part as a
-location filter — and then a cycle over fully-labelled states. That is the same construction
-`exists_invariant_run` performs internally, so a generator alongside
-`benchmarks/scripts/gen_tck_live.py` would do it. TChecker is not installed here and no TChecker
-arm has been run.
+Not runnable as-is: TChecker's liveness tool is label-based Büchi
+(`tck-liveness -a couvscc -l LABEL`), not TCTL. `E[] psi` needs the psi-restricted model built up
+front — psi's clock part as an invariant on every location, psi's discrete part as a location
+filter — then a cycle over fully-labelled states. That is the same construction the engine
+performs internally, so a generator alongside `benchmarks/scripts/gen_tck_live.py` would do it.
+TChecker is not installed here and **no TChecker arm has been run**.
