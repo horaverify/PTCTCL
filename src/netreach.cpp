@@ -2315,6 +2315,143 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
     engine_net = &bounded;
   }
 
+  // ---- witness search in a sub-system, before the full one -----------------
+  //
+  // `E[] psi` needs ONE run, and a run in which some processes never take an edge is a perfectly
+  // legal run of the whole system: a transition is an option, never an obligation. So a maximal
+  // psi-run found with a set of processes' edges suppressed IS a maximal psi-run of the network
+  // as given, and `SAT` from such a search is a verdict for the network as given. Nothing about
+  // the model, the query or the answer changes -- only where the search looks first.
+  //
+  // It looks there because the witnesses are LOCAL and the search is not. TChecker's lasso for
+  // arbiter9 `E[] x0 <= 40` is three steps of C0 and the arbiter with all eight other clients
+  // sitting in `idle`; the breadth-first search reaches it only after enumerating every
+  // interleaving of nine processes down to that depth. Same witness, 2816 states against 3.
+  //
+  //     arbiter9  E[] x0 <= 40    2816 states  ->  3
+  //     grc8      E[] x0 <= 15   28458 states  ->  8   (7.4s -> 0.05s)
+  //
+  // SOUNDNESS rests on two things and is checked rather than assumed:
+  //
+  //   * maximality is judged in the FULL network. `net_in` goes in as the unrestricted network
+  //     exactly as below, so ::Otf::stop_set takes its restricted branch and asks
+  //     ptctlmc::detail::state_has_deadlock about `net_in` -- a state that only looks stuck
+  //     because its neighbours were suppressed is not read as the end of a maximal run.
+  //   * nothing may FORCE a suppressed process to move. Urgent and committed locations do, and
+  //     so does an urgent channel, so the lane declines outright when any suppressed process has
+  //     such a location or the network uses urgent channels. Time-passage is otherwise identical:
+  //     the invariants are untouched, only edges are withheld.
+  //
+  // Only SAT is believed. A sub-system that finds nothing has proved nothing -- the witness may
+  // need every process -- so the search falls through to the full one below.
+  const std::size_t nprocs = engine_net->procs.size();
+  if (!net_in.has_urgent_chan && nprocs > 1) {
+    std::vector<char> keep(nprocs, 0);
+    auto mark_locs = [&](const std::vector<LocReq>& ls) {
+      for (const auto& l : ls)
+        if (l.proc >= 0 && (std::size_t)l.proc < nprocs) keep[l.proc] = 1;
+    };
+    mark_locs(nq.locs);
+    for (const auto& t : nq.forbid) mark_locs(t.locs);
+    // The clocks psi constrains, and every process that guards or resets one of them: suppressing
+    // those would change which valuations psi can be maintained through.
+    std::vector<char> psi_clock(engine_net->nclocks + 1, 0);
+    auto mark_clocks = [&](const std::vector<Constraint>& cs) {
+      for (const auto& c : cs) {
+        if (c.i > 0 && c.i <= engine_net->nclocks) psi_clock[c.i] = 1;
+        if (c.j > 0 && c.j <= engine_net->nclocks) psi_clock[c.j] = 1;
+      }
+    };
+    mark_clocks(psi_clocks);
+    for (const auto& t : nq.forbid) mark_clocks(t.clocks);
+    // Read the footprint off `net_in`, NOT off the psi-restricted network: the restriction
+    // adjoined psi's clock conjunction to every location invariant, so scanning those would
+    // report every process as touching psi's clocks and keep the whole system.
+    for (std::size_t p = 0; p < nprocs && p < net_in.procs.size(); ++p) {
+      for (const auto& e : net_in.procs[p].edges) {
+        for (int rc : e.clock_resets)
+          if (rc > 0 && rc <= net_in.nclocks && psi_clock[rc]) keep[p] = 1;
+        for (const auto& c : e.clock_guard)
+          if ((c.i > 0 && psi_clock[c.i]) || (c.j > 0 && psi_clock[c.j])) keep[p] = 1;
+      }
+      for (const auto& l : net_in.procs[p].locations)
+        for (const auto& c : l.invariant)
+          if ((c.i > 0 && psi_clock[c.i]) || (c.j > 0 && psi_clock[c.j])) keep[p] = 1;
+    }
+    // Synchronisation closure, and it is ONE partner per channel and direction, not all of them.
+    // A kept process's `c!` edge needs somebody offering `c?` to fire; it does not need everybody
+    // who could. Keeping every partner is what makes this lane useless on exactly the models it
+    // is for -- arbiter's nine clients all share `acq`/`rel`, so "keep all partners" closes over
+    // the whole system and freezes nothing. A broadcast send needs no partner at all.
+    for (bool grew = true; grew;) {
+      grew = false;
+      for (std::size_t p = 0; p < nprocs && !grew; ++p) {
+        if (!keep[p]) continue;
+        for (const auto& e : engine_net->procs[p].edges) {
+          if (e.sync_chan < 0 || e.sync_dir == 0) continue;
+          if (e.sync_dir > 0 && (std::size_t)e.sync_chan < engine_net->chan_broadcast.size() &&
+              engine_net->chan_broadcast[e.sync_chan])
+            continue;                                   // broadcast `!` fires with 0 receivers
+          bool have = false;
+          int candidate = -1;
+          for (std::size_t o = 0; o < nprocs && !have; ++o) {
+            if (o == p) continue;
+            for (const auto& oe : engine_net->procs[o].edges) {
+              if (oe.sync_chan != e.sync_chan || oe.sync_dir != -e.sync_dir) continue;
+              if (keep[o]) { have = true; break; }
+              if (candidate < 0) candidate = (int)o;
+            }
+          }
+          if (!have && candidate >= 0) { keep[candidate] = 1; grew = true; break; }
+        }
+      }
+    }
+    std::size_t frozen = 0;
+    bool safe = true;
+    for (std::size_t p = 0; p < nprocs && safe; ++p) {
+      if (keep[p]) continue;
+      ++frozen;
+      for (const auto& l : engine_net->procs[p].locations)
+        if (l.urgent || l.committed) safe = false;      // urgency would force it to move
+    }
+    if (std::getenv("PTCTLMC_EG_SUBDBG")) {
+      std::string k;
+      for (std::size_t p = 0; p < nprocs; ++p) k += keep[p] ? '+' : '.';
+      std::fprintf(stderr, "SUB keep=[%s] frozen=%zu safe=%d\n", k.c_str(), frozen, (int)safe);
+    }
+    if (safe && frozen > 0) {
+      Network sub = *engine_net;
+      for (std::size_t p = 0; p < nprocs; ++p)
+        if (!keep[p]) {
+          sub.procs[p].edges.clear();
+          sub.procs[p].build_edge_index();
+        }
+      // The abstraction data IS recomputed for the sub-system. Carrying the full network's
+      // bounds over looks conservative -- they are larger, and a larger bound only makes a_LU
+      // finer -- but the active-clock marks come with them, and a clock marked active only
+      // because a now-suppressed process reads it keeps a dimension alive that the sub-system
+      // never constrains. The zones then differ on a coordinate the run does not care about and
+      // the cycle never closes: arbiter4 explores its 3 nodes and reports no witness. Recomputing
+      // is also sound in its own right -- every guard the smaller bounds must dominate is still
+      // present, since only edges were removed.
+      sub.compute_bounds();
+      sub.compute_loc_bounds();
+      sub.compute_active();
+      sub.compute_int_live();
+      GfpStats gsub;
+      const bool sub_sat = exists_invariant_run_otf(sub, nq, &gsub, &net_in,
+                                                    av.parts.empty() ? nullptr : &av,
+                                                    /*witness_only=*/true);
+      if (std::getenv("PTCTLMC_EG_SUBDBG"))
+        std::fprintf(stderr, "SUB result=%s nodes=%zu\n", sub_sat ? "SAT" : "no witness",
+                     (std::size_t)gsub.outer_nodes);
+      if (sub_sat) {
+        if (stats) stats->explored = gsub.outer_nodes;
+        return true;
+      }
+    }
+  }
+
   GfpStats gs;
   const bool r = exists_invariant_run_otf(*engine_net, nq, &gs, &net_in,
                                           av.parts.empty() ? nullptr : &av);

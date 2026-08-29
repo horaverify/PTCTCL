@@ -2056,12 +2056,12 @@ bool Otf::dtheta_empty() {
     SymState u; u.locs = node[i].locs; u.ints = node[i].ints;
     u.zone = Dbm::universe(net.nclocks);
     Dbm inv = Dbm::universe(net.nclocks);
-    bool c2, u2; frozen_flags(net, u.locs, u.ints, &c2, &u2);
-    std::vector<Constraint> ci; all_invariants(net, u.locs, ci);
+    bool c2, u2; frozen_flags(*dead_net, u.locs, u.ints, &c2, &u2);
+    std::vector<Constraint> ci; all_invariants(*dead_net, u.locs, ci);
     if (!c2 && !u2) inv.delay();
     if (!apply_all(inv, ci)) continue;                        // vacuous key
     Federation stuck, esc;
-    if (!state_has_deadlock(net, u, &stuck, &esc)) continue;   // Dead(q) = empty
+    if (!state_has_deadlock(*dead_net, u, &stuck, &esc)) continue;   // Dead(q) = empty
     bool open = true;
     for (int c = 1; c <= net.nclocks; ++c)
       if (inv.get(c, 0) != kInf) { open = false; break; }
@@ -2141,6 +2141,18 @@ static bool key_invariant(const Network& net, const SymState& rep, int nc, Dbm& 
 }
 
 bool Otf::build_atom_map(AtomMap& am) {
+  // DEADLOCK IS JUDGED IN @ref dead_net, SO THE COMPLETION MUST BE BUILT THERE TOO.
+  //
+  // For `p --> q` the two are the same automaton and this is a no-op. For `E[] psi` they are not:
+  // the search runs on the psi-RESTRICTED network, psi's clock conjunction having been adjoined
+  // to every location invariant, while ::Otf::stop_set asks ptctlmc::detail::state_has_deadlock
+  // about the UNRESTRICTED one -- maximality is a property of the original system. Deriving
+  // Dead(q) from `net` here would complete the covering for the restricted automaton's deadlocks
+  // and leave the fixpoint reading the unrestricted automaton's, so the covering could merge two
+  // states that differ in exactly the property the completion exists to preserve. That is the
+  // grc5 `E[] x0 <= 15 && !T0.in` wrong answer, and it is why the sibling `E[] !T0.in`, which
+  // has no clock part and therefore no second network, was always right.
+
   const int nc = net.nclocks;
   am.diag.clear();
   am.bump.assign(nc + 1, kNoBump);
@@ -2177,14 +2189,14 @@ bool Otf::build_atom_map(AtomMap& am) {
     u.zone = Dbm::universe(nc);                 // NOT Dbm(nc), which is the ZERO zone
     Dbm inv = Dbm::universe(nc);
     bool fc, fu;
-    frozen_flags(net, u.locs, u.ints, &fc, &fu);
+    frozen_flags(*dead_net, u.locs, u.ints, &fc, &fu);
     std::vector<Constraint> ci;
-    all_invariants(net, u.locs, ci);
+    all_invariants(*dead_net, u.locs, ci);
     if (!fc && !fu) inv.delay();
     if (!apply_all(inv, ci)) continue;                       // vacuous key
     invrep.emplace(k, static_cast<int>(i));
     Federation stuck, esc;
-    if (!state_has_deadlock(net, u, &stuck, &esc)) continue;  // Dead(q) = empty
+    if (!state_has_deadlock(*dead_net, u, &stuck, &esc)) continue;  // Dead(q) = empty
     bool open = true;
     for (int c = 1; c <= nc; ++c)
       if (inv.get(c, 0) != kInf) { open = false; break; }
@@ -2362,7 +2374,7 @@ bool Otf::build_atom_map(AtomMap& am) {
               auto rit = invrep.find(e.s);
               if (rit != invrep.end()) {
                 Dbm rebuilt;
-                if (key_invariant(net, node[rit->second], nc, rebuilt))
+                if (key_invariant(*dead_net, node[rit->second], nc, rebuilt))
                   mit = invmemo.emplace(e.s, std::move(rebuilt)).first;
               }
             }
@@ -2694,7 +2706,7 @@ void Otf::fill_stats(GfpStats* gs) {
 ///       so that delay stays inside `psi`.
 bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* gs,
                               const Network* unrestricted,
-                              const detail::DelayAvoidSet* avoid) {
+                              const detail::DelayAvoidSet* avoid, bool witness_only) {
   static const DiscPred kTrue{};
   auto make = [&](bool exact) {
     auto e = std::make_unique<Otf>(net, kTrue, nq, exact, nullptr, unrestricted);
@@ -2706,67 +2718,45 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
   // a_LU is unsound on diagonal constraints (Bouyer 2004) -- so this run is already exact.
   if (network_has_diagonal(net)) return make(false)->eg_from_initial(gs);
 
-  // TWO LANES, SPLIT BY DIRECTION, because the two directions do not need the same relation.
+  // STAGED, AND EVERY STAGE IS ONLY PAID WHEN THE ONE BEFORE IT COULD NOT ANSWER.
   //
-  // a_LU covering is a SIMULATION, and so is every refinement of it: it preserves an infinite run
-  // and time divergence, so a witness found under it is genuine and `SAT` is conclusive outright.
-  // What a simulation does not preserve is deadlock, which is universally quantified -- so the
-  // ABSENCE of a witness is not a verdict, and `NOT` has to be re-decided under a relation that
-  // is conclusive in both directions.
+  //   1. plain a_LU. It is a SIMULATION, so a witness found under it is genuine and SAT is
+  //      conclusive outright -- which is the common case, and it costs one graph.
+  //   2. its NOT is not a verdict, because a simulation does not preserve deadlock. Rather than
+  //      abandon a_LU for exact covering, COMPLETE it: derive the constraint map off the graph
+  //      already built. An EMPTY map means the covering just used was already deadlock-preserving
+  //      and e1's own NOT stands, with nothing further to pay.
+  //   3. a non-empty map means re-searching under it, and that relation is conclusive in both
+  //      directions, so its answer is the answer.
+  //   4. only a map that cannot be represented falls through to exact covering.
   //
-  // The deadlock-completed relation of the constraint map was meant to be that relation, and it
-  // is not yet: on grc5 `E[] x0 <= 15 && !T0.in` it reports NOT where UPPAAL 5.0.0, plain a_LU
-  // and exact inclusion covering all report SAT, losing a deadlock-terminated witness. Until
-  // that is understood the map stays in the FAST lane, where only its SAT is believed, and the
-  // verdict for NOT comes from exact inclusion covering, which is sound outright.
-  // THE DEADLOCK-FREEDOM PROOF IS OVERLAPPED, NOT SEQUENCED. It is needed only when the fast
-  // lane comes back NOT, and running it afterwards makes a NOT row pay two full passes -- 2x,
-  // measured (twolock8 `E[] (P0.idle || P0.waitA) && x0 <= 30`, 319s -> 607s). Started here it
-  // costs max(fast lane, proof) instead of the sum, which is how ::leads_to_otf runs the same
-  // proof. A SAT cancels it and never reads it, which is required and not merely tidy: a
-  // cancelled ptctlmc::deadlock_reachable returns @c false, indistinguishable from "none found".
-  const Network& dead_judged_in = unrestricted ? *unrestricted : net;
-  std::atomic<bool> dl_cancel{false};
-  bool dl_free = false;
-  std::thread dl_lane(
-      [&] { dl_free = !deadlock_reachable(dead_judged_in, Backend::Seq, nullptr, &dl_cancel); });
+  // Deriving the map BEFORE asking e1 for its verdict -- which is what this did first -- makes
+  // every SAT row pay for a second graph to reach an answer the first one already had: grc5
+  // `E[] x0 <= 15 && !T0.in` 1.9s against 7.5s. The map is for the NOT case and is built there.
+  //
+  // This is `p --> q`'s staging, and it is available to `E[]` again only because
+  // ::Otf::build_atom_map now derives Dead(q) from @ref dead_net; while it read that off the
+  // psi-restricted network the completed covering lost the grc5 witness.
+  bool sat = false;
+  auto e1 = make(false);
+  e1->build_forward(gs);
+  if (e1->eg_early_hit()) return true;             // a probe already proved the witness
+  sat = e1->eg_verdict(gs);                        // the deferred backward pass, on e1's graph
+  if (!e1->was_capped() && sat) return true;       // a simulation's witness is genuine
 
-  bool sat = false, usable = false, early = false;
-  {
-    auto e1 = make(false);
-    e1->build_forward(gs);
-    if (e1->eg_early_hit()) early = true;            // a probe already proved the witness
-    if (!early) {
-      // THE FAST LANE IS PLAIN a_LU, and the deadlock completion is not built at all. It exists
-      // to make a NOT conclusive without paying for exact covering, and it does not currently
-      // do that -- see the grc5 rows above. Since only SAT is believed here, and a_LU is itself
-      // a simulation, a_LU's SAT is worth exactly as much as the completed relation's and costs
-      // one graph instead of two. It is also the cheaper graph on the rows that matter: grc5
-      // `E[] x0 <= 15 && !T0.in` is a witness a_LU finds in 17636 nodes, where routing it
-      // through the completion loses it and lands on the exact lane's 50558.
-      sat = e1->eg_verdict(gs);                     // the deferred backward pass, paid here
-      usable = !e1->was_capped();
+  if (!e1->was_capped()) {
+    AtomMap am;
+    if (e1->build_atom_map(am) && am.usable) {
+      if (am.diag.empty() && am.bumped == 0) return false;   // already deadlock-preserving
+      e1->release();                               // one graph resident at a time, not two
+      auto e2 = make(false);
+      e2->set_atoms(&am);
+      const bool sat2 = e2->eg_from_initial(gs);
+      if (!e2->was_capped()) return sat2;          // conclusive in both directions
     }
   }
-  if (early || (usable && sat)) {                   // witness found: the proof is not needed
-    dl_cancel.store(true, std::memory_order_release);
-    dl_lane.join();
-    return true;
-  }
-  dl_lane.join();
-  // A SIMULATION'S `NOT` IS INCONCLUSIVE FOR EXACTLY ONE REASON: a_LU preserves an infinite run
-  // and time divergence, and fails only on deadlock, which is universally quantified. If no
-  // deadlock is reachable in the system maximality is judged against -- the UNRESTRICTED one,
-  // since a run that can only continue by leaving psi is not maximal -- then ::Otf::stop_set's
-  // deadlock branch is vacuous, every stop it reports is a divergence a_LU does preserve, and
-  // the fast lane's `NOT` is already a verdict. This is the soundness argument ::leads_to_otf
-  // races its exact lane against; taken directly here, it keeps the deadlock-free families off
-  // the exact lane entirely (arbiter5 `E[] (C0.idle || C0.want) && x0 <= 40`: 4.1s -> 0.0s).
-  if (usable && dl_free) return false;
-  // Deadlock IS reachable, so the fast lane's silence proves nothing -- or the run was capped and
-  // its verdict is unusable either way. Decide under exact inclusion covering, conclusive both
-  // ways. Restores the ::Otf::was_capped guard the previous staging dropped, which let a capped
-  // run fall out of ::Otf::eg_verdict as a plain `NOT satisfied`.
+  // The map could not be represented, or a run was capped and its verdict is unusable. Decide
+  // under exact inclusion covering, which is sound outright.
   return make(true)->eg_from_initial(gs);
 }
 

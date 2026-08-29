@@ -364,9 +364,14 @@ struct GfpStats {
 ///       a successor to a strictly larger covering zone and close a cycle no concrete run
 ///       realises, so forward cycle detection on the stored graph is unsound (Laarman 2013,
 ///       Tripakis 2009) — the same reason `p --> q` is evaluated backward.
+/// @param witness_only  believe only a witness. The deadlock-freedom proof and the exact lane
+///        exist to turn "no witness under a simulation" into a verdict; a caller that reads a
+///        @c false as "not proved here" rather than as `NOT satisfied` needs neither, and paying
+///        for them is pure loss (they cost a full reachability over @p unrestricted).
 bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* gs = nullptr,
                               const Network* unrestricted = nullptr,
-                              const detail::DelayAvoidSet* avoid = nullptr);
+                              const detail::DelayAvoidSet* avoid = nullptr,
+                              bool witness_only = false);
 
 /// @brief `p --> q` where either operand constrains clocks or carries boolean structure.
 /// @param p   the antecedent as a positive DNF; evaluated at one valuation under `EF`
