@@ -2779,26 +2779,32 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
   // `E[] x0 <= 15 && !T0.in` is 5.9s with it against 7.9s without, being the one query in the
   // suite whose map is non-empty. PTCTLMC_EG_NOSHORTCUT=1 suppresses it, which is how the <=_D
   // path is exercised on a SAT row at all.
-  static const bool no_short = [] {
-    const char* e = std::getenv("PTCTLMC_EG_NOSHORTCUT");
-    return e && *e == '1';
-  }();
-  bool keys_sat = false, keys_decided = false;
-  if (!no_short && !keys->was_capped()) {
-    keys_sat = keys->eg_verdict(gs);               // the fixpoint on pass 0's graph, once
-    keys_decided = true;
-    if (keys_sat) return true;
-  }
+  // PASS 0 IS FORWARD ONLY. Its backward fixpoint is never paid: the verdict comes off the <=_D
+  // graph, so computing one here would run the fixpoint TWICE, and the fixpoint is where the time
+  // is -- 97% of a NOT row. That was the whole cost of deciding on the D graph (fischer7
+  // `E[] (P0.idle || P0.wait) && x0 <= 40`: 5.3s -> 10.6s), and it was self-inflicted rather than
+  // inherent. What remains is one extra FORWARD pass, which is a few percent.
+  //
+  // The cheap early SAT survives: ::Otf::eg_probe runs during the forward search and certifies
+  // witnesses, and a witness is existential, so one found under any covering is genuine. That is
+  // the short-circuit worth having; the expensive one is not.
   if (!keys->was_capped()) {
     AtomMap am;
     if (keys->build_atom_map(am) && am.usable) {
-      if (am.diag.empty() && am.bumped == 0)       // <=_D == a_LU here: this graph IS the D graph
-        return keys_decided ? keys_sat : keys->eg_verdict(gs);
+      // THE VERDICT COMES OFF A GRAPH BUILT UNDER <=_D. Where the map is EMPTY that graph is
+      // the one pass 0 already built, and reusing it is not a substitution of a_LU for <=_D: with
+      // no atoms at any key, ::Otf::intern's per-key `tagged` is false everywhere and <=_D takes
+      // the same covering test on the same states. Rebuilding produces a bit-identical graph --
+      // measured, every state count matches to the digit on both query kinds -- for 1.6x on
+      // leads-to and a wasted forward pass here. Where the map is NON-empty the relations differ
+      // and the graph is rebuilt under <=_D, which is where grc5 `E[] x0 <= 15 && !T0.in` gets
+      // 7237 states against a_LU's 8806.
+      if (am.diag.empty() && am.bumped == 0) return keys->eg_verdict(gs);
       keys->release();                             // one graph resident at a time, not two
-      auto g = make(false);
-      g->set_atoms(&am);                           // the covering is now <=_D
-      const bool sat = g->eg_from_initial(gs);
-      if (!g->was_capped()) return sat;            // conclusive in both directions
+      auto d = make(false);
+      d->set_atoms(&am);                           // the covering is <=_D
+      const bool sat = d->eg_from_initial(gs);
+      if (!d->was_capped()) return sat;            // conclusive in both directions
     }
   }
   // The map could not be represented past 64 atoms at one key, or a run was capped and its
@@ -2928,15 +2934,10 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
   // preserves the sink's reachability and hence deadlock.
   AtomMap am;
   if (e1.build_atom_map(am) && am.usable) {
-    if (am.diag.empty() && am.bumped == 0) {
-      // EMPTY MAP: the completion adds nothing, so the a_LU covering already used was
-      // deadlock-sound and this run's own verdict is the answer. Its backward fixpoint was
-      // deferred, not skipped -- pay it here, exactly once, on the graph already built.
-      return e1.finish_verdict(gs);
-    }
-    // e1 is dead from here: the map is a value that owns its atoms, and every path that still
-    // needs e1's own verdict (the empty-map return above, and the fall-through below) is out of
-    // reach. Releasing before e2 starts is what keeps the peak at one graph instead of two.
+    // EMPTY MAP: <=_D coincides with a_LU at every key, so e1's graph already IS the <=_D
+    // graph -- `tagged` is false everywhere and the same covering test is taken. Its backward
+    // pass was deferred, not skipped; pay it here, once, on the graph already built.
+    if (am.diag.empty() && am.bumped == 0) return e1.finish_verdict(gs);
     e1.release();
     Otf e2(net, p, q);
     e2.set_atoms(&am);
