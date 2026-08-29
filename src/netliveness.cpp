@@ -1625,7 +1625,6 @@ Federation Otf::stop_set(int u) {
 ///
 /// @warning @ref capped is sticky. A capped pass must be reported as UNUSABLE, never laundered
 ///          into a verdict; see ::Otf::certificate_in.
-std::size_t g_visits = 0, g_pre = 0;
 void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   ++passes;
   const std::size_t N = node.size();
@@ -1875,7 +1874,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
      const int v = work.front();
      work.pop_front();
      in_q[v] = 0;
-     ++it; ++g_visits;
+     ++it;
      if (it > 100000000) break;
      if (!relax(v)) continue;
      for (int u : rev[v])
@@ -2588,8 +2587,6 @@ bool Otf::eg_verdict(GfpStats* gs) {
       gfp_on(S, W);
       if (!capped) res = !gfp_fed_empty(W[0]);
     }
-    if (std::getenv("PTCTLMC_EG_PROF"))
-      std::fprintf(stderr, "PROF |S|=%zu visits=%zu pre=%zu\n", S.size(), g_visits, g_pre);
   }
   fill_stats(gs);
   return res;
