@@ -657,6 +657,36 @@ class Otf {
   /// @warning Meaningless if ::was_capped() is true afterwards; the caller retries exactly.
   bool eg_from_initial(GfpStats* gs);
 
+  /// @brief The expanded `psi`-closure of the initial vertex -- the set `E[] psi` iterates over.
+  ///
+  /// @note Only EXPANDED nodes enter. ::Otf::stop_set reads `adj[u].empty()` as "enables nothing",
+  ///       which is true of a finished node and false of a frontier one, so admitting an
+  ///       unexpanded node would fabricate a stop valuation and with it a witness.
+  std::vector<int> eg_closure();
+
+  /// @brief Sound early `SAT` test for `E[] psi` on a PARTIALLY built graph.
+  ///
+  /// @return @c true only if a witness is proven; @c false means "not proven yet", never "no
+  ///         witness exists"
+  ///
+  /// ::Otf::gfp_on confined to @p S returns the exact greatest fixpoint of the operator
+  /// restricted to @p S, which is a post-fixpoint of the operator on the FINISHED graph and
+  /// therefore an under-approximation of the true value: every node outside @p S is pinned to
+  /// the empty federation, and the operator is monotone, so completing the graph can only add.
+  /// A non-empty `W[0]` here is thus a genuine maximal `psi`-run from the initial state and the
+  /// forward search may stop. An empty one proves nothing, which is why only the SAT direction
+  /// is ever concluded early.
+  ///
+  /// @note @ref capped is sticky and is restored on exit: a probe that exhausts the federation
+  ///       width bound is inconclusive, and must not condemn the real run that follows it.
+  bool eg_probe();
+
+  /// @brief Enable ::Otf::eg_probe during the forward search. `E[] psi` lanes only.
+  void set_eg_early(bool v) { eg_early_ = v; }
+
+  /// @brief Did an early probe prove the witness, stopping the forward search deliberately?
+  bool eg_early_hit() const { return eg_early_hit_; }
+
   /// @brief The `E[] psi` verdict on a graph ::Otf::build_forward has already built.
   /// @note The counterpart of ::Otf::finish_verdict, which does the same for `p --> q`: it pays
   ///       the backward pass that ::Otf::build_forward deliberately deferred.
@@ -752,6 +782,13 @@ class Otf {
   bool avoid_forward_ = true;   ///< see ::Otf::set_avoid
   /// @brief Iterate the fixpoint component-wise; see ::Otf::gfp_on. Set by the `E[]` path only.
   bool scc_iter_ = false;
+
+  /// @brief Probe the partial graph for a witness while the forward search runs; see
+  ///        ::Otf::eg_probe. Set by the `E[] psi` path only.
+  bool eg_early_ = false;
+  /// @brief An early probe proved the witness, so ::Otf::base_forward returned on purpose and the
+  ///        graph is deliberately incomplete.
+  bool eg_early_hit_ = false;
   bool force_exact_ = false;                   ///< inclusion covering, no a_LU
   const std::atomic<bool>* cancel_ = nullptr;  ///< set by the winner of the race
   bool cancelled_ = false;
@@ -2348,6 +2385,18 @@ void Otf::base_forward() {
         if (!inq[v]) { inq[v] = 1; work.push_back(v); }
       };
       push(0);
+      // EARLY WITNESS PROBE, geometric. `E[] psi` is satisfied on 220 of the 254 decided rows of
+      // the benchmark suite, and on those the whole forward graph is built to certify a witness
+      // that a fraction of it already contains -- fischer8 `E[] x0 <= 40 && !P1.cs` needs 64 of
+      // its 129468 nodes. ::Otf::eg_probe is sound in the SAT direction on a partial graph, so
+      // the search may stop the moment one fires; NOT is never concluded here.
+      //
+      // The schedule is geometric so the probes cost a constant factor of the last one rather
+      // than a factor of the number of expansions: measured first-witness sizes across the suite
+      // are 16 (csma8), 64 (fischer7, fischer8), 256 (twolock6) and 1024 (grc5), so a first probe
+      // at 16 with ratio 4 lands within one step of each.
+      constexpr std::size_t kProbeFirst = 16, kProbeRatio = 4;
+      std::size_t next_probe = eg_early_ ? kProbeFirst : 0;
       while (!work.empty()) {
         const int u = work.front();
         work.pop_front();
@@ -2360,6 +2409,10 @@ void Otf::base_forward() {
         // reset because a merge enlarged it.
         for (const auto& e : adj[u])
           if (!expanded[e.tgt]) push(e.tgt);
+        if (next_probe != 0 && node.size() >= next_probe) {
+          next_probe = node.size() * kProbeRatio;
+          if (eg_probe()) { eg_early_hit_ = true; return; }
+        }
       }
 }
 
@@ -2378,30 +2431,53 @@ bool Otf::finish_verdict(GfpStats* gs) {
 bool Otf::eg_from_initial(GfpStats* gs) {
   setup();
   base_forward();
+  if (eg_early_hit_) { fill_stats(gs); return true; }   // witness proven on the partial graph
   return eg_verdict(gs);
+}
+
+std::vector<int> Otf::eg_closure() {
+  std::vector<int> S;
+  if (node.empty()) return S;
+  grow();
+  // The psi-closure REACHED FROM THE INITIAL VERTEX. ::Otf::accepting_closure seeds from every
+  // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
+  // state, so a node reachable only by leaving psi and coming back must not be admitted.
+  if (!expanded[0] || !is_nq(0)) return S;
+  std::vector<char> in(node.size(), 0);
+  std::vector<int> stk{0};
+  in[0] = 1;
+  while (!stk.empty()) {
+    const int v = stk.back();
+    stk.pop_back();
+    S.push_back(v);
+    for (const auto& e : adj[v])
+      if (!in[e.tgt] && expanded[e.tgt] && is_nq(e.tgt)) { in[e.tgt] = 1; stk.push_back(e.tgt); }
+  }
+  return S;
+}
+
+bool Otf::eg_probe() {
+  if (!fwd_ok_ || node.empty()) return false;
+  const bool saved_capped = capped;         // sticky, and a probe must not condemn the real run
+  const bool saved_scc = scc_iter_;
+  scc_iter_ = true;
+  bool sat = false;
+  const std::vector<int> S = eg_closure();
+  if (!S.empty()) {
+    std::vector<Federation> W;
+    gfp_on(S, W);
+    if (!capped) sat = !gfp_fed_empty(W[0]);
+  }
+  capped = saved_capped;
+  scc_iter_ = saved_scc;
+  return sat;
 }
 
 bool Otf::eg_verdict(GfpStats* gs) {
   scc_iter_ = true;             // the verdict is one node's, so diameter is what costs here
   bool res = false;
   if (fwd_ok_ && !node.empty()) {
-    grow();
-    // The psi-closure REACHED FROM THE INITIAL VERTEX. ::Otf::accepting_closure seeds from every
-    // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
-    // state, so a node reachable only by leaving psi and coming back must not be admitted.
-    std::vector<int> S;
-    if (expanded[0] && is_nq(0)) {
-      std::vector<char> in(node.size(), 0);
-      std::vector<int> stk{0};
-      in[0] = 1;
-      while (!stk.empty()) {
-        const int v = stk.back();
-        stk.pop_back();
-        S.push_back(v);
-        for (const auto& e : adj[v])
-          if (!in[e.tgt] && expanded[e.tgt] && is_nq(e.tgt)) { in[e.tgt] = 1; stk.push_back(e.tgt); }
-      }
-    }
+    const std::vector<int> S = eg_closure();
     if (!S.empty()) {
       std::vector<Federation> W;
       gfp_on(S, W);
@@ -2519,33 +2595,60 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
   auto make = [&](bool exact) {
     auto e = std::make_unique<Otf>(net, kTrue, nq, exact, nullptr, unrestricted);
     e->set_avoid(avoid);
+    e->set_eg_early(true);                          // SAT may be concluded on a partial graph
     return e;
   };
   // Diagonal models never used a_LU at all -- Otf::setup forces inclusion covering there, since
   // a_LU is unsound on diagonal constraints (Bouyer 2004) -- so this run is already exact.
   if (network_has_diagonal(net)) return make(false)->eg_from_initial(gs);
 
-  // The SAME staging ::leads_to_otf uses, and for the same reason. Plain a_LU covering is a
-  // simulation, so it preserves an infinite run and time divergence but NOT deadlock, which is
-  // universally quantified: a witness found under it is genuine, the absence of one is not. The
-  // deadlock-completed relation of Definition "deadlock-simulation" repairs exactly that, and it
-  // is what the constraint map installs -- so the answer is to derive the map and search under
-  // it, not to abandon a_LU for exact covering.
-  auto e1 = make(false);
-  e1->build_forward(gs);
-  AtomMap am;
-  if (e1->build_atom_map(am) && am.usable) {
-    // EMPTY MAP: the completion adds nothing, so the covering already used preserved deadlock and
-    // this run's own verdict is the answer. Its backward pass was deferred, not skipped.
-    if (am.diag.empty() && am.bumped == 0) return e1->eg_verdict(gs);
-    e1->release();                                  // one graph resident at a time, not two
-    auto e2 = make(false);
-    e2->set_atoms(&am);
-    return e2->eg_from_initial(gs);
+  // TWO LANES, SPLIT BY DIRECTION, because the two directions do not need the same relation.
+  //
+  // a_LU covering is a SIMULATION, and so is every refinement of it: it preserves an infinite run
+  // and time divergence, so a witness found under it is genuine and `SAT` is conclusive outright.
+  // What a simulation does not preserve is deadlock, which is universally quantified -- so the
+  // ABSENCE of a witness is not a verdict, and `NOT` has to be re-decided under a relation that
+  // is conclusive in both directions.
+  //
+  // The deadlock-completed relation of the constraint map was meant to be that relation, and it
+  // is not yet: on grc5 `E[] x0 <= 15 && !T0.in` it reports NOT where UPPAAL 5.0.0, plain a_LU
+  // and exact inclusion covering all report SAT, losing a deadlock-terminated witness. Until
+  // that is understood the map stays in the FAST lane, where only its SAT is believed, and the
+  // verdict for NOT comes from exact inclusion covering, which is sound outright.
+  bool sat = false, usable = false;
+  {
+    auto e1 = make(false);
+    e1->build_forward(gs);
+    if (e1->eg_early_hit()) return true;            // a probe already proved the witness
+    AtomMap am;
+    if (e1->build_atom_map(am) && am.usable && !(am.diag.empty() && am.bumped == 0)) {
+      e1->release();                                // one graph resident at a time, not two
+      auto e2 = make(false);
+      e2->set_atoms(&am);
+      sat = e2->eg_from_initial(gs);
+      usable = !e2->was_capped();
+    } else {
+      // EMPTY MAP, or a map past 64 atoms at one key: either way this run's own a_LU verdict is
+      // the fast lane's answer. Its backward pass was deferred, not skipped.
+      sat = e1->eg_verdict(gs);
+      usable = !e1->was_capped();
+    }
   }
-  // The map could not be represented (more than 64 atoms at one key). Fall back to exact
-  // inclusion covering, which is sound outright. ::leads_to_otf races this against a
-  // deadlock-freedom proof; here it is taken directly, which is slower and never wrong.
+  if (usable && sat) return true;
+  // A SIMULATION'S `NOT` IS INCONCLUSIVE FOR EXACTLY ONE REASON: a_LU preserves an infinite run
+  // and time divergence, and fails only on deadlock, which is universally quantified. If no
+  // deadlock is reachable in the system maximality is judged against -- the UNRESTRICTED one,
+  // since a run that can only continue by leaving psi is not maximal -- then ::Otf::stop_set's
+  // deadlock branch is vacuous, every stop it reports is a divergence a_LU does preserve, and
+  // the fast lane's `NOT` is already a verdict. This is the soundness argument ::leads_to_otf
+  // races its exact lane against; taken directly here, it keeps the deadlock-free families off
+  // the exact lane entirely (arbiter5 `E[] (C0.idle || C0.want) && x0 <= 40`: 4.1s -> 0.0s).
+  if (usable && !deadlock_reachable(unrestricted ? *unrestricted : net, Backend::Seq, nullptr))
+    return false;
+  // Deadlock IS reachable, so the fast lane's silence proves nothing -- or the run was capped and
+  // its verdict is unusable either way. Decide under exact inclusion covering, conclusive both
+  // ways. Restores the ::Otf::was_capped guard the previous staging dropped, which let a capped
+  // run fall out of ::Otf::eg_verdict as a plain `NOT satisfied`.
   return make(true)->eg_from_initial(gs);
 }
 
