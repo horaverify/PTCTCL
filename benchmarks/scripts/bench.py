@@ -47,6 +47,18 @@ Examples
     ./bench.py run --tool ltsmin   --threads 24 --ltsmin-store table --ltsmin-size 25
     ./bench.py run --tool verifyta --families all --timeout 7200
 
+    # the E[] suite, which is the same handle with a different query set. eg_queries/ carries
+    # SEVERAL queries per family, so rows are keyed by qidx as well as model and each query is
+    # timed out and strike-limited on its own. --cores keeps it off CPUs another sweep is using.
+    ./bench.py run --tool ptctlmc  --queries eg --families all --threads 1 \
+        --outdir ../results_eg/ptctlmc --cores 16-31 --detach
+    ./bench.py run --tool verifyta --queries eg --families all --outdir ../results_eg/uppaal
+    ./bench.py run --tool tchecker --queries eg --families all --outdir ../results_eg/tchecker
+
+    TChecker's E[] arm needs the psi-restricted models: run gen_tck_eg.py first. A query it
+    cannot encode is SKIPped with the reason from tck_live_e/manifest.json, which is a refusal
+    and not a gap.
+
     ./bench.py status --outdir ../recheability_results/ptctlmc_gsim
     ./bench.py stop   --outdir ../recheability_results/ptctlmc_gsim [--soft]
 """
@@ -76,7 +88,8 @@ TCHECKER_LIVENESS = os.environ.get("TCHECKER_LIVENESS_BIN") or os.path.join(
     os.path.dirname(LTS), "tchecker", "install", "bin", "tck-liveness")
 
 CSV_COLS = ["family", "model", "tool", "threads", "rep", "states", "seconds", "rss_gb",
-            "status", "mergescan", "hotlen", "chunk", "sim", "engine", "queries"]
+            "status", "mergescan", "hotlen", "chunk", "sim", "engine", "queries",
+            "qidx", "verdict", "query"]
 # The first eleven columns and their order are load-bearing: make_clean_results.py and the
 # plot_*.py readers index them by name out of files written before chunk/sim/engine existed.
 # New columns go on the END.
@@ -155,7 +168,7 @@ def query_dir(kind):
     The fallback exists because sweeps launched before the split still read queries/, and a
     running sweep must keep resolving its queries; drop it once nothing in flight needs it.
     """
-    d = os.path.join(BENCH, "%s_queries" % ("reach" if kind == "reach" else "live"))
+    d = os.path.join(BENCH, "%s_queries" % kind)
     if os.path.isdir(d):
         return d
     if kind == "reach" and os.path.isdir(QDIR):
@@ -173,6 +186,20 @@ def query_path(fam, tool, kind="reach"):
     if fam == "train" and tool == "verifyta" and kind == "reach":
         return os.path.join(d, "train_uppaal.q")
     return os.path.join(d, "%s.q" % fam)
+
+
+def queries_of(fam, tool, kind="reach"):
+    """Every query in a family's file, in order. The index is the `qidx` column.
+
+    `reach` and `live` carry exactly one query per family and are unchanged by this: they get a
+    one-element list and keep using the family file itself, so their command lines and their
+    recorded rows are byte-identical to what the existing tables were measured with. `eg` is the
+    multi-query set, and only it is split into per-query files.
+    """
+    path = query_path(fam, tool, kind)
+    if not os.path.exists(path):
+        return []
+    return [ln.strip() for ln in open(path) if ln.strip()]
 
 
 def so_path(fam, n):
@@ -251,14 +278,36 @@ class Tool:
     def __init__(self, name, threaded, states_re):
         self.name, self.threaded, self.states_re = name, threaded, states_re
 
-    def argv(self, a, xml, q, th, so):
+    def argv(self, a, xml, q, th, so, qidx=0):
         raise NotImplementedError
+
+    def verdict(self, a, output):
+        """SAT | NOT | unsup | '-' -- what the tool decided, independent of how it exited.
+
+        Recorded for every query kind. It is the whole point of the `eg` sweep, where two tools
+        answering differently is the finding, and it is free confirmation everywhere else.
+        """
+        if "UNSUPPORTED" in output:
+            return "unsup"
+        if "CYCLE true" in output:
+            return "SAT"
+        if "CYCLE false" in output:
+            return "NOT"
+        if "Formula is NOT satisfied" in output:
+            return "NOT"
+        if "Formula is satisfied" in output:
+            return "SAT"
+        return "-"
 
     def env(self, a, th):
         return {}
 
-    def available(self, a, xml, so):
+    def available(self, a, xml, so, qidx=0):
         return True
+
+    def unavailable_reason(self, a, xml, qidx=0):
+        """Why ::available said no. Overridden where "missing" means "declined, for a reason"."""
+        return "input missing for this tool"
 
     def status(self, a, status, output):
         return status
@@ -268,7 +317,7 @@ class PtctlmcTool(Tool):
     def __init__(self):
         super().__init__("ptctlmc-omp", True, r"explored ([0-9]+) symbolic")
 
-    def argv(self, a, xml, q, th, so):
+    def argv(self, a, xml, q, th, so, qidx=0):
         cmd = [a.ptctlmc_bin, "--backend", "omp"]
         if a.chunk is not None:
             cmd += ["--omp-chunk", str(a.chunk)]
@@ -292,7 +341,7 @@ class VerifytaTool(Tool):
     def __init__(self):
         super().__init__("verifyta", False, r"States explored\s*:\s*([0-9]+)")
 
-    def argv(self, a, xml, q, th, so):
+    def argv(self, a, xml, q, th, so, qidx=0):
         # NO `-s`. `--silence-progress` zeroes UPPAAL's state counter on LIVENESS
         # queries -- `E[]` reports 0 for every row, and `p --> q` under-reports
         # (arbiter4 `C0.cs --> C0.idle`: 506 with it, 710 without). Reachability is
@@ -304,11 +353,11 @@ class LtsminTool(Tool):
     def __init__(self):
         super().__init__("ltsmin", True, r"Explored ([0-9]+) states")
 
-    def argv(self, a, xml, q, th, so):
+    def argv(self, a, xml, q, th, so, qidx=0):
         return [a.opaal_bin, "--threads=%d" % th, "--strategy=sbfs",
                 "--state=%s" % a.ltsmin_store, "-s", str(a.ltsmin_size), so]
 
-    def available(self, a, xml, so):
+    def available(self, a, xml, so, qidx=0):
         return os.path.exists(so)   # needs a compiled PINS module, not the xml
 
 
@@ -336,8 +385,21 @@ class TcheckerTool(Tool):
         m = re.match(r"^([a-zA-Z_]+)", os.path.basename(xml))
         return m.group(1) if m else ""
 
-    def argv(self, a, xml, q, th, so):
+    def _eg_model(self, xml, qidx):
+        """tck_live_e/<model>__q<idx>.tck -- gen_tck_eg.py's psi-restricted model.
+
+        TChecker has no TCTL, so `E[] psi` is asked as "couvscc finds a cycle" on a model whose
+        every state satisfies psi. The restriction is per QUERY, so unlike every other kind the
+        model depends on qidx and not on the family alone.
+        """
+        base = os.path.basename(xml).replace(".xml", "")
+        return os.path.join(BENCH, "tck_live_e", "%s__q%d.tck" % (base, qidx))
+
+    def argv(self, a, xml, q, th, so, qidx=0):
         name = os.path.basename(xml).replace(".xml", ".tck")
+        if a.queries == "eg":
+            return [a.tchecker_liveness_bin, "-a", "couvscc", "-l", "TC_EG",
+                    self._eg_model(xml, qidx)]
         if a.queries == "live":
             tck = os.path.join(BENCH, "tck_live", name)
             return [a.tchecker_liveness_bin, "-a", "couvscc", "-l", "TC_LIVE_PENDING", tck]
@@ -345,8 +407,12 @@ class TcheckerTool(Tool):
         labels = TCHECKER_LABELS[self._family(xml)]
         return [a.tchecker_bin, "-a", "reach", "-l", labels, tck]
 
-    def available(self, a, xml, so):
+    def available(self, a, xml, so, qidx=0):
         name = os.path.basename(xml).replace(".xml", ".tck")
+        if a.queries == "eg":
+            # A missing model is a REFUSAL, not an oversight: gen_tck_eg.py declines a psi whose
+            # clock part is non-convex, and records why in tck_live_e/manifest.json.
+            return os.path.exists(self._eg_model(xml, qidx))
         if a.queries == "live":
             return os.path.exists(os.path.join(BENCH, "tck_live", name))
         if self._family(xml) not in TCHECKER_LABELS:
@@ -354,8 +420,21 @@ class TcheckerTool(Tool):
         tck = os.path.join(BENCH, "tck", name)
         return os.path.exists(tck)
 
+    def unavailable_reason(self, a, xml, qidx=0):
+        if a.queries != "eg":
+            return "input missing for this tool"
+        # gen_tck_eg.py records why it declined a query; a refusal is a result, not a gap.
+        try:
+            with open(os.path.join(BENCH, "tck_live_e", "manifest.json")) as fh:
+                ref = json.load(fh).get("refused", {})
+        except (OSError, ValueError):
+            return "no psi-restricted model"
+        key = "%s q%d" % (self._family(xml), qidx)
+        return ref.get(key, {}).get("reason", "no psi-restricted model")
+
     def status(self, a, status, output):
-        if a.queries == "live" and status == "OK" and "CYCLE false" not in output:
+        if a.queries in ("live", "eg") and status == "OK" \
+                and "CYCLE false" not in output and "CYCLE true" not in output:
             return "ERR"
         return status
 
@@ -371,7 +450,7 @@ def parse_families(spec, tool=None, include_unmeasurable=False, kind="reach", lo
     'all' means every family that yields a valid measurement for `tool`; the excluded ones
     are reported with their reason rather than dropped silently.
     """
-    bad = {} if include_unmeasurable or (tool == "tchecker" and kind == "live") \
+    bad = {} if include_unmeasurable or kind == "eg" or (tool == "tchecker" and kind == "live") \
         else UNMEASURABLE.get(tool, {})
     if not spec or spec == "all":
         for f, why in sorted(bad.items()):
@@ -489,14 +568,18 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
                     done[(r["model"], r["tool"], r["threads"], r["rep"],
                           r.get("mergescan") or "-", r.get("hotlen") or "-",
                           r.get("chunk") or "-", r.get("sim") or "-",
-                          r.get("engine") or "-", r.get("queries") or "reach")] = r
+                          r.get("engine") or "-", r.get("queries") or "reach",
+                          r.get("qidx") or "0")] = r
 
     # Per-(family, tool, knobs) timeout streaks, seeded from disk so the rule survives a
     # restart. A size counts as timed out iff it has runs and NONE finished OK.
     outcomes = {}
 
-    def record(fam, N, timed_out):
-        d = outcomes.setdefault(fam, {})
+    def record(fam, qidx, N, timed_out):
+        # Keyed by QUERY as well as family: within one family the queries have wildly different
+        # costs (grc5 `E[] x0 <= 15` against its `!T0.in` sibling), so a timeout on one says
+        # nothing about the next and must not retire it.
+        d = outcomes.setdefault((fam, qidx), {})
         if d.get(N) is False:
             return
         d[N] = timed_out
@@ -509,15 +592,15 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
             continue
         if (r.get("chunk") or "-") != ch or (r.get("queries") or "reach") != qk:
             continue
-        hist.setdefault((r["family"], r["model"]), []).append(r.get("status"))
-    for (fam, model), sts in hist.items():
+        hist.setdefault((r["family"], r.get("qidx") or "0", r["model"]), []).append(r.get("status"))
+    for (fam, qidx, model), sts in hist.items():
         n = int(re.search(r"(\d+)$", model).group(1)) if re.search(r"(\d+)$", model) else 0
-        record(fam, n, not any(s == "OK" for s in sts))
+        record(fam, qidx, n, not any(s == "OK" for s in sts))
 
-    def struck(fam, N):
+    def struck(fam, qidx, N):
         if a.strike_limit <= 0:
             return False
-        d, streak = outcomes.get(fam, {}), 0
+        d, streak = outcomes.get((fam, str(qidx)), {}), 0
         for n in sorted((x for x in d if x < N), reverse=True):
             if d[n]:
                 streak += 1
@@ -528,13 +611,28 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
         return False
 
     new = not os.path.exists(out_csv)
+    # A file already on disk keeps ITS columns. New columns go on the end (see CSV_COLS), so an
+    # older table simply does not get them rather than gaining a row of the wrong width -- which
+    # matters while a sweep started under the previous schema is still appending.
+    cols = CSV_COLS
+    if not new:
+        with open(out_csv) as fh0:
+            hdr = next(csv.reader(fh0), None)
+        if hdr:
+            cols = hdr
     fh = open(out_csv, "a")
     w = csv.writer(fh)
+
+    def emit(row):
+        w.writerow([row.get(c, "-") or "-" for c in cols])
+
     if new:
-        w.writerow(CSV_COLS)
+        w.writerow(cols)
         for r in done.values():     # carry seeded rows in so the file is self-contained
-            w.writerow([r.get(c, "-") or "-" for c in CSV_COLS])
+            emit(r)
     fh.flush()
+    qdir_out = os.path.join(a.outdir, "q")
+    os.makedirs(qdir_out, exist_ok=True)
     print("seeded %d completed runs" % len(done), flush=True)
 
     for fam, n in work_items(fams, a.order):
@@ -543,52 +641,78 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
         model, xml = model_name(fam, n), model_path(fam, n)
         if not os.path.exists(xml):
             continue                                     # size not generated: silent skip
-        so, q = so_path(fam, n), query_path(fam, tool.name, a.queries)
-        if not os.path.exists(q):
+        so = so_path(fam, n)
+        qlist = queries_of(fam, tool.name, a.queries)
+        if not qlist:
             print("  %-11s %-13s   SKIP  (no %s query for '%s')"
                   % (model, tool.name, a.queries, fam), flush=True)
             continue
-        if not tool.available(a, xml, so):
-            print("  %-11s %-13s   SKIP  (input missing for this tool)" % (model, tool.name),
-                  flush=True)
-            continue
-        if struck(fam, n):
-            print("  %-11s %-13s   SKIP  (%d+ consecutive TIMEOUTs earlier in '%s')"
-                  % (model, tool.name, a.strike_limit, fam), flush=True)
-            continue
+        fam_qfile = query_path(fam, tool.name, a.queries)
 
-        sts, timed_out = [], False
-        for rep in range(1, a.reps + 1):
-            key = (model, tool.name, str(th), str(rep), ms, hl, ch, sim, engine, qk)
-            if key in done:
-                sts.append(done[key]["status"])
-                timed_out = timed_out or done[key]["status"] in ("TIMEOUT", "MEMOUT")
+        for qidx, qtext in enumerate(qlist):
+            if os.path.exists(stop_file):
+                log("STOP present -- exiting."); break
+            # One query per file, because every tool takes a query FILE. `reach` and `live` have
+            # a single query and keep using the family file itself, so their command lines stay
+            # exactly what the recorded tables were measured with; only `eg` is split out.
+            if len(qlist) == 1:
+                q = fam_qfile
+            else:
+                q = os.path.join(qdir_out, "%s_q%d.q" % (model, qidx))
+                with open(q, "w") as qh:
+                    qh.write(qtext + "\n")
+            label = model if len(qlist) == 1 else "%s q%d" % (model, qidx)
+            if not tool.available(a, xml, so, qidx):
+                print("  %-14s %-13s   SKIP  (%s)"
+                      % (label, tool.name, tool.unavailable_reason(a, xml, qidx)), flush=True)
                 continue
-            # Once a config times out on a model, its remaining reps are skipped: further
-            # reps are deterministic in cost and would burn the whole budget again.
-            if timed_out:
-                print("  %-11s %-13s t=%-3s r=%s   SKIP  (already TIMED OUT on %s)"
-                      % (model, tool.name, th, rep, model), flush=True)
-                sts.append("TIMEOUT")
+            if struck(fam, qidx, n):
+                print("  %-14s %-13s   SKIP  (%d+ consecutive TIMEOUTs earlier in '%s')"
+                      % (label, tool.name, a.strike_limit, fam), flush=True)
                 continue
-            # Pin each run to exactly as many cores as it has threads (16 -> 0-15), which is
-            # the methodology the recorded baselines were measured under; anything else makes
-            # a t16 number incomparable to the t16 column already on disk.
-            pre = ["taskset", "-c", "0-%d" % (th - 1)] if (a.pin and tool.threaded) else []
-            secs, rss, st, out = measure(pre + tool.argv(a, xml, q, th, so), tool.env(a, th),
-                                         a.timeout, a.memgb)
-            st = tool.status(a, st, out)
-            g = re.search(tool.states_re, out)
-            states = next((x for x in (g.groups() if g else ()) if x), "-") if g else "-"
-            w.writerow([fam, model, tool.name, th, rep, states, "%.3f" % secs, "%.3f" % rss,
-                        st, ms, hl, ch, sim, engine, qk])
-            fh.flush()
-            print("  %-11s %-13s t=%-3s r=%s %10s %9.2fs %6.2fGB  %s"
-                  % (model, tool.name, th, rep, states, secs, rss, st), flush=True)
-            sts.append(st)
-            timed_out = timed_out or st in ("TIMEOUT", "MEMOUT")
-        if sts:
-            record(fam, n, all(s in ("TIMEOUT", "MEMOUT") for s in sts))
+
+            sts, timed_out = [], False
+            for rep in range(1, a.reps + 1):
+                key = (model, tool.name, str(th), str(rep), ms, hl, ch, sim, engine, qk,
+                       str(qidx))
+                if key in done:
+                    sts.append(done[key]["status"])
+                    timed_out = timed_out or done[key]["status"] in ("TIMEOUT", "MEMOUT")
+                    continue
+                # Once a config times out on a model, its remaining reps are skipped: further
+                # reps are deterministic in cost and would burn the whole budget again.
+                if timed_out:
+                    print("  %-14s %-13s t=%-3s r=%s   SKIP  (already TIMED OUT on %s)"
+                          % (label, tool.name, th, rep, model), flush=True)
+                    sts.append("TIMEOUT")
+                    continue
+                # Pin each run to exactly as many cores as it has threads (16 -> 0-15), which is
+                # the methodology the recorded baselines were measured under; anything else makes
+                # a t16 number incomparable to the t16 column already on disk.
+                if a.cores:
+                    pre = ["taskset", "-c", a.cores]
+                elif a.pin and tool.threaded:
+                    pre = ["taskset", "-c", "0-%d" % (th - 1)]
+                else:
+                    pre = []
+                secs, rss, st, out = measure(pre + tool.argv(a, xml, q, th, so, qidx),
+                                             tool.env(a, th), a.timeout, a.memgb)
+                st = tool.status(a, st, out)
+                g = re.search(tool.states_re, out)
+                states = next((x for x in (g.groups() if g else ()) if x), "-") if g else "-"
+                emit({"family": fam, "model": model, "tool": tool.name, "threads": th,
+                      "rep": rep, "states": states, "seconds": "%.3f" % secs,
+                      "rss_gb": "%.3f" % rss, "status": st, "mergescan": ms, "hotlen": hl,
+                      "chunk": ch, "sim": sim, "engine": engine, "queries": qk,
+                      "qidx": qidx, "verdict": tool.verdict(a, out), "query": qtext})
+                fh.flush()
+                print("  %-14s %-13s t=%-3s r=%s %6s %10s %9.2fs %6.2fGB  %s"
+                      % (label, tool.name, th, rep, tool.verdict(a, out), states, secs, rss, st),
+                      flush=True)
+                sts.append(st)
+                timed_out = timed_out or st in ("TIMEOUT", "MEMOUT")
+            if sts:
+                record(fam, qidx, n, all(s in ("TIMEOUT", "MEMOUT") for s in sts))
     fh.close()
 
 
@@ -664,9 +788,11 @@ def main():
                    help="'all' | 'uppaal' | 'phil:4-13;csma:4,6,8' (default all)")
     r.add_argument("--include-unmeasurable", action="store_true",
                    help="do not drop families known to produce invalid measurements")
-    r.add_argument("--queries", default="reach", choices=["reach", "live"],
-                   help="which query set to measure: reach_queries/ (default) or "
-                        "live_queries/. Recorded in the CSV, so both can stream into one dir.")
+    r.add_argument("--queries", default="reach", choices=["reach", "live", "eg"],
+                   help="which query set to measure: reach_queries/ (default), live_queries/ "
+                        "or eg_queries/. Recorded in the CSV, so all three can stream into one "
+                        "dir. eg_queries/ holds SEVERAL queries per family; they are indexed by "
+                        "the qidx column and measured independently.")
     r.add_argument("--order", default="family", choices=["family", "size"],
                    help="family: finish one family before starting the next (default). "
                         "size: sweep all families at each size. Both are strictly "
@@ -691,6 +817,12 @@ def main():
     r.add_argument("--hotlen", type=int, default=None, help="PTCTLMC_HOTLEN")
     r.add_argument("--ptctlmc-bin", default=PTCTLMC)
     r.add_argument("--ptctlmc-extra", nargs="*", default=[], help="extra ptctlmc flags")
+    r.add_argument("--cores", default=None,
+                   help="taskset CPU list for every measured run (e.g. '16-31'). Overrides the "
+                        "default '0-(threads-1)' pinning, which is the methodology the recorded "
+                        "tables were measured under -- use it to keep a sweep off CPUs another "
+                        "sweep is already using, and note that times are then not comparable "
+                        "with those tables.")
     # other tools
     r.add_argument("--verifyta-bin", default=VERIFYTA)
     r.add_argument("--opaal-bin", default=OPAAL)
