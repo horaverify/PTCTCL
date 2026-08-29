@@ -1,0 +1,87 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_twolock4.xml
+# x0:(clock)
+clock:1:x0
+# x1:(clock)
+clock:1:x1
+# x2:(clock)
+clock:1:x2
+# x3:(clock)
+clock:1:x3
+# a:(range (int) "0" "4")
+int:1:0:4:0:a
+# b:(range (int) "0" "4")
+int:1:0:4:0:b
+# no iodecl
+# compilation of process P0
+process:P0
+location:P0:idle{initial::invariant:x0 <= 30:labels:TC_EG}
+location:P0:reqA{invariant:1 && x0 <= 2 && x0 <= 30:labels:TC_EG}
+location:P0:waitA{invariant:x0 <= 30:labels:TC_EG}
+location:P0:reqB{invariant:1 && x0 <= 2 && x0 <= 30:labels:TC_EG}
+location:P0:waitB{invariant:x0 <= 30:labels:TC_EG}
+location:P0:cs{invariant:x0 <= 30:labels:TC_EG}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:P0:idle:reqA:tau{do:x0=0:provided:(a == 0)}
+edge:P0:reqA:waitA:tau{do:a=1;x0=0}
+edge:P0:waitA:reqB:tau{do:x0=0:provided:x0 > 2 && a == 1 && b == 0}
+edge:P0:waitA:idle:tau{provided:x0 > 2 && a != 1}
+edge:P0:reqB:waitB:tau{do:b=1;x0=0}
+edge:P0:waitB:cs:tau{provided:x0 > 2 && b == 1}
+edge:P0:waitB:idle:tau{do:a=0:provided:x0 > 2 && b != 1}
+edge:P0:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P1
+process:P1
+location:P1:idle{initial:}
+location:P1:reqA{invariant:1 && x1 <= 2}
+location:P1:waitA{}
+location:P1:reqB{invariant:1 && x1 <= 2}
+location:P1:waitB{}
+location:P1:cs{labels:L_P1_cs}
+edge:P1:idle:reqA:tau{do:x1=0:provided:(a == 0)}
+edge:P1:reqA:waitA:tau{do:a=2;x1=0}
+edge:P1:waitA:reqB:tau{do:x1=0:provided:x1 > 2 && a == 2 && b == 0}
+edge:P1:waitA:idle:tau{provided:x1 > 2 && a != 2}
+edge:P1:reqB:waitB:tau{do:b=2;x1=0}
+edge:P1:waitB:cs:tau{provided:x1 > 2 && b == 2}
+edge:P1:waitB:idle:tau{do:a=0:provided:x1 > 2 && b != 2}
+edge:P1:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P2
+process:P2
+location:P2:idle{initial:}
+location:P2:reqA{invariant:1 && x2 <= 2}
+location:P2:waitA{}
+location:P2:reqB{invariant:1 && x2 <= 2}
+location:P2:waitB{}
+location:P2:cs{labels:L_P2_cs}
+edge:P2:idle:reqA:tau{do:x2=0:provided:(a == 0)}
+edge:P2:reqA:waitA:tau{do:a=3;x2=0}
+edge:P2:waitA:reqB:tau{do:x2=0:provided:x2 > 2 && a == 3 && b == 0}
+edge:P2:waitA:idle:tau{provided:x2 > 2 && a != 3}
+edge:P2:reqB:waitB:tau{do:b=3;x2=0}
+edge:P2:waitB:cs:tau{provided:x2 > 2 && b == 3}
+edge:P2:waitB:idle:tau{do:a=0:provided:x2 > 2 && b != 3}
+edge:P2:cs:idle:tau{do:a=0;b=0}
+
+# compilation of process P3
+process:P3
+location:P3:idle{initial:}
+location:P3:reqA{invariant:1 && x3 <= 2}
+location:P3:waitA{}
+location:P3:reqB{invariant:1 && x3 <= 2}
+location:P3:waitB{}
+location:P3:cs{}
+edge:P3:idle:reqA:tau{do:x3=0:provided:(a == 0)}
+edge:P3:reqA:waitA:tau{do:a=4;x3=0}
+edge:P3:waitA:reqB:tau{do:x3=0:provided:x3 > 2 && a == 4 && b == 0}
+edge:P3:waitA:idle:tau{provided:x3 > 2 && a != 4}
+edge:P3:reqB:waitB:tau{do:b=4;x3=0}
+edge:P3:waitB:cs:tau{provided:x3 > 2 && b == 4}
+edge:P3:waitB:idle:tau{do:a=0:provided:x3 > 2 && b != 4}
+edge:P3:cs:idle:tau{do:a=0;b=0}
+

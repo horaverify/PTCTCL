@@ -1,0 +1,269 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_arbiter19.xml
+# x0:(clock)
+clock:1:x0
+# x1:(clock)
+clock:1:x1
+# x2:(clock)
+clock:1:x2
+# x3:(clock)
+clock:1:x3
+# x4:(clock)
+clock:1:x4
+# x5:(clock)
+clock:1:x5
+# x6:(clock)
+clock:1:x6
+# x7:(clock)
+clock:1:x7
+# x8:(clock)
+clock:1:x8
+# x9:(clock)
+clock:1:x9
+# x10:(clock)
+clock:1:x10
+# x11:(clock)
+clock:1:x11
+# x12:(clock)
+clock:1:x12
+# x13:(clock)
+clock:1:x13
+# x14:(clock)
+clock:1:x14
+# x15:(clock)
+clock:1:x15
+# x16:(clock)
+clock:1:x16
+# x17:(clock)
+clock:1:x17
+# x18:(clock)
+clock:1:x18
+# acq:(channel)
+# global event: acq
+# rel:(channel)
+# global event: rel
+# no iodecl
+# compilation of process Arb
+process:Arb
+location:Arb:Free{initial::invariant:x0 <= 40:labels:TC_EG}
+location:Arb:Busy{invariant:x0 <= 40:labels:TC_EG}
+event:acq_recv
+edge:Arb:Free:Busy:acq_recv{}
+event:rel_recv
+edge:Arb:Busy:Free:rel_recv{}
+
+# compilation of process C0
+process:C0
+location:C0:idle{initial:}
+location:C0:want{}
+location:C0:cs{invariant:1 && x0 <= 4}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:C0:idle:want:tau{provided:(x0 >= 2)}
+event:acq_emit
+edge:C0:want:cs:acq_emit{do:x0=0}
+event:rel_emit
+edge:C0:cs:idle:rel_emit{do:x0=0}
+
+# compilation of process C1
+process:C1
+location:C1:idle{initial:}
+location:C1:want{}
+location:C1:cs{invariant:1 && x1 <= 4:labels:L_C1_cs}
+edge:C1:idle:want:tau{provided:(x1 >= 2)}
+edge:C1:want:cs:acq_emit{do:x1=0}
+edge:C1:cs:idle:rel_emit{do:x1=0}
+
+# compilation of process C2
+process:C2
+location:C2:idle{initial:}
+location:C2:want{}
+location:C2:cs{invariant:1 && x2 <= 4:labels:L_C2_cs}
+edge:C2:idle:want:tau{provided:(x2 >= 2)}
+edge:C2:want:cs:acq_emit{do:x2=0}
+edge:C2:cs:idle:rel_emit{do:x2=0}
+
+# compilation of process C3
+process:C3
+location:C3:idle{initial:}
+location:C3:want{}
+location:C3:cs{invariant:1 && x3 <= 4}
+edge:C3:idle:want:tau{provided:(x3 >= 2)}
+edge:C3:want:cs:acq_emit{do:x3=0}
+edge:C3:cs:idle:rel_emit{do:x3=0}
+
+# compilation of process C4
+process:C4
+location:C4:idle{initial:}
+location:C4:want{}
+location:C4:cs{invariant:1 && x4 <= 4}
+edge:C4:idle:want:tau{provided:(x4 >= 2)}
+edge:C4:want:cs:acq_emit{do:x4=0}
+edge:C4:cs:idle:rel_emit{do:x4=0}
+
+# compilation of process C5
+process:C5
+location:C5:idle{initial:}
+location:C5:want{}
+location:C5:cs{invariant:1 && x5 <= 4}
+edge:C5:idle:want:tau{provided:(x5 >= 2)}
+edge:C5:want:cs:acq_emit{do:x5=0}
+edge:C5:cs:idle:rel_emit{do:x5=0}
+
+# compilation of process C6
+process:C6
+location:C6:idle{initial:}
+location:C6:want{}
+location:C6:cs{invariant:1 && x6 <= 4}
+edge:C6:idle:want:tau{provided:(x6 >= 2)}
+edge:C6:want:cs:acq_emit{do:x6=0}
+edge:C6:cs:idle:rel_emit{do:x6=0}
+
+# compilation of process C7
+process:C7
+location:C7:idle{initial:}
+location:C7:want{}
+location:C7:cs{invariant:1 && x7 <= 4}
+edge:C7:idle:want:tau{provided:(x7 >= 2)}
+edge:C7:want:cs:acq_emit{do:x7=0}
+edge:C7:cs:idle:rel_emit{do:x7=0}
+
+# compilation of process C8
+process:C8
+location:C8:idle{initial:}
+location:C8:want{}
+location:C8:cs{invariant:1 && x8 <= 4}
+edge:C8:idle:want:tau{provided:(x8 >= 2)}
+edge:C8:want:cs:acq_emit{do:x8=0}
+edge:C8:cs:idle:rel_emit{do:x8=0}
+
+# compilation of process C9
+process:C9
+location:C9:idle{initial:}
+location:C9:want{}
+location:C9:cs{invariant:1 && x9 <= 4}
+edge:C9:idle:want:tau{provided:(x9 >= 2)}
+edge:C9:want:cs:acq_emit{do:x9=0}
+edge:C9:cs:idle:rel_emit{do:x9=0}
+
+# compilation of process C10
+process:C10
+location:C10:idle{initial:}
+location:C10:want{}
+location:C10:cs{invariant:1 && x10 <= 4}
+edge:C10:idle:want:tau{provided:(x10 >= 2)}
+edge:C10:want:cs:acq_emit{do:x10=0}
+edge:C10:cs:idle:rel_emit{do:x10=0}
+
+# compilation of process C11
+process:C11
+location:C11:idle{initial:}
+location:C11:want{}
+location:C11:cs{invariant:1 && x11 <= 4}
+edge:C11:idle:want:tau{provided:(x11 >= 2)}
+edge:C11:want:cs:acq_emit{do:x11=0}
+edge:C11:cs:idle:rel_emit{do:x11=0}
+
+# compilation of process C12
+process:C12
+location:C12:idle{initial:}
+location:C12:want{}
+location:C12:cs{invariant:1 && x12 <= 4}
+edge:C12:idle:want:tau{provided:(x12 >= 2)}
+edge:C12:want:cs:acq_emit{do:x12=0}
+edge:C12:cs:idle:rel_emit{do:x12=0}
+
+# compilation of process C13
+process:C13
+location:C13:idle{initial:}
+location:C13:want{}
+location:C13:cs{invariant:1 && x13 <= 4}
+edge:C13:idle:want:tau{provided:(x13 >= 2)}
+edge:C13:want:cs:acq_emit{do:x13=0}
+edge:C13:cs:idle:rel_emit{do:x13=0}
+
+# compilation of process C14
+process:C14
+location:C14:idle{initial:}
+location:C14:want{}
+location:C14:cs{invariant:1 && x14 <= 4}
+edge:C14:idle:want:tau{provided:(x14 >= 2)}
+edge:C14:want:cs:acq_emit{do:x14=0}
+edge:C14:cs:idle:rel_emit{do:x14=0}
+
+# compilation of process C15
+process:C15
+location:C15:idle{initial:}
+location:C15:want{}
+location:C15:cs{invariant:1 && x15 <= 4}
+edge:C15:idle:want:tau{provided:(x15 >= 2)}
+edge:C15:want:cs:acq_emit{do:x15=0}
+edge:C15:cs:idle:rel_emit{do:x15=0}
+
+# compilation of process C16
+process:C16
+location:C16:idle{initial:}
+location:C16:want{}
+location:C16:cs{invariant:1 && x16 <= 4}
+edge:C16:idle:want:tau{provided:(x16 >= 2)}
+edge:C16:want:cs:acq_emit{do:x16=0}
+edge:C16:cs:idle:rel_emit{do:x16=0}
+
+# compilation of process C17
+process:C17
+location:C17:idle{initial:}
+location:C17:want{}
+location:C17:cs{invariant:1 && x17 <= 4}
+edge:C17:idle:want:tau{provided:(x17 >= 2)}
+edge:C17:want:cs:acq_emit{do:x17=0}
+edge:C17:cs:idle:rel_emit{do:x17=0}
+
+# compilation of process C18
+process:C18
+location:C18:idle{initial:}
+location:C18:want{}
+location:C18:cs{invariant:1 && x18 <= 4}
+edge:C18:idle:want:tau{provided:(x18 >= 2)}
+edge:C18:want:cs:acq_emit{do:x18=0}
+edge:C18:cs:idle:rel_emit{do:x18=0}
+
+sync:Arb@acq_recv:C0@acq_emit
+sync:Arb@acq_recv:C1@acq_emit
+sync:Arb@acq_recv:C10@acq_emit
+sync:Arb@acq_recv:C11@acq_emit
+sync:Arb@acq_recv:C12@acq_emit
+sync:Arb@acq_recv:C13@acq_emit
+sync:Arb@acq_recv:C14@acq_emit
+sync:Arb@acq_recv:C15@acq_emit
+sync:Arb@acq_recv:C16@acq_emit
+sync:Arb@acq_recv:C17@acq_emit
+sync:Arb@acq_recv:C18@acq_emit
+sync:Arb@acq_recv:C2@acq_emit
+sync:Arb@acq_recv:C3@acq_emit
+sync:Arb@acq_recv:C4@acq_emit
+sync:Arb@acq_recv:C5@acq_emit
+sync:Arb@acq_recv:C6@acq_emit
+sync:Arb@acq_recv:C7@acq_emit
+sync:Arb@acq_recv:C8@acq_emit
+sync:Arb@acq_recv:C9@acq_emit
+sync:Arb@rel_recv:C0@rel_emit
+sync:Arb@rel_recv:C1@rel_emit
+sync:Arb@rel_recv:C10@rel_emit
+sync:Arb@rel_recv:C11@rel_emit
+sync:Arb@rel_recv:C12@rel_emit
+sync:Arb@rel_recv:C13@rel_emit
+sync:Arb@rel_recv:C14@rel_emit
+sync:Arb@rel_recv:C15@rel_emit
+sync:Arb@rel_recv:C16@rel_emit
+sync:Arb@rel_recv:C17@rel_emit
+sync:Arb@rel_recv:C18@rel_emit
+sync:Arb@rel_recv:C2@rel_emit
+sync:Arb@rel_recv:C3@rel_emit
+sync:Arb@rel_recv:C4@rel_emit
+sync:Arb@rel_recv:C5@rel_emit
+sync:Arb@rel_recv:C6@rel_emit
+sync:Arb@rel_recv:C7@rel_emit
+sync:Arb@rel_recv:C8@rel_emit
+sync:Arb@rel_recv:C9@rel_emit

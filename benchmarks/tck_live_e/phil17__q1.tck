@@ -1,0 +1,550 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_phil17.xml
+# c0:(clock)
+clock:1:c0
+# c1:(clock)
+clock:1:c1
+# c2:(clock)
+clock:1:c2
+# c3:(clock)
+clock:1:c3
+# c4:(clock)
+clock:1:c4
+# c5:(clock)
+clock:1:c5
+# c6:(clock)
+clock:1:c6
+# c7:(clock)
+clock:1:c7
+# c8:(clock)
+clock:1:c8
+# c9:(clock)
+clock:1:c9
+# c10:(clock)
+clock:1:c10
+# c11:(clock)
+clock:1:c11
+# c12:(clock)
+clock:1:c12
+# c13:(clock)
+clock:1:c13
+# c14:(clock)
+clock:1:c14
+# c15:(clock)
+clock:1:c15
+# c16:(clock)
+clock:1:c16
+int:1:0:3:0:__loc_P1
+# take0:(channel)
+# global event: take0
+# take1:(channel)
+# global event: take1
+# take2:(channel)
+# global event: take2
+# take3:(channel)
+# global event: take3
+# take4:(channel)
+# global event: take4
+# take5:(channel)
+# global event: take5
+# take6:(channel)
+# global event: take6
+# take7:(channel)
+# global event: take7
+# take8:(channel)
+# global event: take8
+# take9:(channel)
+# global event: take9
+# take10:(channel)
+# global event: take10
+# take11:(channel)
+# global event: take11
+# take12:(channel)
+# global event: take12
+# take13:(channel)
+# global event: take13
+# take14:(channel)
+# global event: take14
+# take15:(channel)
+# global event: take15
+# take16:(channel)
+# global event: take16
+# put0:(channel)
+# global event: put0
+# put1:(channel)
+# global event: put1
+# put2:(channel)
+# global event: put2
+# put3:(channel)
+# global event: put3
+# put4:(channel)
+# global event: put4
+# put5:(channel)
+# global event: put5
+# put6:(channel)
+# global event: put6
+# put7:(channel)
+# global event: put7
+# put8:(channel)
+# global event: put8
+# put9:(channel)
+# global event: put9
+# put10:(channel)
+# global event: put10
+# put11:(channel)
+# global event: put11
+# put12:(channel)
+# global event: put12
+# put13:(channel)
+# global event: put13
+# put14:(channel)
+# global event: put14
+# put15:(channel)
+# global event: put15
+# put16:(channel)
+# global event: put16
+# no iodecl
+# compilation of process F0
+process:F0
+location:F0:Free{initial::invariant:c0 <= 40 && __loc_P1 != 2:labels:TC_EG}
+location:F0:Used{invariant:c0 <= 40 && __loc_P1 != 2:labels:TC_EG}
+event:take0_recv
+edge:F0:Free:Used:take0_recv{}
+event:put0_recv
+edge:F0:Used:Free:put0_recv{}
+
+# compilation of process F1
+process:F1
+location:F1:Free{initial:}
+location:F1:Used{}
+event:take1_recv
+edge:F1:Free:Used:take1_recv{}
+event:put1_recv
+edge:F1:Used:Free:put1_recv{}
+
+# compilation of process F2
+process:F2
+location:F2:Free{initial:}
+location:F2:Used{}
+event:take2_recv
+edge:F2:Free:Used:take2_recv{}
+event:put2_recv
+edge:F2:Used:Free:put2_recv{}
+
+# compilation of process F3
+process:F3
+location:F3:Free{initial:}
+location:F3:Used{}
+event:take3_recv
+edge:F3:Free:Used:take3_recv{}
+event:put3_recv
+edge:F3:Used:Free:put3_recv{}
+
+# compilation of process F4
+process:F4
+location:F4:Free{initial:}
+location:F4:Used{}
+event:take4_recv
+edge:F4:Free:Used:take4_recv{}
+event:put4_recv
+edge:F4:Used:Free:put4_recv{}
+
+# compilation of process F5
+process:F5
+location:F5:Free{initial:}
+location:F5:Used{}
+event:take5_recv
+edge:F5:Free:Used:take5_recv{}
+event:put5_recv
+edge:F5:Used:Free:put5_recv{}
+
+# compilation of process F6
+process:F6
+location:F6:Free{initial:}
+location:F6:Used{}
+event:take6_recv
+edge:F6:Free:Used:take6_recv{}
+event:put6_recv
+edge:F6:Used:Free:put6_recv{}
+
+# compilation of process F7
+process:F7
+location:F7:Free{initial:}
+location:F7:Used{}
+event:take7_recv
+edge:F7:Free:Used:take7_recv{}
+event:put7_recv
+edge:F7:Used:Free:put7_recv{}
+
+# compilation of process F8
+process:F8
+location:F8:Free{initial:}
+location:F8:Used{}
+event:take8_recv
+edge:F8:Free:Used:take8_recv{}
+event:put8_recv
+edge:F8:Used:Free:put8_recv{}
+
+# compilation of process F9
+process:F9
+location:F9:Free{initial:}
+location:F9:Used{}
+event:take9_recv
+edge:F9:Free:Used:take9_recv{}
+event:put9_recv
+edge:F9:Used:Free:put9_recv{}
+
+# compilation of process F10
+process:F10
+location:F10:Free{initial:}
+location:F10:Used{}
+event:take10_recv
+edge:F10:Free:Used:take10_recv{}
+event:put10_recv
+edge:F10:Used:Free:put10_recv{}
+
+# compilation of process F11
+process:F11
+location:F11:Free{initial:}
+location:F11:Used{}
+event:take11_recv
+edge:F11:Free:Used:take11_recv{}
+event:put11_recv
+edge:F11:Used:Free:put11_recv{}
+
+# compilation of process F12
+process:F12
+location:F12:Free{initial:}
+location:F12:Used{}
+event:take12_recv
+edge:F12:Free:Used:take12_recv{}
+event:put12_recv
+edge:F12:Used:Free:put12_recv{}
+
+# compilation of process F13
+process:F13
+location:F13:Free{initial:}
+location:F13:Used{}
+event:take13_recv
+edge:F13:Free:Used:take13_recv{}
+event:put13_recv
+edge:F13:Used:Free:put13_recv{}
+
+# compilation of process F14
+process:F14
+location:F14:Free{initial:}
+location:F14:Used{}
+event:take14_recv
+edge:F14:Free:Used:take14_recv{}
+event:put14_recv
+edge:F14:Used:Free:put14_recv{}
+
+# compilation of process F15
+process:F15
+location:F15:Free{initial:}
+location:F15:Used{}
+event:take15_recv
+edge:F15:Free:Used:take15_recv{}
+event:put15_recv
+edge:F15:Used:Free:put15_recv{}
+
+# compilation of process F16
+process:F16
+location:F16:Free{initial:}
+location:F16:Used{}
+event:take16_recv
+edge:F16:Free:Used:take16_recv{}
+event:put16_recv
+edge:F16:Used:Free:put16_recv{}
+
+# compilation of process P0
+process:P0
+location:P0:Think{initial:}
+location:P0:HoldL{}
+location:P0:Eat{invariant:1 && c0 <= 2:labels:L_P0_Eat}
+location:P0:Dropped{}
+event:take0_emit
+edge:P0:Think:HoldL:take0_emit{do:c0=0}
+event:take1_emit
+edge:P0:HoldL:Eat:take1_emit{do:c0=0}
+event:put0_emit
+edge:P0:Eat:Dropped:put0_emit{provided:(c0 >= 1)}
+event:put1_emit
+edge:P0:Dropped:Think:put1_emit{}
+
+# compilation of process P1
+process:P1
+location:P1:Think{initial:}
+location:P1:HoldL{}
+location:P1:Eat{invariant:1 && c1 <= 2:labels:L_P1_Eat}
+location:P1:Dropped{}
+edge:P1:Think:HoldL:take1_emit{do:c1=0;__loc_P1=1}
+event:take2_emit
+edge:P1:HoldL:Eat:take2_emit{do:c1=0;__loc_P1=2}
+edge:P1:Eat:Dropped:put1_emit{provided:(c1 >= 1):do:__loc_P1=3}
+event:put2_emit
+edge:P1:Dropped:Think:put2_emit{do:__loc_P1=0}
+
+# compilation of process P2
+process:P2
+location:P2:Think{initial:}
+location:P2:HoldL{}
+location:P2:Eat{invariant:1 && c2 <= 2}
+location:P2:Dropped{}
+edge:P2:Think:HoldL:take2_emit{do:c2=0}
+event:take3_emit
+edge:P2:HoldL:Eat:take3_emit{do:c2=0}
+edge:P2:Eat:Dropped:put2_emit{provided:(c2 >= 1)}
+event:put3_emit
+edge:P2:Dropped:Think:put3_emit{}
+
+# compilation of process P3
+process:P3
+location:P3:Think{initial:}
+location:P3:HoldL{}
+location:P3:Eat{invariant:1 && c3 <= 2}
+location:P3:Dropped{}
+edge:P3:Think:HoldL:take3_emit{do:c3=0}
+event:take4_emit
+edge:P3:HoldL:Eat:take4_emit{do:c3=0}
+edge:P3:Eat:Dropped:put3_emit{provided:(c3 >= 1)}
+event:put4_emit
+edge:P3:Dropped:Think:put4_emit{}
+
+# compilation of process P4
+process:P4
+location:P4:Think{initial:}
+location:P4:HoldL{}
+location:P4:Eat{invariant:1 && c4 <= 2}
+location:P4:Dropped{}
+edge:P4:Think:HoldL:take4_emit{do:c4=0}
+event:take5_emit
+edge:P4:HoldL:Eat:take5_emit{do:c4=0}
+edge:P4:Eat:Dropped:put4_emit{provided:(c4 >= 1)}
+event:put5_emit
+edge:P4:Dropped:Think:put5_emit{}
+
+# compilation of process P5
+process:P5
+location:P5:Think{initial:}
+location:P5:HoldL{}
+location:P5:Eat{invariant:1 && c5 <= 2}
+location:P5:Dropped{}
+edge:P5:Think:HoldL:take5_emit{do:c5=0}
+event:take6_emit
+edge:P5:HoldL:Eat:take6_emit{do:c5=0}
+edge:P5:Eat:Dropped:put5_emit{provided:(c5 >= 1)}
+event:put6_emit
+edge:P5:Dropped:Think:put6_emit{}
+
+# compilation of process P6
+process:P6
+location:P6:Think{initial:}
+location:P6:HoldL{}
+location:P6:Eat{invariant:1 && c6 <= 2}
+location:P6:Dropped{}
+edge:P6:Think:HoldL:take6_emit{do:c6=0}
+event:take7_emit
+edge:P6:HoldL:Eat:take7_emit{do:c6=0}
+edge:P6:Eat:Dropped:put6_emit{provided:(c6 >= 1)}
+event:put7_emit
+edge:P6:Dropped:Think:put7_emit{}
+
+# compilation of process P7
+process:P7
+location:P7:Think{initial:}
+location:P7:HoldL{}
+location:P7:Eat{invariant:1 && c7 <= 2}
+location:P7:Dropped{}
+edge:P7:Think:HoldL:take7_emit{do:c7=0}
+event:take8_emit
+edge:P7:HoldL:Eat:take8_emit{do:c7=0}
+edge:P7:Eat:Dropped:put7_emit{provided:(c7 >= 1)}
+event:put8_emit
+edge:P7:Dropped:Think:put8_emit{}
+
+# compilation of process P8
+process:P8
+location:P8:Think{initial:}
+location:P8:HoldL{}
+location:P8:Eat{invariant:1 && c8 <= 2}
+location:P8:Dropped{}
+edge:P8:Think:HoldL:take8_emit{do:c8=0}
+event:take9_emit
+edge:P8:HoldL:Eat:take9_emit{do:c8=0}
+edge:P8:Eat:Dropped:put8_emit{provided:(c8 >= 1)}
+event:put9_emit
+edge:P8:Dropped:Think:put9_emit{}
+
+# compilation of process P9
+process:P9
+location:P9:Think{initial:}
+location:P9:HoldL{}
+location:P9:Eat{invariant:1 && c9 <= 2}
+location:P9:Dropped{}
+edge:P9:Think:HoldL:take9_emit{do:c9=0}
+event:take10_emit
+edge:P9:HoldL:Eat:take10_emit{do:c9=0}
+edge:P9:Eat:Dropped:put9_emit{provided:(c9 >= 1)}
+event:put10_emit
+edge:P9:Dropped:Think:put10_emit{}
+
+# compilation of process P10
+process:P10
+location:P10:Think{initial:}
+location:P10:HoldL{}
+location:P10:Eat{invariant:1 && c10 <= 2}
+location:P10:Dropped{}
+edge:P10:Think:HoldL:take10_emit{do:c10=0}
+event:take11_emit
+edge:P10:HoldL:Eat:take11_emit{do:c10=0}
+edge:P10:Eat:Dropped:put10_emit{provided:(c10 >= 1)}
+event:put11_emit
+edge:P10:Dropped:Think:put11_emit{}
+
+# compilation of process P11
+process:P11
+location:P11:Think{initial:}
+location:P11:HoldL{}
+location:P11:Eat{invariant:1 && c11 <= 2}
+location:P11:Dropped{}
+edge:P11:Think:HoldL:take11_emit{do:c11=0}
+event:take12_emit
+edge:P11:HoldL:Eat:take12_emit{do:c11=0}
+edge:P11:Eat:Dropped:put11_emit{provided:(c11 >= 1)}
+event:put12_emit
+edge:P11:Dropped:Think:put12_emit{}
+
+# compilation of process P12
+process:P12
+location:P12:Think{initial:}
+location:P12:HoldL{}
+location:P12:Eat{invariant:1 && c12 <= 2}
+location:P12:Dropped{}
+edge:P12:Think:HoldL:take12_emit{do:c12=0}
+event:take13_emit
+edge:P12:HoldL:Eat:take13_emit{do:c12=0}
+edge:P12:Eat:Dropped:put12_emit{provided:(c12 >= 1)}
+event:put13_emit
+edge:P12:Dropped:Think:put13_emit{}
+
+# compilation of process P13
+process:P13
+location:P13:Think{initial:}
+location:P13:HoldL{}
+location:P13:Eat{invariant:1 && c13 <= 2}
+location:P13:Dropped{}
+edge:P13:Think:HoldL:take13_emit{do:c13=0}
+event:take14_emit
+edge:P13:HoldL:Eat:take14_emit{do:c13=0}
+edge:P13:Eat:Dropped:put13_emit{provided:(c13 >= 1)}
+event:put14_emit
+edge:P13:Dropped:Think:put14_emit{}
+
+# compilation of process P14
+process:P14
+location:P14:Think{initial:}
+location:P14:HoldL{}
+location:P14:Eat{invariant:1 && c14 <= 2}
+location:P14:Dropped{}
+edge:P14:Think:HoldL:take14_emit{do:c14=0}
+event:take15_emit
+edge:P14:HoldL:Eat:take15_emit{do:c14=0}
+edge:P14:Eat:Dropped:put14_emit{provided:(c14 >= 1)}
+event:put15_emit
+edge:P14:Dropped:Think:put15_emit{}
+
+# compilation of process P15
+process:P15
+location:P15:Think{initial:}
+location:P15:HoldL{}
+location:P15:Eat{invariant:1 && c15 <= 2}
+location:P15:Dropped{}
+edge:P15:Think:HoldL:take15_emit{do:c15=0}
+event:take16_emit
+edge:P15:HoldL:Eat:take16_emit{do:c15=0}
+edge:P15:Eat:Dropped:put15_emit{provided:(c15 >= 1)}
+event:put16_emit
+edge:P15:Dropped:Think:put16_emit{}
+
+# compilation of process P16
+process:P16
+location:P16:Think{initial:}
+location:P16:HoldL{}
+location:P16:Eat{invariant:1 && c16 <= 2}
+location:P16:Dropped{}
+edge:P16:Think:HoldL:take16_emit{do:c16=0}
+edge:P16:HoldL:Eat:take0_emit{do:c16=0}
+edge:P16:Eat:Dropped:put16_emit{provided:(c16 >= 1)}
+edge:P16:Dropped:Think:put0_emit{}
+
+sync:F0@put0_recv:P0@put0_emit
+sync:F0@put0_recv:P16@put0_emit
+sync:F1@put1_recv:P0@put1_emit
+sync:F1@put1_recv:P1@put1_emit
+sync:F10@put10_recv:P10@put10_emit
+sync:F10@put10_recv:P9@put10_emit
+sync:F11@put11_recv:P10@put11_emit
+sync:F11@put11_recv:P11@put11_emit
+sync:F12@put12_recv:P11@put12_emit
+sync:F12@put12_recv:P12@put12_emit
+sync:F13@put13_recv:P12@put13_emit
+sync:F13@put13_recv:P13@put13_emit
+sync:F14@put14_recv:P13@put14_emit
+sync:F14@put14_recv:P14@put14_emit
+sync:F15@put15_recv:P14@put15_emit
+sync:F15@put15_recv:P15@put15_emit
+sync:F16@put16_recv:P15@put16_emit
+sync:F16@put16_recv:P16@put16_emit
+sync:F2@put2_recv:P1@put2_emit
+sync:F2@put2_recv:P2@put2_emit
+sync:F3@put3_recv:P2@put3_emit
+sync:F3@put3_recv:P3@put3_emit
+sync:F4@put4_recv:P3@put4_emit
+sync:F4@put4_recv:P4@put4_emit
+sync:F5@put5_recv:P4@put5_emit
+sync:F5@put5_recv:P5@put5_emit
+sync:F6@put6_recv:P5@put6_emit
+sync:F6@put6_recv:P6@put6_emit
+sync:F7@put7_recv:P6@put7_emit
+sync:F7@put7_recv:P7@put7_emit
+sync:F8@put8_recv:P7@put8_emit
+sync:F8@put8_recv:P8@put8_emit
+sync:F9@put9_recv:P8@put9_emit
+sync:F9@put9_recv:P9@put9_emit
+sync:F0@take0_recv:P0@take0_emit
+sync:F0@take0_recv:P16@take0_emit
+sync:F1@take1_recv:P0@take1_emit
+sync:F1@take1_recv:P1@take1_emit
+sync:F10@take10_recv:P10@take10_emit
+sync:F10@take10_recv:P9@take10_emit
+sync:F11@take11_recv:P10@take11_emit
+sync:F11@take11_recv:P11@take11_emit
+sync:F12@take12_recv:P11@take12_emit
+sync:F12@take12_recv:P12@take12_emit
+sync:F13@take13_recv:P12@take13_emit
+sync:F13@take13_recv:P13@take13_emit
+sync:F14@take14_recv:P13@take14_emit
+sync:F14@take14_recv:P14@take14_emit
+sync:F15@take15_recv:P14@take15_emit
+sync:F15@take15_recv:P15@take15_emit
+sync:F16@take16_recv:P15@take16_emit
+sync:F16@take16_recv:P16@take16_emit
+sync:F2@take2_recv:P1@take2_emit
+sync:F2@take2_recv:P2@take2_emit
+sync:F3@take3_recv:P2@take3_emit
+sync:F3@take3_recv:P3@take3_emit
+sync:F4@take4_recv:P3@take4_emit
+sync:F4@take4_recv:P4@take4_emit
+sync:F5@take5_recv:P4@take5_emit
+sync:F5@take5_recv:P5@take5_emit
+sync:F6@take6_recv:P5@take6_emit
+sync:F6@take6_recv:P6@take6_emit
+sync:F7@take7_recv:P6@take7_emit
+sync:F7@take7_recv:P7@take7_emit
+sync:F8@take8_recv:P7@take8_emit
+sync:F8@take8_recv:P8@take8_emit
+sync:F9@take9_recv:P8@take9_emit
+sync:F9@take9_recv:P9@take9_emit

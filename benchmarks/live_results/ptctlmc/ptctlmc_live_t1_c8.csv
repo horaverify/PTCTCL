@@ -132,3 +132,5 @@ twolock,twolock12,ptctlmc-omp,1,2,8640354,167.148,4.070,OK,-,-,8,alu,adaptive,li
 twolock,twolock13,ptctlmc-omp,1,1,30133600,665.948,14.956,OK,-,-,8,alu,adaptive,live
 twolock,twolock13,ptctlmc-omp,1,2,30133600,681.681,14.957,OK,-,-,8,alu,adaptive,live
 twolock,twolock14,ptctlmc-omp,1,1,104179662,2660.936,55.387,OK,-,-,8,alu,adaptive,live
+twolock,twolock14,ptctlmc-omp,1,2,104179662,2624.139,55.387,OK,-,-,8,alu,adaptive,live
+twolock,twolock15,ptctlmc-omp,1,1,-,3454.453,100.002,MEMOUT,-,-,8,alu,adaptive,live

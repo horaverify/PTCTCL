@@ -1,0 +1,136 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_LTStest_models_fischer9.xml
+# x0:(clock)
+clock:1:x0
+# x1:(clock)
+clock:1:x1
+# x2:(clock)
+clock:1:x2
+# x3:(clock)
+clock:1:x3
+# x4:(clock)
+clock:1:x4
+# x5:(clock)
+clock:1:x5
+# x6:(clock)
+clock:1:x6
+# x7:(clock)
+clock:1:x7
+# x8:(clock)
+clock:1:x8
+# id:(range (int) "0" "9")
+int:1:0:9:0:id
+int:1:0:3:0:__loc_P1
+# no iodecl
+# compilation of process P0
+process:P0
+location:P0:idle{initial::invariant:x0 <= 40 && __loc_P1 != 3:labels:TC_EG}
+location:P0:req{invariant:1 && x0 <= 2 && x0 <= 40 && __loc_P1 != 3:labels:TC_EG}
+location:P0:wait{invariant:x0 <= 40 && __loc_P1 != 3:labels:TC_EG}
+location:P0:cs{invariant:x0 <= 40 && __loc_P1 != 3:labels:TC_EG}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:P0:idle:req:tau{do:x0=0:provided:(id == 0)}
+edge:P0:req:wait:tau{do:id=1;x0=0}
+edge:P0:wait:cs:tau{provided:x0 > 2 && id == 1}
+edge:P0:wait:idle:tau{provided:x0 > 2 && id != 1}
+edge:P0:cs:idle:tau{do:id=0}
+
+# compilation of process P1
+process:P1
+location:P1:idle{initial:}
+location:P1:req{invariant:1 && x1 <= 2}
+location:P1:wait{}
+location:P1:cs{labels:L_P1_cs}
+edge:P1:idle:req:tau{do:x1=0;__loc_P1=1:provided:(id == 0)}
+edge:P1:req:wait:tau{do:id=2;x1=0;__loc_P1=2}
+edge:P1:wait:cs:tau{provided:x1 > 2 && id == 2:do:__loc_P1=3}
+edge:P1:wait:idle:tau{provided:x1 > 2 && id != 2:do:__loc_P1=0}
+edge:P1:cs:idle:tau{do:id=0;__loc_P1=0}
+
+# compilation of process P2
+process:P2
+location:P2:idle{initial:}
+location:P2:req{invariant:1 && x2 <= 2}
+location:P2:wait{}
+location:P2:cs{labels:L_P2_cs}
+edge:P2:idle:req:tau{do:x2=0:provided:(id == 0)}
+edge:P2:req:wait:tau{do:id=3;x2=0}
+edge:P2:wait:cs:tau{provided:x2 > 2 && id == 3}
+edge:P2:wait:idle:tau{provided:x2 > 2 && id != 3}
+edge:P2:cs:idle:tau{do:id=0}
+
+# compilation of process P3
+process:P3
+location:P3:idle{initial:}
+location:P3:req{invariant:1 && x3 <= 2}
+location:P3:wait{}
+location:P3:cs{}
+edge:P3:idle:req:tau{do:x3=0:provided:(id == 0)}
+edge:P3:req:wait:tau{do:id=4;x3=0}
+edge:P3:wait:cs:tau{provided:x3 > 2 && id == 4}
+edge:P3:wait:idle:tau{provided:x3 > 2 && id != 4}
+edge:P3:cs:idle:tau{do:id=0}
+
+# compilation of process P4
+process:P4
+location:P4:idle{initial:}
+location:P4:req{invariant:1 && x4 <= 2}
+location:P4:wait{}
+location:P4:cs{}
+edge:P4:idle:req:tau{do:x4=0:provided:(id == 0)}
+edge:P4:req:wait:tau{do:id=5;x4=0}
+edge:P4:wait:cs:tau{provided:x4 > 2 && id == 5}
+edge:P4:wait:idle:tau{provided:x4 > 2 && id != 5}
+edge:P4:cs:idle:tau{do:id=0}
+
+# compilation of process P5
+process:P5
+location:P5:idle{initial:}
+location:P5:req{invariant:1 && x5 <= 2}
+location:P5:wait{}
+location:P5:cs{}
+edge:P5:idle:req:tau{do:x5=0:provided:(id == 0)}
+edge:P5:req:wait:tau{do:id=6;x5=0}
+edge:P5:wait:cs:tau{provided:x5 > 2 && id == 6}
+edge:P5:wait:idle:tau{provided:x5 > 2 && id != 6}
+edge:P5:cs:idle:tau{do:id=0}
+
+# compilation of process P6
+process:P6
+location:P6:idle{initial:}
+location:P6:req{invariant:1 && x6 <= 2}
+location:P6:wait{}
+location:P6:cs{}
+edge:P6:idle:req:tau{do:x6=0:provided:(id == 0)}
+edge:P6:req:wait:tau{do:id=7;x6=0}
+edge:P6:wait:cs:tau{provided:x6 > 2 && id == 7}
+edge:P6:wait:idle:tau{provided:x6 > 2 && id != 7}
+edge:P6:cs:idle:tau{do:id=0}
+
+# compilation of process P7
+process:P7
+location:P7:idle{initial:}
+location:P7:req{invariant:1 && x7 <= 2}
+location:P7:wait{}
+location:P7:cs{}
+edge:P7:idle:req:tau{do:x7=0:provided:(id == 0)}
+edge:P7:req:wait:tau{do:id=8;x7=0}
+edge:P7:wait:cs:tau{provided:x7 > 2 && id == 8}
+edge:P7:wait:idle:tau{provided:x7 > 2 && id != 8}
+edge:P7:cs:idle:tau{do:id=0}
+
+# compilation of process P8
+process:P8
+location:P8:idle{initial:}
+location:P8:req{invariant:1 && x8 <= 2}
+location:P8:wait{}
+location:P8:cs{}
+edge:P8:idle:req:tau{do:x8=0:provided:(id == 0)}
+edge:P8:req:wait:tau{do:id=9;x8=0}
+edge:P8:wait:cs:tau{provided:x8 > 2 && id == 9}
+edge:P8:wait:idle:tau{provided:x8 > 2 && id != 9}
+edge:P8:cs:idle:tau{do:id=0}
+

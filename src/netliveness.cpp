@@ -682,6 +682,14 @@ class Otf {
   ///       width bound is inconclusive, and must not condemn the real run that follows it.
   bool eg_probe();
 
+  /// @brief ::Otf::is_nq without its leading ::Otf::grow.
+  /// @pre `grow()` has run since the last node was interned -- true inside ::Otf::base_forward's
+  ///      worklist loop, which calls it immediately after every ::Otf::expand.
+  bool is_nq_fast(int i) {
+    if (qc[i] == 2) qc[i] = holds(q, node[i]) ? 1 : 0;
+    return qc[i] == 0;
+  }
+
   /// @brief Enable ::Otf::eg_probe during the forward search. `E[] psi` lanes only.
   void set_eg_early(bool v) { eg_early_ = v; }
 
@@ -1617,6 +1625,7 @@ Federation Otf::stop_set(int u) {
 ///
 /// @warning @ref capped is sticky. A capped pass must be reported as UNUSABLE, never laundered
 ///          into a verdict; see ::Otf::certificate_in.
+std::size_t g_visits = 0, g_pre = 0;
 void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   ++passes;
   const std::size_t N = node.size();
@@ -1759,60 +1768,120 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     }
   }
 
+  // ONE NODE'S REFINEMENT, `W[v] /\ (NoSucc(v) \/ Pre(W))`. Factored out so the lockstep sweep
+  // and the worklist below drive exactly the same operator; only the ORDER differs.
+  auto relax = [&](int v) -> bool {
+    if (!seeded[v] && gfp_fed_empty(W[v])) return false;
+    Federation cand = nosucc[v];
+    for (const auto& e : adj[v]) {
+      const int j = e.tgt;
+      if (!inS[j]) continue;
+      if (!seeded[j] && gfp_fed_empty(W[j])) continue;
+      // A seeded successor contributes exactly one zone, its own, without being written down.
+      const Dbm* one = seeded[j] ? &zread(j, jsc) : nullptr;
+      const std::size_t ny = one ? 1u : W[j].size();
+      for (std::size_t yi = 0; yi < ny; ++yi) {
+        const Dbm& Y = one ? *one : W[j][yi];
+        ++pre_calls;
+        if (avoid_) {
+          gfp_pre_avoid(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y, *avoid_, cand);
+        } else {
+          Dbm pz = gfp_pre(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y);
+          if (!pz.empty()) cand.push_back(std::move(pz));
+        }
+      }
+    }
+    // Materialise v's own seed now, for this one node only: the swap below overwrites it with
+    // the refinement, so the copy does not outlive the iteration.
+    if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
+    gfp_fed_compact(cand, fedcap, &capped);
+    // `W[v] /\ cand`, computed directly rather than as the double complement
+    // `subtract(z, subtract(z, cand))` the textbook formulation uses. Both denote the same
+    // set, but the inner subtraction peels z by every constraint of every member of cand, so
+    // its output is an ARRANGEMENT whose size is not bounded by |cand| at all, and the outer
+    // subtraction then peels z by all of those. The intersection of two zones is a single
+    // zone, so the direct form needs exactly |cand| pieces.
+    Federation nw;
+    for (const auto& z : W[v]) {
+      for (const auto& c : cand) {
+        Dbm t = z;
+        t.intersect(c);
+        if (!t.empty()) nw.push_back(std::move(t));
+      }
+    }
+    gfp_fed_compact(nw, fedcap, &capped);
+    const bool shrank = !gfp_fed_subset(W[v], nw);
+    W[v].swap(nw);
+    return shrank;
+  };
+
+  // WORKLIST INSIDE A COMPONENT, for `E[] psi` only. `relax` reads only v's SUCCESSORS, so v can
+  // change only after one of them has -- and the lockstep sweep re-reads every node of the
+  // component every round regardless. That is free where the decomposition is fine-grained
+  // (grc5: 2717 components over |S|=7079, 58916 node visits) and ruinous where the closure is a
+  // single component, which is the common shape here:
+  //
+  //     fischer7  |S|=3774  sccs=1     280 rounds   985707 visits   3.45M Pre   26.3s
+  //     twolock7  |S|=4158  sccs=1     126 rounds   449145 visits   1.57M Pre   12.6s
+  //     grc5      |S|=7079  sccs=2717 5458 rounds    58916 visits   0.30M Pre    2.5s
+  //
+  // DESIGN.md records a chaotic worklist as measured and REJECTED, because reordering changes
+  // the intermediate federation shapes and `fedcap` bounds those -- it turned grc4
+  // `T0.in --> T0.far` UNUSABLE. That measurement was on leads-to, which is why this is confined
+  // to the `E[] psi` lanes (@ref scc_iter_) and leaves `p --> q` on the lockstep sweep verbatim.
+  // The E[] suite runs at a maximum federation width of 186 against a cap of 4096, with zero cap
+  // hits across 108 rows, so the bound that killed it there is not close to binding here.
+  const bool worklist = scc_on && [] {
+    const char* e = std::getenv("PTCTLMC_GFP_WORKLIST");
+    return !e || *e != '0';
+  }();
+
+  std::vector<std::vector<int>> rev;
+  std::vector<char> in_comp, in_q;
+  if (worklist) {
+    rev.resize(N);
+    for (int v : S)
+      for (const auto& e : adj[v])
+        if (inS[e.tgt]) rev[e.tgt].push_back(v);
+    in_comp.assign(N, 0);
+    in_q.assign(N, 0);
+  }
+
   std::size_t it = 0;
   for (const auto& comp : sccs) {
    if (capped || cancelled()) break;
-   bool changed = true;
-   while (changed && !capped) {
-    if (cancelled()) break;
-    changed = false;
-    ++it;
-    for (int v : comp) {
-      if (!seeded[v] && gfp_fed_empty(W[v])) continue;
-      Federation cand = nosucc[v];
-      for (const auto& e : adj[v]) {
-        const int j = e.tgt;
-        if (!inS[j]) continue;
-        if (!seeded[j] && gfp_fed_empty(W[j])) continue;
-        // A seeded successor contributes exactly one zone, its own, without being written down.
-        const Dbm* one = seeded[j] ? &zread(j, jsc) : nullptr;
-        const std::size_t ny = one ? 1u : W[j].size();
-        for (std::size_t yi = 0; yi < ny; ++yi) {
-          const Dbm& Y = one ? *one : W[j][yi];
-          ++pre_calls;
-          if (avoid_) {
-            gfp_pre_avoid(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y, *avoid_, cand);
-          } else {
-            Dbm pz = gfp_pre(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y);
-            if (!pz.empty()) cand.push_back(std::move(pz));
-          }
-        }
-      }
-      // Materialise v's own seed now, for this one node only: the swap below overwrites it with
-      // the refinement, so the copy does not outlive the iteration.
-      if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
-      gfp_fed_compact(cand, fedcap, &capped);
-      // `W[v] /\ cand`, computed directly rather than as the double complement
-      // `subtract(z, subtract(z, cand))` the textbook formulation uses. Both denote the same
-      // set, but the inner subtraction peels z by every constraint of every member of cand, so
-      // its output is an ARRANGEMENT whose size is not bounded by |cand| at all, and the outer
-      // subtraction then peels z by all of those. The intersection of two zones is a single
-      // zone, so the direct form needs exactly |cand| pieces.
-      Federation nw;
-      for (const auto& z : W[v]) {
-        for (const auto& c : cand) {
-          Dbm t = z;
-          t.intersect(c);
-          if (!t.empty()) nw.push_back(std::move(t));
-        }
-      }
-      gfp_fed_compact(nw, fedcap, &capped);
-      if (!gfp_fed_subset(W[v], nw)) changed = true;
-      W[v].swap(nw);
-      if (capped) break;
+   if (!worklist) {
+    bool changed = true;
+    while (changed && !capped) {
+     if (cancelled()) break;
+     changed = false;
+     ++it;
+     for (int v : comp) {
+       if (relax(v)) changed = true;
+       if (capped) break;
+     }
+     if (it > 100000) break;
     }
-    if (it > 100000) break;
+    continue;
    }
+   // A predecessor OUTSIDE the component needs no attention: Tarjan emits components
+   // successors-first, so such a predecessor lives in a component not yet processed and will
+   // read this one's final value when its own turn comes.
+   for (int v : comp) in_comp[v] = 1;
+   std::deque<int> work(comp.begin(), comp.end());
+   for (int v : comp) in_q[v] = 1;
+   while (!work.empty() && !capped) {
+     if (cancelled()) break;
+     const int v = work.front();
+     work.pop_front();
+     in_q[v] = 0;
+     ++it; ++g_visits;
+     if (it > 100000000) break;
+     if (!relax(v)) continue;
+     for (int u : rev[v])
+       if (in_comp[u] && !in_q[u]) { in_q[u] = 1; work.push_back(u); }
+   }
+   for (int v : comp) { in_comp[v] = 0; in_q[v] = 0; }
   }
   // Restore the documented postcondition on every exit path. A converged sweep materialised
   // every seed as it went, so this loop does nothing; an aborted one (capped or cancelled) can
@@ -2386,39 +2455,34 @@ void Otf::base_forward() {
         if (!inq[v]) { inq[v] = 1; work.push_back(v); }
       };
       push(0);
-      // EARLY WITNESS PROBE, geometric. `E[] psi` is satisfied on 220 of the 254 decided rows of
-      // the benchmark suite, and on those the whole forward graph is built to certify a witness
-      // that a fraction of it already contains -- fischer8 `E[] x0 <= 40 && !P1.cs` needs 64 of
-      // its 129468 nodes. ::Otf::eg_probe is sound in the SAT direction on a partial graph, so
-      // the search may stop the moment one fires; NOT is never concluded here.
+      // EARLY WITNESS PROBE. `E[] psi` is satisfied on 220 of the 254 decided rows of the
+      // benchmark suite, and on those the whole forward graph is built to certify a witness that
+      // a fraction of it already contains -- fischer8 `E[] x0 <= 40 && !P1.cs` needs 292 of its
+      // 129468 nodes. ::Otf::eg_probe is sound in the SAT direction on a partial graph, so the
+      // search may stop the moment one fires; NOT is never concluded here.
       //
-      // The schedule is geometric so the probes cost a constant factor of the last one rather
-      // than a factor of the number of expansions: measured first-witness sizes across the suite
-      // are 16 (csma8), 64 (fischer7, fischer8), 256 (twolock6) and 1024 (grc5), so a first probe
-      // at 16 with ratio 4 lands within one step of each.
-      // AND A TIME BUDGET, because a probe that finds nothing is pure waste and its cost grows
-      // with the graph: unbounded, the misses double a NOT row (fischer7
-      // `E[] (P0.idle || P0.wait) && x0 <= 40` 86.6s -> 164.3s). A fixed NODE ceiling is the
-      // wrong knob -- 4096 still doubles the graphs just above it (fischer6 5440 nodes) and
-      // cuts off grc5 `E[] x0 <= 15 && !T0.in`, whose witness needs a probe at 16384 and which
-      // costs 7.1s when it fires against 63.7s on the exact lane when it does not. Budgeting the
-      // TIME instead adapts to both: probing stops once it has cost half of what exploring has,
-      // so a miss can add at most ~50% and a probe that keeps paying for itself keeps running.
-      // The ratio needs a FLOOR under it or it never lets the cheap probes run: at the first
-      // probe, exploring 16 nodes has cost microseconds, so any probe at all looks like 100% of
-      // the run and probing switches itself off before it can ever fire (csma8 `E[] y0 <= 40`,
-      // whose witness is 16 nodes in, went 68 states back to 17493). Below the floor the budget
-      // does not apply, and the floor is small enough to vanish against any row that has a
-      // budget problem in the first place.
-      constexpr std::size_t kProbeFirst = 16, kProbeRatio = 4;
-      constexpr long long kProbeFloorNs = 50'000'000;    // 50 ms
-      const auto t_probe0 = std::chrono::steady_clock::now();
-      long long probe_ns = 0;
-      static const bool noprobe = [] {              // DIAGNOSTIC
-        const char* e = std::getenv("PTCTLMC_EG_NOPROBE");
-        return e && *e == '1';
-      }();
-      std::size_t next_probe = (eg_early_ && !noprobe) ? kProbeFirst : 0;
+      // Hoisted out of the per-EDGE test below: ::Otf::is_nq opens with a ::Otf::grow it does not
+      // need here, the loop running right after one, and at one call per edge that is not free.
+      const bool psi_prune = eg_early_;
+      //
+      // WHEN TO PROBE: amortization, not tuning. A probe that misses is wasted work whose cost
+      // grows with the graph, so it has to be paid for. The rule is that exploration since the
+      // last probe must have cost at least as much as ALL the probing done so far; only then is
+      // another probe affordable. Two things follow with no constant anywhere:
+      //
+      //   * total probe time can never exceed total exploration time, so a query whose witness
+      //     never appears -- every `NOT` row -- pays at most a factor of two, by construction;
+      //   * the spacing calibrates itself to the model. Where a probe is cheap against the
+      //     exploration it interrupts the probes come thick and the witness is caught early;
+      //     where the fixpoint is expensive (grc) they thin out on their own.
+      //
+      // The alternative, a geometric schedule on the node count, needs a first size and a ratio,
+      // and both are fitted: ratio 4 puts consecutive checkpoints at 25% and 100% of the final
+      // graph, which is why grc7 -- whose witness is only provable at 57% -- explored all of it.
+      const auto clk_now = [] { return std::chrono::steady_clock::now(); };
+      static const bool probe_dbg = [] { return std::getenv("PTCTLMC_EG_PROBEDBG") != nullptr; }();
+      long long probe_ns = 0;                  // cumulative cost of every probe so far
+      auto since_probe = clk_now();            // when exploration resumed after the last one
       while (!work.empty()) {
         const int u = work.front();
         work.pop_front();
@@ -2429,18 +2493,30 @@ void Otf::base_forward() {
         grow();
         // A successor needs work exactly when it has no adjacency of its own: brand new, or
         // reset because a merge enlarged it.
+        //
+        // AND, for `E[] psi`, only if it still satisfies psi. psi's CLOCK part is folded into the
+        // restricted network's invariants, so the forward search never leaves it; its DISCRETE
+        // part is not, and was left to ::Otf::is_nq at closure time -- so the search explored the
+        // whole reachable graph and then discarded 73% of it on fischer7. A maximal psi-run is in
+        // psi at every step, so a run reaching a non-psi node has already left psi and neither
+        // that node nor anything beyond it can lie on a witness. Not expanding it therefore
+        // removes nothing from ::Otf::eg_closure: a psi-node reachable only through a non-psi
+        // node was never admitted to it in the first place. It removes 3x the STORED nodes and
+        // almost no time, because those nodes were never in the closure the fixpoint iterates.
         for (const auto& e : adj[u])
-          if (!expanded[e.tgt]) push(e.tgt);
-        if (next_probe != 0 && node.size() >= next_probe) {
-          const auto p0 = std::chrono::steady_clock::now();
+          if (!expanded[e.tgt] && !(psi_prune && !is_nq_fast(e.tgt))) push(e.tgt);
+        if (psi_prune &&
+            std::chrono::duration_cast<std::chrono::nanoseconds>(clk_now() - since_probe).count()
+                >= probe_ns) {
+          const auto p0 = clk_now();
           const bool hit = eg_probe();
-          const auto now = std::chrono::steady_clock::now();
-          probe_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(now - p0).count();
+          probe_ns +=
+              std::chrono::duration_cast<std::chrono::nanoseconds>(clk_now() - p0).count();
+          if (probe_dbg)
+            std::fprintf(stderr, "PROBE at_nodes=%zu hit=%d cumulative_probe_ms=%lld\n",
+                         node.size(), (int)hit, probe_ns / 1000000);
           if (hit) { eg_early_hit_ = true; return; }
-          const long long all_ns =
-              std::chrono::duration_cast<std::chrono::nanoseconds>(now - t_probe0).count();
-          const bool over_budget = probe_ns > kProbeFloorNs && probe_ns * 2 > all_ns - probe_ns;
-          next_probe = over_budget ? 0 : node.size() * kProbeRatio;
+          since_probe = clk_now();
         }
       }
 }
@@ -2512,6 +2588,8 @@ bool Otf::eg_verdict(GfpStats* gs) {
       gfp_on(S, W);
       if (!capped) res = !gfp_fed_empty(W[0]);
     }
+    if (std::getenv("PTCTLMC_EG_PROF"))
+      std::fprintf(stderr, "PROF |S|=%zu visits=%zu pre=%zu\n", S.size(), g_visits, g_pre);
   }
   fill_stats(gs);
   return res;
