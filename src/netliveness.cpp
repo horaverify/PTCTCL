@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -2395,8 +2396,29 @@ void Otf::base_forward() {
       // than a factor of the number of expansions: measured first-witness sizes across the suite
       // are 16 (csma8), 64 (fischer7, fischer8), 256 (twolock6) and 1024 (grc5), so a first probe
       // at 16 with ratio 4 lands within one step of each.
+      // AND A TIME BUDGET, because a probe that finds nothing is pure waste and its cost grows
+      // with the graph: unbounded, the misses double a NOT row (fischer7
+      // `E[] (P0.idle || P0.wait) && x0 <= 40` 86.6s -> 164.3s). A fixed NODE ceiling is the
+      // wrong knob -- 4096 still doubles the graphs just above it (fischer6 5440 nodes) and
+      // cuts off grc5 `E[] x0 <= 15 && !T0.in`, whose witness needs a probe at 16384 and which
+      // costs 7.1s when it fires against 63.7s on the exact lane when it does not. Budgeting the
+      // TIME instead adapts to both: probing stops once it has cost half of what exploring has,
+      // so a miss can add at most ~50% and a probe that keeps paying for itself keeps running.
+      // The ratio needs a FLOOR under it or it never lets the cheap probes run: at the first
+      // probe, exploring 16 nodes has cost microseconds, so any probe at all looks like 100% of
+      // the run and probing switches itself off before it can ever fire (csma8 `E[] y0 <= 40`,
+      // whose witness is 16 nodes in, went 68 states back to 17493). Below the floor the budget
+      // does not apply, and the floor is small enough to vanish against any row that has a
+      // budget problem in the first place.
       constexpr std::size_t kProbeFirst = 16, kProbeRatio = 4;
-      std::size_t next_probe = eg_early_ ? kProbeFirst : 0;
+      constexpr long long kProbeFloorNs = 50'000'000;    // 50 ms
+      const auto t_probe0 = std::chrono::steady_clock::now();
+      long long probe_ns = 0;
+      static const bool noprobe = [] {              // DIAGNOSTIC
+        const char* e = std::getenv("PTCTLMC_EG_NOPROBE");
+        return e && *e == '1';
+      }();
+      std::size_t next_probe = (eg_early_ && !noprobe) ? kProbeFirst : 0;
       while (!work.empty()) {
         const int u = work.front();
         work.pop_front();
@@ -2410,8 +2432,15 @@ void Otf::base_forward() {
         for (const auto& e : adj[u])
           if (!expanded[e.tgt]) push(e.tgt);
         if (next_probe != 0 && node.size() >= next_probe) {
-          next_probe = node.size() * kProbeRatio;
-          if (eg_probe()) { eg_early_hit_ = true; return; }
+          const auto p0 = std::chrono::steady_clock::now();
+          const bool hit = eg_probe();
+          const auto now = std::chrono::steady_clock::now();
+          probe_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(now - p0).count();
+          if (hit) { eg_early_hit_ = true; return; }
+          const long long all_ns =
+              std::chrono::duration_cast<std::chrono::nanoseconds>(now - t_probe0).count();
+          const bool over_budget = probe_ns > kProbeFloorNs && probe_ns * 2 > all_ns - probe_ns;
+          next_probe = over_budget ? 0 : node.size() * kProbeRatio;
         }
       }
 }
@@ -2615,26 +2644,41 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
   // and exact inclusion covering all report SAT, losing a deadlock-terminated witness. Until
   // that is understood the map stays in the FAST lane, where only its SAT is believed, and the
   // verdict for NOT comes from exact inclusion covering, which is sound outright.
-  bool sat = false, usable = false;
+  // THE DEADLOCK-FREEDOM PROOF IS OVERLAPPED, NOT SEQUENCED. It is needed only when the fast
+  // lane comes back NOT, and running it afterwards makes a NOT row pay two full passes -- 2x,
+  // measured (twolock8 `E[] (P0.idle || P0.waitA) && x0 <= 30`, 319s -> 607s). Started here it
+  // costs max(fast lane, proof) instead of the sum, which is how ::leads_to_otf runs the same
+  // proof. A SAT cancels it and never reads it, which is required and not merely tidy: a
+  // cancelled ptctlmc::deadlock_reachable returns @c false, indistinguishable from "none found".
+  const Network& dead_judged_in = unrestricted ? *unrestricted : net;
+  std::atomic<bool> dl_cancel{false};
+  bool dl_free = false;
+  std::thread dl_lane(
+      [&] { dl_free = !deadlock_reachable(dead_judged_in, Backend::Seq, nullptr, &dl_cancel); });
+
+  bool sat = false, usable = false, early = false;
   {
     auto e1 = make(false);
     e1->build_forward(gs);
-    if (e1->eg_early_hit()) return true;            // a probe already proved the witness
-    AtomMap am;
-    if (e1->build_atom_map(am) && am.usable && !(am.diag.empty() && am.bumped == 0)) {
-      e1->release();                                // one graph resident at a time, not two
-      auto e2 = make(false);
-      e2->set_atoms(&am);
-      sat = e2->eg_from_initial(gs);
-      usable = !e2->was_capped();
-    } else {
-      // EMPTY MAP, or a map past 64 atoms at one key: either way this run's own a_LU verdict is
-      // the fast lane's answer. Its backward pass was deferred, not skipped.
-      sat = e1->eg_verdict(gs);
+    if (e1->eg_early_hit()) early = true;            // a probe already proved the witness
+    if (!early) {
+      // THE FAST LANE IS PLAIN a_LU, and the deadlock completion is not built at all. It exists
+      // to make a NOT conclusive without paying for exact covering, and it does not currently
+      // do that -- see the grc5 rows above. Since only SAT is believed here, and a_LU is itself
+      // a simulation, a_LU's SAT is worth exactly as much as the completed relation's and costs
+      // one graph instead of two. It is also the cheaper graph on the rows that matter: grc5
+      // `E[] x0 <= 15 && !T0.in` is a witness a_LU finds in 17636 nodes, where routing it
+      // through the completion loses it and lands on the exact lane's 50558.
+      sat = e1->eg_verdict(gs);                     // the deferred backward pass, paid here
       usable = !e1->was_capped();
     }
   }
-  if (usable && sat) return true;
+  if (early || (usable && sat)) {                   // witness found: the proof is not needed
+    dl_cancel.store(true, std::memory_order_release);
+    dl_lane.join();
+    return true;
+  }
+  dl_lane.join();
   // A SIMULATION'S `NOT` IS INCONCLUSIVE FOR EXACTLY ONE REASON: a_LU preserves an infinite run
   // and time divergence, and fails only on deadlock, which is universally quantified. If no
   // deadlock is reachable in the system maximality is judged against -- the UNRESTRICTED one,
@@ -2643,8 +2687,7 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
   // the fast lane's `NOT` is already a verdict. This is the soundness argument ::leads_to_otf
   // races its exact lane against; taken directly here, it keeps the deadlock-free families off
   // the exact lane entirely (arbiter5 `E[] (C0.idle || C0.want) && x0 <= 40`: 4.1s -> 0.0s).
-  if (usable && !deadlock_reachable(unrestricted ? *unrestricted : net, Backend::Seq, nullptr))
-    return false;
+  if (usable && dl_free) return false;
   // Deadlock IS reachable, so the fast lane's silence proves nothing -- or the run was capped and
   // its verdict is unusable either way. Decide under exact inclusion covering, conclusive both
   // ways. Restores the ::Otf::was_capped guard the previous staging dropped, which let a capped

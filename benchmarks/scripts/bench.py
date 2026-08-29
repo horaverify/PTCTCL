@@ -125,22 +125,6 @@ UNMEASURABLE = {
 }
 
 
-# Families a tool cannot measure for LIVENESS specifically, merged over UNMEASURABLE when
-# --queries live. Measurability is not a property of the family alone: tchecker answers a
-# liveness query on `single` (via benchmarks/tck_live/) but not a reachability one, and ltsmin's
-# opaal module breaks on models its reachability sweep handled. Measured, not assumed.
-UNMEASURABLE_LIVE = {
-    "ltsmin": {
-        "arbiter":  "opaal2lts-mc's cndfs decides Buchi emptiness on the zone graph with NO time-divergence test, so it accepts Zeno cycles that leads-to does not: on phil4 it reports 'Accepting cycle FOUND' where verifyta reports satisfied, because P0's only exit from Eat is guarded c0>=1 under invariant c0<=2 -- time forces the step, so the cycle it found cannot diverge. Verified at 1 thread under all three --ltl-semantics, and the encoding itself checks out (a forced p==q formula correctly finds no cycle). It answers a different question, not a coarser one",
-        "csma":     "opaal2lts-mc's cndfs decides Buchi emptiness on the zone graph with NO time-divergence test, so it accepts Zeno cycles that leads-to does not: on phil4 it reports 'Accepting cycle FOUND' where verifyta reports satisfied, because P0's only exit from Eat is guarded c0>=1 under invariant c0<=2 -- time forces the step, so the cycle it found cannot diverge. Verified at 1 thread under all three --ltl-semantics, and the encoding itself checks out (a forced p==q formula correctly finds no cycle). It answers a different question, not a coarser one",
-        "fischer":  "opaal2lts-mc's cndfs decides Buchi emptiness on the zone graph with NO time-divergence test, so it accepts Zeno cycles that leads-to does not: on phil4 it reports 'Accepting cycle FOUND' where verifyta reports satisfied, because P0's only exit from Eat is guarded c0>=1 under invariant c0<=2 -- time forces the step, so the cycle it found cannot diverge. Verified at 1 thread under all three --ltl-semantics, and the encoding itself checks out (a forced p==q formula correctly finds no cycle). It answers a different question, not a coarser one",
-        "phil":     "opaal2lts-mc's cndfs decides Buchi emptiness on the zone graph with NO time-divergence test, so it accepts Zeno cycles that leads-to does not: on phil4 it reports 'Accepting cycle FOUND' where verifyta reports satisfied, because P0's only exit from Eat is guarded c0>=1 under invariant c0<=2 -- time forces the step, so the cycle it found cannot diverge. Verified at 1 thread under all three --ltl-semantics, and the encoding itself checks out (a forced p==q formula correctly finds no cycle). It answers a different question, not a coarser one",
-        "single":   "opaal2lts-mc's cndfs decides Buchi emptiness on the zone graph with NO time-divergence test, so it accepts Zeno cycles that leads-to does not: on phil4 it reports 'Accepting cycle FOUND' where verifyta reports satisfied, because P0's only exit from Eat is guarded c0>=1 under invariant c0<=2 -- time forces the step, so the cycle it found cannot diverge. Verified at 1 thread under all three --ltl-semantics, and the encoding itself checks out (a forced p==q formula correctly finds no cycle). It answers a different question, not a coarser one",
-        "twolock":  "opaal2lts-mc's cndfs decides Buchi emptiness on the zone graph with NO time-divergence test, so it accepts Zeno cycles that leads-to does not: on phil4 it reports 'Accepting cycle FOUND' where verifyta reports satisfied, because P0's only exit from Eat is guarded c0>=1 under invariant c0<=2 -- time forces the step, so the cycle it found cannot diverge. Verified at 1 thread under all three --ltl-semantics, and the encoding itself checks out (a forced p==q formula correctly finds no cycle). It answers a different question, not a coarser one",
-    },
-}
-
-
 def model_path(fam, n):
     """Model file for (family, size), preferring the LTSmin tree where one exists.
 
@@ -189,11 +173,6 @@ def query_path(fam, tool, kind="reach"):
     if fam == "train" and tool == "verifyta" and kind == "reach":
         return os.path.join(d, "train_uppaal.q")
     return os.path.join(d, "%s.q" % fam)
-
-
-def _fam_of(xml):
-    m = re.match(r"^([a-zA-Z_]+)", os.path.basename(xml))
-    return m.group(1) if m else ""
 
 
 def so_path(fam, n):
@@ -314,99 +293,23 @@ class VerifytaTool(Tool):
         super().__init__("verifyta", False, r"States explored\s*:\s*([0-9]+)")
 
     def argv(self, a, xml, q, th, so):
-        return [a.verifyta_bin, "-u", "-s", xml, q]
-
-
-# opaal encodes each location as an integer and exposes it as a chunk named "avar<index>"
-# (get_state_variable_type_value in the generated C++). An LTL atom must therefore name the
-# INDEX, not the location: `C0 == "avar1"`, not `C0 == cs`. The index is recoverable from the
-# generated source, which keeps the location name in a comment on each case label.
-_LOC_IDX_CACHE = {}
-
-
-def opaal_loc_index(so, proc, loc):
-    """Index of location `loc` in process `proc`, read from the opaal-generated C++.
-
-    Only `switch (out->PROC)` blocks are read. The matching `in->PROC` switches enumerate
-    TRANSITIONS, not locations, and number them differently -- reading both makes csma's `Send`
-    come out as 0 and 1 at once.
-    """
-    cpp = so[:-3] + ".cpp" if so.endswith(".so") else so + ".cpp"
-    key = (cpp, proc)
-    if key not in _LOC_IDX_CACHE:
-        out = {}
-        try:
-            txt = open(cpp).read()
-        except OSError:
-            _LOC_IDX_CACHE[key] = out
-            return None
-        for m in re.finditer(r"switch\(\s*out->%s\s*\)\s*\{" % re.escape(proc), txt):
-            i, depth = m.end(), 1
-            while i < len(txt) and depth:
-                if txt[i] == "{":
-                    depth += 1
-                elif txt[i] == "}":
-                    depth -= 1
-                i += 1
-            for c in re.finditer(r"case\s+(\d+)\s*:\s*/\*\s*([A-Za-z_]\w*)\s*\*/", txt[m.end():i]):
-                out.setdefault(c.group(2), int(c.group(1)))
-        _LOC_IDX_CACHE[key] = out
-    return _LOC_IDX_CACHE[key].get(loc)
-
-
-def leadsto_ltl(so, q_path):
-    """'P.p --> P.q' + a model -> the LTL formula for opaal2lts-mc, or None."""
-    try:
-        txt = open(q_path).read().strip()
-    except OSError:
-        return None
-    m = re.match(r"^\s*(\w+)\.(\w+)\s*-->\s*(\w+)\.(\w+)\s*$", txt)
-    if not m:
-        return None
-    lp, p, lq, qq = m.groups()
-    ip, iq = opaal_loc_index(so, lp, p), opaal_loc_index(so, lq, qq)
-    if ip is None or iq is None:
-        return None
-    return '[]((%s == "avar%d") -> <> (%s == "avar%d"))' % (lp, ip, lq, iq)
+        # NO `-s`. `--silence-progress` zeroes UPPAAL's state counter on LIVENESS
+        # queries -- `E[]` reports 0 for every row, and `p --> q` under-reports
+        # (arbiter4 `C0.cs --> C0.idle`: 506 with it, 710 without). Reachability is
+        # unaffected (48 either way), which is why it went unnoticed.
+        return [a.verifyta_bin, "-u", xml, q]
 
 
 class LtsminTool(Tool):
-    """opaal + LTSmin.
-
-    REACHABILITY is a plain multi-core state-space exploration (--strategy=sbfs), which is what
-    "Multi-Core Reachability for Timed Automata" (Dalsgaard, Laarman, Larsen, Olesen, van de
-    Pol, FORMATS 2012) measures.
-
-    LIVENESS is NOT that exploration relabelled. argv used to ignore `q` entirely, so a
-    --queries live sweep re-ran the reachability search and wrote it as if it were liveness.
-    The toolchain does have a real timed-liveness algorithm: cndfs extended with zone
-    subsumption, from "Multi-core Emptiness Checking of Timed Buchi Automata Using Inclusion
-    Abstraction" (Laarman, Olesen, Dalsgaard, Larsen, van de Pol, CAV 2013) -- the first
-    parallel LTL model checking algorithm for timed automata. Buchi emptiness is not preserved
-    under inclusion abstraction, which is exactly what that paper solves; using --strategy=sbfs
-    with no formula was not an approximation of it, it was a different question.
-
-    So liveness runs `--strategy=cndfs --ltl '[]((P == p) -> <> (P == q))'`. Verified against
-    verifyta on both outcomes: the satisfied query reports no cycle, and a deliberately
-    violated one reports "Accepting cycle FOUND"."""
-
     def __init__(self):
         super().__init__("ltsmin", True, r"Explored ([0-9]+) states")
 
     def argv(self, a, xml, q, th, so):
-        cmd = [a.opaal_bin, "--threads=%d" % th]
-        if a.queries == "live":
-            cmd += ["--strategy=cndfs", "--ltl=%s" % leadsto_ltl(so, q)]
-        else:
-            cmd += ["--strategy=sbfs"]
-        return cmd + ["--state=%s" % a.ltsmin_store, "-s", str(a.ltsmin_size), so]
+        return [a.opaal_bin, "--threads=%d" % th, "--strategy=sbfs",
+                "--state=%s" % a.ltsmin_store, "-s", str(a.ltsmin_size), so]
 
     def available(self, a, xml, so):
-        if not os.path.exists(so):
-            return False            # needs a compiled PINS module, not the xml
-        if a.queries == "live":
-            return leadsto_ltl(so, query_path(_fam_of(xml), self.name, "live")) is not None
-        return True
+        return os.path.exists(so)   # needs a compiled PINS module, not the xml
 
 
 def _tchecker_labels():
@@ -469,9 +372,7 @@ def parse_families(spec, tool=None, include_unmeasurable=False, kind="reach", lo
     are reported with their reason rather than dropped silently.
     """
     bad = {} if include_unmeasurable or (tool == "tchecker" and kind == "live") \
-        else dict(UNMEASURABLE.get(tool, {}))
-    if kind == "live" and not include_unmeasurable:
-        bad.update(UNMEASURABLE_LIVE.get(tool, {}))
+        else UNMEASURABLE.get(tool, {})
     if not spec or spec == "all":
         for f, why in sorted(bad.items()):
             if f in FAMILIES:
@@ -794,8 +695,6 @@ def main():
     r.add_argument("--verifyta-bin", default=VERIFYTA)
     r.add_argument("--opaal-bin", default=OPAAL)
     r.add_argument("--tchecker-bin", default=TCHECKER)
-    r.add_argument("--tchecker-live-bin", default=None,
-                   help="tck-liveness (default: alongside --tchecker-bin)")
     r.add_argument("--tchecker-liveness-bin", default=TCHECKER_LIVENESS)
     r.add_argument("--ltsmin-size", type=int, default=26, help="LTSmin -s (log2 store size)")
     r.add_argument("--ltsmin-store", default="tree", choices=["tree", "table", "cleary-tree"])
