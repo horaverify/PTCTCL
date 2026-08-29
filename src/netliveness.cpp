@@ -790,7 +790,20 @@ class Otf {
   const detail::DelayAvoidSet* avoid_ = nullptr;
   bool avoid_forward_ = true;   ///< see ::Otf::set_avoid
   /// @brief Iterate the fixpoint component-wise; see ::Otf::gfp_on. Set by the `E[]` path only.
-  bool scc_iter_ = false;
+  // Iterate the fixpoint by SCC, with a worklist inside each component; see ::Otf::gfp_on.
+  // Enabled for BOTH query kinds. DESIGN records the decomposition as measured and rejected for
+  // `p --> q` -- grc5 `T0.in --> T0.far` lost a quarter -- but that measurement predates the
+  // within-component worklist, which changes the balance: the state counts are identical either
+  // way, so this is purely iteration order, and
+  //
+  //     fischer8  1.508 -> 0.584   phil8  0.372 -> 0.223   csma7  0.087 -> 0.058
+  //     fischer7  0.292 -> 0.134   grc5 `T0.far --> T0.in`  7.05 -> 3.84
+  //     grc5 `T0.in --> T0.far`    9.32 -> 10.73            <-- the one row that still loses
+  //
+  // The `fedcap` sensitivity that turned grc4 `T0.in --> T0.far` UNUSABLE does not bind: the
+  // suite peaks at a federation width of 186 against a cap of 4096, with zero cap hits, and that
+  // row is unchanged at 1121 states either way.
+  bool scc_iter_ = true;
 
   /// @brief Probe the partial graph for a witness while the forward search runs; see
   ///        ::Otf::eg_probe. Set by the `E[] psi` path only.
@@ -1827,7 +1840,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // DESIGN.md records a chaotic worklist as measured and REJECTED, because reordering changes
   // the intermediate federation shapes and `fedcap` bounds those -- it turned grc4
   // `T0.in --> T0.far` UNUSABLE. That measurement was on leads-to, which is why this is confined
-  // to the `E[] psi` lanes (@ref scc_iter_) and leaves `p --> q` on the lockstep sweep verbatim.
+  // to @ref scc_iter_, which is now on for `p --> q` as well; see its declaration.
   // The E[] suite runs at a maximum federation width of 186 against a cap of 4096, with zero cap
   // hits across 108 rows, so the bound that killed it there is not close to binding here.
   const bool worklist = scc_on && [] {
@@ -2737,26 +2750,59 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
   // This is `p --> q`'s staging, and it is available to `E[]` again only because
   // ::Otf::build_atom_map now derives Dead(q) from @ref dead_net; while it read that off the
   // psi-restricted network the completed covering lost the grc5 witness.
-  bool sat = false;
-  auto e1 = make(false);
-  e1->build_forward(gs);
-  if (e1->eg_early_hit()) return true;             // a probe already proved the witness
-  sat = e1->eg_verdict(gs);                        // the deferred backward pass, on e1's graph
-  if (!e1->was_capped() && sat) return true;       // a simulation's witness is genuine
-
-  if (!e1->was_capped()) {
+  // THE ALGORITHM IS ONE FORWARD PASS UNDER <=_D FOLLOWED BY THE BACKWARD FIXPOINT.
+  //
+  // a_LU decides nothing here. It is not sound for liveness: it preserves an infinite run and
+  // time divergence but not deadlock, which is universally quantified, so the ABSENCE of a
+  // witness under it is not a verdict. <=_D -- a_LU refined by the deadlock completion's
+  // Datoms(q), closed under pre -- is conclusive in both directions, and it is what the verdict
+  // comes from on every query.
+  //
+  // Pass 0 exists only to ENUMERATE the reachable discrete keys, because Datoms(q) is defined
+  // per key and the pre-closure runs over the key-edge relation. It decides nothing and its own
+  // verdict is never read. The one thing it may do is stop early: ::Otf::eg_probe is sound in
+  // the SAT direction on any graph, so a witness it certifies is a witness, whatever covering
+  // produced the graph.
+  //
+  // Where Datoms(q) is empty at every key, <=_D coincides with a_LU BY DEFINITION -- the
+  // completion adds no constraint anywhere, and ::Otf::intern's per-key `tagged` test degenerates
+  // accordingly. Pass 0's graph is then already a <=_D graph and is reused rather than rebuilt.
+  // That is not a fallback to a different relation; it is the same relation, recognised.
+  auto keys = make(false);
+  keys->build_forward(gs);
+  if (keys->eg_early_hit()) return true;           // a probe certified a witness: sound anywhere
+  // AND ITS OWN WITNESS COUNTS, TOO. A witness is EXISTENTIAL, so one certified under a coarser
+  // relation is a witness under a finer one -- the concrete run it exhibits does not stop
+  // existing because the covering was refined. Reading pass 0's SAT is therefore sound and does
+  // not weaken the claim that the verdict comes from <=_D: the short-circuit only ever returns
+  // SAT, and `NOT` is never taken from anything but <=_D. It is worth having -- grc5
+  // `E[] x0 <= 15 && !T0.in` is 5.9s with it against 7.9s without, being the one query in the
+  // suite whose map is non-empty. PTCTLMC_EG_NOSHORTCUT=1 suppresses it, which is how the <=_D
+  // path is exercised on a SAT row at all.
+  static const bool no_short = [] {
+    const char* e = std::getenv("PTCTLMC_EG_NOSHORTCUT");
+    return e && *e == '1';
+  }();
+  bool keys_sat = false, keys_decided = false;
+  if (!no_short && !keys->was_capped()) {
+    keys_sat = keys->eg_verdict(gs);               // the fixpoint on pass 0's graph, once
+    keys_decided = true;
+    if (keys_sat) return true;
+  }
+  if (!keys->was_capped()) {
     AtomMap am;
-    if (e1->build_atom_map(am) && am.usable) {
-      if (am.diag.empty() && am.bumped == 0) return false;   // already deadlock-preserving
-      e1->release();                               // one graph resident at a time, not two
-      auto e2 = make(false);
-      e2->set_atoms(&am);
-      const bool sat2 = e2->eg_from_initial(gs);
-      if (!e2->was_capped()) return sat2;          // conclusive in both directions
+    if (keys->build_atom_map(am) && am.usable) {
+      if (am.diag.empty() && am.bumped == 0)       // <=_D == a_LU here: this graph IS the D graph
+        return keys_decided ? keys_sat : keys->eg_verdict(gs);
+      keys->release();                             // one graph resident at a time, not two
+      auto g = make(false);
+      g->set_atoms(&am);                           // the covering is now <=_D
+      const bool sat = g->eg_from_initial(gs);
+      if (!g->was_capped()) return sat;            // conclusive in both directions
     }
   }
-  // The map could not be represented, or a run was capped and its verdict is unusable. Decide
-  // under exact inclusion covering, which is sound outright.
+  // The map could not be represented past 64 atoms at one key, or a run was capped and its
+  // verdict is unusable. Decide under exact inclusion covering, which is sound outright.
   return make(true)->eg_from_initial(gs);
 }
 
