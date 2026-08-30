@@ -80,3 +80,4 @@ docs/
 *.log
 old/
 *_corrupted*
+__pycache__/
