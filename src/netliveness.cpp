@@ -97,6 +97,9 @@ struct OnlinePerf {
   std::uint64_t coverer_active_scan = 0;
   std::uint64_t compact_calls = 0;
   std::uint64_t compact_active_scan = 0;
+  std::uint64_t compact_deact = 0;
+  std::uint64_t compact_deact_unexp = 0;
+  std::uint64_t compact_deact_permanent = 0;
   std::uint64_t recheck_calls = 0;
   std::uint64_t recheck_nodes = 0;
   std::uint64_t successor_ns = 0;
@@ -734,7 +737,7 @@ void Otf::release() {
 
 void Otf::zstore(int i, Dbm&& z) {
   zs_.store(i, z);
-  node[i].zone = Dbm();
+  if (!online_d_) node[i].zone = Dbm();   // online records have no SymState to scrub
 }
 
 const Dbm& Otf::zread(int i, Dbm& sc) const {
@@ -937,7 +940,7 @@ bool Otf::holds(const DiscPred& pr, const SymState& s) const {
 }
 
 void Otf::grow() {
-  const std::size_t n = node.size();
+  const std::size_t n = nrec();
   if (expanded.size() < n) expanded.resize(n, 0);
   if (online_d_) {
     if (online_active_.size() < n) online_active_.resize(n, 0);
@@ -1117,6 +1120,9 @@ bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t
 // ---- Online D: persistent, monotonically refined forward quotient -------------------------
 
 void Otf::online_reset() {
+  online_nrec_ = 0;
+  node.clear();
+  node.shrink_to_fit();
   online_am_ = AtomMap{};
   online_am_.bump.assign(net.nclocks + 1, kNoBump);
   online_am_.live.assign(net.nclocks + 1, 0);
@@ -1293,12 +1299,13 @@ bool Otf::online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>&
 }
 
 int Otf::online_append(SymState&& s, int key) {
-  const int id = static_cast<int>(node.size());
+  // NO SymState IS PUSHED. During the online phase the discrete half lives once in the key
+  // arenas and the zone lives in the ZoneStore, so `node`'s entry would be three empty vector
+  // headers -- 80 bytes a record, and the search materialises far more records than it keeps
+  // (614212 against 447598 on fischer10, so 49 MB of placeholder). The vector is built once, at
+  // its final size, in ::online_finalize_graph; until then `online_nrec_` is the id counter.
+  const int id = static_cast<int>(online_nrec_++);
   Dbm z = std::move(s.zone);
-  // During the online phase the immutable discrete half lives once in OnlineKeyInfo.  Parking
-  // a provisional record only needs its exact zone and this key id; copying its location and
-  // integer vectors into every raw candidate was pure duplication and dominated memory.
-  node.emplace_back();
   zstore(id, std::move(z));
   online_key_of_.push_back(key);
   OnlineKeyInfo& ki = *online_key_by_id_[key];
@@ -1318,7 +1325,7 @@ int Otf::online_append(SymState&& s, int key) {
 /// activating a whole same-level antichain merely because its first representative has not yet
 /// reached the front of the FIFO queue.  Final edge redirection asks for an expanded coverer.
 int Otf::online_coverer(int v, bool require_expanded) {
-  if (v < 0 || v >= (int)node.size()) return -1;
+  if (v < 0 || v >= (int)nrec()) return -1;
   if (online_active_[v] && (!require_expanded || expanded[v])) return v;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   if (online_perf.enabled) {
@@ -1326,7 +1333,7 @@ int Otf::online_coverer(int v, bool require_expanded) {
     online_perf.coverer_active_scan += ki.active_count;
   }
   const int cached = online_cover_[v];
-  if (cached >= 0 && cached < (int)node.size() && online_active_[cached] &&
+  if (cached >= 0 && cached < (int)nrec() && online_active_[cached] &&
       (!require_expanded || expanded[cached]) && online_covers(v, cached, ki.id))
     return cached;
   for (int j = ki.active_head; j >= 0; j = online_active_next_[j])
@@ -1342,12 +1349,12 @@ int Otf::online_coverer(int v, bool require_expanded) {
 /// record to one.  D-covering is transitive, so final edge redirection can chase that chain
 /// without repeating a DBM cover test for every raw edge.
 int Otf::online_resolve_cover(int v, bool require_expanded) {
-  if (v < 0 || v >= (int)node.size()) return -1;
+  if (v < 0 || v >= (int)nrec()) return -1;
   int cur = v;
   std::size_t hops = 0;
   while (!online_active_[cur]) {
     const int next = online_cover_[cur];
-    if (next < 0 || next >= (int)node.size() || next == cur || ++hops > node.size()) return -1;
+    if (next < 0 || next >= (int)nrec() || next == cur || ++hops > nrec()) return -1;
     cur = next;
   }
   if (require_expanded && !expanded[cur]) return -1;
@@ -1363,12 +1370,12 @@ int Otf::online_resolve_cover(int v, bool require_expanded) {
 
 /// @brief Remember the current D certificate of an inactive materialised record.
 void Otf::online_set_cover(int v, int cover) {
-  if (v < 0 || v >= (int)node.size()) return;
+  if (v < 0 || v >= (int)nrec()) return;
   online_cover_[v] = cover;
 }
 
 void Otf::online_activate(int v) {
-  if (v < 0 || v >= (int)node.size()) return;
+  if (v < 0 || v >= (int)nrec()) return;
   if (!online_active_[v]) {
     online_active_[v] = 1;
     online_set_cover(v, -1);
@@ -1422,6 +1429,15 @@ void Otf::online_compact_key(int v) {
       continue;
     }
     if (online_covers(j, v, ki.id)) {
+      if (online_perf.enabled) {
+        ++online_perf.compact_deact;
+        if (!expanded[j]) {
+          ++online_perf.compact_deact_unexp;
+          Dbm jz;
+          zread(j, jz);
+          if (stored_includes(v, jz)) ++online_perf.compact_deact_permanent;
+        }
+      }
       online_active_[j] = 0;
       online_set_cover(j, v);
       const int prev = online_active_prev_[j];
@@ -1537,7 +1553,7 @@ int Otf::online_intern(SymState&& s, int key, int source, int ordinal, int* defe
 
 /// @brief Regenerate exactly one provisionally covered successor from its immutable source.
 bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
-  if (source < 0 || source >= static_cast<int>(node.size()) || ordinal < 0 || key < 0 ||
+  if (source < 0 || source >= static_cast<int>(nrec()) || ordinal < 0 || key < 0 ||
       key >= static_cast<int>(online_key_by_id_.size()))
     return false;
 
@@ -1824,7 +1840,7 @@ int Otf::intern(SymState&& s) {
       }
     }
   }
-  const int id = static_cast<int>(node.size());
+  const int id = static_cast<int>(nrec());
   Dbm znew = std::move(s.zone);           // taken out first: zstore decides where it lands
   s.zone = Dbm();
   node.push_back(std::move(s));
@@ -2045,7 +2061,7 @@ Federation Otf::stop_set(int u) {
 /// @brief Solve `W = W /\ (NoSucc \/ Pre(W))` by descending iteration confined to @p S.
 ///
 /// @param S      the nodes to iterate over; every other node is pinned to the empty federation
-/// @param[out] W indexed by node; sized to `node.size()`, empty outside @p S
+/// @param[out] W indexed by node; sized to `nrec()`, empty outside @p S
 ///
 /// @pre Every element of @p S is an expanded `!q` node (see ::Otf::stop_set).
 /// @post On normal return @p W is the exact greatest fixpoint of the operator *restricted to*
@@ -2058,7 +2074,7 @@ Federation Otf::stop_set(int u) {
 ///          into a verdict; see ::Otf::certificate_in.
 void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   ++passes;
-  const std::size_t N = node.size();
+  const std::size_t N = nrec();
   std::vector<char> inS(N, 0);
   for (int v : S) inS[v] = 1;
   W.assign(N, Federation{});
@@ -2616,7 +2632,7 @@ bool Otf::build_all() {
 ///       nothing outside it is ever read.
 std::vector<int> Otf::accepting_closure() {
   grow();
-  const std::size_t N = node.size();
+  const std::size_t N = nrec();
   std::vector<char> in(N, 0);
   std::vector<int> stk, out;
   for (std::size_t v = 0; v < N; ++v)
@@ -2653,7 +2669,7 @@ bool Otf::final_verdict_violated() {
 /// key invariant rather than over individual reached zones.
 bool Otf::dtheta_empty() {
   std::unordered_set<std::string> seen;
-  for (std::size_t i = 0; i < node.size(); ++i) {
+  for (std::size_t i = 0; i < nrec(); ++i) {
     const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
     if (!seen.insert(k).second) continue;
     SymState u; u.locs = node[i].locs; u.ints = node[i].ints;
@@ -2743,7 +2759,7 @@ bool Otf::build_atom_map(AtomMap& am) {
   std::unordered_map<std::string, Dbm> invmemo;   // rebuilt on demand, only in the pre-closure
 
   // ---- seed ---------------------------------------------------------------
-  for (std::size_t i = 0; i < node.size(); ++i) {
+  for (std::size_t i = 0; i < nrec(); ++i) {
     const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
     if (invrep.count(k)) continue;
     SymState u;
@@ -2873,7 +2889,7 @@ bool Otf::build_atom_map(AtomMap& am) {
   std::vector<KE> kedges;
   {
     std::unordered_set<std::string> seenE;
-    const std::size_t n = std::min(adj.size(), node.size());
+    const std::size_t n = std::min(adj.size(), nrec());
     for (std::size_t u = 0; u < n; ++u) {
       const std::string ks = disc_key_bytes(node[u].locs, node[u].ints);
       for (const auto& e : adj[u]) {
@@ -3374,7 +3390,7 @@ void Otf::online_recheck_key(int key) {
     v = online_next_in_key_[current];
     if (online_active_[current]) continue;
     const int c = online_cover_[current];
-    if (c >= 0 && c < (int)node.size() && online_active_[c]) {
+    if (c >= 0 && c < (int)nrec() && online_active_[c]) {
       if (online_covers(current, c, ki.id))
         continue;  // its recorded certificate survived the newly settled D map
     }
@@ -3413,7 +3429,7 @@ void Otf::online_recheck_key(int key) {
     if (online_perf.enabled) ++online_perf.deferred_replayed;
 
     int cover = -1;
-    if (edge.tgt >= 0 && edge.tgt < static_cast<int>(node.size()) && online_active_[edge.tgt] &&
+    if (edge.tgt >= 0 && edge.tgt < static_cast<int>(nrec()) && online_active_[edge.tgt] &&
         online_covers(candidate, edge.tgt, ki.id)) {
       cover = edge.tgt;
     } else {
@@ -3479,7 +3495,7 @@ bool Otf::online_build_all() {
 /// active.
 void Otf::online_expand(int u) {
   grow();
-  if (cancelled() || online_failed_ || u < 0 || u >= (int)node.size()) return;
+  if (cancelled() || online_failed_ || u < 0 || u >= (int)nrec()) return;
   if (!online_active_[u] || expanded[u]) return;
 
   expanded[u] = 1;
@@ -3621,7 +3637,7 @@ void Otf::online_drain_forward_work() {
 
     const int u = online_work_.front();
     online_work_.pop_front();
-    if (u < 0 || u >= (int)node.size()) continue;
+    if (u < 0 || u >= (int)nrec()) continue;
     online_inq_[u] = 0;
     if (!online_active_[u] || expanded[u]) continue;
     if (online_eg_prune_ && !online_is_nq(u)) {
@@ -3649,7 +3665,7 @@ void Otf::online_drain_forward_work() {
 /// graph is rebuilt: this drains retained records through the same online-D worklist.
 void Otf::online_complete_eg_history() {
   online_eg_repair_ = true;
-  const std::size_t parked = node.size();
+  const std::size_t parked = nrec();
   std::size_t pending = 0;
   for (std::size_t v = 0; v < parked; ++v)
     if (!expanded[v]) { ++pending; online_activate(static_cast<int>(v)); }
@@ -3659,9 +3675,9 @@ void Otf::online_complete_eg_history() {
   online_drain_forward_work();
   if (online_perf.enabled) {
     std::size_t remaining = 0;
-    for (std::size_t v = 0; v < node.size(); ++v) remaining += !expanded[v];
+    for (std::size_t v = 0; v < nrec(); ++v) remaining += !expanded[v];
     std::fprintf(stderr, "ONLINE-EG-REPAIR after=%zu remaining=%zu\n",
-                 node.size(), remaining);
+                 nrec(), remaining);
   }
 }
 
@@ -3682,7 +3698,7 @@ void Otf::online_finalize_graph() {
 
   for (;;) {
     bool woke = false;
-    for (std::size_t u = 0; u < node.size(); ++u) {
+    for (std::size_t u = 0; u < nrec(); ++u) {
       if (!online_active_[u] || !expanded[u]) continue;
       const int raw_slot = online_raw_slot_[u];
       if (raw_slot < 0) { online_failed_ = true; return; }
@@ -3723,14 +3739,15 @@ void Otf::online_finalize_graph() {
   // forward-sound redirection to a simulator is not an exact inverse for gfp_pre.  Compaction
   // therefore removes records only from future cover scans, never from the finished graph.
   // With that invariant the existing numbering, zones, and raw adjacency can all be moved.
-  bool already_dense = online_active_.size() == node.size();
-  for (std::size_t v = 0; v < node.size() && already_dense; ++v)
+  bool already_dense = online_active_.size() == nrec();
+  for (std::size_t v = 0; v < nrec() && already_dense; ++v)
     already_dense = expanded[v] && online_raw_slot_[v] >= 0;
 
   if (already_dense) {
     adj.clear();
-    adj.resize(node.size());
-    for (std::size_t v = 0; v < node.size(); ++v) {
+    adj.resize(nrec());
+    node.assign(nrec(), SymState{});      // built here, at its final size; see ::online_append
+    for (std::size_t v = 0; v < nrec(); ++v) {
       const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
       key_state(ki.id, node[v]);
       std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
@@ -3738,7 +3755,7 @@ void Otf::online_finalize_graph() {
         // Materialised targets keep their own identity, even after leaving the active forward
         // antichain. A never-materialised provisional successor already names its final active
         // coverer here; dirty-key replay would have promoted it if that certificate had failed.
-        if (edge.tgt < 0 || edge.tgt >= static_cast<int>(node.size()) ||
+        if (edge.tgt < 0 || edge.tgt >= static_cast<int>(nrec()) ||
             !expanded[edge.tgt] || online_raw_slot_[edge.tgt] < 0) {
           const int representative = online_resolve_cover(edge.tgt, /*require_expanded=*/true);
           if (representative < 0) { online_failed_ = true; return; }
@@ -3757,10 +3774,17 @@ void Otf::online_finalize_graph() {
     // compacted graph beside the original instead put two copies of the zone store, the node
     // vector and the adjacency in memory at once -- an 86 MB spike on fischer10, on a graph the
     // refinement had thinned from 614212 records to 260998.
-    std::vector<int> remap(node.size(), -1);
+    std::vector<int> remap(nrec(), -1);
     std::size_t kept = 0;
+    // Count first, then size `node` exactly. It is empty until now (see ::online_append), and
+    // sizing it to the record count and shrinking afterwards would allocate the placeholder this
+    // whole arrangement exists to avoid.
+    for (std::size_t v = 0; v < nrec(); ++v)
+      if (expanded[v] && online_raw_slot_[v] >= 0) ++kept;
+    node.assign(kept, SymState{});
+    kept = 0;
     Dbm zsc;
-    for (std::size_t old = 0; old < node.size(); ++old) {
+    for (std::size_t old = 0; old < nrec(); ++old) {
       if (!expanded[old] || online_raw_slot_[old] < 0) continue;
       const int now = static_cast<int>(kept++);
       remap[old] = now;
@@ -3772,13 +3796,13 @@ void Otf::online_finalize_graph() {
     // The adjacency moves the same way, and each raw vector is moved out rather than copied.
     adj.clear();
     adj.resize(kept);
-    for (std::size_t old = 0; old < node.size(); ++old) {
+    for (std::size_t old = 0; old < nrec(); ++old) {
       const int now = remap[old];
       if (now < 0) continue;
       std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[old]];
       for (OtfEdge& e : raw) {
         int representative = e.tgt;
-        if (representative < 0 || representative >= static_cast<int>(node.size()) ||
+        if (representative < 0 || representative >= static_cast<int>(nrec()) ||
             !expanded[representative] || online_raw_slot_[representative] < 0)
           representative = online_resolve_cover(e.tgt, /*require_expanded=*/true);
         if (representative < 0) { online_failed_ = true; return; }
@@ -3789,18 +3813,20 @@ void Otf::online_finalize_graph() {
       }
       adj[now] = std::move(raw);
     }
-    node.resize(kept);
-    node.shrink_to_fit();
     zs_.truncate(kept);
   }
+  // From here on `node` IS the graph, so the record counter must agree with it: the compaction
+  // branch above keeps fewer entries than records were created, and every table below is sized
+  // from ::nrec.
+  online_nrec_ = node.size();
   bucket.clear();
-  for (std::size_t v = 0; v < node.size(); ++v)
+  for (std::size_t v = 0; v < nrec(); ++v)
     bucket[disc_hash(node[v].locs, node[v].ints)].push_back(static_cast<int>(v));
-  expanded.assign(node.size(), 1);
-  pc.assign(node.size(), 2);
-  qc.assign(node.size(), 2);
-  ntag_.assign(node.size(), 0);
-  ntag_out_.assign(node.size(), 0);
+  expanded.assign(nrec(), 1);
+  pc.assign(nrec(), 2);
+  qc.assign(nrec(), 2);
+  ntag_.assign(nrec(), 0);
+  ntag_out_.assign(nrec(), 0);
   online_active_.clear();
   online_active_next_.clear();
   online_active_prev_.clear();
@@ -3853,7 +3879,7 @@ void Otf::base_forward() {
       std::deque<int> work;
       std::vector<char> inq;
       auto push = [&](int v) {
-        if (inq.size() < node.size()) inq.resize(node.size(), 0);
+        if (inq.size() < nrec()) inq.resize(nrec(), 0);
         if (!inq[v]) { inq[v] = 1; work.push_back(v); }
       };
       push(0);
@@ -3889,7 +3915,7 @@ void Otf::base_forward() {
         const int u = work.front();
         work.pop_front();
         grow();
-        if (inq.size() < node.size()) inq.resize(node.size(), 0);
+        if (inq.size() < nrec()) inq.resize(nrec(), 0);
         inq[u] = 0;
         expand(u);                                  // no-op if still expanded
         grow();
@@ -3916,7 +3942,7 @@ void Otf::base_forward() {
               std::chrono::duration_cast<std::chrono::nanoseconds>(clk_now() - p0).count();
           if (probe_dbg)
             std::fprintf(stderr, "PROBE at_nodes=%zu hit=%d cumulative_probe_ms=%lld\n",
-                         node.size(), (int)hit, probe_ns / 1000000);
+                         nrec(), (int)hit, probe_ns / 1000000);
           if (hit) { eg_early_hit_ = true; return; }
           since_probe = clk_now();
         }
@@ -3950,7 +3976,7 @@ std::vector<int> Otf::eg_closure() {
   // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
   // state, so a node reachable only by leaving psi and coming back must not be admitted.
   if (!expanded[0] || !is_nq(0)) return S;
-  std::vector<char> in(node.size(), 0);
+  std::vector<char> in(nrec(), 0);
   std::vector<int> stk{0};
   in[0] = 1;
   while (!stk.empty()) {
@@ -4045,7 +4071,7 @@ bool Otf::run_online_d(GfpStats* gs) {
   }
   const auto forward_done = std::chrono::steady_clock::now();
   const std::size_t rss_fwd = rss_mb();
-  std::size_t raw_nodes = node.size(), raw_edges = 0, active_nodes = 0, active_slots = 0;
+  std::size_t raw_nodes = nrec(), raw_edges = 0, active_nodes = 0, active_slots = 0;
   std::size_t live_deferred = 0;
   for (const auto& edges : online_raw_adj_)
     live_deferred += std::count_if(edges.begin(), edges.end(),
@@ -4055,6 +4081,13 @@ bool Otf::run_online_d(GfpStats* gs) {
     active_slots += ki.active_count;
     for (int v = ki.active_head; v >= 0; v = online_active_next_[v])
       if (online_raw_slot_[v] >= 0) raw_edges += online_raw_adj_[online_raw_slot_[v]].size();
+  }
+  // What the D machinery is holding, whether or not D ever gained an atom.
+  std::size_t dropped_records = 0, dropped_unexpanded = 0, inactive_expanded = 0;
+  for (std::size_t v = 0; v < nrec(); ++v) {
+    const bool keep = expanded[v] && online_raw_slot_[v] >= 0;
+    if (!keep) { ++dropped_records; if (!expanded[v]) ++dropped_unexpanded; }
+    else if (!online_active_[v]) ++inactive_expanded;
   }
   const std::size_t key_count = online_key_by_id_.size();
   const std::size_t key_edge_count = online_key_edges_.size();
@@ -4082,15 +4115,18 @@ bool Otf::run_online_d(GfpStats* gs) {
       return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
     };
     std::fprintf(stderr,
-                 "ONLINE-PERF forward_ms=%lld finalize_ms=%lld backward_ms=%lld raw_nodes=%zu "
+                 "ONLINE-PERF dropped=%zu dropped_unexp=%zu inactive_exp=%zu "
+                 "forward_ms=%lld finalize_ms=%lld backward_ms=%lld raw_nodes=%zu "
                  "active_nodes=%zu active_slots=%zu active_edges=%zu keys=%zu key_edges=%zu seed_keys=%zu "
                  "seed_atoms=%zu closure_atoms=%zu diag_keys=%zu bumped=%zu cover_calls=%llu "
                  "cover_ms=%.3f intern=%llu intern_scan=%llu probe_ms=%.3f "
                  "join_ms=%.3f append_ms=%.3f "
                  "deferred=%zu deferred_created=%llu deferred_replayed=%llu deferred_promoted=%llu "
                  "coverer=%llu coverer_scan=%llu "
-                 "compact=%llu compact_scan=%llu recheck=%llu recheck_nodes=%llu succ_ms=%.3f "
+                 "compact=%llu compact_scan=%llu deact=%llu deact_unexp=%llu deact_perm=%llu "
+                 "recheck=%llu recheck_nodes=%llu succ_ms=%.3f "
                  "register_ms=%.3f key_ms=%.3f tag_ms=%.3f reset_ms=%.3f edge_ms=%.3f intern_ms=%.3f\n",
+                 dropped_records, dropped_unexpanded, inactive_expanded,
                  static_cast<long long>(ms(forward_done - forward_start)),
                  static_cast<long long>(ms(finalised - forward_done)),
                  static_cast<long long>(ms(solved - finalised)), raw_nodes, active_nodes,
@@ -4109,6 +4145,9 @@ bool Otf::run_online_d(GfpStats* gs) {
                  static_cast<unsigned long long>(online_perf.coverer_active_scan),
                  static_cast<unsigned long long>(online_perf.compact_calls),
                  static_cast<unsigned long long>(online_perf.compact_active_scan),
+                 static_cast<unsigned long long>(online_perf.compact_deact),
+                 static_cast<unsigned long long>(online_perf.compact_deact_unexp),
+                 static_cast<unsigned long long>(online_perf.compact_deact_permanent),
                  static_cast<unsigned long long>(online_perf.recheck_calls),
                  static_cast<unsigned long long>(online_perf.recheck_nodes),
                  online_perf.successor_ns / 1e6, online_perf.register_ns / 1e6,
@@ -4136,7 +4175,7 @@ bool Otf::eg_from_initial_online_d(GfpStats* gs) {
     std::fprintf(stderr,
                  "ONLINE-EG raw_nodes=%zu keys=%zu seed_keys=%zu seed_atoms=%zu closure_atoms=%zu "
                  "deferred_created=%llu deferred_replayed=%llu deferred_promoted=%llu\n",
-                 node.size(), online_key_by_id_.size(), online_am_.seed_keys,
+                 nrec(), online_key_by_id_.size(), online_am_.seed_keys,
                  online_am_.seed_atoms, online_am_.closure_atoms,
                  static_cast<unsigned long long>(online_perf.deferred_created),
                  static_cast<unsigned long long>(online_perf.deferred_replayed),
@@ -4152,13 +4191,13 @@ bool Otf::eg_from_initial_online_d(GfpStats* gs) {
   const bool r = eg_verdict(gs);
   if (std::getenv("PTCTLMC_RSS"))
     std::fprintf(stderr, "RSS-MB eg_forward=%zu eg_finalize=%zu eg_backward=%zu nodes=%zu\n",
-                 rss_fwd, rss_fin, rss_mb(), node.size());
+                 rss_fwd, rss_fin, rss_mb(), nrec());
   return r;
 }
 
 void Otf::fill_stats(GfpStats* gs) {
   if (gs) {
-    gs->fwd_nodes = node.size();
+    gs->fwd_nodes = nrec();
     gs->disc_keys = bucket.size();
     gs->fwd_edges = 0;
     for (const auto& a : adj) gs->fwd_edges += a.size();

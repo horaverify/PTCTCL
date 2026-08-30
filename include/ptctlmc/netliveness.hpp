@@ -230,6 +230,9 @@ class Otf {
   // Final graph storage.  The ZoneStore owns dense zone matrices; node[i].zone is scratch-only
   // once a record is interned.
   std::vector<detail::SymState> node;
+  // Records created so far. In online mode `node` stays EMPTY until the graph is sealed, so it
+  // cannot serve as the counter; ::nrec is the one place that knows which is authoritative.
+  std::size_t online_nrec_ = 0;
   std::vector<std::vector<OtfEdge>> adj;
   std::vector<GfpTag> tags_;
   std::unordered_map<std::uint64_t, std::vector<int>> tagidx_;
@@ -298,6 +301,8 @@ class Otf {
   std::vector<char> online_inq_;
 
   // General graph mechanics.
+  /// @brief How many records exist, whichever construction is running.
+  std::size_t nrec() const { return online_d_ ? online_nrec_ : node.size(); }
   bool cancelled();
   void setup();
   void build_local_bound_tables();
