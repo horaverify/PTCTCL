@@ -1,0 +1,22 @@
+family,model,tool,threads,rep,states,seconds,rss_gb,status,mergescan,hotlen,chunk,sim,engine,queries,qidx,verdict,query
+arbiter,arbiter4,tchecker,1,1,5,0.069,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter4,tchecker,1,2,5,0.071,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter4,tchecker,1,1,5,0.068,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter4,tchecker,1,2,5,0.070,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter4,tchecker,1,1,62542,0.927,0.032,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter4,tchecker,1,2,62542,0.923,0.032,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter4,tchecker,1,1,5,0.070,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter4,tchecker,1,2,5,0.070,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter5,tchecker,1,1,5,0.070,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter5,tchecker,1,2,5,0.068,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter5,tchecker,1,1,5,0.069,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter5,tchecker,1,2,5,0.069,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter5,tchecker,1,1,1369442,70.007,0.521,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter5,tchecker,1,2,1369442,88.124,0.521,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter5,tchecker,1,1,5,0.071,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter5,tchecker,1,2,5,0.068,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter6,tchecker,1,1,5,0.067,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter6,tchecker,1,2,5,0.069,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter6,tchecker,1,1,5,0.067,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter6,tchecker,1,2,5,0.068,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter6,tchecker,1,1,-,3112.029,5.133,ERR,-,-,8,alu,adaptive,eg,2,-,E[] (C0.idle || C0.want) && x0 <= 40
