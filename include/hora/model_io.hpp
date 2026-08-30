@@ -1,54 +1,39 @@
-// uppaal.hpp — load UPPAAL .xml timed automata and .q queries (clock fragment).
-//
-// A compact, standalone loader for the common single-template, clock-only subset:
-// clocks, locations (+ invariants, urgent/committed), edges (guards, clock resets).
-// Networks/channels and integer variables are future work. Queries: `E<>` and
-// `A[]` over a location and/or clock constraints.
+/// @file hora/model_io.hpp
+/// @brief Reading a model file into a hora::TimedAutomaton or hora::Network.
+///
+/// The input is UPPAAL's XML. It is the only model format HORA reads, so nothing downstream
+/// depends on where a network came from: the reader is the single point that knows the format.
+///
+/// Supported: clocks, locations with invariants and urgent/committed flags, edges with guards,
+/// clock resets and integer updates, bounded integer variables, and binary and broadcast channel
+/// synchronisation. See docs/limitations.md for what is accepted but not fully honoured.
 #pragma once
 
 #include <stdexcept>
 #include <string>
-#include <vector>
 
-#include "hora/network.hpp"
-#include "hora/reach.hpp"
 #include "hora/automaton.hpp"
+#include "hora/network.hpp"
 
 namespace hora {
 
+/// @brief Thrown when a model file cannot be read or is not in the supported subset.
 struct ModelError : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+/// @brief Load a single-template model as one timed automaton.
+/// @throws ModelError if the file cannot be read or declares more than one template.
 TimedAutomaton load_model(const std::string& path);
 
-// Number of <template> elements (>1 => a network).
-// Number of processes the <system> declaration puts in the network (one
-// template may be instantiated several times); falls back to the template
-// count for models with no system list.
-int network_process_count(const std::string& path);
-// Load a multi-template network (clocks + integer variables + int guards/updates).
+/// @brief Load a multi-template model as a network.
+/// @throws ModelError if the file cannot be read or uses an unsupported construct.
 Network load_network(const std::string& path);
 
-struct Query {
-  enum Kind { EF, AG, EG, AF, LEADSTO } kind = EF;  // E<>, A[], E[], A<>, p-->q
-  std::string raw;
-  std::string loc_name;             // target location name ("" = any)
-  std::vector<Constraint> clock_cond;
-  std::string lhs;                  // LEADSTO: left predicate text (rhs goes in `note`)
-  bool supported = true;
-  std::string note;
-};
-
-std::vector<Query> load_queries(const std::string& path);
-
-// Evaluate `q` on `ta`. Returns true if the query is supported (sets *satisfied);
-// false if unsupported (see q.note). `backend` selects the reachability engine.
-bool check_query(const TimedAutomaton& ta, const Query& q, bool* satisfied,
-                 Backend backend = Backend::Omp, ReachStats* stats = nullptr);
-
-// Evaluate a query on a network (E<> over process locations / int / clock atoms).
-bool check_network_query(const Network& net, const Query& q, bool* satisfied,
-                     Backend backend = Backend::Omp, ReachStats* stats = nullptr);
+/// @brief How many processes the model's `system` declaration instantiates.
+///
+/// One template may be instantiated several times, so this is not the template count. Falls back
+/// to the template count for models with no system list.
+int network_process_count(const std::string& path);
 
 }  // namespace hora

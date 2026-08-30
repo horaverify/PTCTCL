@@ -12,6 +12,7 @@
 #include "hora/reach.hpp"
 #include "hora/automaton.hpp"
 #include "hora/model_io.hpp"
+#include "hora/query.hpp"
 
 /// @brief `--stats`: append successor-generation counts to each verdict line.
 /// The explored-state count is always reported; this adds the generated-zone count, which

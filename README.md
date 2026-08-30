@@ -90,13 +90,35 @@ convex-union merge is checked against an independent set-difference oracle.
 ## Layout
 
 ```
-include/hora/     public headers; detail/ is private to the engine
-src/              engine: parser, network IR, reachability, liveness, symmetry, bisimulation
-app/              command-line front end
-tests/            unit tests, differential harnesses, curated models
-benchmarks/       models, query suites, measurement drivers, recorded results
-docs/specs/       design notes and soundness arguments
-HDBM/             the zone library (separate repository)
+include/hora/          public headers
+  zone.hpp               HDBM's zone algebra, imported into `hora`
+  automaton.hpp          a single timed automaton
+  network.hpp            a network of them
+  expression.hpp         the model's expression language
+  predicate.hpp          lowered query predicates
+  model_io.hpp           reading a model file
+  query.hpp              a parsed query, and answering one
+  reachability.hpp       E<> / A[] / deadlock
+  liveness.hpp           E[] / p --> q
+  config.hpp             every process-global engine switch
+  bisimulation.hpp       timed (bi)simulation between two automata
+  symmetry.hpp           process-symmetry reduction
+  gpu/                   CUDA and Metal drivers
+  detail/                private to the engine
+
+src/
+  model/                 the model in memory: automaton, network, expressions, integer ranges
+  frontend/              reading a model file and a query file
+  query/                 lowering a query and selecting an engine
+  reachability/          the forward zone-graph search, and deadlock
+  liveness/              the online quotient, the D refinement, the backward fixpoint
+  analysis/              bisimulation, symmetry
+  cuda/  metal/          GPU back ends
+
+tests/                 unit, property and differential tests, curated models
+benchmarks/            models, query suites, measurement drivers, recorded results
+docs/                  design.md, limitations.md, specs/
+HDBM/                  the zone library (separate repository)
 ```
 
 ## License

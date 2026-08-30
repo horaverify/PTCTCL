@@ -6,6 +6,7 @@
 /// came from.
 
 #include "hora/model_io.hpp"
+#include "hora/query.hpp"
 #include "hora/config.hpp"
 #include "hora/liveness.hpp"
 #include "hora/reachability.hpp"

@@ -91,11 +91,16 @@ endif()
 
 # The engine's translation units, by area. A glob per directory rather than one recursive glob,
 # so that adding a directory is a deliberate edit here and the layout stays visible.
+# The engine's translation units, one glob per area, so that adding an area is a deliberate
+# edit here and the layout of src/ stays visible from the build file.
 file(GLOB HORA_CORE_SRC CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/*.cpp
      ${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/*.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/liveness/*.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/*.cpp
      ${CMAKE_CURRENT_SOURCE_DIR}/src/query/*.cpp
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/liveness/*.cpp)
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/reachability/*.cpp)
 add_library(hora_core ${HORA_CORE_SRC})
 target_include_directories(hora_core
   PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
