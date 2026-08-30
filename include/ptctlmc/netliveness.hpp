@@ -229,7 +229,13 @@ class Otf {
 
   // Final graph storage.  The ZoneStore owns dense zone matrices; node[i].zone is scratch-only
   // once a record is interned.
+  // The final graph's discrete half. The exact/inclusion route keeps it in `node`; the online
+  // route leaves it in the key arenas and points at them through `node_key_`, because several
+  // records share a key (447598 nodes over 260998 keys on fischer10) and copying the locations
+  // into every one of them cost more than the arenas themselves. ::nlocs is the one place that
+  // knows which representation is live.
   std::vector<detail::SymState> node;
+  std::vector<int> node_key_;
   // Records created so far. In online mode `node` stays EMPTY until the graph is sealed, so it
   // cannot serve as the counter; ::nrec is the one place that knows which is authoritative.
   std::size_t online_nrec_ = 0;
@@ -302,7 +308,31 @@ class Otf {
 
   // General graph mechanics.
   /// @brief How many records exist, whichever construction is running.
-  std::size_t nrec() const { return online_d_ ? online_nrec_ : node.size(); }
+  std::size_t nrec() const {
+    if (online_d_) return online_nrec_;
+    return node_key_.empty() ? node.size() : node_key_.size();
+  }
+  /// @brief Node @p v's locations, `nlocs_n()` of them.
+  const int* nlocs(int v) const {
+    return node_key_.empty() ? node[v].locs.data() : key_locs(node_key_[v]);
+  }
+  /// @brief Node @p v's integer variables, `nints_n()` of them.
+  const long* nints(int v) const {
+    return node_key_.empty() ? node[v].ints.data() : key_ints(node_key_[v]);
+  }
+  std::size_t nlocs_n(int v) const {
+    return node_key_.empty() ? node[v].locs.size() : static_cast<std::size_t>(key_loc_stride_);
+  }
+  std::size_t nints_n(int v) const {
+    return node_key_.empty() ? node[v].ints.size() : static_cast<std::size_t>(key_int_stride_);
+  }
+  /// @brief Copy node @p v's discrete half into @p s, leaving its zone alone.
+  void nstate(int v, detail::SymState& s) const {
+    const int* l = nlocs(v);
+    s.locs.assign(l, l + nlocs_n(v));
+    const long* i = nints(v);
+    s.ints.assign(i, i + nints_n(v));
+  }
   bool cancelled();
   void setup();
   void build_local_bound_tables();

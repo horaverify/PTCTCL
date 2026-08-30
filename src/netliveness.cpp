@@ -702,7 +702,7 @@ bool Otf::cancelled() {
 }
 
 bool Otf::is_nq_fast(int i) {
-  if (qc[i] == 2) qc[i] = holds(q, node[i]) ? 1 : 0;
+  if (qc[i] == 2) { SymState sc; nstate(i, sc); qc[i] = holds(q, sc) ? 1 : 0; }
   return qc[i] == 0;
 }
 
@@ -746,8 +746,7 @@ const Dbm& Otf::zread(int i, Dbm& sc) const {
 }
 
 const SymState& Otf::sread(int i, SymState& sc) const {
-  sc.locs.assign(node[i].locs.begin(), node[i].locs.end());
-  sc.ints.assign(node[i].ints.begin(), node[i].ints.end());
+  nstate(i, sc);
   zread(i, sc.zone);
   return sc;
 }
@@ -1001,7 +1000,9 @@ bool Otf::is_p(int i) {
   // cannot exclude a whole vertex -- and exactly wrong for `p`, where such a term is the reason
   // the node is interesting. Reusing it made `x >= 0 --> P.wait` hold vacuously: no term counted,
   // so no node seeded the closure, so no violation could be found.
-  pc[i] = p_discrete(node[i]) ? 1 : 0;
+  SymState sc;
+  nstate(i, sc);
+  pc[i] = p_discrete(sc) ? 1 : 0;
   return pc[i] != 0;
 }
 
@@ -1020,7 +1021,7 @@ Federation Otf::p_region(int i) {
 
 bool Otf::is_nq(int i) {
   grow();
-  if (qc[i] == 2) qc[i] = holds(q, node[i]) ? 1 : 0;
+  if (qc[i] == 2) { SymState sc; nstate(i, sc); qc[i] = holds(q, sc) ? 1 : 0; }
   return qc[i] == 0;
 }
 
@@ -2315,13 +2316,15 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     pnodes.emplace_back();
     PreNode& pn = pnodes.back();
     pn.ready = true;
-    const LocVec& locs = node[v].locs;
+    SymState dsc;
+    nstate(v, dsc);
+    const LocVec& locs = dsc.locs;
     all_invariants(net, locs, iscratch);
     const auto span = intern_inv(iscratch);
     pn.inv_off = span.first;
     pn.inv_len = span.second;
     bool c2, u2;
-    frozen_flags(net, locs, node[v].ints, &c2, &u2);
+    frozen_flags(net, locs, dsc.ints, &c2, &u2);
     pn.frozen = c2 || u2;
     // The mask needs one bit per clock. Wider networks keep no active_mask either (see
     // Network::compute_active), and the reduction is then off, so there is nothing to record.
@@ -3746,10 +3749,8 @@ void Otf::online_finalize_graph() {
   if (already_dense) {
     adj.clear();
     adj.resize(nrec());
-    node.assign(nrec(), SymState{});      // built here, at its final size; see ::online_append
+    node_key_.assign(online_key_of_.begin(), online_key_of_.begin() + nrec());
     for (std::size_t v = 0; v < nrec(); ++v) {
-      const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
-      key_state(ki.id, node[v]);
       std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
       for (OtfEdge& edge : raw) {
         // Materialised targets keep their own identity, even after leaving the active forward
@@ -3776,22 +3777,19 @@ void Otf::online_finalize_graph() {
     // refinement had thinned from 614212 records to 260998.
     std::vector<int> remap(nrec(), -1);
     std::size_t kept = 0;
-    // Count first, then size `node` exactly. It is empty until now (see ::online_append), and
-    // sizing it to the record count and shrinking afterwards would allocate the placeholder this
-    // whole arrangement exists to avoid.
+    // Count first, then size the key index exactly.
     for (std::size_t v = 0; v < nrec(); ++v)
       if (expanded[v] && online_raw_slot_[v] >= 0) ++kept;
-    node.assign(kept, SymState{});
+    node_key_.assign(kept, -1);
     kept = 0;
     Dbm zsc;
     for (std::size_t old = 0; old < nrec(); ++old) {
       if (!expanded[old] || online_raw_slot_[old] < 0) continue;
       const int now = static_cast<int>(kept++);
       remap[old] = now;
-      const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[old]];
       zread(static_cast<int>(old), zsc);    // read `old` before `now <= old` is overwritten
       zs_.store(now, zsc);
-      key_state(ki.id, node[now]);
+      node_key_[now] = online_key_of_[old];
     }
     // The adjacency moves the same way, and each raw vector is moved out rather than copied.
     adj.clear();
@@ -3815,13 +3813,19 @@ void Otf::online_finalize_graph() {
     }
     zs_.truncate(kept);
   }
-  // From here on `node` IS the graph, so the record counter must agree with it: the compaction
-  // branch above keeps fewer entries than records were created, and every table below is sized
-  // from ::nrec.
-  online_nrec_ = node.size();
+  // From here on `node_key_` IS the graph: the compaction branch keeps fewer entries than
+  // records were created, and every table below is sized from ::nrec.  `node` stays empty on
+  // this route -- the discrete half is read out of the key arenas, which therefore outlive the
+  // rest of the online state.
+  online_nrec_ = node_key_.size();
   bucket.clear();
-  for (std::size_t v = 0; v < nrec(); ++v)
-    bucket[disc_hash(node[v].locs, node[v].ints)].push_back(static_cast<int>(v));
+  {
+    SymState dsc;
+    for (std::size_t v = 0; v < nrec(); ++v) {
+      nstate(static_cast<int>(v), dsc);
+      bucket[disc_hash(dsc.locs, dsc.ints)].push_back(static_cast<int>(v));
+    }
+  }
   expanded.assign(nrec(), 1);
   pc.assign(nrec(), 2);
   qc.assign(nrec(), 2);
@@ -3837,10 +3841,8 @@ void Otf::online_finalize_graph() {
   online_inq_.clear();
   online_work_.clear();
   online_key_by_id_.clear();
-  key_locs_.clear();
-  key_ints_.clear();
-  key_loc_stride_ = net.nprocs();
-  key_int_stride_ = static_cast<int>(net.intvars.size());
+  // key_locs_/key_ints_ and the strides deliberately SURVIVE: `node_key_` points into them for
+  // the rest of the run.  ::online_reset releases them at the start of the next construction.
   online_key_of_.clear();
   online_next_in_key_.clear();
   online_keys_.clear();
@@ -3970,7 +3972,7 @@ bool Otf::eg_from_initial(GfpStats* gs) {
 
 std::vector<int> Otf::eg_closure() {
   std::vector<int> S;
-  if (node.empty()) return S;
+  if (nrec() == 0) return S;
   grow();
   // The psi-closure REACHED FROM THE INITIAL VERTEX. ::Otf::accepting_closure seeds from every
   // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
@@ -3990,7 +3992,7 @@ std::vector<int> Otf::eg_closure() {
 }
 
 bool Otf::eg_probe() {
-  if (!fwd_ok_ || node.empty()) return false;
+  if (!fwd_ok_ || nrec() == 0) return false;
   const bool saved_capped = capped;         // sticky, and a probe must not condemn the real run
   const bool saved_scc = scc_iter_;
   scc_iter_ = true;
@@ -4009,7 +4011,7 @@ bool Otf::eg_probe() {
 bool Otf::eg_verdict(GfpStats* gs) {
   scc_iter_ = true;             // the verdict is one node's, so diameter is what costs here
   bool res = false;
-  if (fwd_ok_ && !node.empty()) {
+  if (fwd_ok_ && nrec() != 0) {
     const std::vector<int> S = eg_closure();
     if (!S.empty()) {
       std::vector<Federation> W;
