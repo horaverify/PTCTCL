@@ -2523,6 +2523,11 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
 
   std::vector<Constraint> tinv;  // target-invariant scratch
   Federation live;
+  // Set when an escape is produced that covers the whole of Z; see ::add_src. The enumeration
+  // below then has nothing left to learn and stops.
+  //
+  // @warning `*escapes` is NOT populated on that path. No caller reads it on a `false` return.
+  bool covered = false;
 
   // `guarded` is Z intersected with the participants' clock guards, before any reset. It is
   // pulled back through the target invariant under the transition's resets, and if a non-empty
@@ -2553,11 +2558,24 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
     //
     // Pruning before down() is sound because W subseteq W' implies down(W) subseteq down(W'), so
     // the union of the time-pasts is unchanged.
-    if (!guarded.empty()) fed_add(live, guarded);
+    if (guarded.empty()) return;
+    // THE WHOLE-ZONE ESCAPE, detected where it is produced rather than after the fact. `guarded`
+    // starts as Z and is only ever constrained, and dbm_constrain writes only a strictly tighter
+    // bound -- which, on a canonical DBM, strictly shrinks the set. So `guarded == Z` entrywise
+    // iff nothing tightened, iff this transition is enabled from every valuation of Z. Then
+    // down(guarded) contains Z and Dead is empty, whatever the remaining transitions do.
+    //
+    // The same conclusion is available from the post-loop inclusion test below, but only after
+    // the O(nprocs^2) synchronisation enumeration has run and `fed_add` has kept `live`
+    // inclusion-minimal at O(|live|^2) DBM comparisons. This reaches it on the first unguarded
+    // edge, for one memcmp.
+    if (std::memcmp(guarded.data().data(), Z.data().data(),
+                    sizeof(raw_t) * Z.data().size()) == 0) { covered = true; return; }
+    fed_add(live, guarded);
   };
 
   // ---- local (unsynchronised) edges ----
-  for (int p = 0; p < net.nprocs(); ++p) {
+  for (int p = 0; p < net.nprocs() && !covered; ++p) {
     if (src_committed && !net.procs[p].locations[s.locs[p]].committed) continue;
     for (int ei : net.procs[p].edges_of(s.locs[p])) {
       const NEdge& e = net.procs[p].edges[ei];
@@ -2574,8 +2592,9 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   }
 
   // ---- binary channel synchronisation (a! || a?) ----
-  for (int i = 0; i < net.nprocs(); ++i) {
+  for (int i = 0; i < net.nprocs() && !covered; ++i) {
     for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      if (covered) break;
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1) continue;
       if (net.chan_broadcast[se.sync_chan]) continue;
@@ -2603,8 +2622,9 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   }
 
   // ---- broadcast synchronisation: a! fires with all enabled a? (0 or more) ----
-  for (int i = 0; i < net.nprocs(); ++i) {
+  for (int i = 0; i < net.nprocs() && !covered; ++i) {
     for (int ei : net.procs[i].edges_of(s.locs[i])) {
+      if (covered) break;
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
@@ -2639,6 +2659,11 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
     }
   }
 
+  if (covered) {
+    if (stuck) stuck->clear();
+    if (escapes) escapes->clear();
+    return false;
+  }
   // Non-deadlocked = valuations that can (delay into, unless frozen) some enabled source
   // region. Subtract that from the zone; a non-empty remainder is a set of deadlock states.
   if (!frozen)

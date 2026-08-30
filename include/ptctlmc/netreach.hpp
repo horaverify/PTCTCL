@@ -142,9 +142,19 @@ bool slice_on();
 /// @see ptctlmc::Network::lraw_loc, ptctlmc::Network::uraw_loc
 void set_gsim(bool on);
 
+/// @brief Store liveness zones as minimal graphs instead of dense matrices.
+///
+/// Far smaller resident, at one `mindbm_unpack` per read. Exact either way — the codec round
+/// trips a canonical DBM bit for bit — so this only trades memory against time. Whether it pays
+/// depends on the model's read rate; see ptctlmc::ZoneStore.
+void set_packed_zones(bool on);
+
 /// @brief Report whether G-simulation subsumption is enabled.
 /// @return the value last passed to ::set_gsim (default @c false)
 bool gsim_on();
+
+/// @brief Is minimal-graph zone storage in force? @see set_packed_zones
+bool packed_zones_on();
 
 /// @brief Memoise the successor-zone pipeline.
 ///

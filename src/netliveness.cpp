@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <atomic>
 #include <chrono>
@@ -36,10 +37,29 @@
 #include <utility>
 #include <vector>
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
 #include "ptctlmc/mindbm.hpp"
 #include "ptctlmc/detail/net_semantics.hpp"
 
 namespace ptctlmc {
+namespace {
+/// @brief Resident set in MiB, for the PTCTLMC_RSS phase report; 0 when it is not asked for.
+std::size_t rss_mb() {
+  static const bool on = std::getenv("PTCTLMC_RSS") != nullptr;
+  if (!on) return 0;                       // do not pay a syscall for a diagnostic nobody reads
+#if defined(__APPLE__)
+  ::mach_task_basic_info info;
+  mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+  if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) != KERN_SUCCESS)
+    return 0;
+  return info.resident_size >> 20;
+#else
+  return 0;
+#endif
+}
+}  // namespace
 namespace {
 using detail::SymState;
 using detail::LocVec;
@@ -77,6 +97,9 @@ struct OnlinePerf {
   std::uint64_t coverer_active_scan = 0;
   std::uint64_t compact_calls = 0;
   std::uint64_t compact_active_scan = 0;
+  std::uint64_t compact_deact = 0;
+  std::uint64_t compact_deact_unexp = 0;
+  std::uint64_t compact_deact_permanent = 0;
   std::uint64_t recheck_calls = 0;
   std::uint64_t recheck_nodes = 0;
   std::uint64_t successor_ns = 0;
@@ -340,6 +363,26 @@ static Dbm gfp_empty(int nclocks) {
   return z;
 }
 
+/// @brief Everything ::gfp_pre needs about one node that depends only on its DISCRETE state.
+///
+/// `Pre` is evaluated once per (edge, target zone) pair and the fixpoint sweeps the graph many
+/// times, so every quantity here used to be rebuilt millions of times from data that never
+/// changes: the location invariants (an `O(nprocs)` scan into a fresh heap vector), the frozen
+/// flags (another `O(nprocs)` scan), and the set of clocks dead at the node (an
+/// `O(nclocks * nprocs)` walk of `Network::active`). They are all functions of `locs` and
+/// `ints` alone, so they are computed once per node, lazily, and read thereafter.
+/// One record per node that `Pre` actually touches. Both variable-length fields are held
+/// indirectly: the invariants as a span into one shared arena, the dead-clock set as a bitmask.
+/// Two heap vectors per node cost more in headers and allocator metadata than the data, and the
+/// backward pass can touch most of the graph.
+struct PreNode {
+  std::uint32_t inv_off = 0;     ///< into the caller's shared Constraint arena
+  std::uint32_t inv_len = 0;
+  std::uint64_t dead = 0;        ///< bit c set iff clock c is read by no process here
+  bool frozen = false;           ///< committed or urgent: no positive delay
+  bool ready = false;
+};
+
 /// @brief The exact concrete predecessor of one tagged transition.
 ///
 /// Inverts the forward step described by @p t, mapping a set @p X of target valuations to the
@@ -353,40 +396,50 @@ static Dbm gfp_empty(int nclocks) {
 ///               /\ (x_r = 0 for every reset r) ; free those r ; /\ (all guards) ;
 ///               down (the delay BEFORE the action) ; /\ inv(src)
 ///
-/// @param net  the network under analysis
-/// @param t    the tag produced for this transition by ::gfp_succ_tagged
-/// @param src  the source symbolic state
-/// @param tgt  the target symbolic state
-/// @param X    a set of target valuations
+/// @param net   the network under analysis
+/// @param t     the tag produced for this transition by ::gfp_succ_tagged
+/// @param sn    the source node's discrete data
+/// @param tn    the target node's discrete data
+/// @param rmask `rmask[c] = 1` for every clock reset by @p t; see ::gfp_tag_reset_mask
+/// @param X     a set of target valuations
 /// @return the exact set of source valuations that can reach @p X by this transition, or an
 ///         empty zone of dimension `net.nclocks + 1` if there are none
 ///
-/// @pre @p t, @p src and @p tgt come from the same call to ::gfp_succ_tagged.
+/// @pre @p t, @p sn and @p tn come from the same call to ::gfp_succ_tagged.
 /// @post No extrapolation and no active-clock reduction is applied in the forward direction:
 ///       the result is the exact concrete predecessor. Abstraction enters the fixpoint only
 ///       through the caller's confinement `W_v subseteq Z_v`.
-static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, const SymState& tgt,
+///
+/// @note Neither node's ZONE is read, only its discrete data. The caller must not materialise
+///       one: doing so decompressed two full DBMs out of the ZoneStore per call, for nothing.
+/// @note The two clock sets are quantified out with ::dbm_free_many rather than a `free` per
+///       clock. Both are exact; the batch form relaxes every flagged clock at once.
+static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const PreNode& tn,
+                   const std::vector<Constraint>& invs,
+                   const std::vector<unsigned char>& rmask, unsigned char* dead_scratch,
                    const Dbm& X) {
   Dbm Y = X;
+  const int dim = net.nclocks + 1;
+  const Constraint* tinv = invs.data() + tn.inv_off;
+  const Constraint* sinv = invs.data() + sn.inv_off;
+  const auto apply = [](Dbm& z, const Constraint* c, std::uint32_t n) {
+    for (std::uint32_t k = 0; k < n; ++k)
+      if (!z.constrain(c[k].i, c[k].j, c[k].bound)) return false;
+    return true;
+  };
 
   // Undo the active-clock reduction at the target. Those clocks appear in no edge's reset set,
   // so without this Pre would silently demand that they also read 0 at the SOURCE -- an
   // over-constrained Pre that collapses the fixpoint and misses violations. Freeing them is the
   // exact inverse of the reduction, and it is sound because they are dead: nothing reads them.
-  if (!net.active.empty()) {
-    for (int c = 1; c <= net.nclocks; ++c) {
-      bool live = false;
-      for (int pr = 0; pr < net.nprocs() && !live; ++pr)
-        if (net.active[pr][tgt.locs[pr]][c]) live = true;
-      if (!live) Y.free(c);
-    }
+  if (tn.dead) {
+    std::memset(dead_scratch, 0, static_cast<std::size_t>(dim));
+    for (std::uint64_t m = tn.dead; m; m &= m - 1) dead_scratch[__builtin_ctzll(m)] = 1;
+    dbm_free_many(Y.data().data(), dim, dead_scratch);
   }
 
-  std::vector<Constraint> inv;
-  all_invariants(net, tgt.locs, inv);
-  bool nc, nu; frozen_flags(net, tgt.locs, tgt.ints, &nc, &nu);
-  if (!apply_all(Y, inv)) return gfp_empty(net.nclocks);
-  if (!nc && !nu) { Y.down(); if (!apply_all(Y, inv)) return gfp_empty(net.nclocks); }
+  if (!apply(Y, tinv, tn.inv_len)) return gfp_empty(net.nclocks);
+  if (!tn.frozen) { Y.down(); if (!apply(Y, tinv, tn.inv_len)) return gfp_empty(net.nclocks); }
 
   // Undo every participant's resets: a reset clock reads 0 after the step, and its value before
   // the step is unconstrained by the step itself.
@@ -395,11 +448,11 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
       if (!Y.constrain(r, 0, le(0))) return gfp_empty(net.nclocks);
       if (!Y.constrain(0, r, le(0))) return gfp_empty(net.nclocks);
     }
-  for (const auto& pe : t.parts)
-    for (int r : net.procs[pe.first].edges[pe.second].clock_resets) Y.free(r);
+  dbm_free_many(Y.data().data(), dim, rmask.data());
 
   for (const auto& pe : t.parts)
-    if (!apply_all(Y, net.procs[pe.first].edges[pe.second].clock_guard)) return gfp_empty(net.nclocks);
+    if (!apply_all(Y, net.procs[pe.first].edges[pe.second].clock_guard))
+      return gfp_empty(net.nclocks);
   // The abstaining receivers' guard complements belong here and nowhere else: like a
   // participant's guard they constrain the source valuation, and unlike one they undo nothing,
   // so they apply after the resets have been freed and before the pre-action delay.
@@ -407,11 +460,8 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const SymState& src, con
 
   // Delay BEFORE the action. A stored zone is delay-closed as a SET, which is why the forward
   // operator may write `Z /\ g`; a single valuation may still have to let time pass first.
-  std::vector<Constraint> sinv;
-  all_invariants(net, src.locs, sinv);
-  bool sc, su; frozen_flags(net, src.locs, src.ints, &sc, &su);
-  if (!sc && !su) { Y.down(); }
-  if (!apply_all(Y, sinv)) return gfp_empty(net.nclocks);
+  if (!sn.frozen) Y.down();
+  if (!apply(Y, sinv, sn.inv_len)) return gfp_empty(net.nclocks);
   return Y;
 }
 
@@ -517,8 +567,12 @@ static bool gfp_fed_subset(const Federation& a, const Federation& b) {
 }
 /// @brief Normalise a federation in place: drop empties and redundant members, merge convex pairs.
 ///
-/// Drops empty members, drops members already covered by one that is kept, and merges any pair
-/// whose union is *exactly* convex.
+/// Drops empty members, drops members already covered by one that is kept, replaces a kept
+/// member by a newcomer that contains it, and merges any pair whose union is *exactly* convex.
+///
+/// The containment test runs BOTH ways. `z` inside a kept `o` is dropped; a kept `o` inside `z`
+/// is overwritten by `z`, which denotes the same union — `o subseteq z` and `z` was going to be
+/// added regardless — and leaves one member where the one-directional test left two.
 ///
 /// @param f            the federation to compact, modified in place
 /// @param cap          maximum number of members to keep
@@ -533,18 +587,23 @@ static bool gfp_fed_subset(const Federation& a, const Federation& b) {
 ///       and the width cap becomes the binding constraint on the whole algorithm.
 static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
   Federation out;
+  bool merged = false;
   for (auto& z : f) {
     if (z.empty()) continue;
     bool absorbed = false;
     for (auto& o : out) {
       if (o.includes(z)) { absorbed = true; break; }          // already covered
-      if (o.try_union(z)) { absorbed = true; break; }         // exactly convex union: merge
+      if (z.includes(o)) { o = z; absorbed = true; merged = true; break; }  // z subsumes o
+      if (o.try_union(z)) { absorbed = true; merged = true; break; }  // exactly convex union
     }
     if (!absorbed) out.push_back(std::move(z));
     if (out.size() > cap) { *capped = true; break; }
   }
-  // One settling pass: a merge can make an earlier member redundant against a later one.
-  if (!*capped && out.size() > 1) {
+  // One settling pass: a merge can make an earlier member redundant against a later one. It is
+  // gated on a merge having HAPPENED, because without one no member was reshaped, so the second
+  // pass would re-test exactly the pairs the first already rejected — and each of those tests is
+  // a try_union.
+  if (!*capped && merged && out.size() > 1) {
     Federation settled;
     for (auto& z : out) {
       bool absorbed = false;
@@ -643,7 +702,7 @@ bool Otf::cancelled() {
 }
 
 bool Otf::is_nq_fast(int i) {
-  if (qc[i] == 2) qc[i] = holds(q, node[i]) ? 1 : 0;
+  if (qc[i] == 2) { SymState sc; nstate(i, sc); qc[i] = holds(q, sc) ? 1 : 0; }
   return qc[i] == 0;
 }
 
@@ -678,7 +737,7 @@ void Otf::release() {
 
 void Otf::zstore(int i, Dbm&& z) {
   zs_.store(i, z);
-  node[i].zone = Dbm();
+  if (!online_d_) node[i].zone = Dbm();   // online records have no SymState to scrub
 }
 
 const Dbm& Otf::zread(int i, Dbm& sc) const {
@@ -687,8 +746,7 @@ const Dbm& Otf::zread(int i, Dbm& sc) const {
 }
 
 const SymState& Otf::sread(int i, SymState& sc) const {
-  sc.locs.assign(node[i].locs.begin(), node[i].locs.end());
-  sc.ints.assign(node[i].ints.begin(), node[i].ints.end());
+  nstate(i, sc);
   zread(i, sc.zone);
   return sc;
 }
@@ -741,7 +799,7 @@ bool Otf::base_cover(const Dbm& a, const Dbm& b) const {
 ///       inclusion covering and extrapolation stays load-bearing there.
 void Otf::setup() {
   zdim_ = net.nclocks + 1;
-  zs_.reset(zdim_);
+  zs_.reset(zdim_, packed_zones_on());
   L = net.lbound;
   U = net.ubound;
   M.resize(net.nclocks + 1);
@@ -766,6 +824,7 @@ void Otf::setup() {
   aL = net.lbound;
   aU = net.ubound;
   aL[0] = aU[0] = 0;
+  build_local_bound_tables();
   // The constraint map has two global effects (see ::AtomMap):
   //
   // (1) A non-diagonal atom is discharged by raising its clock's L and U. Raising either only
@@ -795,6 +854,66 @@ void Otf::setup() {
   // Thus a D-relevant value cannot be erased before a later atom needs it.
 }
 
+/// @brief Precompute what the per-location LU fold actually depends on.
+///
+/// `L[c]` at a discrete state is `max_p lbound_loc[p][locs[p]][c]`, an `nprocs x nclocks` fold
+/// that ::online_configure_bounds and ::Otf::intern both need per key. Almost none of it varies:
+/// a clock is typically constrained by the one process that owns it, and every other process
+/// contributes the same value from every one of its locations.
+///
+/// So split the fold. A process whose bound for clock `c` is the SAME at all of its locations
+/// contributes a constant, folded once here into @ref base_l_ / @ref base_u_. Only the
+/// (process, clock) pairs that really vary stay in @ref vary_clocks_, and the per-key fold walks
+/// those alone --- 17 entries instead of 289 on arbiter16, for the identical result.
+void Otf::build_local_bound_tables() {
+  const int dim = net.nclocks + 1;
+  base_l_.assign(dim, kAluNegInf);
+  base_u_.assign(dim, kAluNegInf);
+  vary_clocks_.assign(net.nprocs(), {});
+  if (net.lbound_loc.empty()) {          // no per-location analysis: the global arrays are it
+    base_l_.assign(net.lbound.begin(), net.lbound.end());
+    base_u_.assign(net.ubound.begin(), net.ubound.end());
+    base_l_.resize(dim, kAluNegInf);
+    base_u_.resize(dim, kAluNegInf);
+    return;
+  }
+  for (int pr = 0; pr < net.nprocs(); ++pr) {
+    const auto& lp = net.lbound_loc[pr];
+    const auto& up = net.ubound_loc[pr];
+    if (lp.empty()) continue;
+    for (int c = 1; c <= net.nclocks; ++c) {
+      bool varies = false;
+      for (std::size_t l = 1; l < lp.size() && !varies; ++l)
+        varies = lp[l][c] != lp[0][c] || up[l][c] != up[0][c];
+      if (varies) vary_clocks_[pr].push_back(c);
+      else {
+        base_l_[c] = std::max(base_l_[c], lp[0][c]);
+        base_u_[c] = std::max(base_u_[c], up[0][c]);
+      }
+    }
+  }
+  base_l_[0] = base_u_[0] = 0;
+}
+
+/// @brief The a_LU bounds at one discrete state, folded through ::build_local_bound_tables.
+void Otf::local_bounds(const int* locs, std::vector<std::int32_t>& outL,
+                       std::vector<std::int32_t>& outU) const {
+  outL = base_l_;
+  outU = base_u_;
+  if (net.lbound_loc.empty()) return;
+  for (int pr = 0; pr < net.nprocs(); ++pr) {
+    const std::vector<int>& vary = vary_clocks_[pr];
+    if (vary.empty()) continue;
+    const auto& lp = net.lbound_loc[pr][locs[pr]];
+    const auto& up = net.ubound_loc[pr][locs[pr]];
+    for (int c : vary) {
+      outL[c] = std::max(outL[c], lp[c]);
+      outU[c] = std::max(outU[c], up[c]);
+    }
+  }
+  outL[0] = outU[0] = 0;
+}
+
 bool Otf::holds(const DiscPred& pr, const SymState& s) const {
   // A predicate carrying a DNF denotes the DISJUNCTION of its terms, not a conjunction. Only the
   // E[] entry point builds one, and only ever from discrete literals: it needs `!psi_discrete`,
@@ -820,7 +939,7 @@ bool Otf::holds(const DiscPred& pr, const SymState& s) const {
 }
 
 void Otf::grow() {
-  const std::size_t n = node.size();
+  const std::size_t n = nrec();
   if (expanded.size() < n) expanded.resize(n, 0);
   if (online_d_) {
     if (online_active_.size() < n) online_active_.resize(n, 0);
@@ -839,6 +958,36 @@ void Otf::grow() {
   if (ntag_out_.size() < n) ntag_out_.resize(n, 0);
 }
 
+/// @brief The discrete OVER-approximation of `p` at one state; see ::Otf::is_p.
+bool Otf::p_discrete(const SymState& s) const {
+  if (!p.is_dnf && p.forbid.empty()) return holds(p, s);
+  for (const auto& t : p.forbid) {
+    bool all = true;
+    for (const auto& r : t.locs)
+      if ((s.locs[r.proc] == r.loc) != r.equal) { all = false; break; }
+    if (all && !int_ok(t.ints, s.ints)) all = false;
+    if (all) return true;
+  }
+  return false;
+}
+
+/// @brief The clock region of `p` inside @p s; see ::Otf::p_region.
+Federation Otf::p_region_of(const SymState& s) const {
+  Federation out;
+  if (p.forbid.empty()) { out.push_back(s.zone); return out; }
+  for (const auto& t : p.forbid) {
+    bool guard = true;
+    for (const auto& r : t.locs)
+      if ((s.locs[r.proc] == r.loc) != r.equal) { guard = false; break; }
+    if (guard && !int_ok(t.ints, s.ints)) guard = false;
+    if (!guard) continue;
+    Dbm z = s.zone;
+    if (!apply_all(z, t.clocks) || z.empty()) continue;
+    fed_add(out, z);
+  }
+  return out;
+}
+
 bool Otf::is_p(int i) {
   grow();
   if (pc[i] != 2) return pc[i] != 0;
@@ -851,20 +1000,9 @@ bool Otf::is_p(int i) {
   // cannot exclude a whole vertex -- and exactly wrong for `p`, where such a term is the reason
   // the node is interesting. Reusing it made `x >= 0 --> P.wait` hold vacuously: no term counted,
   // so no node seeded the closure, so no violation could be found.
-  bool ok;
-  if (p.is_dnf || !p.forbid.empty()) {
-    ok = false;
-    for (const auto& t : p.forbid) {
-      bool all = true;
-      for (const auto& r : t.locs)
-        if ((node[i].locs[r.proc] == r.loc) != r.equal) { all = false; break; }
-      if (all && !int_ok(t.ints, node[i].ints)) all = false;
-      if (all) { ok = true; break; }
-    }
-  } else {
-    ok = holds(p, node[i]);
-  }
-  pc[i] = ok ? 1 : 0;
+  SymState sc;
+  nstate(i, sc);
+  pc[i] = p_discrete(sc) ? 1 : 0;
   return pc[i] != 0;
 }
 
@@ -877,26 +1015,13 @@ bool Otf::is_p(int i) {
 /// @note Returns the whole zone when `p` constrains no clock, which is the pre-existing case and
 ///       makes the intersection in ::Otf::certificate_in a no-op there.
 Federation Otf::p_region(int i) {
-  Federation out;
   SymState cst;
-  const SymState& sv = sread(i, cst);
-  if (p.forbid.empty()) { out.push_back(sv.zone); return out; }
-  for (const auto& t : p.forbid) {
-    bool guard = true;
-    for (const auto& r : t.locs)
-      if ((sv.locs[r.proc] == r.loc) != r.equal) { guard = false; break; }
-    if (guard && !int_ok(t.ints, sv.ints)) guard = false;
-    if (!guard) continue;
-    Dbm z = sv.zone;
-    if (!apply_all(z, t.clocks) || z.empty()) continue;
-    fed_add(out, z);
-  }
-  return out;
+  return p_region_of(sread(i, cst));
 }
 
 bool Otf::is_nq(int i) {
   grow();
-  if (qc[i] == 2) qc[i] = holds(q, node[i]) ? 1 : 0;
+  if (qc[i] == 2) { SymState sc; nstate(i, sc); qc[i] = holds(q, sc) ? 1 : 0; }
   return qc[i] == 0;
 }
 
@@ -996,6 +1121,9 @@ bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t
 // ---- Online D: persistent, monotonically refined forward quotient -------------------------
 
 void Otf::online_reset() {
+  online_nrec_ = 0;
+  node.clear();
+  node.shrink_to_fit();
   online_am_ = AtomMap{};
   online_am_.bump.assign(net.nclocks + 1, kNoBump);
   online_am_.live.assign(net.nclocks + 1, 0);
@@ -1045,24 +1173,10 @@ void Otf::online_reset() {
     online_packed_key_mask_ = initial_capacity - 1;
   }
   online_key_by_id_.clear();
-  online_local_bounds_narrow_ = true;
-  const auto narrow_bound = [&](std::int32_t value) {
-    return value == kAluNegInf ||
-           (value > std::numeric_limits<std::int16_t>::min() &&
-            value <= std::numeric_limits<std::int16_t>::max());
-  };
-  for (std::int32_t value : net.lbound) online_local_bounds_narrow_ &= narrow_bound(value);
-  for (std::int32_t value : net.ubound) online_local_bounds_narrow_ &= narrow_bound(value);
-  for (const auto& proc : net.lbound_loc)
-    for (const auto& loc : proc)
-      for (std::int32_t value : loc) online_local_bounds_narrow_ &= narrow_bound(value);
-  for (const auto& proc : net.ubound_loc)
-    for (const auto& loc : proc)
-      for (std::int32_t value : loc) online_local_bounds_narrow_ &= narrow_bound(value);
-  online_local_l16_.clear();
-  online_local_u16_.clear();
-  online_local_l_.clear();
-  online_local_u_.clear();
+  key_locs_.clear();
+  key_ints_.clear();
+  key_loc_stride_ = net.nprocs();
+  key_int_stride_ = static_cast<int>(net.intvars.size());
   online_key_of_.clear();
   online_next_in_key_.clear();
   online_key_edges_.clear();
@@ -1099,24 +1213,7 @@ void Otf::online_configure_bounds(int key) {
   if (online_bound_cached_epoch_ == online_bound_epoch_ && online_bound_key_ == key) return;
   online_bound_key_ = key;
   online_bound_cached_epoch_ = online_bound_epoch_;
-  const std::size_t dim = static_cast<std::size_t>(net.nclocks + 1);
-  const std::size_t off = static_cast<std::size_t>(key) * dim;
-  if (online_local_bounds_narrow_) {
-    bL.resize(dim);
-    bU.resize(dim);
-    constexpr std::int16_t narrow_inf = std::numeric_limits<std::int16_t>::min();
-    for (std::size_t c = 0; c < dim; ++c) {
-      bL[c] = online_local_l16_[off + c] == narrow_inf
-                  ? kAluNegInf : online_local_l16_[off + c];
-      bU[c] = online_local_u16_[off + c] == narrow_inf
-                  ? kAluNegInf : online_local_u16_[off + c];
-    }
-  } else {
-    bL.assign(online_local_l_.begin() + static_cast<std::ptrdiff_t>(off),
-              online_local_l_.begin() + static_cast<std::ptrdiff_t>(off + dim));
-    bU.assign(online_local_u_.begin() + static_cast<std::ptrdiff_t>(off),
-              online_local_u_.begin() + static_cast<std::ptrdiff_t>(off + dim));
-  }
+  local_bounds(key_locs(key), bL, bU);
   for (int c = 1; c <= net.nclocks && c < (int)online_am_.bump.size(); ++c)
     if (online_am_.bump[c] != kNoBump) {
       bL[c] = std::max(bL[c], online_am_.bump[c]);
@@ -1131,10 +1228,15 @@ bool Otf::online_covers(const SymState& a, int b, int key) {
   std::unique_ptr<OnlinePerfTimer> timer;
   if (profile) timer = std::make_unique<OnlinePerfTimer>(&online_perf.cover_ns);
   online_configure_bounds(key);
+  const OnlineKeyInfo& ki = *online_key_by_id_[key];
+  // A key with no diagonal atom needs only the base relation, and ::alu_le_stored /
+  // ::stored_includes evaluate that against the STORED operand at its own entry type. Widening
+  // it first, as the atom path must, is a full ZoneStore::load per probe -- and the probe is the
+  // hottest call in the forward phase (654M times on grc6, where 857 of 920 keys carry no atom).
+  if (!ki.diag)
+    return use_alu ? alu_le_stored(a.zone, b) : stored_includes(b, a.zone);
   Dbm bsc;
   const Dbm& bz = zread(b, bsc);
-  const OnlineKeyInfo& ki = *online_key_by_id_[key];
-  if (!ki.diag) return base_cover(a.zone, bz);
   const std::vector<AtomC>& diag = *ki.diag;
   if (diag.size() > 64) return online_cover_rec(a.zone, bz, diag, 0);
   std::uint64_t ain, aout, bin, bout;
@@ -1154,12 +1256,15 @@ bool Otf::online_covers(int a, int b, int key) {
   std::unique_ptr<OnlinePerfTimer> timer;
   if (profile) timer = std::make_unique<OnlinePerfTimer>(&online_perf.cover_ns);
   online_configure_bounds(key);
+  const OnlineKeyInfo& ki = *online_key_by_id_[key];
   Dbm asc;
+  if (!ki.diag) {
+    const Dbm& az0 = zread(a, asc);
+    return use_alu ? alu_le_stored(az0, b) : stored_includes(b, az0);
+  }
   const Dbm& az = zread(a, asc);
   Dbm bsc;
   const Dbm& bz = zread(b, bsc);
-  const OnlineKeyInfo& ki = *online_key_by_id_[key];
-  if (!ki.diag) return base_cover(az, bz);
   const std::vector<AtomC>& diag = *ki.diag;
   if (diag.size() > 64) return online_cover_rec(az, bz, diag, 0);
   std::uint64_t ain, aout, bin, bout;
@@ -1195,12 +1300,13 @@ bool Otf::online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>&
 }
 
 int Otf::online_append(SymState&& s, int key) {
-  const int id = static_cast<int>(node.size());
+  // NO SymState IS PUSHED. During the online phase the discrete half lives once in the key
+  // arenas and the zone lives in the ZoneStore, so `node`'s entry would be three empty vector
+  // headers -- 80 bytes a record, and the search materialises far more records than it keeps
+  // (614212 against 447598 on fischer10, so 49 MB of placeholder). The vector is built once, at
+  // its final size, in ::online_finalize_graph; until then `online_nrec_` is the id counter.
+  const int id = static_cast<int>(online_nrec_++);
   Dbm z = std::move(s.zone);
-  // During the online phase the immutable discrete half lives once in OnlineKeyInfo.  Parking
-  // a provisional record only needs its exact zone and this key id; copying its location and
-  // integer vectors into every raw candidate was pure duplication and dominated memory.
-  node.emplace_back();
   zstore(id, std::move(z));
   online_key_of_.push_back(key);
   OnlineKeyInfo& ki = *online_key_by_id_[key];
@@ -1220,7 +1326,7 @@ int Otf::online_append(SymState&& s, int key) {
 /// activating a whole same-level antichain merely because its first representative has not yet
 /// reached the front of the FIFO queue.  Final edge redirection asks for an expanded coverer.
 int Otf::online_coverer(int v, bool require_expanded) {
-  if (v < 0 || v >= (int)node.size()) return -1;
+  if (v < 0 || v >= (int)nrec()) return -1;
   if (online_active_[v] && (!require_expanded || expanded[v])) return v;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   if (online_perf.enabled) {
@@ -1228,7 +1334,7 @@ int Otf::online_coverer(int v, bool require_expanded) {
     online_perf.coverer_active_scan += ki.active_count;
   }
   const int cached = online_cover_[v];
-  if (cached >= 0 && cached < (int)node.size() && online_active_[cached] &&
+  if (cached >= 0 && cached < (int)nrec() && online_active_[cached] &&
       (!require_expanded || expanded[cached]) && online_covers(v, cached, ki.id))
     return cached;
   for (int j = ki.active_head; j >= 0; j = online_active_next_[j])
@@ -1244,12 +1350,12 @@ int Otf::online_coverer(int v, bool require_expanded) {
 /// record to one.  D-covering is transitive, so final edge redirection can chase that chain
 /// without repeating a DBM cover test for every raw edge.
 int Otf::online_resolve_cover(int v, bool require_expanded) {
-  if (v < 0 || v >= (int)node.size()) return -1;
+  if (v < 0 || v >= (int)nrec()) return -1;
   int cur = v;
   std::size_t hops = 0;
   while (!online_active_[cur]) {
     const int next = online_cover_[cur];
-    if (next < 0 || next >= (int)node.size() || next == cur || ++hops > node.size()) return -1;
+    if (next < 0 || next >= (int)nrec() || next == cur || ++hops > nrec()) return -1;
     cur = next;
   }
   if (require_expanded && !expanded[cur]) return -1;
@@ -1265,12 +1371,12 @@ int Otf::online_resolve_cover(int v, bool require_expanded) {
 
 /// @brief Remember the current D certificate of an inactive materialised record.
 void Otf::online_set_cover(int v, int cover) {
-  if (v < 0 || v >= (int)node.size()) return;
+  if (v < 0 || v >= (int)nrec()) return;
   online_cover_[v] = cover;
 }
 
 void Otf::online_activate(int v) {
-  if (v < 0 || v >= (int)node.size()) return;
+  if (v < 0 || v >= (int)nrec()) return;
   if (!online_active_[v]) {
     online_active_[v] = 1;
     online_set_cover(v, -1);
@@ -1324,6 +1430,15 @@ void Otf::online_compact_key(int v) {
       continue;
     }
     if (online_covers(j, v, ki.id)) {
+      if (online_perf.enabled) {
+        ++online_perf.compact_deact;
+        if (!expanded[j]) {
+          ++online_perf.compact_deact_unexp;
+          Dbm jz;
+          zread(j, jz);
+          if (stored_includes(v, jz)) ++online_perf.compact_deact_permanent;
+        }
+      }
       online_active_[j] = 0;
       online_set_cover(j, v);
       const int prev = online_active_prev_[j];
@@ -1399,14 +1514,20 @@ int Otf::online_intern(SymState&& s, int key, int source, int ordinal, int* defe
   if (profile) join_start = std::chrono::steady_clock::now();
   if (cover < 0) {
     Dbm old;
-    for (int j = ki.active_head; j >= 0; j = online_active_next_[j]) {
-      // Keep vertex 0 as the E[] anchor.  It is harmlessly redundant for leads-to, but
-      // absorbing it here would force a special root redirect later.
-      if (j == 0 || !online_active_[j]) continue;
-      Dbm joined = s.zone;
-      if (!joined.try_union(zread(j, old)) || joined == s.zone) continue;
-      s.zone = std::move(joined);
-      break;
+    // Iterated to a fixpoint, not stopped at the first success: each union ENLARGES the
+    // candidate, and a larger zone can be convex with an active record the smaller one was not.
+    // Still exact -- Dbm::try_union succeeds only when the union really is one zone -- so this
+    // adds no point and removes none; it only leaves a tighter antichain behind, which is one
+    // fewer record for ::online_compact_key to retire later.
+    for (bool grew = true; grew;) {
+      grew = false;
+      for (int j = ki.active_head; j >= 0; j = online_active_next_[j]) {
+        if (j == 0 || !online_active_[j]) continue;
+        Dbm joined = s.zone;
+        if (!joined.try_union(zread(j, old)) || joined == s.zone) continue;
+        s.zone = std::move(joined);
+        grew = true;
+      }
     }
   }
   if (profile)
@@ -1433,7 +1554,7 @@ int Otf::online_intern(SymState&& s, int key, int source, int ordinal, int* defe
 
 /// @brief Regenerate exactly one provisionally covered successor from its immutable source.
 bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
-  if (source < 0 || source >= static_cast<int>(node.size()) || ordinal < 0 || key < 0 ||
+  if (source < 0 || source >= static_cast<int>(nrec()) || ordinal < 0 || key < 0 ||
       key >= static_cast<int>(online_key_by_id_.size()))
     return false;
 
@@ -1441,8 +1562,7 @@ bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
   if (source_key < 0 || source_key >= static_cast<int>(online_key_by_id_.size())) return false;
   const OnlineKeyInfo& sk = *online_key_by_id_[source_key];
   SymState src;
-  src.locs = sk.locs;
-  src.ints = sk.ints;
+  key_state(sk.id, src);
   zread(source, src.zone);
 
   std::vector<SymState> succ;
@@ -1453,7 +1573,12 @@ bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
 
   const OnlineKeyInfo& tk = *online_key_by_id_[key];
   SymState& candidate = succ[static_cast<std::size_t>(ordinal)];
-  if (candidate.locs != tk.locs || candidate.ints != tk.ints) return false;
+  const int* tl = key_locs(tk.id);
+  if (!std::equal(candidate.locs.begin(), candidate.locs.end(), tl, tl + key_loc_stride_))
+    return false;
+  const long* ti = key_ints(tk.id);
+  if (!std::equal(candidate.ints.begin(), candidate.ints.end(), ti, ti + key_int_stride_))
+    return false;
   out = std::move(candidate);
   return true;
 }
@@ -1465,8 +1590,7 @@ bool Otf::online_is_nq(int v) {
   if (qc[v] == 2) {
     const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
     SymState state;
-    state.locs = ki.locs;
-    state.ints = ki.ints;
+    key_state(ki.id, state);
     qc[v] = holds(q, state) ? 1 : 0;
   }
   return qc[v] == 0;
@@ -1482,8 +1606,7 @@ bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
   if (!online_eg_prune_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   SymState s;
-  s.locs = ki.locs;
-  s.ints = ki.ints;
+  key_state(ki.id, s);
   zread(v, s.zone);
   if (time_diverges(s)) return true;
 
@@ -1498,6 +1621,63 @@ bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
   }
   Federation dead;
   return state_has_deadlock(*dead_net, s, &dead);
+}
+
+/// @brief Certify a `p --> q` counterexample at a freshly expanded node, before the graph is done.
+///
+/// `p --> q` fails exactly when some reachable state satisfies `p /\ EG !q`. A valuation that
+/// satisfies `p`, sits at a `!q` key, and can END a maximal run -- by deadlocking, or by letting
+/// time diverge -- witnesses `EG !q` outright: the run stops (or runs on) there and never leaves
+/// `!q`. So the forward search can stop the moment one is reached, with no backward pass and no
+/// finished graph.
+///
+/// Every online record holds an EXACT reachable zone, so a valuation found here is genuinely
+/// reachable and the witness is concrete: no subsumption edge takes part in it. That exactness is
+/// also why this is confined to the a_LU lane. Where extrapolation is load-bearing (the diagonal
+/// route) a stored zone over-approximates, and a stop valuation enters positively here, so a
+/// spurious one would fabricate a violation.
+///
+/// @param v             the node just expanded
+/// @param no_successor  whether ::gfp_succ_tagged produced nothing for it
+/// @return @c true iff a `p`-satisfying valuation of @p v ends a maximal `!q` run
+bool Otf::leadsto_witness(const SymState& s, bool no_successor, bool key_may_deadlock) {
+  if (!leadsto_early_ || !use_alu) return false;
+  // With a forbidden region in force, `q` is only PARTLY discrete: ::Otf::holds deliberately
+  // ignores a term that constrains a clock, because ::detail::DelayAvoidSet carries that part and
+  // the backward pass cuts the zone with it. A stop valuation could then satisfy `q` through the
+  // clock part while `holds` reports `!q`, and this witness would claim a violation that is not
+  // one. Deciding it here would mean intersecting the stop set with the `!q` region; until that
+  // is done, the region route keeps the ordinary construct-then-solve path.
+  if (avoid_) return false;
+  if (holds(q, s)) return false;                  // `q` holds here: not a witness position
+  if (!p_discrete(s)) return false;               // `p`'s discrete guard cannot hold either
+
+  // Where the run may stop. The two whole-zone cases are exact as such; only a partial deadlock
+  // needs the per-valuation subtraction.
+  Federation stop;
+  if (no_successor || time_diverges(s)) {
+    stop.push_back(s.zone);
+  } else {
+    if (!key_may_deadlock) return false;          // no zone at this key can deadlock
+    if (!state_has_deadlock(*dead_net, s, &stop)) return false;
+  }
+  if (gfp_fed_empty(stop)) return false;
+
+  // The witness must satisfy `p` as well as stop. With a purely discrete `p` the region is the
+  // whole zone and this is a no-op.
+  if (p.forbid.empty()) return true;
+  return !gfp_fed_empty(fed_intersect(stop, p_region_of(s)));
+}
+
+/// @brief ::leadsto_witness at an online record, whose discrete half lives in its key.
+bool Otf::online_leadsto_witness(int v, bool no_successor) {
+  if (!leadsto_early_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
+  const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
+  SymState s;
+  key_state(ki.id, s);
+  if (holds(q, s) || !p_discrete(s)) return false;   // cheap discrete reject before any zone work
+  zread(v, s.zone);
+  return leadsto_witness(s, no_successor, ki.may_deadlock);
 }
 
 /// @brief Hash a discrete state without allocating its byte key.
@@ -1575,18 +1755,11 @@ int Otf::intern(SymState&& s) {
     return true;
   };
   if (use_alu) {
-    bL.assign(net.nclocks + 1, kAluNegInf);
-    bU.assign(net.nclocks + 1, kAluNegInf);
     if (net.lbound_loc.empty()) {
       bL = aL;
       bU = aU;
     } else {
-      for (int pr = 0; pr < net.nprocs(); ++pr)
-        for (int c = 1; c <= net.nclocks; ++c) {
-          bL[c] = std::max(bL[c], net.lbound_loc[pr][s.locs[pr]][c]);
-          bU[c] = std::max(bU[c], net.ubound_loc[pr][s.locs[pr]][c]);
-        }
-      bL[0] = bU[0] = 0;
+      local_bounds(s.locs.data(), bL, bU);
     }
     // The per-location bounds must carry the non-diagonal atoms' constants too, for the same
     // reason the global arrays do in Otf::setup: raising L or U only makes a_LU finer, and the
@@ -1668,7 +1841,7 @@ int Otf::intern(SymState&& s) {
       }
     }
   }
-  const int id = static_cast<int>(node.size());
+  const int id = static_cast<int>(nrec());
   Dbm znew = std::move(s.zone);           // taken out first: zstore decides where it lands
   s.zone = Dbm();
   node.push_back(std::move(s));
@@ -1731,6 +1904,12 @@ void Otf::expand(int u) {
   SymState usc;
   gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags,
                   avoid_forward_ ? avoid_ : nullptr);
+  // Same concrete counterexample as the online route takes; `usc` still holds this node's exact
+  // state. `may_deadlock` is not tracked per key here, so the exact test is always allowed to run.
+  if (leadsto_early_ && leadsto_witness(usc, succ.empty(), /*key_may_deadlock=*/true)) {
+    eg_early_hit_ = true;
+    return;
+  }
   for (std::size_t k = 0; k < succ.size(); ++k) {
     pieces.clear();
     if (amap_) {
@@ -1883,7 +2062,7 @@ Federation Otf::stop_set(int u) {
 /// @brief Solve `W = W /\ (NoSucc \/ Pre(W))` by descending iteration confined to @p S.
 ///
 /// @param S      the nodes to iterate over; every other node is pinned to the empty federation
-/// @param[out] W indexed by node; sized to `node.size()`, empty outside @p S
+/// @param[out] W indexed by node; sized to `nrec()`, empty outside @p S
 ///
 /// @pre Every element of @p S is an expanded `!q` node (see ::Otf::stop_set).
 /// @post On normal return @p W is the exact greatest fixpoint of the operator *restricted to*
@@ -1896,7 +2075,7 @@ Federation Otf::stop_set(int u) {
 ///          into a verdict; see ::Otf::certificate_in.
 void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   ++passes;
-  const std::size_t N = node.size();
+  const std::size_t N = nrec();
   std::vector<char> inS(N, 0);
   for (int v : S) inS[v] = 1;
   W.assign(N, Federation{});
@@ -1920,8 +2099,9 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // fixpoint has to do the confining itself: `W[v]` starts at `Z_v /\ psi(v)`, not at `Z_v`. The
   // seed is otherwise left unmaterialised (see `seeded`), so only the nodes that actually need
   // cutting are written down here.
-  std::vector<Federation> psi_seed(N);
   const bool confine = avoid_ && !avoid_forward_;
+  std::vector<Federation> psi_seed;
+  if (confine) psi_seed.resize(N);          // only the region route ever writes one
   if (confine)
     for (int v : S) {
       SymState cst;
@@ -1984,10 +2164,10 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     if (e) return *e == '1';
     return scc_iter_;
   }();
-  std::vector<std::vector<int>> sccs;
-  if (!scc_on) {
-    sccs.push_back(S);                     // one component: exactly the undecomposed sweep
-  } else {
+  // Tarjan runs unconditionally: the emptiness prune below reads its components, and the sweep
+  // reads them as an ORDER only when `scc_on`.
+  std::vector<std::vector<int>> comps;
+  {
     std::vector<int> idx(N, -1), low(N, 0), stk;
     std::vector<char> on(N, 0);
     int next = 0;
@@ -2026,7 +2206,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
             // Restore S's own order inside the component, so the lockstep sweep walks it exactly
             // as the undecomposed one did.
             std::sort(comp.begin(), comp.end());
-            sccs.push_back(std::move(comp));
+            comps.push_back(std::move(comp));
           }
           const int child = v;
           call.pop_back();
@@ -2035,6 +2215,149 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
       }
     }
   }
+
+  // STRUCTURAL EMPTINESS, decided on the graph alone.
+  //
+  // At the fixpoint, `W[v] = W[v] /\ (NoSucc(v) \/ \/_e Pre_e(W[j_e]))`. So a non-empty W[v]
+  // needs either a non-empty stop set at v, or a successor inside S that is itself non-empty.
+  // Chase the second case: it yields an unbounded walk of non-empty nodes inside S, which in a
+  // finite graph must revisit a node and therefore meets a cycle. Every node with a non-empty
+  // value can thus reach, inside S, a node that is on a cycle or can stop --- and every node
+  // that cannot is EXACTLY empty, with no zone computation at all.
+  //
+  // Nothing here reads a zone. `nosucc` is already built for all of S, and Tarjan emits
+  // components successors-first, so one pass in that order settles it: a singleton's successors
+  // outside itself live in components already decided.
+  std::vector<char> live_node(N, 0);
+  std::size_t live_count = 0;
+  for (const auto& comp : comps) {
+    bool live = comp.size() > 1;                       // a nontrivial component IS a cycle
+    for (int v : comp) {
+      if (live) break;
+      if (!nosucc[v].empty()) { live = true; break; }  // the run may legitimately stop here
+      for (const auto& e : adj[v])
+        if (inS[e.tgt] && (e.tgt == v || live_node[e.tgt])) { live = true; break; }
+    }
+    if (!live) continue;
+    for (int v : comp) { live_node[v] = 1; ++live_count; }
+  }
+  // Pin the rest to the empty federation, which is what `inS[v] = 0` means to ::relax.
+  if (live_count < S.size())
+    for (int v : S)
+      if (!live_node[v]) {
+        inS[v] = 0;
+        seeded[v] = 0;
+        W[v].clear();
+        nosucc[v].clear();
+      }
+
+  // Filter `comps` in place rather than moving the survivors into a second vector: on a graph
+  // whose components are mostly singletons the outer vector alone is 24 bytes per component,
+  // and holding two of them was a measurable share of the peak.
+  if (scc_on) {
+    comps.erase(std::remove_if(comps.begin(), comps.end(),
+                               [&](const std::vector<int>& c) {
+                                 return c.empty() || !live_node[c.front()];
+                               }),
+                comps.end());
+  } else {
+    std::vector<int> flat;                 // one component: the undecomposed sweep, minus the
+    flat.reserve(live_count);              // nodes just proved empty
+    for (int v : S)
+      if (live_node[v]) flat.push_back(v);
+    comps.clear();
+    if (!flat.empty()) comps.push_back(std::move(flat));
+  }
+  const std::vector<std::vector<int>>& sccs = comps;
+
+  // ::PreNode explains why these are cached rather than recomputed inside `Pre`. Only nodes that
+  // are actually the source or target of a live edge get one, so the table is an index plus a
+  // deque grown on demand rather than N records: where the prune above left nothing to sweep it
+  // costs one `int` per node instead of a whole PreNode, and the deque keeps references stable
+  // across growth, which ::relax relies on when it holds two of them at once.
+  const int dim = net.nclocks + 1;
+  std::vector<std::int32_t> pindex;
+  std::deque<PreNode> pnodes;
+  // One arena for every node's invariants, with the spans INTERNED. The invariant list is a
+  // function of the location vector, and across a zone graph the same list recurs constantly --
+  // on twolock9 the arena is ~120 bytes per node stored naively, which is more than the record it
+  // belongs to. Interning by content collapses that to one copy per distinct list.
+  std::vector<Constraint> pinvs;
+  std::vector<Constraint> iscratch;
+  std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint32_t, std::uint32_t>>> pinv_index;
+  std::vector<unsigned char> dead_scratch(dim, 0);
+  auto intern_inv = [&](const std::vector<Constraint>& cs) {
+    std::uint64_t h = 1469598103934665603ULL;
+    for (const Constraint& c : cs) {
+      h ^= std::uint64_t(std::uint32_t(c.i)) * 0x9e3779b97f4a7c15ULL; h = (h << 7) | (h >> 57);
+      h ^= std::uint64_t(std::uint32_t(c.j)) * 0xc2b2ae3d27d4eb4fULL; h = (h << 11) | (h >> 53);
+      h ^= std::uint64_t(std::uint32_t(c.bound)) * 0x165667b19e3779f9ULL;
+    }
+    auto& slots = pinv_index[h];
+    for (const auto& sl : slots) {
+      if (sl.second != cs.size()) continue;
+      bool same = true;
+      for (std::size_t k = 0; k < cs.size() && same; ++k) {
+        const Constraint& a = pinvs[sl.first + k];
+        same = a.i == cs[k].i && a.j == cs[k].j && a.bound == cs[k].bound;
+      }
+      if (same) return sl;
+    }
+    const std::pair<std::uint32_t, std::uint32_t> span{
+        static_cast<std::uint32_t>(pinvs.size()), static_cast<std::uint32_t>(cs.size())};
+    pinvs.insert(pinvs.end(), cs.begin(), cs.end());
+    slots.push_back(span);
+    return span;
+  };
+  auto prep = [&](int v) -> const PreNode& {
+    if (pindex.empty()) pindex.assign(N, -1);
+    if (pindex[v] >= 0) return pnodes[static_cast<std::size_t>(pindex[v])];
+    pindex[v] = static_cast<std::int32_t>(pnodes.size());
+    pnodes.emplace_back();
+    PreNode& pn = pnodes.back();
+    pn.ready = true;
+    SymState dsc;
+    nstate(v, dsc);
+    const LocVec& locs = dsc.locs;
+    all_invariants(net, locs, iscratch);
+    const auto span = intern_inv(iscratch);
+    pn.inv_off = span.first;
+    pn.inv_len = span.second;
+    bool c2, u2;
+    frozen_flags(net, locs, dsc.ints, &c2, &u2);
+    pn.frozen = c2 || u2;
+    // The mask needs one bit per clock. Wider networks keep no active_mask either (see
+    // Network::compute_active), and the reduction is then off, so there is nothing to record.
+    if (net.nclocks > 63) return pn;
+    if (!net.active_mask.empty()) {                  // one OR per process, see reset_inactive
+      std::uint64_t a = 0;
+      for (int pr = 0; pr < net.nprocs(); ++pr) a |= net.active_mask[pr][locs[pr]];
+      pn.dead = ~a & (((std::uint64_t(1) << net.nclocks) - 1) << 1);
+    } else if (!net.active.empty()) {
+      for (int c = 1; c <= net.nclocks; ++c) {
+        bool live = false;
+        for (int pr = 0; pr < net.nprocs() && !live; ++pr)
+          if (net.active[pr][locs[pr]][c]) live = true;
+        if (!live) pn.dead |= std::uint64_t(1) << c;
+      }
+    }
+    return pn;
+  };
+
+  // One reset mask per TAG, not per edge: tags are pooled by value, so two edges with the same
+  // transition recipe share it. Built lazily for the same reason as ::PreNode.
+  std::vector<std::vector<unsigned char>> rmask(tags_.size());
+  std::vector<char> rmask_ready(tags_.size(), 0);
+  auto tag_resets = [&](int tag) -> const std::vector<unsigned char>& {
+    if (!rmask_ready[tag]) {
+      rmask_ready[tag] = 1;
+      rmask[tag].assign(dim, 0);
+      for (const auto& pe : tags_[tag].parts)
+        for (int r : net.procs[pe.first].edges[pe.second].clock_resets)
+          if (r >= 1 && r <= net.nclocks) rmask[tag][r] = 1;
+    }
+    return rmask[tag];
+  };
 
   // ONE NODE'S REFINEMENT, `W[v] /\ (NoSucc(v) \/ Pre(W))`. Factored out so the lockstep sweep
   // and the worklist below drive exactly the same operator; only the ORDER differs.
@@ -2048,13 +2371,16 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
       // A seeded successor contributes exactly one zone, its own, without being written down.
       const Dbm* one = seeded[j] ? &zread(j, jsc) : nullptr;
       const std::size_t ny = one ? 1u : W[j].size();
+      const PreNode* pv = avoid_ ? nullptr : &prep(v);
+      const PreNode* pj = avoid_ ? nullptr : &prep(j);
       for (std::size_t yi = 0; yi < ny; ++yi) {
         const Dbm& Y = one ? *one : W[j][yi];
         ++pre_calls;
         if (avoid_) {
           gfp_pre_avoid(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y, *avoid_, cand);
         } else {
-          Dbm pz = gfp_pre(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y);
+          Dbm pz = gfp_pre(net, tags_[e.tag], *pv, *pj, pinvs, tag_resets(e.tag),
+                           dead_scratch.data(), Y);
           if (!pz.empty()) cand.push_back(std::move(pz));
         }
       }
@@ -2070,13 +2396,28 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     // subtraction then peels z by all of those. The intersection of two zones is a single
     // zone, so the direct form needs exactly |cand| pieces.
     Federation nw;
+    // A converged sweep still visits every node, and near the fixpoint most visits change
+    // nothing. Detect that per member: if some `c` in cand already CONTAINS z, then
+    // `z /\ cand == z`, and every other product `z /\ c'` is a subset of that, so the inner
+    // loop below can only produce pieces the compaction would absorb again. Emit z and move on.
+    //
+    // If that holds for every member, `nw` denotes W[v] member for member, so W[v] is unchanged
+    // and there is nothing to propagate -- skip the compaction and, more to the point, skip
+    // ::gfp_fed_subset, which peels W[v] by every member of nw through fed_subtract.
+    bool unchanged = true;
     for (const auto& z : W[v]) {
+      bool whole = false;
+      for (const auto& c : cand)
+        if (c.includes(z)) { whole = true; break; }
+      if (whole) { nw.push_back(z); continue; }
+      unchanged = false;
       for (const auto& c : cand) {
         Dbm t = z;
         t.intersect(c);
         if (!t.empty()) nw.push_back(std::move(t));
       }
     }
+    if (unchanged) return false;
     gfp_fed_compact(nw, fedcap, &capped);
     const bool shrank = !gfp_fed_subset(W[v], nw);
     W[v].swap(nw);
@@ -2158,6 +2499,20 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   for (int v : S)
     if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
   gfp_iters += it;
+  if (std::getenv("PTCTLMC_GFP_PROFILE")) {
+    std::size_t big = 0, nontrivial = 0;
+    for (const auto& c : sccs) { big = std::max(big, c.size()); if (c.size() > 1) ++nontrivial; }
+    std::size_t stopn = 0, stopmembers = 0, wmembers = 0;
+    for (int v : S) {
+      if (!nosucc[v].empty()) { ++stopn; stopmembers += nosucc[v].size(); }
+      wmembers += W[v].size();
+    }
+    std::fprintf(stderr, "GFP-PROFILE |S|=%zu N=%zu sccs=%zu nontrivial=%zu maxcomp=%zu "
+                 "visits=%zu pre=%zu stopnodes=%zu stopmembers=%zu wmembers=%zu "
+                 "fedmax=%zu live=%zu\n",
+                 S.size(), N, sccs.size(), nontrivial, big, it, pre_calls, stopn, stopmembers,
+                 wmembers, fed_max, live_count);
+  }
 }
 
 /// @brief Is there a counterexample certificate within @p S?
@@ -2280,7 +2635,7 @@ bool Otf::build_all() {
 ///       nothing outside it is ever read.
 std::vector<int> Otf::accepting_closure() {
   grow();
-  const std::size_t N = node.size();
+  const std::size_t N = nrec();
   std::vector<char> in(N, 0);
   std::vector<int> stk, out;
   for (std::size_t v = 0; v < N; ++v)
@@ -2317,7 +2672,7 @@ bool Otf::final_verdict_violated() {
 /// key invariant rather than over individual reached zones.
 bool Otf::dtheta_empty() {
   std::unordered_set<std::string> seen;
-  for (std::size_t i = 0; i < node.size(); ++i) {
+  for (std::size_t i = 0; i < nrec(); ++i) {
     const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
     if (!seen.insert(k).second) continue;
     SymState u; u.locs = node[i].locs; u.ints = node[i].ints;
@@ -2407,7 +2762,7 @@ bool Otf::build_atom_map(AtomMap& am) {
   std::unordered_map<std::string, Dbm> invmemo;   // rebuilt on demand, only in the pre-closure
 
   // ---- seed ---------------------------------------------------------------
-  for (std::size_t i = 0; i < node.size(); ++i) {
+  for (std::size_t i = 0; i < nrec(); ++i) {
     const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
     if (invrep.count(k)) continue;
     SymState u;
@@ -2537,7 +2892,7 @@ bool Otf::build_atom_map(AtomMap& am) {
   std::vector<KE> kedges;
   {
     std::unordered_set<std::string> seenE;
-    const std::size_t n = std::min(adj.size(), node.size());
+    const std::size_t n = std::min(adj.size(), nrec());
     for (std::size_t u = 0; u < n; ++u) {
       const std::string ks = disc_key_bytes(node[u].locs, node[u].ints);
       for (const auto& e : adj[u]) {
@@ -2721,8 +3076,7 @@ void Otf::online_seed_key(int key_id) {
   const int nc = net.nclocks;
   OnlineKeyInfo& ki = *online_key_by_id_.at(key_id);
   SymState u;
-  u.locs = ki.locs;
-  u.ints = ki.ints;
+  key_state(ki.id, u);
   bool fc, fu;
   frozen_flags(*dead_net, u.locs, u.ints, &fc, &fu);
   std::vector<Constraint> ci;
@@ -2844,8 +3198,7 @@ void Otf::online_pullback(const OnlineKeyEdge& e, const AtomC& atom) {
   OnlineKeyInfo& si = *online_key_by_id_.at(e.src);
   if (!si.inv_ready) {
     SymState rep;
-    rep.locs = si.locs;
-    rep.ints = si.ints;
+    key_state(si.id, rep);
     si.inv_ready = true;
     Dbm inv;
     if (key_invariant(*dead_net, rep, net.nclocks, inv))
@@ -2904,8 +3257,11 @@ int Otf::online_register_key(const LocVec& locs, const IntVec& ints,
     h = disc_hash(locs, ints);
     slots = &online_key_index_[h];
     for (int id : *slots) {
-      const OnlineKeyInfo& old = *online_key_by_id_[id];
-      if (old.locs == locs && old.ints == ints) return id;
+      const int* kl = key_locs(id);
+      if (!std::equal(locs.begin(), locs.end(), kl, kl + key_loc_stride_)) continue;
+      const long* kint = key_ints(id);
+      if (!std::equal(ints.begin(), ints.end(), kint, kint + key_int_stride_)) continue;
+      return id;
     }
   }
 
@@ -2913,57 +3269,10 @@ int Otf::online_register_key(const LocVec& locs, const IntVec& ints,
   OnlineKeyInfo& ki = online_keys_.back();
   ki.id = static_cast<int>(online_key_by_id_.size());
   ki.packed_key = packed;
-  ki.locs = locs;
-  ki.ints = ints;
+  key_locs_.insert(key_locs_.end(), locs.begin(), locs.end());
+  key_ints_.insert(key_ints_.end(), ints.begin(), ints.end());
   online_key_by_id_.push_back(&ki);
   online_dirty_queued_.push_back(0);
-  const std::size_t dim = static_cast<std::size_t>(net.nclocks + 1);
-  if (online_local_bounds_narrow_) {
-    constexpr std::int16_t narrow_inf = std::numeric_limits<std::int16_t>::min();
-    const auto pack = [](std::int32_t value) {
-      return value == kAluNegInf ? std::numeric_limits<std::int16_t>::min()
-                                 : static_cast<std::int16_t>(value);
-    };
-    const std::size_t off = online_local_l16_.size();
-    online_local_l16_.resize(off + dim, narrow_inf);
-    online_local_u16_.resize(off + dim, narrow_inf);
-    if (net.lbound_loc.empty()) {
-      for (std::size_t c = 0; c < dim; ++c) {
-        online_local_l16_[off + c] = pack(net.lbound[c]);
-        online_local_u16_[off + c] = pack(net.ubound[c]);
-      }
-    } else {
-      for (int pr = 0; pr < net.nprocs(); ++pr)
-        for (int c = 1; c <= net.nclocks; ++c) {
-          online_local_l16_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_l16_[off + static_cast<std::size_t>(c)],
-              pack(net.lbound_loc[pr][locs[pr]][c]));
-          online_local_u16_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_u16_[off + static_cast<std::size_t>(c)],
-              pack(net.ubound_loc[pr][locs[pr]][c]));
-        }
-      online_local_l16_[off] = online_local_u16_[off] = 0;
-    }
-  } else {
-    const std::size_t off = online_local_l_.size();
-    online_local_l_.resize(off + dim, kAluNegInf);
-    online_local_u_.resize(off + dim, kAluNegInf);
-    if (net.lbound_loc.empty()) {
-      std::copy(net.lbound.begin(), net.lbound.end(), online_local_l_.begin() + off);
-      std::copy(net.ubound.begin(), net.ubound.end(), online_local_u_.begin() + off);
-    } else {
-      for (int pr = 0; pr < net.nprocs(); ++pr)
-        for (int c = 1; c <= net.nclocks; ++c) {
-          online_local_l_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_l_[off + static_cast<std::size_t>(c)],
-              net.lbound_loc[pr][locs[pr]][c]);
-          online_local_u_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_u_[off + static_cast<std::size_t>(c)],
-              net.ubound_loc[pr][locs[pr]][c]);
-        }
-      online_local_l_[off] = online_local_u_[off] = 0;
-    }
-  }
   if (online_packed_key_usable_) {
     if ((online_packed_key_count_ + 1) * 10 >= online_packed_key_values_.size() * 7) {
       std::vector<std::uint64_t> old_keys = std::move(online_packed_key_keys_);
@@ -3084,7 +3393,7 @@ void Otf::online_recheck_key(int key) {
     v = online_next_in_key_[current];
     if (online_active_[current]) continue;
     const int c = online_cover_[current];
-    if (c >= 0 && c < (int)node.size() && online_active_[c]) {
+    if (c >= 0 && c < (int)nrec() && online_active_[c]) {
       if (online_covers(current, c, ki.id))
         continue;  // its recorded certificate survived the newly settled D map
     }
@@ -3123,7 +3432,7 @@ void Otf::online_recheck_key(int key) {
     if (online_perf.enabled) ++online_perf.deferred_replayed;
 
     int cover = -1;
-    if (edge.tgt >= 0 && edge.tgt < static_cast<int>(node.size()) && online_active_[edge.tgt] &&
+    if (edge.tgt >= 0 && edge.tgt < static_cast<int>(nrec()) && online_active_[edge.tgt] &&
         online_covers(candidate, edge.tgt, ki.id)) {
       cover = edge.tgt;
     } else {
@@ -3189,7 +3498,7 @@ bool Otf::online_build_all() {
 /// active.
 void Otf::online_expand(int u) {
   grow();
-  if (cancelled() || online_failed_ || u < 0 || u >= (int)node.size()) return;
+  if (cancelled() || online_failed_ || u < 0 || u >= (int)nrec()) return;
   if (!online_active_[u] || expanded[u]) return;
 
   expanded[u] = 1;
@@ -3202,8 +3511,7 @@ void Otf::online_expand(int u) {
   const OnlineKeyInfo& src_info = *online_key_by_id_[src];
   const bool profile = online_perf.enabled;
   SymState usc;
-  usc.locs = src_info.locs;
-  usc.ints = src_info.ints;
+  key_state(src_info.id, usc);
   zread(u, usc.zone);
   std::chrono::steady_clock::time_point successor_start;
   if (profile) successor_start = std::chrono::steady_clock::now();
@@ -3216,6 +3524,10 @@ void Otf::online_expand(int u) {
   // GFP probe this performs no backward pass on a changing graph; if it misses, construction
   // continues to D-quiescence and the one normal backward pass decides the query.
   if (eg_early_ && online_eg_terminal_witness(u, succ.empty())) {
+    eg_early_hit_ = true;
+    return;
+  }
+  if (leadsto_early_ && online_leadsto_witness(u, succ.empty())) {
     eg_early_hit_ = true;
     return;
   }
@@ -3235,7 +3547,7 @@ void Otf::online_expand(int u) {
     // participating process list.  Integer vectors are normally empty; when present, compare
     // them exactly and patch only changed fields.
     for (std::size_t v = 0; v < succ[k].ints.size(); ++v) {
-      if (succ[k].ints[v] == src_info.ints[v]) continue;
+      if (succ[k].ints[v] == key_ints(src_info.id)[v]) continue;
       const int field = net.nprocs() + static_cast<int>(v);
       const std::uint64_t field_mask = online_disc_mask_[field] << online_disc_shift_[field];
       const std::uint64_t value = static_cast<std::uint64_t>(succ[k].ints[v] - net.intvars[v].lo);
@@ -3328,7 +3640,7 @@ void Otf::online_drain_forward_work() {
 
     const int u = online_work_.front();
     online_work_.pop_front();
-    if (u < 0 || u >= (int)node.size()) continue;
+    if (u < 0 || u >= (int)nrec()) continue;
     online_inq_[u] = 0;
     if (!online_active_[u] || expanded[u]) continue;
     if (online_eg_prune_ && !online_is_nq(u)) {
@@ -3356,7 +3668,7 @@ void Otf::online_drain_forward_work() {
 /// graph is rebuilt: this drains retained records through the same online-D worklist.
 void Otf::online_complete_eg_history() {
   online_eg_repair_ = true;
-  const std::size_t parked = node.size();
+  const std::size_t parked = nrec();
   std::size_t pending = 0;
   for (std::size_t v = 0; v < parked; ++v)
     if (!expanded[v]) { ++pending; online_activate(static_cast<int>(v)); }
@@ -3366,9 +3678,9 @@ void Otf::online_complete_eg_history() {
   online_drain_forward_work();
   if (online_perf.enabled) {
     std::size_t remaining = 0;
-    for (std::size_t v = 0; v < node.size(); ++v) remaining += !expanded[v];
+    for (std::size_t v = 0; v < nrec(); ++v) remaining += !expanded[v];
     std::fprintf(stderr, "ONLINE-EG-REPAIR after=%zu remaining=%zu\n",
-                 node.size(), remaining);
+                 nrec(), remaining);
   }
 }
 
@@ -3389,7 +3701,7 @@ void Otf::online_finalize_graph() {
 
   for (;;) {
     bool woke = false;
-    for (std::size_t u = 0; u < node.size(); ++u) {
+    for (std::size_t u = 0; u < nrec(); ++u) {
       if (!online_active_[u] || !expanded[u]) continue;
       const int raw_slot = online_raw_slot_[u];
       if (raw_slot < 0) { online_failed_ = true; return; }
@@ -3430,23 +3742,21 @@ void Otf::online_finalize_graph() {
   // forward-sound redirection to a simulator is not an exact inverse for gfp_pre.  Compaction
   // therefore removes records only from future cover scans, never from the finished graph.
   // With that invariant the existing numbering, zones, and raw adjacency can all be moved.
-  bool already_dense = online_active_.size() == node.size();
-  for (std::size_t v = 0; v < node.size() && already_dense; ++v)
+  bool already_dense = online_active_.size() == nrec();
+  for (std::size_t v = 0; v < nrec() && already_dense; ++v)
     already_dense = expanded[v] && online_raw_slot_[v] >= 0;
 
   if (already_dense) {
     adj.clear();
-    adj.resize(node.size());
-    for (std::size_t v = 0; v < node.size(); ++v) {
-      const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
-      node[v].locs = ki.locs;
-      node[v].ints = ki.ints;
+    adj.resize(nrec());
+    node_key_.assign(online_key_of_.begin(), online_key_of_.begin() + nrec());
+    for (std::size_t v = 0; v < nrec(); ++v) {
       std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
       for (OtfEdge& edge : raw) {
         // Materialised targets keep their own identity, even after leaving the active forward
         // antichain. A never-materialised provisional successor already names its final active
         // coverer here; dirty-key replay would have promoted it if that certificate had failed.
-        if (edge.tgt < 0 || edge.tgt >= static_cast<int>(node.size()) ||
+        if (edge.tgt < 0 || edge.tgt >= static_cast<int>(nrec()) ||
             !expanded[edge.tgt] || online_raw_slot_[edge.tgt] < 0) {
           const int representative = online_resolve_cover(edge.tgt, /*require_expanded=*/true);
           if (representative < 0) { online_failed_ = true; return; }
@@ -3459,54 +3769,69 @@ void Otf::online_finalize_graph() {
   } else {
     // Reindex only when refinement really left inactive materialised records.  No successor is
     // recomputed and no D decision is revisited.
-    std::vector<int> remap(node.size(), -1);
-    std::vector<SymState> compact_nodes;
-    compact_nodes.reserve(node.size());
-    ptctlmc::ZoneStore compact_zones;
-    compact_zones.reset(zdim_);
-    for (std::size_t old = 0; old < node.size(); ++old) {
+    //
+    // IN PLACE. Compaction only ever DROPS, so the new index of a survivor is at most its old
+    // one, and rewriting ascending can therefore only overwrite slots already read. Building the
+    // compacted graph beside the original instead put two copies of the zone store, the node
+    // vector and the adjacency in memory at once -- an 86 MB spike on fischer10, on a graph the
+    // refinement had thinned from 614212 records to 260998.
+    std::vector<int> remap(nrec(), -1);
+    std::size_t kept = 0;
+    // Count first, then size the key index exactly.
+    for (std::size_t v = 0; v < nrec(); ++v)
+      if (expanded[v] && online_raw_slot_[v] >= 0) ++kept;
+    node_key_.assign(kept, -1);
+    kept = 0;
+    Dbm zsc;
+    for (std::size_t old = 0; old < nrec(); ++old) {
       if (!expanded[old] || online_raw_slot_[old] < 0) continue;
-      const int now = static_cast<int>(compact_nodes.size());
+      const int now = static_cast<int>(kept++);
       remap[old] = now;
-      const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[old]];
-      SymState s;
-      s.locs = ki.locs;
-      s.ints = ki.ints;
-      Dbm z;
-      zread(static_cast<int>(old), z);
-      compact_zones.store(now, z);
-      compact_nodes.push_back(std::move(s));
+      // Alias rather than store: a packed record must not be re-encoded (see ZoneStore::alias),
+      // and even dense this is a memcpy instead of a load-and-re-store.
+      zs_.alias(now, static_cast<int>(old));
+      node_key_[now] = online_key_of_[old];
     }
-    std::vector<std::vector<OtfEdge>> compact_adj(compact_nodes.size());
-    for (std::size_t old = 0; old < node.size(); ++old) {
+    // The adjacency moves the same way, and each raw vector is moved out rather than copied.
+    adj.clear();
+    adj.resize(kept);
+    for (std::size_t old = 0; old < nrec(); ++old) {
       const int now = remap[old];
       if (now < 0) continue;
-      const int raw_slot = online_raw_slot_[old];
-      std::vector<OtfEdge>& out = compact_adj[now];
-      out.reserve(online_raw_adj_[raw_slot].size());
-      for (const OtfEdge& e : online_raw_adj_[raw_slot]) {
+      std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[old]];
+      for (OtfEdge& e : raw) {
         int representative = e.tgt;
-        if (representative < 0 || representative >= static_cast<int>(node.size()) ||
+        if (representative < 0 || representative >= static_cast<int>(nrec()) ||
             !expanded[representative] || online_raw_slot_[representative] < 0)
           representative = online_resolve_cover(e.tgt, /*require_expanded=*/true);
         if (representative < 0) { online_failed_ = true; return; }
         const int tgt = remap[representative];
         if (tgt < 0) { online_failed_ = true; return; }
-        out.push_back(OtfEdge{tgt, e.tag});
+        e.tgt = tgt;
+        e.deferred = -1;
       }
+      adj[now] = std::move(raw);
     }
-    node.swap(compact_nodes);
-    adj.swap(compact_adj);
-    zs_ = std::move(compact_zones);
+    zs_.truncate(kept);
   }
+  // From here on `node_key_` IS the graph: the compaction branch keeps fewer entries than
+  // records were created, and every table below is sized from ::nrec.  `node` stays empty on
+  // this route -- the discrete half is read out of the key arenas, which therefore outlive the
+  // rest of the online state.
+  online_nrec_ = node_key_.size();
   bucket.clear();
-  for (std::size_t v = 0; v < node.size(); ++v)
-    bucket[disc_hash(node[v].locs, node[v].ints)].push_back(static_cast<int>(v));
-  expanded.assign(node.size(), 1);
-  pc.assign(node.size(), 2);
-  qc.assign(node.size(), 2);
-  ntag_.assign(node.size(), 0);
-  ntag_out_.assign(node.size(), 0);
+  {
+    SymState dsc;
+    for (std::size_t v = 0; v < nrec(); ++v) {
+      nstate(static_cast<int>(v), dsc);
+      bucket[disc_hash(dsc.locs, dsc.ints)].push_back(static_cast<int>(v));
+    }
+  }
+  expanded.assign(nrec(), 1);
+  pc.assign(nrec(), 2);
+  qc.assign(nrec(), 2);
+  ntag_.assign(nrec(), 0);
+  ntag_out_.assign(nrec(), 0);
   online_active_.clear();
   online_active_next_.clear();
   online_active_prev_.clear();
@@ -3517,10 +3842,8 @@ void Otf::online_finalize_graph() {
   online_inq_.clear();
   online_work_.clear();
   online_key_by_id_.clear();
-  online_local_l16_.clear();
-  online_local_u16_.clear();
-  online_local_l_.clear();
-  online_local_u_.clear();
+  // key_locs_/key_ints_ and the strides deliberately SURVIVE: `node_key_` points into them for
+  // the rest of the run.  ::online_reset releases them at the start of the next construction.
   online_key_of_.clear();
   online_next_in_key_.clear();
   online_keys_.clear();
@@ -3559,7 +3882,7 @@ void Otf::base_forward() {
       std::deque<int> work;
       std::vector<char> inq;
       auto push = [&](int v) {
-        if (inq.size() < node.size()) inq.resize(node.size(), 0);
+        if (inq.size() < nrec()) inq.resize(nrec(), 0);
         if (!inq[v]) { inq[v] = 1; work.push_back(v); }
       };
       push(0);
@@ -3595,7 +3918,7 @@ void Otf::base_forward() {
         const int u = work.front();
         work.pop_front();
         grow();
-        if (inq.size() < node.size()) inq.resize(node.size(), 0);
+        if (inq.size() < nrec()) inq.resize(nrec(), 0);
         inq[u] = 0;
         expand(u);                                  // no-op if still expanded
         grow();
@@ -3622,7 +3945,7 @@ void Otf::base_forward() {
               std::chrono::duration_cast<std::chrono::nanoseconds>(clk_now() - p0).count();
           if (probe_dbg)
             std::fprintf(stderr, "PROBE at_nodes=%zu hit=%d cumulative_probe_ms=%lld\n",
-                         node.size(), (int)hit, probe_ns / 1000000);
+                         nrec(), (int)hit, probe_ns / 1000000);
           if (hit) { eg_early_hit_ = true; return; }
           since_probe = clk_now();
         }
@@ -3650,13 +3973,13 @@ bool Otf::eg_from_initial(GfpStats* gs) {
 
 std::vector<int> Otf::eg_closure() {
   std::vector<int> S;
-  if (node.empty()) return S;
+  if (nrec() == 0) return S;
   grow();
   // The psi-closure REACHED FROM THE INITIAL VERTEX. ::Otf::accepting_closure seeds from every
   // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
   // state, so a node reachable only by leaving psi and coming back must not be admitted.
   if (!expanded[0] || !is_nq(0)) return S;
-  std::vector<char> in(node.size(), 0);
+  std::vector<char> in(nrec(), 0);
   std::vector<int> stk{0};
   in[0] = 1;
   while (!stk.empty()) {
@@ -3670,7 +3993,7 @@ std::vector<int> Otf::eg_closure() {
 }
 
 bool Otf::eg_probe() {
-  if (!fwd_ok_ || node.empty()) return false;
+  if (!fwd_ok_ || nrec() == 0) return false;
   const bool saved_capped = capped;         // sticky, and a probe must not condemn the real run
   const bool saved_scc = scc_iter_;
   scc_iter_ = true;
@@ -3689,7 +4012,7 @@ bool Otf::eg_probe() {
 bool Otf::eg_verdict(GfpStats* gs) {
   scc_iter_ = true;             // the verdict is one node's, so diameter is what costs here
   bool res = false;
-  if (fwd_ok_ && !node.empty()) {
+  if (fwd_ok_ && nrec() != 0) {
     const std::vector<int> S = eg_closure();
     if (!S.empty()) {
       std::vector<Federation> W;
@@ -3704,6 +4027,10 @@ bool Otf::eg_verdict(GfpStats* gs) {
 bool Otf::run(GfpStats* gs) {
   setup();
   base_forward();
+  // A concrete `p /\ EG !q` witness found during construction is already the verdict; see
+  // ::Otf::leadsto_witness. `run` also serves `E[] psi`, whose own early hit is handled by its
+  // caller, so this only fires when leads-to armed it.
+  if (leadsto_early_ && eg_early_hit_) { fill_stats(gs); return false; }
   const bool violated = fwd_ok_ && final_verdict_violated();
   fill_stats(gs);
   return !violated;
@@ -3716,6 +4043,14 @@ bool Otf::run(GfpStats* gs) {
 /// source-edge replay handle.  Atom pullback and expansion share one worklist, and only the
 /// stable active quotient reaches the backward GFP.
 bool Otf::run_online_d(GfpStats* gs) {
+  // A violated `p --> q` needs no finished graph: see ::Otf::leadsto_witness. Armed before either
+  // delegation below, so the exact and structurally-empty-D routes get it too. Disabled with
+  // PTCTLMC_LEADSTO_EARLY=0, for measuring what it saves.
+  leadsto_early_ = [] {
+    const char* e = std::getenv("PTCTLMC_LEADSTO_EARLY");
+    return !e || *e != '0';
+  }();
+
   // Diagonal constraints already select the exact inclusion lane.  There is no a_LU/D quotient
   // to refine there, and preserving the existing exact route avoids imposing online bookkeeping
   // where it cannot buy anything.
@@ -3733,8 +4068,13 @@ bool Otf::run_online_d(GfpStats* gs) {
   setup();
   const auto forward_start = std::chrono::steady_clock::now();
   online_base_forward();
+  if (eg_early_hit_) {                     // a concrete `p /\ EG !q` witness was reached
+    fill_stats(gs);
+    return false;
+  }
   const auto forward_done = std::chrono::steady_clock::now();
-  std::size_t raw_nodes = node.size(), raw_edges = 0, active_nodes = 0, active_slots = 0;
+  const std::size_t rss_fwd = rss_mb();
+  std::size_t raw_nodes = nrec(), raw_edges = 0, active_nodes = 0, active_slots = 0;
   std::size_t live_deferred = 0;
   for (const auto& edges : online_raw_adj_)
     live_deferred += std::count_if(edges.begin(), edges.end(),
@@ -3744,6 +4084,13 @@ bool Otf::run_online_d(GfpStats* gs) {
     active_slots += ki.active_count;
     for (int v = ki.active_head; v >= 0; v = online_active_next_[v])
       if (online_raw_slot_[v] >= 0) raw_edges += online_raw_adj_[online_raw_slot_[v]].size();
+  }
+  // What the D machinery is holding, whether or not D ever gained an atom.
+  std::size_t dropped_records = 0, dropped_unexpanded = 0, inactive_expanded = 0;
+  for (std::size_t v = 0; v < nrec(); ++v) {
+    const bool keep = expanded[v] && online_raw_slot_[v] >= 0;
+    if (!keep) { ++dropped_records; if (!expanded[v]) ++dropped_unexpanded; }
+    else if (!online_active_[v]) ++inactive_expanded;
   }
   const std::size_t key_count = online_key_by_id_.size();
   const std::size_t key_edge_count = online_key_edges_.size();
@@ -3757,26 +4104,32 @@ bool Otf::run_online_d(GfpStats* gs) {
                                            [](std::int32_t x) { return x != kNoBump; });
   if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
   const auto finalised = std::chrono::steady_clock::now();
+  const std::size_t rss_fin = rss_mb();
 
   // `online_failed_` is defensive only (the online atom and reset representations are dynamic),
   // but never turn an unfinished quotient into a normal answer if an invariant is broken.
   if (online_failed_ || cancelled()) capped = true;
   const bool violated = fwd_ok_ && !online_failed_ && !cancelled() && final_verdict_violated();
   const auto solved = std::chrono::steady_clock::now();
+  if (std::getenv("PTCTLMC_RSS"))
+    std::fprintf(stderr, "RSS-MB forward=%zu finalize=%zu backward=%zu\n", rss_fwd, rss_fin, rss_mb());
   if (online_perf.enabled) {
     const auto ms = [](auto d) {
       return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
     };
     std::fprintf(stderr,
-                 "ONLINE-PERF forward_ms=%lld finalize_ms=%lld backward_ms=%lld raw_nodes=%zu "
+                 "ONLINE-PERF dropped=%zu dropped_unexp=%zu inactive_exp=%zu "
+                 "forward_ms=%lld finalize_ms=%lld backward_ms=%lld raw_nodes=%zu "
                  "active_nodes=%zu active_slots=%zu active_edges=%zu keys=%zu key_edges=%zu seed_keys=%zu "
                  "seed_atoms=%zu closure_atoms=%zu diag_keys=%zu bumped=%zu cover_calls=%llu "
                  "cover_ms=%.3f intern=%llu intern_scan=%llu probe_ms=%.3f "
                  "join_ms=%.3f append_ms=%.3f "
                  "deferred=%zu deferred_created=%llu deferred_replayed=%llu deferred_promoted=%llu "
                  "coverer=%llu coverer_scan=%llu "
-                 "compact=%llu compact_scan=%llu recheck=%llu recheck_nodes=%llu succ_ms=%.3f "
+                 "compact=%llu compact_scan=%llu deact=%llu deact_unexp=%llu deact_perm=%llu "
+                 "recheck=%llu recheck_nodes=%llu succ_ms=%.3f "
                  "register_ms=%.3f key_ms=%.3f tag_ms=%.3f reset_ms=%.3f edge_ms=%.3f intern_ms=%.3f\n",
+                 dropped_records, dropped_unexpanded, inactive_expanded,
                  static_cast<long long>(ms(forward_done - forward_start)),
                  static_cast<long long>(ms(finalised - forward_done)),
                  static_cast<long long>(ms(solved - finalised)), raw_nodes, active_nodes,
@@ -3795,6 +4148,9 @@ bool Otf::run_online_d(GfpStats* gs) {
                  static_cast<unsigned long long>(online_perf.coverer_active_scan),
                  static_cast<unsigned long long>(online_perf.compact_calls),
                  static_cast<unsigned long long>(online_perf.compact_active_scan),
+                 static_cast<unsigned long long>(online_perf.compact_deact),
+                 static_cast<unsigned long long>(online_perf.compact_deact_unexp),
+                 static_cast<unsigned long long>(online_perf.compact_deact_permanent),
                  static_cast<unsigned long long>(online_perf.recheck_calls),
                  static_cast<unsigned long long>(online_perf.recheck_nodes),
                  online_perf.successor_ns / 1e6, online_perf.register_ns / 1e6,
@@ -3822,23 +4178,29 @@ bool Otf::eg_from_initial_online_d(GfpStats* gs) {
     std::fprintf(stderr,
                  "ONLINE-EG raw_nodes=%zu keys=%zu seed_keys=%zu seed_atoms=%zu closure_atoms=%zu "
                  "deferred_created=%llu deferred_replayed=%llu deferred_promoted=%llu\n",
-                 node.size(), online_key_by_id_.size(), online_am_.seed_keys,
+                 nrec(), online_key_by_id_.size(), online_am_.seed_keys,
                  online_am_.seed_atoms, online_am_.closure_atoms,
                  static_cast<unsigned long long>(online_perf.deferred_created),
                  static_cast<unsigned long long>(online_perf.deferred_replayed),
                  static_cast<unsigned long long>(online_perf.deferred_promoted));
   }
+  const std::size_t rss_fwd = rss_mb();
   if (eg_early_hit_) { fill_stats(gs); return true; }
   online_complete_eg_history();
   if (eg_early_hit_) { fill_stats(gs); return true; }
   if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
   if (online_failed_ || cancelled()) { capped = true; fill_stats(gs); return false; }
-  return eg_verdict(gs);
+  const std::size_t rss_fin = rss_mb();
+  const bool r = eg_verdict(gs);
+  if (std::getenv("PTCTLMC_RSS"))
+    std::fprintf(stderr, "RSS-MB eg_forward=%zu eg_finalize=%zu eg_backward=%zu nodes=%zu\n",
+                 rss_fwd, rss_fin, rss_mb(), nrec());
+  return r;
 }
 
 void Otf::fill_stats(GfpStats* gs) {
   if (gs) {
-    gs->fwd_nodes = node.size();
+    gs->fwd_nodes = nrec();
     gs->disc_keys = bucket.size();
     gs->fwd_edges = 0;
     for (const auto& a : adj) gs->fwd_edges += a.size();

@@ -102,11 +102,16 @@ struct OnlineKeyEdge {
   int next_in;
 };
 
+/// @brief One discrete key of the online quotient.
+///
+/// The location and integer vectors are NOT here: they live in @ref Otf's `key_locs_` /
+/// `key_ints_` arenas at a fixed stride, reached through @ref Otf::key_locs. Two heap vectors per
+/// key cost more in headers and allocator metadata than the locations themselves, and on the
+/// families where every reachable state has its own key that was the largest single block of
+/// memory after the zones.
 struct OnlineKeyInfo {
   int id = -1;
   std::uint64_t packed_key = 0;
-  detail::LocVec locs;
-  detail::IntVec ints;
   // Intrusive lists into Otf::online_key_edges_.  This avoids three heap-allocated vectors per
   // discrete key while preserving exact incoming propagation and source-local deduplication.
   int incoming = -1;
@@ -190,6 +195,9 @@ class Otf {
   bool scc_iter_ = true;
   bool eg_early_ = false;
   bool eg_early_hit_ = false;
+  // `p --> q`: a reached `p /\ !q` valuation that can end a maximal run is already a
+  // counterexample, so the forward search may stop the moment one is found.
+  bool leadsto_early_ = false;
   bool online_eg_prune_ = false;
   bool online_eg_repair_ = false;
   bool force_exact_ = false;
@@ -198,6 +206,10 @@ class Otf {
 
   // Covering and backward-solver state.
   std::vector<std::int32_t> L, U, aL, aU, bL, bU, M;
+  // The per-location a_LU fold, split into the part that varies with the location vector and the
+  // part that does not; see ::Otf::build_local_bound_tables.
+  std::vector<std::int32_t> base_l_, base_u_;
+  std::vector<std::vector<int>> vary_clocks_;
   int emode = 0;
   std::vector<char> qmask;
   bool use_alu = false;
@@ -217,7 +229,16 @@ class Otf {
 
   // Final graph storage.  The ZoneStore owns dense zone matrices; node[i].zone is scratch-only
   // once a record is interned.
+  // The final graph's discrete half. The exact/inclusion route keeps it in `node`; the online
+  // route leaves it in the key arenas and points at them through `node_key_`, because several
+  // records share a key (447598 nodes over 260998 keys on fischer10) and copying the locations
+  // into every one of them cost more than the arenas themselves. ::nlocs is the one place that
+  // knows which representation is live.
   std::vector<detail::SymState> node;
+  std::vector<int> node_key_;
+  // Records created so far. In online mode `node` stays EMPTY until the graph is sealed, so it
+  // cannot serve as the counter; ::nrec is the one place that knows which is authoritative.
+  std::size_t online_nrec_ = 0;
   std::vector<std::vector<OtfEdge>> adj;
   std::vector<GfpTag> tags_;
   std::unordered_map<std::uint64_t, std::vector<int>> tagidx_;
@@ -238,6 +259,12 @@ class Otf {
   bool online_d_ = false;
   AtomMap online_am_;
   std::deque<OnlineKeyInfo> online_keys_;
+  // Discrete state of every key, flat: `key_locs_` at stride nprocs, `key_ints_` at stride
+  // |intvars|. Empty when the network has no integer variables, which is the common case.
+  std::vector<int> key_locs_;
+  std::vector<long> key_ints_;
+  int key_loc_stride_ = 0;
+  int key_int_stride_ = 0;
   // Hash-only fallback for wide discrete keys.  Collisions are resolved by comparing the
   // immutable location and integer vectors in `online_key_by_id_`.
   std::unordered_map<std::uint64_t, std::vector<int>> online_key_index_;
@@ -251,14 +278,6 @@ class Otf {
   std::size_t online_packed_key_mask_ = 0;
   std::size_t online_packed_key_count_ = 0;
   std::vector<OnlineKeyInfo*> online_key_by_id_;
-  // Flat immutable local aLU bounds, one `(nclocks+1)` slice per key.  Computing the network
-  // maximum once at key creation avoids repeating a process×clock fold on every cover probe.
-  // The common small-constant case uses 16-bit storage; wide models retain exact 32-bit bounds.
-  bool online_local_bounds_narrow_ = false;
-  std::vector<std::int16_t> online_local_l16_;
-  std::vector<std::int16_t> online_local_u16_;
-  std::vector<std::int32_t> online_local_l_;
-  std::vector<std::int32_t> online_local_u_;
   std::vector<int> online_key_of_;
   std::vector<int> online_next_in_key_;
   std::vector<OnlineKeyEdge> online_key_edges_;
@@ -288,11 +307,45 @@ class Otf {
   std::vector<char> online_inq_;
 
   // General graph mechanics.
+  /// @brief How many records exist, whichever construction is running.
+  std::size_t nrec() const {
+    if (online_d_) return online_nrec_;
+    return node_key_.empty() ? node.size() : node_key_.size();
+  }
+  /// @brief Node @p v's locations, `nlocs_n()` of them.
+  const int* nlocs(int v) const {
+    return node_key_.empty() ? node[v].locs.data() : key_locs(node_key_[v]);
+  }
+  /// @brief Node @p v's integer variables, `nints_n()` of them.
+  const long* nints(int v) const {
+    return node_key_.empty() ? node[v].ints.data() : key_ints(node_key_[v]);
+  }
+  std::size_t nlocs_n(int v) const {
+    return node_key_.empty() ? node[v].locs.size() : static_cast<std::size_t>(key_loc_stride_);
+  }
+  std::size_t nints_n(int v) const {
+    return node_key_.empty() ? node[v].ints.size() : static_cast<std::size_t>(key_int_stride_);
+  }
+  /// @brief Copy node @p v's discrete half into @p s, leaving its zone alone.
+  void nstate(int v, detail::SymState& s) const {
+    const int* l = nlocs(v);
+    s.locs.assign(l, l + nlocs_n(v));
+    const long* i = nints(v);
+    s.ints.assign(i, i + nints_n(v));
+  }
   bool cancelled();
   void setup();
+  void build_local_bound_tables();
+  void local_bounds(const int* locs, std::vector<std::int32_t>& outL,
+                    std::vector<std::int32_t>& outU) const;
   bool holds(const DiscPred& pr, const detail::SymState& s) const;
   bool is_p(int i);
+  bool p_discrete(const detail::SymState& s) const;
   Federation p_region(int i);
+  Federation p_region_of(const detail::SymState& s) const;
+  bool leadsto_witness(const detail::SymState& s, bool no_successor,
+                       bool key_may_deadlock);
+  bool online_leadsto_witness(int v, bool no_successor);
   bool is_nq(int i);
   void grow();
   int intern(detail::SymState&& s);
@@ -351,6 +404,22 @@ class Otf {
   void online_drain_atoms();
   int online_register_key(const detail::LocVec& locs, const detail::IntVec& ints,
                           std::uint64_t packed = 0, bool packed_ready = false);
+  /// @brief Locations of key @p id, `key_loc_stride_` of them.
+  const int* key_locs(int id) const {
+    return key_locs_.data() + static_cast<std::size_t>(id) * key_loc_stride_;
+  }
+  /// @brief Integer variables of key @p id, `key_int_stride_` of them (possibly none).
+  const long* key_ints(int id) const {
+    return key_int_stride_ ? key_ints_.data() + static_cast<std::size_t>(id) * key_int_stride_
+                           : nullptr;
+  }
+  /// @brief Copy key @p id's discrete state into @p s, leaving its zone alone.
+  void key_state(int id, detail::SymState& s) const {
+    const int* l = key_locs(id);
+    s.locs.assign(l, l + key_loc_stride_);
+    const long* i = key_ints(id);
+    s.ints.assign(i, i + key_int_stride_);
+  }
   int online_reset_class(int tag);
   void online_enable_key_graph();
   void online_register_edge(int src, int tgt, int reset_class);

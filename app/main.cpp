@@ -259,6 +259,14 @@ int main(int argc, char** argv) {
       ptctlmc::set_adaptive_merge(false);
     } else if (a == "--gpu-intern") {   // GPU passed set: deduplicate zones (memory over speed)
       ptctlmc::set_gpu_intern(true);
+    } else if (a == "--zones" && i + 1 < argc) {
+      const std::string mode = argv[++i];
+      if (mode == "packed") {
+        ptctlmc::set_packed_zones(true);
+      } else if (mode != "dense") {
+        std::cerr << "unknown --zones mode '" << mode << "' (expected dense or packed)\n";
+        return 2;
+      }
     } else if (a == "--stats") {       // report generated successors alongside explored states
       g_stats = true;
     } else if (a == "--memo") {        // memoise the successor-zone pipeline (adaptive; off by default)
@@ -295,8 +303,13 @@ int main(int argc, char** argv) {
   if (nf == 2) return run(files[0], files[1], backend);
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
-            << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats] <model.xml> <query.q>\n"
+            << "usage: ptctlmc [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats]\n              [--zones dense|packed] <model.xml> <query.q>\n"
             << "       --stats: also report the number of successor zones generated\n"
+            << "       --zones dense|packed: how liveness stores its zones (default dense).\n"
+            << "                   `packed` keeps each zone as a minimal graph -- an order of\n"
+            << "                   magnitude smaller resident -- and unpacks it on every read.\n"
+            << "                   Same verdicts either way; it trades memory for time, and\n"
+            << "                   which way that goes depends on the model's probe rate.\n"
             << "       --gpu-intern: GPU passed set deduplicates zones (large win on models with\n"
             << "                     few distinct zones, e.g. viking; neutral elsewhere)\n"
             << "       --adaptive: GPU merge auto-routes CPU/GPU per level (default --naive)\n"
