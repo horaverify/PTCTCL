@@ -33,8 +33,8 @@ Two measurements reframed the problem:
 
 ## 2. Findings, and the fix for each
 
-Numbers are from a working prototype, measured against a `Release` build of the baseline; the
-prototype was `RelWithDebInfo` (`-O2` against `-O3`), so the ratios are conservative.
+All landed. Numbers are `Release` against `Release`, both engines re-run on the same machine
+(the recorded reference results predate this hardware and are not comparable).
 
 ### F1 — `dbm_free` runs a Floyd–Warshall it does not need *(HDBM)*
 
@@ -96,7 +96,7 @@ stop. One `memcmp` per transition, and it aborts the rest.
 
 `*escapes` is then not populated. No caller reads it on a `false` return (`online_seed_key`,
 `build_atom_map` and `dtheta_empty` all `return`/`continue`; `stop_set` and `deadlock_reachable`
-never ask for it), and the contract will say so.
+never ask for it), and the contract says so.
 
 > Forward pass: 8–10 %.
 
@@ -126,9 +126,9 @@ one zone) and **reduces exploration**.
 > grc5 13 980 → 12 184 states (−13 %), grc4 923 → 788 (−15 %), phil11 254 958 → 247 943, phil10
 > 75 120 → 73 455. arbiter / fischer / twolock / csma / single unchanged.
 
-This is the one change with a cost risk: the join loop is `O(width²)` per intern, and grc6's
-antichains are 152 wide. Its effect on grc6 is being measured; if it regresses there it becomes a
-separate decision rather than part of Landing 3.
+The join loop is `O(width²)` per intern and grc6's antichains are 152 wide, so this was the one
+change with a cost risk. It does not regress there: grc6's E[] row drops 75 212 → 68 026 states,
+and no family's time regresses.
 
 ### F8 — atom-free cover probes decompress the stored zone for nothing
 
@@ -278,26 +278,66 @@ antichain width)`** in cover probes, and the width is 152 on grc6. A cheap exact
 ahead of the `a_LU`/D probe is the obvious lever there, and F8 is only the first, smallest piece
 of it.
 
-## 9. Prototype results
+## 9. Results
 
-All verdicts agree with the baseline. `explored` differs only where F7 legitimately merges more.
+All verdicts agree with the baseline. `explored` differs only where the iterated convex-union
+join legitimately merges more (F7), or where the early witness settles a violation sooner.
+
+### Whole suite, one machine, both engines re-run
+
+408 cases — `live`, `eg`, `violated`, `reach`, `deadlock` × sizes 4–9 — **0 verdict mismatches**.
+
+| suite | cases | time | peak RSS |
+|---|---|---|---|
+| live | 44 | 2.30× | 1.10× |
+| eg | 210 | 2.59× | 1.00× |
+| violated | 66 | **21.8×** | **2.39×** |
+| reach | 44 | 1.12× | 1.00× |
+| deadlock | 44 | 1.18× | 1.00× |
+
+Reachability state counts are **identical on every row**. Its speedup comes entirely from the
+shared HDBM primitives, and its memory is unchanged, as intended — no reachability algorithm was
+touched.
+
+### Per model, leads-to
 
 ```
-                base      new    speedup   explored
-arbiter14      1.10s    0.94s     1.17x    131072 -> 131072
-arbiter15      2.60s    2.24s     1.16x    278528 -> 278528
-fischer9       0.77s    0.56s     1.38x    135485 -> 135485
-fischer10      3.04s    2.20s     1.38x    447598 -> 447598
-twolock9       0.64s    0.53s     1.21x    140093 -> 140093
-twolock10      2.49s    2.06s     1.21x    457838 -> 457838
-csma10         0.21s    0.18s     1.17x     22784 -> 22784
-phil9          0.42s    0.16s     2.62x     22597 -> 22414
-phil10         2.72s    0.78s     3.49x     75120 -> 73455
-phil11        18.57s    4.33s     4.29x    254958 -> 247943
-grc4           0.03s    0.02s     1.50x       923 -> 788
-grc5           4.92s    2.44s     2.02x     13980 -> 12184
-single6        0.22s    0.12s     1.83x      1167 -> 1167
-single7       19.32s    7.32s     2.64x      9164 -> 9164
+             time                       peak RSS
+arbiter15    2.45s -> 2.03s   1.21x     336MB -> 299MB   1.12x
+fischer10    2.92s -> 1.93s   1.51x     528MB -> 371MB   1.42x
+twolock10    2.34s -> 1.84s   1.27x     554MB -> 401MB   1.38x
+phil10       2.59s -> 0.75s   3.45x      98MB ->  88MB   1.11x
+phil11      18.57s -> 4.09s   4.54x                      252MB
+grc5         4.70s -> 2.30s   2.04x      22MB ->  19MB   1.16x
+csma10       0.19s -> 0.17s   1.12x      44MB ->  37MB   1.19x
+single7     18.20s -> 7.11s   2.56x
 ```
 
-231 differential cases run against the baseline so far, 0 verdict mismatches.
+### Violated leads-to
+
+The suite for this is new (`benchmarks/live_queries_violated`); every pre-existing leads-to row,
+ours and every recorded `verifyta`/`tchecker` row alike, is satisfied.
+
+```
+fischer7  P0.wait --> P0.cs     11951 ->    9 states   x54
+twolock7  P0.waitB --> P0.reqB  12847 ->  121          x47.5
+fischer7  P0.cs --> P0.req      11951 ->   37          x18
+grc5      T0.near --> T0.far    13980 -> 3519          x71.6
+grc6      T0.near --> T0.far    baseline >45s -> 2.37s
+grc6/7    T0.far --> T0.in      baseline >45s -> ~6ms
+```
+
+Peak RSS on those rows falls by up to 31× (`fischer9` 221.6 MB → 7.1 MB), because the search
+stops instead of building the graph. Cycle-witness rows are unchanged in both, which is the
+evidence that the witness does not fire where it must not.
+
+## 10. What was measured and rejected
+
+- **A whole-zone stop-set shortcut.** `NoSucc(v) = Z_v` puts `v` at its fixpoint immediately.
+  Implemented, verified against 102 queries, measured — and it never fires: the stopping term is
+  **empty at every node of every model in the suite**, leads-to and E[] alike. Removed rather than
+  carried. The corollary is worth recording: on this suite the backward fixpoint is purely
+  `W = W /\ Pre(W)`, and its memory is the transient `W` federations of the descent, not `nosucc`.
+- **`comps.shrink_to_fit()` and a flatter `PreNode`** as memory fixes for the E[] regression: both
+  made it *worse*. Bisecting across the branch and instrumenting the E[] phases found the actual
+  cause (the invariant arena at ~120 B/node); interning the spans fixed it.
