@@ -874,6 +874,36 @@ void Otf::grow() {
   if (ntag_out_.size() < n) ntag_out_.resize(n, 0);
 }
 
+/// @brief The discrete OVER-approximation of `p` at one state; see ::Otf::is_p.
+bool Otf::p_discrete(const SymState& s) const {
+  if (!p.is_dnf && p.forbid.empty()) return holds(p, s);
+  for (const auto& t : p.forbid) {
+    bool all = true;
+    for (const auto& r : t.locs)
+      if ((s.locs[r.proc] == r.loc) != r.equal) { all = false; break; }
+    if (all && !int_ok(t.ints, s.ints)) all = false;
+    if (all) return true;
+  }
+  return false;
+}
+
+/// @brief The clock region of `p` inside @p s; see ::Otf::p_region.
+Federation Otf::p_region_of(const SymState& s) const {
+  Federation out;
+  if (p.forbid.empty()) { out.push_back(s.zone); return out; }
+  for (const auto& t : p.forbid) {
+    bool guard = true;
+    for (const auto& r : t.locs)
+      if ((s.locs[r.proc] == r.loc) != r.equal) { guard = false; break; }
+    if (guard && !int_ok(t.ints, s.ints)) guard = false;
+    if (!guard) continue;
+    Dbm z = s.zone;
+    if (!apply_all(z, t.clocks) || z.empty()) continue;
+    fed_add(out, z);
+  }
+  return out;
+}
+
 bool Otf::is_p(int i) {
   grow();
   if (pc[i] != 2) return pc[i] != 0;
@@ -886,20 +916,7 @@ bool Otf::is_p(int i) {
   // cannot exclude a whole vertex -- and exactly wrong for `p`, where such a term is the reason
   // the node is interesting. Reusing it made `x >= 0 --> P.wait` hold vacuously: no term counted,
   // so no node seeded the closure, so no violation could be found.
-  bool ok;
-  if (p.is_dnf || !p.forbid.empty()) {
-    ok = false;
-    for (const auto& t : p.forbid) {
-      bool all = true;
-      for (const auto& r : t.locs)
-        if ((node[i].locs[r.proc] == r.loc) != r.equal) { all = false; break; }
-      if (all && !int_ok(t.ints, node[i].ints)) all = false;
-      if (all) { ok = true; break; }
-    }
-  } else {
-    ok = holds(p, node[i]);
-  }
-  pc[i] = ok ? 1 : 0;
+  pc[i] = p_discrete(node[i]) ? 1 : 0;
   return pc[i] != 0;
 }
 
@@ -912,21 +929,8 @@ bool Otf::is_p(int i) {
 /// @note Returns the whole zone when `p` constrains no clock, which is the pre-existing case and
 ///       makes the intersection in ::Otf::certificate_in a no-op there.
 Federation Otf::p_region(int i) {
-  Federation out;
   SymState cst;
-  const SymState& sv = sread(i, cst);
-  if (p.forbid.empty()) { out.push_back(sv.zone); return out; }
-  for (const auto& t : p.forbid) {
-    bool guard = true;
-    for (const auto& r : t.locs)
-      if ((sv.locs[r.proc] == r.loc) != r.equal) { guard = false; break; }
-    if (guard && !int_ok(t.ints, sv.ints)) guard = false;
-    if (!guard) continue;
-    Dbm z = sv.zone;
-    if (!apply_all(z, t.clocks) || z.empty()) continue;
-    fed_add(out, z);
-  }
-  return out;
+  return p_region_of(sread(i, cst));
 }
 
 bool Otf::is_nq(int i) {
@@ -1549,6 +1553,64 @@ bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
   return state_has_deadlock(*dead_net, s, &dead);
 }
 
+/// @brief Certify a `p --> q` counterexample at a freshly expanded node, before the graph is done.
+///
+/// `p --> q` fails exactly when some reachable state satisfies `p /\ EG !q`. A valuation that
+/// satisfies `p`, sits at a `!q` key, and can END a maximal run -- by deadlocking, or by letting
+/// time diverge -- witnesses `EG !q` outright: the run stops (or runs on) there and never leaves
+/// `!q`. So the forward search can stop the moment one is reached, with no backward pass and no
+/// finished graph.
+///
+/// Every online record holds an EXACT reachable zone, so a valuation found here is genuinely
+/// reachable and the witness is concrete: no subsumption edge takes part in it. That exactness is
+/// also why this is confined to the a_LU lane. Where extrapolation is load-bearing (the diagonal
+/// route) a stored zone over-approximates, and a stop valuation enters positively here, so a
+/// spurious one would fabricate a violation.
+///
+/// @param v             the node just expanded
+/// @param no_successor  whether ::gfp_succ_tagged produced nothing for it
+/// @return @c true iff a `p`-satisfying valuation of @p v ends a maximal `!q` run
+bool Otf::leadsto_witness(const SymState& s, bool no_successor, bool key_may_deadlock) {
+  if (!leadsto_early_ || !use_alu) return false;
+  // With a forbidden region in force, `q` is only PARTLY discrete: ::Otf::holds deliberately
+  // ignores a term that constrains a clock, because ::detail::DelayAvoidSet carries that part and
+  // the backward pass cuts the zone with it. A stop valuation could then satisfy `q` through the
+  // clock part while `holds` reports `!q`, and this witness would claim a violation that is not
+  // one. Deciding it here would mean intersecting the stop set with the `!q` region; until that
+  // is done, the region route keeps the ordinary construct-then-solve path.
+  if (avoid_) return false;
+  if (holds(q, s)) return false;                  // `q` holds here: not a witness position
+  if (!p_discrete(s)) return false;               // `p`'s discrete guard cannot hold either
+
+  // Where the run may stop. The two whole-zone cases are exact as such; only a partial deadlock
+  // needs the per-valuation subtraction.
+  Federation stop;
+  if (no_successor || time_diverges(s)) {
+    stop.push_back(s.zone);
+  } else {
+    if (!key_may_deadlock) return false;          // no zone at this key can deadlock
+    if (!state_has_deadlock(*dead_net, s, &stop)) return false;
+  }
+  if (gfp_fed_empty(stop)) return false;
+
+  // The witness must satisfy `p` as well as stop. With a purely discrete `p` the region is the
+  // whole zone and this is a no-op.
+  if (p.forbid.empty()) return true;
+  return !gfp_fed_empty(fed_intersect(stop, p_region_of(s)));
+}
+
+/// @brief ::leadsto_witness at an online record, whose discrete half lives in its key.
+bool Otf::online_leadsto_witness(int v, bool no_successor) {
+  if (!leadsto_early_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
+  const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
+  SymState s;
+  s.locs = ki.locs;
+  s.ints = ki.ints;
+  if (holds(q, s) || !p_discrete(s)) return false;   // cheap discrete reject before any zone work
+  zread(v, s.zone);
+  return leadsto_witness(s, no_successor, ki.may_deadlock);
+}
+
 /// @brief Hash a discrete state without allocating its byte key.
 static std::uint64_t disc_hash(const LocVec& locs, const IntVec& ints) {
   std::uint64_t h = 1469598103934665603ULL;
@@ -1780,6 +1842,12 @@ void Otf::expand(int u) {
   SymState usc;
   gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags,
                   avoid_forward_ ? avoid_ : nullptr);
+  // Same concrete counterexample as the online route takes; `usc` still holds this node's exact
+  // state. `may_deadlock` is not tracked per key here, so the exact test is always allowed to run.
+  if (leadsto_early_ && leadsto_witness(usc, succ.empty(), /*key_may_deadlock=*/true)) {
+    eg_early_hit_ = true;
+    return;
+  }
   for (std::size_t k = 0; k < succ.size(); ++k) {
     pieces.clear();
     if (amap_) {
@@ -2033,10 +2101,10 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     if (e) return *e == '1';
     return scc_iter_;
   }();
-  std::vector<std::vector<int>> sccs;
-  if (!scc_on) {
-    sccs.push_back(S);                     // one component: exactly the undecomposed sweep
-  } else {
+  // Tarjan runs unconditionally: the emptiness prune below reads its components, and the sweep
+  // reads them as an ORDER only when `scc_on`.
+  std::vector<std::vector<int>> comps;
+  {
     std::vector<int> idx(N, -1), low(N, 0), stk;
     std::vector<char> on(N, 0);
     int next = 0;
@@ -2075,13 +2143,62 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
             // Restore S's own order inside the component, so the lockstep sweep walks it exactly
             // as the undecomposed one did.
             std::sort(comp.begin(), comp.end());
-            sccs.push_back(std::move(comp));
+            comps.push_back(std::move(comp));
           }
           const int child = v;
           call.pop_back();
           if (!call.empty()) low[call.back().first] = std::min(low[call.back().first], low[child]);
         }
       }
+    }
+  }
+
+  // STRUCTURAL EMPTINESS, decided on the graph alone.
+  //
+  // At the fixpoint, `W[v] = W[v] /\ (NoSucc(v) \/ \/_e Pre_e(W[j_e]))`. So a non-empty W[v]
+  // needs either a non-empty stop set at v, or a successor inside S that is itself non-empty.
+  // Chase the second case: it yields an unbounded walk of non-empty nodes inside S, which in a
+  // finite graph must revisit a node and therefore meets a cycle. Every node with a non-empty
+  // value can thus reach, inside S, a node that is on a cycle or can stop --- and every node
+  // that cannot is EXACTLY empty, with no zone computation at all.
+  //
+  // Nothing here reads a zone. `nosucc` is already built for all of S, and Tarjan emits
+  // components successors-first, so one pass in that order settles it: a singleton's successors
+  // outside itself live in components already decided.
+  std::vector<char> live_node(N, 0);
+  std::size_t live_count = 0;
+  for (const auto& comp : comps) {
+    bool live = comp.size() > 1;                       // a nontrivial component IS a cycle
+    for (int v : comp) {
+      if (live) break;
+      if (!nosucc[v].empty()) { live = true; break; }  // the run may legitimately stop here
+      for (const auto& e : adj[v])
+        if (inS[e.tgt] && (e.tgt == v || live_node[e.tgt])) { live = true; break; }
+    }
+    if (!live) continue;
+    for (int v : comp) { live_node[v] = 1; ++live_count; }
+  }
+  // Pin the rest to the empty federation, which is what `inS[v] = 0` means to ::relax.
+  if (live_count < S.size())
+    for (int v : S)
+      if (!live_node[v]) {
+        inS[v] = 0;
+        seeded[v] = 0;
+        W[v].clear();
+        nosucc[v].clear();
+      }
+
+  std::vector<std::vector<int>> sccs;
+  if (!scc_on) {
+    std::vector<int> flat;                 // one component: the undecomposed sweep, minus the
+    flat.reserve(live_count);              // nodes just proved empty
+    for (int v : S)
+      if (live_node[v]) flat.push_back(v);
+    if (!flat.empty()) sccs.push_back(std::move(flat));
+  } else {
+    for (auto& comp : comps) {
+      if (comp.empty() || !live_node[comp.front()]) continue;
+      sccs.push_back(std::move(comp));
     }
   }
 
@@ -2277,8 +2394,9 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     std::size_t stopn = 0;
     for (int v : S) if (!nosucc[v].empty()) ++stopn;
     std::fprintf(stderr, "GFP-PROFILE |S|=%zu N=%zu sccs=%zu nontrivial=%zu maxcomp=%zu "
-                 "visits=%zu pre=%zu stopnodes=%zu fedmax=%zu\n",
-                 S.size(), N, sccs.size(), nontrivial, big, it, pre_calls, stopn, fed_max);
+                 "visits=%zu pre=%zu stopnodes=%zu fedmax=%zu live=%zu\n",
+                 S.size(), N, sccs.size(), nontrivial, big, it, pre_calls, stopn, fed_max,
+                 live_count);
   }
 }
 
@@ -3341,6 +3459,10 @@ void Otf::online_expand(int u) {
     eg_early_hit_ = true;
     return;
   }
+  if (leadsto_early_ && online_leadsto_witness(u, succ.empty())) {
+    eg_early_hit_ = true;
+    return;
+  }
 
   std::vector<int> target_keys(succ.size());
   std::vector<int> tag_ids(succ.size());
@@ -3826,6 +3948,10 @@ bool Otf::eg_verdict(GfpStats* gs) {
 bool Otf::run(GfpStats* gs) {
   setup();
   base_forward();
+  // A concrete `p /\ EG !q` witness found during construction is already the verdict; see
+  // ::Otf::leadsto_witness. `run` also serves `E[] psi`, whose own early hit is handled by its
+  // caller, so this only fires when leads-to armed it.
+  if (leadsto_early_ && eg_early_hit_) { fill_stats(gs); return false; }
   const bool violated = fwd_ok_ && final_verdict_violated();
   fill_stats(gs);
   return !violated;
@@ -3838,6 +3964,14 @@ bool Otf::run(GfpStats* gs) {
 /// source-edge replay handle.  Atom pullback and expansion share one worklist, and only the
 /// stable active quotient reaches the backward GFP.
 bool Otf::run_online_d(GfpStats* gs) {
+  // A violated `p --> q` needs no finished graph: see ::Otf::leadsto_witness. Armed before either
+  // delegation below, so the exact and structurally-empty-D routes get it too. Disabled with
+  // PTCTLMC_LEADSTO_EARLY=0, for measuring what it saves.
+  leadsto_early_ = [] {
+    const char* e = std::getenv("PTCTLMC_LEADSTO_EARLY");
+    return !e || *e != '0';
+  }();
+
   // Diagonal constraints already select the exact inclusion lane.  There is no a_LU/D quotient
   // to refine there, and preserving the existing exact route avoids imposing online bookkeeping
   // where it cannot buy anything.
@@ -3855,6 +3989,10 @@ bool Otf::run_online_d(GfpStats* gs) {
   setup();
   const auto forward_start = std::chrono::steady_clock::now();
   online_base_forward();
+  if (eg_early_hit_) {                     // a concrete `p /\ EG !q` witness was reached
+    fill_stats(gs);
+    return false;
+  }
   const auto forward_done = std::chrono::steady_clock::now();
   const std::size_t rss_fwd = rss_mb();
   std::size_t raw_nodes = node.size(), raw_edges = 0, active_nodes = 0, active_slots = 0;

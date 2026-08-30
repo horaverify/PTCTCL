@@ -190,6 +190,9 @@ class Otf {
   bool scc_iter_ = true;
   bool eg_early_ = false;
   bool eg_early_hit_ = false;
+  // `p --> q`: a reached `p /\ !q` valuation that can end a maximal run is already a
+  // counterexample, so the forward search may stop the moment one is found.
+  bool leadsto_early_ = false;
   bool online_eg_prune_ = false;
   bool online_eg_repair_ = false;
   bool force_exact_ = false;
@@ -292,7 +295,12 @@ class Otf {
   void setup();
   bool holds(const DiscPred& pr, const detail::SymState& s) const;
   bool is_p(int i);
+  bool p_discrete(const detail::SymState& s) const;
   Federation p_region(int i);
+  Federation p_region_of(const detail::SymState& s) const;
+  bool leadsto_witness(const detail::SymState& s, bool no_successor,
+                       bool key_may_deadlock);
+  bool online_leadsto_witness(int v, bool no_successor);
   bool is_nq(int i);
   void grow();
   int intern(detail::SymState&& s);

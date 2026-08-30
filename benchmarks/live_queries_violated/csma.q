@@ -1,0 +1,1 @@
+Bus.Idle --> Bus.Collided
