@@ -16,19 +16,19 @@
 
 namespace hora {
 
-struct UppaalError : std::runtime_error {
+struct ModelError : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
-TimedAutomaton load_uppaal_xml(const std::string& path);
+TimedAutomaton load_model(const std::string& path);
 
 // Number of <template> elements (>1 => a network).
 // Number of processes the <system> declaration puts in the network (one
 // template may be instantiated several times); falls back to the template
 // count for models with no system list.
-int uppaal_process_count(const std::string& path);
+int network_process_count(const std::string& path);
 // Load a multi-template network (clocks + integer variables + int guards/updates).
-Network load_uppaal_network(const std::string& path);
+Network load_network(const std::string& path);
 
 struct Query {
   enum Kind { EF, AG, EG, AF, LEADSTO } kind = EF;  // E<>, A[], E[], A<>, p-->q
@@ -48,7 +48,7 @@ bool check_query(const TimedAutomaton& ta, const Query& q, bool* satisfied,
                  Backend backend = Backend::Omp, ReachStats* stats = nullptr);
 
 // Evaluate a query on a network (E<> over process locations / int / clock atoms).
-bool check_net_query(const Network& net, const Query& q, bool* satisfied,
+bool check_network_query(const Network& net, const Query& q, bool* satisfied,
                      Backend backend = Backend::Omp, ReachStats* stats = nullptr);
 
 }  // namespace hora

@@ -77,7 +77,7 @@ struct Network {
   //
   // It is NOT a property of the zone, and that is a language restriction rather than an accident:
   // an edge synchronising on an urgent channel may not carry a clock guard (the same restriction
-  // UPPAAL imposes). load_uppaal_network rejects a model that breaks it. Were clock guards
+  // UPPAAL imposes). load_network rejects a model that breaks it. Were clock guards
   // allowed, enabledness could switch on partway through a delay and the delay would have to be
   // clipped at that instant, which is a zone subtraction with a non-convex result. See
   // docs/limitations.md.

@@ -1,28 +1,14 @@
-/// @file uppaal.cpp
-/// @brief Front end: parses model files and query files into the engine's own structures.
+/// @file src/frontend/model_reader.cpp
+/// @brief Reads a model file into a hora::Network or hora::TimedAutomaton.
 ///
-/// Everything here is translation, never analysis. It reads the modelling language's XML format
-/// and produces either a hora::TimedAutomaton (single automaton) or a hora::Network
-/// (parallel composition), plus the hora::Query list a run checks. It also owns the query
-/// routers ::check_query and ::check_net_query, which choose an engine per query kind.
-///
-/// @par What the parser refuses
-/// A construct that cannot be represented faithfully is rejected, so a query over it reports
-/// unsupported rather than being answered against different semantics. The one place this rule is
-/// broken today is `urgent chan`, which is accepted and downgraded silently — see
-/// docs/limitations.md §1.
-///
-/// @warning Declarations are matched textually. Any keyword test must therefore check both sides
-///          of the match for identifier characters; testing only the prefix would split an
-///          identifier that merely begins or ends with the keyword and drop the declaration with
-///          no diagnostic.
+/// The input is UPPAAL's XML, the only model format HORA reads. This is the only place that
+/// knows the file format: nothing downstream of hora::load_network depends on where a network
+/// came from.
 
-#include "hora/uppaal.hpp"
-
+#include "hora/model_io.hpp"
 #include "hora/config.hpp"
 #include "hora/liveness.hpp"
 #include "hora/reachability.hpp"
-
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -30,10 +16,18 @@
 #include <functional>
 #include <sstream>
 #include <unordered_map>
-
 #include "hora/reach.hpp"
+#include "src/frontend/parse_util.hpp"
 
 namespace hora {
+
+using frontend::ClockMap;
+using frontend::ident_char;
+using frontend::parse_atom;
+using frontend::parse_net_atom;
+using frontend::split_conjuncts;
+using frontend::trim;
+
 namespace {
 
 // ---- a minimal XML tree, sufficient for the flat model format ---------------
@@ -137,44 +131,8 @@ struct XmlParser {
   Xml parse() { skip_misc(); return element(); }
 };
 
-// ---- expression tokenizing / parsing (clock constraints & assignments) -------
-/// @brief Strip leading and trailing whitespace.
-std::string trim(const std::string& s) {
-  std::size_t a = 0, b = s.size();
-  while (a < b && std::isspace((unsigned char)s[a])) ++a;
-  while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
-  return s.substr(a, b - a);
-}
 
-/// @brief May @p c appear inside an identifier?
-///
-/// @warning Used to require that a textual operator such as `and` is a whole token. Both sides
-///          must be checked: an identifier merely *ending* in the keyword would otherwise be split
-///          mid-name, silently dropping the declaration and corrupting the model with no
-///          diagnostic.
-static inline bool ident_char(unsigned char c) { return std::isalnum(c) != 0 || c == '_'; }
 
-/// @brief Split a textual conjunction into its conjuncts.
-/// @param s the expression text
-/// @return the conjuncts, trimmed; a single-element result when there is no top-level operator
-/// @note Splits on both the symbolic and the word form of conjunction, the latter only when it
-///       stands as a whole token; see ::ident_char.
-std::vector<std::string> split_conjuncts(const std::string& s) {
-  std::vector<std::string> out;
-  std::string cur;
-  for (std::size_t i = 0; i < s.size();) {
-    if (s.compare(i, 2, "&&") == 0) { out.push_back(trim(cur)); cur.clear(); i += 2; }
-    else if (s.compare(i, 3, "and") == 0
-             && (i == 0 || !ident_char((unsigned char)s[i - 1]))
-             && (i + 3 >= s.size() || !ident_char((unsigned char)s[i + 3]))) {
-      out.push_back(trim(cur)); cur.clear(); i += 3;
-    }
-    else if (s[i] == ',') { out.push_back(trim(cur)); cur.clear(); ++i; }
-    else cur += s[i++];
-  }
-  if (!trim(cur).empty()) out.push_back(trim(cur));
-  return out;
-}
 
 /// @brief Split on top-level `||` / `or`, the disjunctive counterpart of ::split_conjuncts.
 /// @note Used only by the liveness predicates. A disjunction is admissible there precisely when
@@ -215,7 +173,7 @@ struct Side {
 /// @param raw the text
 /// @param cm  clock name to index
 /// @return the parsed side
-/// @throws UppaalError if the text is neither a constant nor a known clock or clock difference
+/// @throws ModelError if the text is neither a constant nor a known clock or clock difference
 Side parse_side(const std::string& raw, const ClockMap& cm) {
   std::string t = trim(raw);
   Side s;
@@ -262,29 +220,6 @@ Cmp flip(Cmp c) {
                case Cmp::GE: return Cmp::LE; case Cmp::GT: return Cmp::LT; default: return Cmp::EQ; }
 }
 
-/// @brief Parse a single comparison into clock constraints.
-/// @param atom the atom text
-/// @param cm   clock name to index
-/// @param[out] out constraints are appended on success
-/// @return @c false if @p atom is not a clock comparison, leaving @p out untouched
-bool parse_atom(const std::string& atom, const ClockMap& cm, std::vector<Constraint>& out) {
-  static const std::pair<const char*, Cmp> ops[] = {
-      {"<=", Cmp::LE}, {">=", Cmp::GE}, {"==", Cmp::EQ}, {"<", Cmp::LT}, {">", Cmp::GT}};
-  std::size_t pos = std::string::npos;
-  Cmp op = Cmp::EQ;
-  int oplen = 0;
-  for (auto& o : ops) {
-    std::size_t p = atom.find(o.first);
-    if (p != std::string::npos && (pos == std::string::npos || p < pos)) { pos = p; op = o.second; oplen = (int)std::string(o.first).size(); }
-  }
-  if (pos == std::string::npos) return false;
-  Side l = parse_side(atom.substr(0, pos), cm);
-  Side r = parse_side(atom.substr(pos + oplen), cm);
-  if (l.is_const && !r.is_const) { std::swap(l, r); op = flip(op); }
-  if (l.is_const || !r.is_const) return false;  // need clock op const
-  emit_clock_cmp(l.a, l.b, op, r.val, out);
-  return true;
-}
 
 /// @brief Parse a conjunction of clock comparisons.
 /// @param expr the expression text
@@ -380,7 +315,6 @@ std::string strip_comments(const std::string& s) {
   return o;
 }
 
-bool ident_char(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
 
 /// @brief Parse the system block.
 /// @param raw the block text
@@ -422,7 +356,7 @@ SystemDecl parse_system(const std::string& raw) {
     std::string args = trim(rhs.substr(op + 1, rhs.size() - op - 2));
     if (lhs.empty() || tname.empty()) continue;
     if (!args.empty())
-      throw UppaalError("parameterised template instantiation is not supported: " + stmt);
+      throw ModelError("parameterised template instantiation is not supported: " + stmt);
     sd.inst[lhs] = tname;
   }
   return sd;
@@ -433,22 +367,22 @@ SystemDecl parse_system(const std::string& raw) {
 /// @brief Load a model file as a single timed automaton.
 /// @param path path to the model file
 /// @return the automaton, with its max-constant arrays already computed
-/// @throws UppaalError if the file cannot be opened or the model cannot be represented
-/// @note For a model composing several processes, use ::load_uppaal_network instead.
-TimedAutomaton load_uppaal_xml(const std::string& path) {
+/// @throws ModelError if the file cannot be opened or the model cannot be represented
+/// @note For a model composing several processes, use ::load_network instead.
+TimedAutomaton load_model(const std::string& path) {
   std::ifstream in(path);
-  if (!in) throw UppaalError("cannot open model: " + path);
+  if (!in) throw ModelError("cannot open model: " + path);
   std::stringstream ss;
   ss << in.rdbuf();
   Xml nta = XmlParser(ss.str()).parse();
-  if (nta.tag != "nta") throw UppaalError("not an <nta> UPPAAL model");
+  if (nta.tag != "nta") throw ModelError("not an <nta> UPPAAL model");
 
   TimedAutomaton ta;
   ClockMap cm;
   ta.clock_names.push_back("0");
   if (const Xml* d = nta.first("declaration")) collect_clocks(d->text, cm, ta.clock_names);
   const Xml* tmpl = nta.first("template");
-  if (!tmpl) throw UppaalError("no <template> found");
+  if (!tmpl) throw ModelError("no <template> found");
   if (const Xml* d = tmpl->first("declaration")) collect_clocks(d->text, cm, ta.clock_names);
   ta.nclocks = (int)ta.clock_names.size() - 1;
 
@@ -489,101 +423,12 @@ TimedAutomaton load_uppaal_xml(const std::string& path) {
 /// @brief Load a query file.
 /// @param path path to the query file
 /// @return one hora::Query per query line
-/// @throws UppaalError if the file cannot be opened
+/// @throws ModelError if the file cannot be opened
 /// @post A query whose operator is not supported is returned with `supported == false` and a note
 ///       explaining why, rather than being dropped — so every input line is accounted for in the
 ///       output.
 /// @note Each query's condition text is stored raw and resolved later, since resolving it needs
 ///       the clock and variable maps of the model it will be checked against.
-std::vector<Query> load_queries(const std::string& path) {
-  std::ifstream in(path);
-  if (!in) throw UppaalError("cannot open query file: " + path);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  std::string all = ss.str();
-  // strip /* */ comments
-  for (std::size_t p; (p = all.find("/*")) != std::string::npos;) {
-    std::size_t e = all.find("*/", p);
-    all.erase(p, (e == std::string::npos ? all.size() : e + 2) - p);
-  }
-  std::vector<Query> out;
-  std::stringstream ls(all);
-  std::string line;
-  while (std::getline(ls, line)) {
-    std::size_t c = line.find("//");
-    if (c != std::string::npos) line = line.substr(0, c);
-    line = trim(line);
-    if (line.empty()) continue;
-    Query q;
-    q.raw = line;
-    std::string cond;
-    std::size_t arrow = line.find("-->");
-    if (arrow != std::string::npos) {  // leads-to:  p --> q
-      q.kind = Query::LEADSTO;
-      q.lhs = trim(line.substr(0, arrow));
-      cond = trim(line.substr(arrow + 3));
-    } else if (line.compare(0, 3, "E<>") == 0) { q.kind = Query::EF; cond = line.substr(3); }
-    else if (line.compare(0, 3, "A[]") == 0) { q.kind = Query::AG; cond = line.substr(3); }
-    else if (line.compare(0, 3, "E[]") == 0) { q.kind = Query::EG; cond = line.substr(3); }
-    else if (line.compare(0, 3, "A<>") == 0) { q.kind = Query::AF; cond = line.substr(3); }
-    else { q.supported = false; q.note = "unsupported query operator"; out.push_back(q); continue; }
-    out.push_back(q);
-    out.back().raw = line;
-    out.back().note = cond;  // condition text stored raw; resolved later (needs clocks)
-  }
-  return out;
-}
-
-/// @brief Resolve and decide one query against a single timed automaton.
-/// @param ta   the automaton
-/// @param q_in the query, with its condition text unresolved
-/// @param[out] satisfied receives the verdict; written only on @c true
-/// @param backend which expansion backend to run
-/// @param[out] stats optional statistics; unchanged when null
-/// @return @c false if the query is unsupported or its condition does not resolve against @p ta
-/// @note A @c false return is reported to the user as unsupported. It never means "not
-///       satisfied", which is why @p satisfied is left untouched.
-bool check_query(const TimedAutomaton& ta, const Query& q_in, bool* satisfied, Backend backend,
-                 ReachStats* stats) {
-  if (!q_in.supported) return false;
-  // rebuild clock map from the automaton
-  ClockMap cm;
-  for (int c = 1; c <= ta.nclocks; ++c) cm[ta.clock_names[c]] = c;
-
-  // parse the condition (stored raw in note by load_queries)
-  Query q = q_in;
-  std::string cond = q.note;
-  q.note.clear();
-  std::string loc_name;
-  std::vector<Constraint> clocks;
-  for (auto atom : split_conjuncts(cond)) {
-    atom = trim(atom);
-    if (atom.empty() || atom == "true") continue;
-    std::vector<Constraint> cs;
-    if (parse_atom(atom, cm, cs)) { clocks.insert(clocks.end(), cs.begin(), cs.end()); continue; }
-    if (atom == "deadlock") { *satisfied = false; return false; }
-    // location atom "Proc.Loc" or "Loc"
-    std::size_t dot = atom.rfind('.');
-    loc_name = (dot == std::string::npos) ? atom : atom.substr(dot + 1);
-  }
-  int target = -1;
-  if (!loc_name.empty()) {
-    for (int i = 0; i < (int)ta.locations.size(); ++i)
-      if (ta.locations[i].name == loc_name) { target = i; break; }
-    if (target < 0) return false;  // unknown location
-  }
-
-  if (q.kind == Query::EF) {
-    *satisfied = reachable(ta, target, clocks, stats, backend);
-    return true;
-  }
-  // A[] cond  (clock safety):  satisfied iff no reachable state violates cond.
-  if (target >= 0) return false;  // A[] with a location target not supported in v1
-  for (const auto& c : clocks)
-    if (reachable(ta, -1, {negate(c)}, stats, backend)) { *satisfied = false; return true; }
-  *satisfied = true;
-  return true;
-}
 
 // ============================ networks ======================================
 namespace {
@@ -618,37 +463,6 @@ Side2 parse_side2(const std::string& raw, const ClockMap& cm,
   return {SideKind::Const, 0, -1, v};
 }
 
-/// @brief Parse one network-level atom into either a clock constraint or an integer atom.
-/// @param atom the atom text
-/// @param cm   clock name to index
-/// @param[out] cc clock constraints are appended here
-/// @param[out] ic integer atoms are appended here
-/// @post At most one of @p cc and @p ic grows, which is how callers tell the two kinds apart —
-///       ::build_pred relies on this to refuse a clock constraint in a liveness predicate.
-void parse_net_atom(const std::string& atom, const ClockMap& cm,
-                    const std::unordered_map<std::string, int>& im,
-                    std::vector<Constraint>& cc, std::vector<IntAtom>& ic) {
-  static const std::pair<const char*, int> ops[] = {{"<=", 0}, {">=", 1}, {"==", 2}, {"!=", 3}, {"<", 4}, {">", 5}};
-  std::size_t pos = std::string::npos; int opi = -1, oplen = 0;
-  for (auto& o : ops) {
-    std::size_t q = atom.find(o.first);
-    if (q != std::string::npos && (pos == std::string::npos || q < pos)) { pos = q; opi = o.second; oplen = (int)std::string(o.first).size(); }
-  }
-  if (pos == std::string::npos) return;
-  Side2 l = parse_side2(atom.substr(0, pos), cm, im);
-  Side2 r = parse_side2(atom.substr(pos + oplen), cm, im);
-  auto flip = [](int o) { switch (o) { case 0: return 1; case 1: return 0; case 4: return 5; case 5: return 4; default: return o; } };
-  if (l.kind == SideKind::Const && r.kind != SideKind::Const) { std::swap(l, r); opi = flip(opi); }
-  if (r.kind != SideKind::Const) return;
-  if (l.kind == SideKind::Clock || l.kind == SideKind::ClockDiff) {
-    if (opi == 3) return;  // != is not a clock constraint
-    Cmp cmp = opi == 0 ? Cmp::LE : opi == 1 ? Cmp::GE : opi == 2 ? Cmp::EQ : opi == 4 ? Cmp::LT : Cmp::GT;
-    emit_clock_cmp(l.a, l.b, cmp, r.val, cc);
-  } else if (l.kind == SideKind::Int) {
-    IntOp io = opi == 0 ? IntOp::Le : opi == 1 ? IntOp::Ge : opi == 2 ? IntOp::Eq : opi == 3 ? IntOp::Ne : opi == 4 ? IntOp::Lt : IntOp::Gt;
-    ic.push_back({l.a, io, r.val});
-  }
-}
 
 /// @brief Parse an edge guard into its clock and integer parts.
 /// @param text the guard text
@@ -688,9 +502,9 @@ void parse_net_assign(const std::string& text, const ClockMap& cm,
 /// @return the number of composed processes, or 1 when the model declares no system block
 /// @note Used to choose between the single-automaton and network engines before paying for a full
 ///       parse.
-int uppaal_process_count(const std::string& path) {
+int network_process_count(const std::string& path) {
   std::ifstream in(path);
-  if (!in) throw UppaalError("cannot open model: " + path);
+  if (!in) throw ModelError("cannot open model: " + path);
   std::stringstream ss; ss << in.rdbuf();
   Xml nta = XmlParser(ss.str()).parse();
   // The system list decides how many processes there are: one template may be
@@ -854,9 +668,9 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
       std::size_t p = 0;
       long lo = 0, hi = 0;
       if (!type_range(rest, &p, dc, net.funcs, &lo, &hi))
-        throw UppaalError("unsupported typedef: " + s);
+        throw ModelError("unsupported typedef: " + s);
       const std::string name = trim(rest.substr(p));
-      if (name.empty()) throw UppaalError("typedef without a name: " + s);
+      if (name.empty()) throw ModelError("typedef without a name: " + s);
       dc.tdefs[name] = {lo, hi};
       continue;
     }
@@ -895,7 +709,7 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
           SymTab tmp = dc.st;
           count = const_eval(parse_expression(trim(part.substr(br + 1, rb - br - 1)), tmp, net.funcs),
                              net.funcs);
-          if (count <= 0) throw UppaalError("channel array with non-positive size: " + part);
+          if (count <= 0) throw ModelError("channel array with non-positive size: " + part);
         }
         const int first = static_cast<int>(net.channels.size());
         for (long i = 0; i < count; ++i) {
@@ -934,7 +748,7 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
         count = const_eval(parse_expression(trim(name.substr(br + 1, rb - br - 1)), tmp, net.funcs),
                            net.funcs);
         name = trim(name.substr(0, br));
-        if (count <= 0) throw UppaalError("array with non-positive size: " + part);
+        if (count <= 0) throw ModelError("array with non-positive size: " + part);
       }
       if (name.empty()) continue;
 
@@ -993,10 +807,10 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
       std::size_t tp = 0;
       long plo = 0, phi = 0;
       if (!type_range(p, &tp, dc, net.funcs, &plo, &phi))
-        throw UppaalError("unsupported parameter in function '" + f.name + "': " + p);
+        throw ModelError("unsupported parameter in function '" + f.name + "': " + p);
       const std::string pname = trim(p.substr(tp));
       if (pname.find('&') != std::string::npos)
-        throw UppaalError("reference parameters are not supported: " + p);
+        throw ModelError("reference parameters are not supported: " + p);
       SymTab::Sym sym;
       sym.kind = SymTab::Sym::Local;
       sym.idx = nloc++;
@@ -1111,14 +925,14 @@ ExprP and_expr(ExprP a, ExprP b) {
 /// downgrade this replaces, which verified the model against semantics it did not declare.
 ///
 /// @param net the finalised network
-/// @throws UppaalError naming the process, edge and channel of the first offending edge
+/// @throws ModelError naming the process, edge and channel of the first offending edge
 static void check_urgent_chan_guards(const Network& net) {
   if (!net.has_urgent_chan) return;
   for (const auto& proc : net.procs)
     for (const auto& e : proc.edges) {
       if (e.sync_chan < 0 || e.sync_chan >= (int)net.chan_urgent.size()) continue;
       if (!net.chan_urgent[e.sync_chan] || e.clock_guard.empty()) continue;
-      throw UppaalError(
+      throw ModelError(
           "clock guard on an edge synchronising over the urgent channel '" +
           net.channels[e.sync_chan] + "' (process " + proc.name + ", " +
           proc.locations[e.src].name + " -> " + proc.locations[e.tgt].name +
@@ -1129,15 +943,15 @@ static void check_urgent_chan_guards(const Network& net) {
 /// @brief Load a model file as a network of timed automata.
 /// @param path path to the model file
 /// @return the network, fully finalised
-/// @throws UppaalError if the file cannot be opened or the model cannot be represented
+/// @throws ModelError if the file cannot be opened or the model cannot be represented
 /// @post Every finalisation analysis has run — bounds, per-location bounds, active clocks and
 ///       integer liveness — so the network is ready to explore.
-Network load_uppaal_network(const std::string& path) {
+Network load_network(const std::string& path) {
   std::ifstream in(path);
-  if (!in) throw UppaalError("cannot open model: " + path);
+  if (!in) throw ModelError("cannot open model: " + path);
   std::stringstream ss; ss << in.rdbuf();
   Xml nta = XmlParser(ss.str()).parse();
-  if (nta.tag != "nta") throw UppaalError("not an <nta> model");
+  if (nta.tag != "nta") throw ModelError("not an <nta> model");
 
   Network net;
   ClockMap cm;
@@ -1177,13 +991,13 @@ Network load_uppaal_network(const std::string& path) {
     if (!p || trim(p->text).empty()) return false;
     std::string s = trim(p->text);
     if (s.find(',') != std::string::npos)
-      throw UppaalError("templates with more than one parameter are not supported: " + s);
+      throw ModelError("templates with more than one parameter are not supported: " + s);
     if (s.find('&') != std::string::npos)
-      throw UppaalError("reference parameters are not supported: " + s);
+      throw ModelError("reference parameters are not supported: " + s);
     if (starts_word(s, "const")) s = trim(s.substr(5));
     std::size_t tp = 0;
     if (!type_range(s, &tp, dc, net.funcs, plo, phi))
-      throw UppaalError("unsupported template parameter type: " + s);
+      throw ModelError("unsupported template parameter type: " + s);
     *pname = trim(s.substr(tp));
     return true;
   };
@@ -1205,7 +1019,7 @@ Network load_uppaal_network(const std::string& path) {
       const std::string tn = (ii != sd.inst.end()) ? ii->second : nm;
       auto ti = tmpl_by_name.find(tn);
       if (ti == tmpl_by_name.end())
-        throw UppaalError("system declaration names unknown process or template: " + nm);
+        throw ModelError("system declaration names unknown process or template: " + nm);
       add_instances(nm, ti->second);
     }
   } else {
@@ -1259,14 +1073,14 @@ Network load_uppaal_network(const std::string& path) {
         if (lb.tag != "label" || lb.attr("kind") != "select") continue;
         const std::string t = trim(lb.text);
         const std::size_t colon = t.find(':');
-        if (colon == std::string::npos) throw UppaalError("malformed select: " + t);
+        if (colon == std::string::npos) throw ModelError("malformed select: " + t);
         if (t.find(',') != std::string::npos)
-          throw UppaalError("multiple select bindings are not supported: " + t);
+          throw ModelError("multiple select bindings are not supported: " + t);
         sel_name = trim(t.substr(0, colon));
         std::string ty = trim(t.substr(colon + 1));
         std::size_t tp = 0;
         if (!type_range(ty, &tp, ldc, net.funcs, &sel_lo, &sel_hi))
-          throw UppaalError("unsupported select type: " + ty);
+          throw ModelError("unsupported select type: " + ty);
       }
 
       for (long sv = sel_lo; sv <= (sel_name.empty() ? sel_lo : sel_hi); ++sv) {
@@ -1343,7 +1157,7 @@ Network load_uppaal_network(const std::string& path) {
             const std::size_t br = raw.find('[');
             if (br == std::string::npos) {
               auto it = chm.find(raw);
-              if (it == chm.end()) throw UppaalError("unknown channel: " + raw);
+              if (it == chm.end()) throw ModelError("unknown channel: " + raw);
               sync_opts.emplace_back(it->second, nullptr);
               continue;
             }
@@ -1352,13 +1166,13 @@ Network load_uppaal_network(const std::string& path) {
             SymTab tmp = edc.st;
             ExprP idx = parse_expression(itxt, tmp, net.funcs);
             auto ca = edc.chan_arr.find(cbase);
-            if (ca == edc.chan_arr.end()) throw UppaalError("unknown channel array: " + cbase);
+            if (ca == edc.chan_arr.end()) throw ModelError("unknown channel array: " + cbase);
             long fixed = 0;
             bool is_const = true;
             try { fixed = const_eval(idx, net.funcs); } catch (const ParseError&) { is_const = false; }
             if (is_const) {
               if (fixed < 0 || fixed >= ca->second.second)
-                throw UppaalError("channel index out of range: " + raw);
+                throw ModelError("channel index out of range: " + raw);
               sync_opts.emplace_back(ca->second.first + static_cast<int>(fixed), nullptr);
             } else {
               // State-dependent index (`stop[tail()]!`, `go[front()]!`): the
@@ -1420,441 +1234,106 @@ Network load_uppaal_network(const std::string& path) {
 /// @note A @c false return is reported as unsupported and never means "not satisfied", which is
 ///       why @p satisfied is left untouched. This is the path a liveness predicate mentioning a
 ///       clock takes; see docs/limitations.md §3.
-bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backend backend,
-                     ReachStats* stats) {
-  if (!q.supported) return false;
-  ClockMap cm;
-  for (int c = 1; c <= net.nclocks; ++c) cm[net.clock_names[c]] = c;
-  std::unordered_map<std::string, int> im;
-  for (int i = 0; i < (int)net.intvars.size(); ++i) im[net.intvars[i].name] = i;
 
-  // Conjunction -> NetTarget (E<> path; clock atoms allowed).
-  auto build_target = [&](const std::string& text, NetTarget& tgt) -> bool {
-    for (auto atom : split_conjuncts(text)) {
-      atom = trim(atom);
-      if (atom.empty() || atom == "true") continue;
-      if (atom == "deadlock") return false;
-      std::vector<Constraint> cc; std::vector<IntAtom> ic;
-      parse_net_atom(atom, cm, im, cc, ic);
-      if (!cc.empty() || !ic.empty()) {
-        tgt.clock_cond.insert(tgt.clock_cond.end(), cc.begin(), cc.end());
-        tgt.int_cond.insert(tgt.int_cond.end(), ic.begin(), ic.end());
-        continue;
-      }
-      std::size_t dot = atom.rfind('.');
-      std::string proc = dot == std::string::npos ? "" : atom.substr(0, dot);
-      std::string loc = dot == std::string::npos ? atom : atom.substr(dot + 1);
-      int pi, li;
-      if (!net.resolve_location(proc, loc, &pi, &li)) return false;
-      tgt.loc_req.push_back({pi, li});
-    }
-    return true;
-  };
-  // Conjunction of location/int atoms -> DiscPred (liveness; clock atoms rejected).
-  // Parse a list of atoms into `out`, optionally negating each one as it is pushed.
-  //
-  // Negating atom by atom is what lets a disjunction be accepted: `a \/ b` is `!(!a /\ !b)`, and
-  // the engine represents a conjunction and the negation of a conjunction, so a disjunction of
-  // single atoms lands in the second class. It does not represent anything wider, which is why an
-  // atom whose own negation is not a single atom -- a clock equality, since `x == 5` parses to
-  // two constraints and negates to a disjunction -- is refused here rather than approximated.
-  auto build_atoms = [&](const std::vector<std::string>& atoms, DiscPred& out, bool neg) -> bool {
-    for (auto atom : atoms) {
-      atom = trim(atom);
-      if (atom.empty() || atom == "true") continue;
-      std::vector<Constraint> cc; std::vector<IntAtom> ic;
-      parse_net_atom(atom, cm, im, cc, ic);
-      // A clock atom is kept, not refused: ::exists_invariant_run adjoins the conjunction to
-      // every location invariant, which is the psi-restricted semantics and is exact because a
-      // conjunction of constraints is convex.
-      if (!cc.empty()) {
-        if (neg) {
-          if (cc.size() != 1) return false;   // `x == 5` negates to a disjunction
-          out.clocks.push_back(negate(cc[0]));
-        } else {
-          out.clocks.insert(out.clocks.end(), cc.begin(), cc.end());
-        }
-        continue;
-      }
-      if (!ic.empty()) {
-        for (const auto& a : ic) {
-          if (!neg) { out.ints.push_back(a); continue; }
-          IntOp n = a.op;
-          switch (a.op) {
-            case IntOp::Eq: n = IntOp::Ne; break; case IntOp::Ne: n = IntOp::Eq; break;
-            case IntOp::Lt: n = IntOp::Ge; break; case IntOp::Ge: n = IntOp::Lt; break;
-            case IntOp::Le: n = IntOp::Gt; break; case IntOp::Gt: n = IntOp::Le; break;
-          }
-          out.ints.push_back({a.var, n, a.val});
-        }
-        continue;
-      }
-      bool eq = true;
-      std::string a = atom;
-      if (!a.empty() && a[0] == '!') { eq = false; a = trim(a.substr(1)); }
-      else if (a.compare(0, 4, "not ") == 0) { eq = false; a = trim(a.substr(4)); }
-      std::size_t dot = a.rfind('.');
-      std::string proc = dot == std::string::npos ? "" : a.substr(0, dot);
-      std::string loc = dot == std::string::npos ? a : a.substr(dot + 1);
-      int pi, li;
-      if (!net.resolve_location(proc, loc, &pi, &li)) return false;
-      out.locs.push_back({pi, li, neg ? !eq : eq});
-    }
-    return true;
-  };
-  auto build_pred = [&](const std::string& text, DiscPred& out) -> bool {
-    return build_atoms(split_conjuncts(text), out, false);
-  };
-  // ---- general boolean predicates -------------------------------------------------------
-  //
-  // Anything that is not a plain conjunction is handled by putting the negation of the predicate
-  // into disjunctive normal form. Each resulting term is a conjunction, hence a discrete guard
-  // plus a convex clock region, which is the only shape the engine ever has to represent; the
-  // non-convexity lives in the union of terms and is absorbed by intersecting the per-term delay
-  // results. See hora::detail::DelayAvoidSet.
-  //
-  // Grammar: or := and ('||' and)* ; and := unary ('&&' unary)* ; unary := '!' unary | '(' or ')'
-  //          | atom. `and`/`or`/`not` spell the operators too, and ',' reads as '&&'.
-  struct BExpr {
-    enum Kind { Atom, Not, And, Or } kind = Atom;
-    std::string atom;
-    std::vector<BExpr> kids;
-  };
-  // A hand-rolled parser rather than reuse of parse_expression: that one yields an arithmetic
-  // ExprP over integer state, while what is needed here is the boolean skeleton, with the leaves
-  // left as text for parse_net_atom to interpret as a location, integer or clock atom.
-  struct BParse {
-    const std::string& t; std::size_t i = 0; bool ok = true;
-    explicit BParse(const std::string& s) : t(s) {}
-    void ws() { while (i < t.size() && std::isspace((unsigned char)t[i])) ++i; }
-    bool word(const char* w) {
-      ws(); const std::size_t n = std::strlen(w);
-      if (t.compare(i, n, w) != 0) return false;
-      const bool alpha = std::isalpha((unsigned char)w[0]);
-      if (alpha && i + n < t.size() && ident_char((unsigned char)t[i + n])) return false;
-      if (alpha && i > 0 && ident_char((unsigned char)t[i - 1])) return false;
-      i += n; return true;
-    }
-    BExpr parse_or() {
-      BExpr a = parse_and();
-      while (true) { const std::size_t save = i; if (word("||") || word("or")) {
-          BExpr b = parse_and(); BExpr n; n.kind = BExpr::Or; n.kids = {a, b}; a = n;
-        } else { i = save; break; } }
-      return a;
-    }
-    BExpr parse_and() {
-      BExpr a = parse_unary();
-      while (true) { const std::size_t save = i; if (word("&&") || word("and") || word(",")) {
-          BExpr b = parse_unary(); BExpr n; n.kind = BExpr::And; n.kids = {a, b}; a = n;
-        } else { i = save; break; } }
-      return a;
-    }
-    BExpr parse_unary() {
-      ws();
-      if (word("!") || word("not")) { BExpr k = parse_unary(); BExpr n; n.kind = BExpr::Not; n.kids = {k}; return n; }
-      if (word("(")) { BExpr k = parse_or(); if (!word(")")) ok = false; return k; }
-      // An atom runs to the next top-level boolean operator or close-paren.
-      const std::size_t start = i; int depth = 0;
-      while (i < t.size()) {
-        if (t[i] == '(') ++depth;
-        else if (t[i] == ')') { if (depth == 0) break; --depth; }
-        else if (depth == 0) {
-          if (t.compare(i, 2, "||") == 0 || t.compare(i, 2, "&&") == 0 || t[i] == ',') break;
-          if ((t.compare(i, 2, "or") == 0 || t.compare(i, 3, "and") == 0) &&
-              (i == 0 || !ident_char((unsigned char)t[i - 1]))) {
-            const std::size_t n = t.compare(i, 2, "or") == 0 ? 2 : 3;
-            if (i + n >= t.size() || !ident_char((unsigned char)t[i + n])) break;
-          }
-        }
-        ++i;
-      }
-      BExpr a; a.kind = BExpr::Atom; a.atom = trim(t.substr(start, i - start));
-      if (a.atom.empty()) ok = false;
-      return a;
-    }
-  };
-  // Push negations to the leaves, then distribute. Returns the DNF of the expression as a list of
-  // terms, each a list of (atom text, negated) literals.
-  using Lit = std::pair<std::string, bool>;
-  std::function<std::vector<std::vector<Lit>>(const BExpr&, bool)> to_dnf =
-      [&](const BExpr& e, bool neg) -> std::vector<std::vector<Lit>> {
-    switch (e.kind) {
-      case BExpr::Atom: return {{{e.atom, neg}}};
-      case BExpr::Not:  return to_dnf(e.kids[0], !neg);
-      case BExpr::And: case BExpr::Or: {
-        // De Morgan: negating swaps the connective.
-        const bool as_or = (e.kind == BExpr::Or) != neg;
-        auto a = to_dnf(e.kids[0], neg), b = to_dnf(e.kids[1], neg);
-        if (as_or) { for (auto& t : b) a.push_back(std::move(t)); return a; }
-        std::vector<std::vector<Lit>> out;
-        for (const auto& x : a)
-          for (const auto& y : b) { auto t = x; t.insert(t.end(), y.begin(), y.end()); out.push_back(std::move(t)); }
-        return out;
-      }
-    }
-    return {};
-  };
+// ---- shared with the query reader and the dispatcher; declared in parse_util.hpp -------
 
-  // Build the predicate a liveness query must maintain, from the query text.
-  //
-  // `want_negated` says whether the caller wants `!text` (as `A<>` does) rather than `text`.
-  // Either way the result is a conjunction plus a flag, because those are the two shapes the
-  // engine represents; a disjunction is turned into the negation of a conjunction of negated
-  // atoms, which flips the flag. Mixing `&&` and `||` in one predicate is refused: the result
-  // would be neither shape.
-  // Split `psi` into an arbitrary boolean over discrete atoms and a conjunction of clock atoms.
-  //
-  // This is the fragment the backward engine decides. The clock conjunction is convex, so it
-  // becomes an invariant of a restricted network and the run stays inside it by construction; the
-  // discrete part is constant across a vertex, so any boolean structure in it is a vertex filter
-  // and needs no convexity at all. What is refused is a clock atom under a disjunction or a
-  // negation, because that is a non-convex region the run must stay inside, and the backward
-  // operator for it -- Pre through a delay routed around an obstacle -- does not exist yet.
-  //
-  // @param[out] cc  the clock conjunction
-  // @param[out] ndnf  DNF of the negated discrete part, i.e. where V_psi does NOT hold
-  std::function<bool(const BExpr&, std::vector<const BExpr*>&)> flatten_and =
-      [&](const BExpr& e, std::vector<const BExpr*>& out) -> bool {
-    if (e.kind == BExpr::And) return flatten_and(e.kids[0], out) && flatten_and(e.kids[1], out);
-    out.push_back(&e);
-    return true;
-  };
-  std::function<bool(const BExpr&)> has_clock = [&](const BExpr& e) -> bool {
-    if (e.kind == BExpr::Atom) {
-      std::vector<Constraint> cc; std::vector<IntAtom> ic;
-      parse_net_atom(e.atom, cm, im, cc, ic);
-      return !cc.empty();
-    }
-    for (const auto& k : e.kids) if (has_clock(k)) return true;
-    return false;
-  };
-  auto split_psi = [&](const std::string& text, std::vector<Constraint>& cc,
-                       std::vector<DiscTerm>& ndnf) -> bool {
-    BParse bp(text);
-    BExpr e = bp.parse_or();
-    bp.ws();
-    if (!bp.ok || bp.i != text.size()) return false;
-    std::vector<const BExpr*> conj;
-    flatten_and(e, conj);
-    std::vector<const BExpr*> disc, nonconvex;
-    for (const BExpr* k : conj) {
-      if (!has_clock(*k)) { disc.push_back(k); continue; }
-      if (k->kind == BExpr::Atom) {                  // a bare clock atom: convex, an invariant
-        std::vector<Constraint> a; std::vector<IntAtom> ic;
-        parse_net_atom(k->atom, cm, im, a, ic);
-        cc.insert(cc.end(), a.begin(), a.end());
-        continue;
-      }
-      nonconvex.push_back(k);                        // clock under a disjunction or a negation
-    }
-    // A conjunct putting a clock under a disjunction or a negation is not an invariant: the run
-    // must stay inside a non-convex region. Its negation goes into DNF, giving convex terms with
-    // discrete guards that detail::DelayAvoidSet routes each delay around -- forward through
-    // delay_avoiding, backward through pre_avoiding.
-    for (const BExpr* k : nonconvex)
-      for (const auto& term : to_dnf(*k, /*neg=*/true)) {
-        // A negated literal can itself be a disjunction -- `x == 3` parses to two constraints, so
-        // `!(x == 3)` is `x < 3 \/ x > 3` -- and a forbidden term must stay a conjunction, so the
-        // term splits into one copy per alternative, cross-producted over every such literal.
-        DiscTerm base;
-        std::vector<std::vector<Constraint>> alts;
-        for (const auto& lit : term) {
-          std::vector<std::string> one{lit.first};
-          DiscPred acc;
-          if (!lit.second) {
-            if (!build_atoms(one, acc, false)) return false;
-          } else {
-            std::vector<Constraint> cc2; std::vector<IntAtom> ic2;
-            parse_net_atom(lit.first, cm, im, cc2, ic2);
-            if (cc2.size() > 1) {
-              std::vector<Constraint> a;
-              for (const auto& c : cc2) a.push_back(negate(c));
-              alts.push_back(std::move(a));
-              continue;
-            }
-            if (!build_atoms(one, acc, true)) return false;
-          }
-          base.locs.insert(base.locs.end(), acc.locs.begin(), acc.locs.end());
-          base.ints.insert(base.ints.end(), acc.ints.begin(), acc.ints.end());
-          base.clocks.insert(base.clocks.end(), acc.clocks.begin(), acc.clocks.end());
-        }
-        std::vector<DiscTerm> expanded{base};
-        for (const auto& a : alts) {
-          std::vector<DiscTerm> next;
-          for (const auto& tt : expanded)
-            for (const auto& c : a) { DiscTerm cp = tt; cp.clocks.push_back(c); next.push_back(std::move(cp)); }
-          expanded.swap(next);
-        }
-        for (auto& tt : expanded) ndnf.push_back(std::move(tt));
-      }
-    // The discrete conjuncts, negated and put in DNF: that is exactly `!psi_discrete`.
-    for (const BExpr* k : disc)
-      for (const auto& term : to_dnf(*k, /*neg=*/true)) {
-        DiscTerm t;
-        DiscPred acc;
-        std::vector<std::string> pos, negs;
-        for (const auto& lit : term) (lit.second ? negs : pos).push_back(lit.first);
-        if (!build_atoms(pos, acc, false) || !build_atoms(negs, acc, true)) return false;
-        if (!acc.clocks.empty()) return false;       // should not happen: `disc` has no clocks
-        t.locs = std::move(acc.locs); t.ints = std::move(acc.ints);
-        ndnf.push_back(std::move(t));
-      }
-    return true;
-  };
+namespace frontend {
 
-  if (q.kind == Query::EF) {
-    if (trim(q.note) == "deadlock") {  // E<> deadlock
-      *satisfied = deadlock_reachable(net, backend, stats);
-      return true;
-    }
-    NetTarget tgt;
-    if (!build_target(q.note, tgt)) return false;
-    *satisfied = reachable_net(net, tgt, backend, stats);
-    return true;
-  }
-  if (q.kind == Query::EG) {  // E[] phi
-    std::vector<Constraint> cc;
-    DiscPred nq;
-    nq.is_dnf = true;   // empty means psi's discrete part never fails, not that it always does
-    if (!split_psi(q.note, cc, nq.forbid)) return false;
-    *satisfied = exists_invariant_run(net, cc, nq, stats, &nq.forbid);
-    return true;
-  }
-  if (q.kind == Query::AF) {  // A<> phi = !E[] !phi
-    // `!phi` is what the run must maintain. Its clock part is a conjunction only when `phi`'s is
-    // a single atom, so the split below refuses the rest -- a regression in reach against the
-    // forward path, taken deliberately: the forward path decided them by cycle detection on a
-    // subsumed graph, which is unsound.
-    {
-      std::vector<Constraint> cc;
-      DiscPred nq;
-      nq.is_dnf = true;
-      // psi = !phi, so psi's negation is phi itself: the DNF of `phi` is what nq wants, and the
-      // clock conjunction of `psi` is the negation of phi's single clock atom.
-      std::string neg = "!(" + q.note + ")";
-      if (!split_psi(neg, cc, nq.forbid)) return false;
-      *satisfied = !exists_invariant_run(net, cc, nq, stats, &nq.forbid);
-      return true;
-    }
-  }
-  auto neg_int = [](IntOp o) {
-    switch (o) {
-      case IntOp::Eq: return IntOp::Ne; case IntOp::Ne: return IntOp::Eq;
-      case IntOp::Lt: return IntOp::Ge; case IntOp::Ge: return IntOp::Lt;
-      case IntOp::Le: return IntOp::Gt; default: return IntOp::Le;
-    }
-  };
-  // Is a state satisfying !atom reachable?  atom = conjunction of constraints; !atom is the
-  // disjunction of the negated constraints, so any one being reachable violates the atom.
-  auto violated = [&](const std::string& atom) -> int {  // 1 reachable, 0 not, -1 unsupported
-    std::vector<Constraint> cc; std::vector<IntAtom> ic;
-    parse_net_atom(atom, cm, im, cc, ic);
-    if (!cc.empty()) {
-      for (const auto& c : cc) { NetTarget nt; nt.clock_cond.push_back(negate(c));
-        if (reachable_net(net, nt, backend, stats)) return 1; }
-      return 0;
-    }
-    if (!ic.empty()) {
-      for (const auto& a : ic) { NetTarget nt; nt.int_cond.push_back({a.var, neg_int(a.op), a.val});
-        if (reachable_net(net, nt, backend, stats)) return 1; }
-      return 0;
-    }
-    return -1;  // location atom: negation not expressible as a positive target
-  };
+/// @brief May @p c appear inside an identifier?
+///
+/// @warning Used to require that a textual operator such as `and` is a whole token. Both sides
+///          must be checked: an identifier merely *ending* in the keyword would otherwise be split
+///          mid-name, silently dropping the declaration and corrupting the model with no
+///          diagnostic.
+bool ident_char(unsigned char c) { return std::isalnum(c) != 0 || c == '_'; }
 
-  if (q.kind == Query::AG) {  // A[] phi  =  ! E<> !phi
-    std::string body = trim(q.note);
-    // Safety form  A[] not(X)  /  A[] !(X)  =  ! E<>(X)
-    std::string inner;
-    if (!body.empty() && body[0] == '!') inner = trim(body.substr(1));
-    else if (body.compare(0, 4, "not(") == 0 || body.compare(0, 4, "not ") == 0) inner = trim(body.substr(3));
-    if (!inner.empty()) {
-      if (inner.size() >= 2 && inner.front() == '(' && inner.back() == ')') inner = trim(inner.substr(1, inner.size() - 2));
-      if (inner == "deadlock") {  // A[] not deadlock = ! E<> deadlock
-        *satisfied = !deadlock_reachable(net, backend, stats);
-        return true;
-      }
-      NetTarget tgt;
-      if (!build_target(inner, tgt)) return false;
-      *satisfied = !reachable_net(net, tgt, backend, stats);
-      return true;
-    }
-    // General:  A[] (a1 & a2 & ...) = AND_i !E<>(!ai)
-    for (auto atom : split_conjuncts(body)) {
-      atom = trim(atom);
-      if (atom.empty() || atom == "true") continue;
-      const int v = violated(atom);
-      if (v < 0) return false;             // unsupported atom (positive location)
-      if (v == 1) { *satisfied = false; return true; }
-    }
-    *satisfied = true;
-    return true;
-  }
-  if (q.kind == Query::LEADSTO) {  // p --> q
-    DiscPred p, qq;
-    // `p --> q` is violated by EF(p /\ EG !q), so the two operands are handled differently.
-    //
-    // `q` supplies psi = !q, exactly as A<> does: split_psi on the negated text yields the clock
-    // conjunction of psi and the DNF of !psi, which is q itself -- the region the run must avoid
-    // wherever q's discrete part holds.
-    //
-    // `p` is evaluated at one valuation under EF, with no obligation along a delay, so it needs
-    // no convexity treatment at all: its DNF is carried positively and intersected with the
-    // fixpoint at the end.
-    {
-      std::vector<Constraint> qcc;
-      DiscPred nqp;
-      nqp.is_dnf = true;
-      if (!split_psi("!(" + q.note + ")", qcc, nqp.forbid)) return false;
-      // psi's own clock conjunction must be empty here: psi = !q, and a conjunction in psi would
-      // mean q contributed a disjunction, which split_psi routes through `forbid` instead.
-      if (!qcc.empty()) return false;
-      DiscPred pp;
-      pp.is_dnf = true;
-      {
-        BParse bp(q.lhs);
-        BExpr pe = bp.parse_or();
-        bp.ws();
-        if (!bp.ok || bp.i != q.lhs.size()) return false;
-        for (const auto& term : to_dnf(pe, /*neg=*/false)) {
-          DiscTerm t;
-          DiscPred acc;
-          std::vector<std::string> pos, negs;
-          for (const auto& lit : term) (lit.second ? negs : pos).push_back(lit.first);
-          if (!build_atoms(pos, acc, false) || !build_atoms(negs, acc, true)) return false;
-          t.locs = std::move(acc.locs); t.ints = std::move(acc.ints); t.clocks = std::move(acc.clocks);
-          pp.forbid.push_back(std::move(t));
-        }
-      }
-      const bool has_clocks = [&] {
-        for (const auto& t : pp.forbid) if (!t.clocks.empty()) return true;
-        for (const auto& t : nqp.forbid) if (!t.clocks.empty()) return true;
-        return false;
-      }();
-      if (has_clocks || pp.forbid.size() > 1 || nqp.forbid.size() > 1) {
-        GfpStats gs2;
-        *satisfied = leads_to_clocks(net, pp, nqp, &gs2);
-        if (stats) stats->explored = gs2.outer_nodes;
-        return true;
-      }
-      // Purely discrete and single-term on both sides: the long-standing path, untouched.
-    }
-    if (!build_pred(q.lhs, p) || !build_pred(q.note, qq)) return false;
-    // the backward greatest fixpoint IS the engine. Forward SCC search closes cycles that
-    // subsumption invented; the backward fixpoint only ever reads a target's W as an upper
-    // bound, so subsumption is harmless to it.
-    GfpStats gs;
-    *satisfied = leads_to_otf(net, p, qq, &gs);
-    if (stats) {
-      // `explored` is the like-for-like count: successor computations actually performed.
-      // On a violated query the on-the-fly engine settles early, so this is far below
-      // fwd_nodes -- which is the entire point of the engine and must not be papered over.
-      stats->explored = gs.expanded_nodes ? gs.expanded_nodes : gs.fwd_nodes;
-      stats->generated = gs.fwd_edges;
-    }
-    return true;
-  }
-  return false;
+// ---- expression tokenizing / parsing (clock constraints & assignments) -------
+/// @brief Strip leading and trailing whitespace.
+std::string trim(const std::string& s) {
+  std::size_t a = 0, b = s.size();
+  while (a < b && std::isspace((unsigned char)s[a])) ++a;
+  while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+  return s.substr(a, b - a);
 }
+
+/// @brief Split a textual conjunction into its conjuncts.
+/// @param s the expression text
+/// @return the conjuncts, trimmed; a single-element result when there is no top-level operator
+/// @note Splits on both the symbolic and the word form of conjunction, the latter only when it
+///       stands as a whole token; see ::ident_char.
+std::vector<std::string> split_conjuncts(const std::string& s) {
+  std::vector<std::string> out;
+  std::string cur;
+  for (std::size_t i = 0; i < s.size();) {
+    if (s.compare(i, 2, "&&") == 0) { out.push_back(trim(cur)); cur.clear(); i += 2; }
+    else if (s.compare(i, 3, "and") == 0
+             && (i == 0 || !ident_char((unsigned char)s[i - 1]))
+             && (i + 3 >= s.size() || !ident_char((unsigned char)s[i + 3]))) {
+      out.push_back(trim(cur)); cur.clear(); i += 3;
+    }
+    else if (s[i] == ',') { out.push_back(trim(cur)); cur.clear(); ++i; }
+    else cur += s[i++];
+  }
+  if (!trim(cur).empty()) out.push_back(trim(cur));
+  return out;
+}
+
+/// @brief Parse a single comparison into clock constraints.
+/// @param atom the atom text
+/// @param cm   clock name to index
+/// @param[out] out constraints are appended on success
+/// @return @c false if @p atom is not a clock comparison, leaving @p out untouched
+bool parse_atom(const std::string& atom, const ClockMap& cm, std::vector<Constraint>& out) {
+  static const std::pair<const char*, Cmp> ops[] = {
+      {"<=", Cmp::LE}, {">=", Cmp::GE}, {"==", Cmp::EQ}, {"<", Cmp::LT}, {">", Cmp::GT}};
+  std::size_t pos = std::string::npos;
+  Cmp op = Cmp::EQ;
+  int oplen = 0;
+  for (auto& o : ops) {
+    std::size_t p = atom.find(o.first);
+    if (p != std::string::npos && (pos == std::string::npos || p < pos)) { pos = p; op = o.second; oplen = (int)std::string(o.first).size(); }
+  }
+  if (pos == std::string::npos) return false;
+  Side l = parse_side(atom.substr(0, pos), cm);
+  Side r = parse_side(atom.substr(pos + oplen), cm);
+  if (l.is_const && !r.is_const) { std::swap(l, r); op = flip(op); }
+  if (l.is_const || !r.is_const) return false;  // need clock op const
+  emit_clock_cmp(l.a, l.b, op, r.val, out);
+  return true;
+}
+
+/// @brief Parse one network-level atom into either a clock constraint or an integer atom.
+/// @param atom the atom text
+/// @param cm   clock name to index
+/// @param[out] cc clock constraints are appended here
+/// @param[out] ic integer atoms are appended here
+/// @post At most one of @p cc and @p ic grows, which is how callers tell the two kinds apart —
+///       ::build_pred relies on this to refuse a clock constraint in a liveness predicate.
+void parse_net_atom(const std::string& atom, const ClockMap& cm,
+                    const std::unordered_map<std::string, int>& im,
+                    std::vector<Constraint>& cc, std::vector<IntAtom>& ic) {
+  static const std::pair<const char*, int> ops[] = {{"<=", 0}, {">=", 1}, {"==", 2}, {"!=", 3}, {"<", 4}, {">", 5}};
+  std::size_t pos = std::string::npos; int opi = -1, oplen = 0;
+  for (auto& o : ops) {
+    std::size_t q = atom.find(o.first);
+    if (q != std::string::npos && (pos == std::string::npos || q < pos)) { pos = q; opi = o.second; oplen = (int)std::string(o.first).size(); }
+  }
+  if (pos == std::string::npos) return;
+  Side2 l = parse_side2(atom.substr(0, pos), cm, im);
+  Side2 r = parse_side2(atom.substr(pos + oplen), cm, im);
+  auto flip = [](int o) { switch (o) { case 0: return 1; case 1: return 0; case 4: return 5; case 5: return 4; default: return o; } };
+  if (l.kind == SideKind::Const && r.kind != SideKind::Const) { std::swap(l, r); opi = flip(opi); }
+  if (r.kind != SideKind::Const) return;
+  if (l.kind == SideKind::Clock || l.kind == SideKind::ClockDiff) {
+    if (opi == 3) return;  // != is not a clock constraint
+    Cmp cmp = opi == 0 ? Cmp::LE : opi == 1 ? Cmp::GE : opi == 2 ? Cmp::EQ : opi == 4 ? Cmp::LT : Cmp::GT;
+    emit_clock_cmp(l.a, l.b, cmp, r.val, cc);
+  } else if (l.kind == SideKind::Int) {
+    IntOp io = opi == 0 ? IntOp::Le : opi == 1 ? IntOp::Ge : opi == 2 ? IntOp::Eq : opi == 3 ? IntOp::Ne : opi == 4 ? IntOp::Lt : IntOp::Gt;
+    ic.push_back({l.a, io, r.val});
+  }
+}
+
+}  // namespace frontend
 
 }  // namespace hora

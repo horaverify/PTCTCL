@@ -89,9 +89,17 @@ else()
   FetchContent_MakeAvailable(hdbm)
 endif()
 
-file(GLOB HORA_CORE_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+# The engine's translation units, by area. A glob per directory rather than one recursive glob,
+# so that adding a directory is a deliberate edit here and the layout stays visible.
+file(GLOB HORA_CORE_SRC CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/frontend/*.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/query/*.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/liveness/*.cpp)
 add_library(hora_core ${HORA_CORE_SRC})
-target_include_directories(hora_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(hora_core
+  PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})   # so a TU can say "src/<area>/<internal>.hpp"
 target_compile_features(hora_core PUBLIC cxx_std_17)
 target_link_libraries(hora_core PUBLIC hdbm)   # DBM zone algebra + its headers
 if(OpenMP_CXX_FOUND)

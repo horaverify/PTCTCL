@@ -11,7 +11,7 @@
 #include "hora/config.hpp"
 #include "hora/reach.hpp"
 #include "hora/automaton.hpp"
-#include "hora/uppaal.hpp"
+#include "hora/model_io.hpp"
 
 /// @brief `--stats`: append successor-generation counts to each verdict line.
 /// The explored-state count is always reported; this adds the generated-zone count, which
@@ -46,8 +46,8 @@ int run(const char* model, const char* query, hora::Backend backend) {
                    : backend == Backend::Metal ? "metal" : "cuda";
     std::vector<Query> queries = load_queries(query);
 
-    if (uppaal_process_count(model) > 1) {  // network of timed automata
-      Network net = load_uppaal_network(model);
+    if (network_process_count(model) > 1) {  // network of timed automata
+      Network net = load_network(model);
       std::cout << "*** HORA — backend: " << bn << " | network: " << net.nprocs()
                 << " procs, " << net.nclocks << " clocks, " << net.intvars.size() << " int vars\n";
       int rc = 0;
@@ -55,7 +55,7 @@ int run(const char* model, const char* query, hora::Backend backend) {
         bool sat = false;
         ReachStats st;
         std::cout << "Verifying formula: " << q.raw << "\n";
-        if (check_net_query(net, q, &sat, backend, &st))
+        if (check_network_query(net, q, &sat, backend, &st))
           std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
                     << "  [explored " << st.explored << " symbolic states"
                     << (g_stats ? ", generated " + std::to_string(st.generated) : "") << "]\n";
@@ -67,7 +67,7 @@ int run(const char* model, const char* query, hora::Backend backend) {
       return rc;
     }
 
-    TimedAutomaton ta = load_uppaal_xml(model);
+    TimedAutomaton ta = load_model(model);
     std::cout << "*** HORA — backend: " << bn << " | " << ta.locations.size() << " locations, "
               << ta.nclocks << " clocks, " << ta.edges.size() << " edges\n";
     Network net_fb;  // lazily loaded as a 1-process network for liveness / A[] / leads-to
@@ -90,7 +90,7 @@ int run(const char* model, const char* query, hora::Backend backend) {
       // keep the old route.
       if (!net_loaded) {
         net_loaded = true;
-        try { net_fb = load_uppaal_network(model); net_ok = true; } catch (...) { net_ok = false; }
+        try { net_fb = load_network(model); net_ok = true; } catch (...) { net_ok = false; }
       }
       // A model declaring an `urgent chan` must take the network route whatever else is true of
       // it. The single-TA engine in reach.cpp has no notion of channels at all -- it drops the
@@ -103,12 +103,12 @@ int run(const char* model, const char* query, hora::Backend backend) {
       bool net_tried = false, done = false;
       if (prefer_net) {
         net_tried = true;
-        done = check_net_query(net_fb, q, &sat, backend, &st);
+        done = check_network_query(net_fb, q, &sat, backend, &st);
       }
       if (!done && !urgent_chan && check_query(ta, q, &sat, backend, &st)) done = true;
       // E[] / A<> / A[] / leads-to on a single automaton land here when the route above declined.
       else if (!done && net_ok && !net_tried)
-        done = check_net_query(net_fb, q, &sat, backend, &st);
+        done = check_network_query(net_fb, q, &sat, backend, &st);
       if (done) {
         std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
                   << "  [explored " << st.explored << " symbolic states"
@@ -128,7 +128,7 @@ int run(const char* model, const char* query, hora::Backend backend) {
 
 int dump(const char* model) {
   using namespace hora;
-  TimedAutomaton ta = load_uppaal_xml(model);
+  TimedAutomaton ta = load_model(model);
   std::cout << "clocks:";
   for (int c = 1; c <= ta.nclocks; ++c) std::cout << " " << ta.clock_names[c] << "(#" << c << ")";
   std::cout << "\ninitial: " << ta.initial << "\n";
