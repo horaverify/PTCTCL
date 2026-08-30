@@ -801,6 +801,7 @@ void Otf::setup() {
   aL = net.lbound;
   aU = net.ubound;
   aL[0] = aU[0] = 0;
+  build_local_bound_tables();
   // The constraint map has two global effects (see ::AtomMap):
   //
   // (1) A non-diagonal atom is discharged by raising its clock's L and U. Raising either only
@@ -828,6 +829,66 @@ void Otf::setup() {
   // outgoing guard at that key, so compute_active keeps it. Pullback either resets that clock
   // (making its old value irrelevant) or propagates the target's active bit to the source.
   // Thus a D-relevant value cannot be erased before a later atom needs it.
+}
+
+/// @brief Precompute what the per-location LU fold actually depends on.
+///
+/// `L[c]` at a discrete state is `max_p lbound_loc[p][locs[p]][c]`, an `nprocs x nclocks` fold
+/// that ::online_configure_bounds and ::Otf::intern both need per key. Almost none of it varies:
+/// a clock is typically constrained by the one process that owns it, and every other process
+/// contributes the same value from every one of its locations.
+///
+/// So split the fold. A process whose bound for clock `c` is the SAME at all of its locations
+/// contributes a constant, folded once here into @ref base_l_ / @ref base_u_. Only the
+/// (process, clock) pairs that really vary stay in @ref vary_clocks_, and the per-key fold walks
+/// those alone --- 17 entries instead of 289 on arbiter16, for the identical result.
+void Otf::build_local_bound_tables() {
+  const int dim = net.nclocks + 1;
+  base_l_.assign(dim, kAluNegInf);
+  base_u_.assign(dim, kAluNegInf);
+  vary_clocks_.assign(net.nprocs(), {});
+  if (net.lbound_loc.empty()) {          // no per-location analysis: the global arrays are it
+    base_l_.assign(net.lbound.begin(), net.lbound.end());
+    base_u_.assign(net.ubound.begin(), net.ubound.end());
+    base_l_.resize(dim, kAluNegInf);
+    base_u_.resize(dim, kAluNegInf);
+    return;
+  }
+  for (int pr = 0; pr < net.nprocs(); ++pr) {
+    const auto& lp = net.lbound_loc[pr];
+    const auto& up = net.ubound_loc[pr];
+    if (lp.empty()) continue;
+    for (int c = 1; c <= net.nclocks; ++c) {
+      bool varies = false;
+      for (std::size_t l = 1; l < lp.size() && !varies; ++l)
+        varies = lp[l][c] != lp[0][c] || up[l][c] != up[0][c];
+      if (varies) vary_clocks_[pr].push_back(c);
+      else {
+        base_l_[c] = std::max(base_l_[c], lp[0][c]);
+        base_u_[c] = std::max(base_u_[c], up[0][c]);
+      }
+    }
+  }
+  base_l_[0] = base_u_[0] = 0;
+}
+
+/// @brief The a_LU bounds at one discrete state, folded through ::build_local_bound_tables.
+void Otf::local_bounds(const int* locs, std::vector<std::int32_t>& outL,
+                       std::vector<std::int32_t>& outU) const {
+  outL = base_l_;
+  outU = base_u_;
+  if (net.lbound_loc.empty()) return;
+  for (int pr = 0; pr < net.nprocs(); ++pr) {
+    const std::vector<int>& vary = vary_clocks_[pr];
+    if (vary.empty()) continue;
+    const auto& lp = net.lbound_loc[pr][locs[pr]];
+    const auto& up = net.ubound_loc[pr][locs[pr]];
+    for (int c : vary) {
+      outL[c] = std::max(outL[c], lp[c]);
+      outU[c] = std::max(outU[c], up[c]);
+    }
+  }
+  outL[0] = outU[0] = 0;
 }
 
 bool Otf::holds(const DiscPred& pr, const SymState& s) const {
@@ -1084,24 +1145,10 @@ void Otf::online_reset() {
     online_packed_key_mask_ = initial_capacity - 1;
   }
   online_key_by_id_.clear();
-  online_local_bounds_narrow_ = true;
-  const auto narrow_bound = [&](std::int32_t value) {
-    return value == kAluNegInf ||
-           (value > std::numeric_limits<std::int16_t>::min() &&
-            value <= std::numeric_limits<std::int16_t>::max());
-  };
-  for (std::int32_t value : net.lbound) online_local_bounds_narrow_ &= narrow_bound(value);
-  for (std::int32_t value : net.ubound) online_local_bounds_narrow_ &= narrow_bound(value);
-  for (const auto& proc : net.lbound_loc)
-    for (const auto& loc : proc)
-      for (std::int32_t value : loc) online_local_bounds_narrow_ &= narrow_bound(value);
-  for (const auto& proc : net.ubound_loc)
-    for (const auto& loc : proc)
-      for (std::int32_t value : loc) online_local_bounds_narrow_ &= narrow_bound(value);
-  online_local_l16_.clear();
-  online_local_u16_.clear();
-  online_local_l_.clear();
-  online_local_u_.clear();
+  key_locs_.clear();
+  key_ints_.clear();
+  key_loc_stride_ = net.nprocs();
+  key_int_stride_ = static_cast<int>(net.intvars.size());
   online_key_of_.clear();
   online_next_in_key_.clear();
   online_key_edges_.clear();
@@ -1138,24 +1185,7 @@ void Otf::online_configure_bounds(int key) {
   if (online_bound_cached_epoch_ == online_bound_epoch_ && online_bound_key_ == key) return;
   online_bound_key_ = key;
   online_bound_cached_epoch_ = online_bound_epoch_;
-  const std::size_t dim = static_cast<std::size_t>(net.nclocks + 1);
-  const std::size_t off = static_cast<std::size_t>(key) * dim;
-  if (online_local_bounds_narrow_) {
-    bL.resize(dim);
-    bU.resize(dim);
-    constexpr std::int16_t narrow_inf = std::numeric_limits<std::int16_t>::min();
-    for (std::size_t c = 0; c < dim; ++c) {
-      bL[c] = online_local_l16_[off + c] == narrow_inf
-                  ? kAluNegInf : online_local_l16_[off + c];
-      bU[c] = online_local_u16_[off + c] == narrow_inf
-                  ? kAluNegInf : online_local_u16_[off + c];
-    }
-  } else {
-    bL.assign(online_local_l_.begin() + static_cast<std::ptrdiff_t>(off),
-              online_local_l_.begin() + static_cast<std::ptrdiff_t>(off + dim));
-    bU.assign(online_local_u_.begin() + static_cast<std::ptrdiff_t>(off),
-              online_local_u_.begin() + static_cast<std::ptrdiff_t>(off + dim));
-  }
+  local_bounds(key_locs(key), bL, bU);
   for (int c = 1; c <= net.nclocks && c < (int)online_am_.bump.size(); ++c)
     if (online_am_.bump[c] != kNoBump) {
       bL[c] = std::max(bL[c], online_am_.bump[c]);
@@ -1494,8 +1524,7 @@ bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
   if (source_key < 0 || source_key >= static_cast<int>(online_key_by_id_.size())) return false;
   const OnlineKeyInfo& sk = *online_key_by_id_[source_key];
   SymState src;
-  src.locs = sk.locs;
-  src.ints = sk.ints;
+  key_state(sk.id, src);
   zread(source, src.zone);
 
   std::vector<SymState> succ;
@@ -1506,7 +1535,12 @@ bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
 
   const OnlineKeyInfo& tk = *online_key_by_id_[key];
   SymState& candidate = succ[static_cast<std::size_t>(ordinal)];
-  if (candidate.locs != tk.locs || candidate.ints != tk.ints) return false;
+  const int* tl = key_locs(tk.id);
+  if (!std::equal(candidate.locs.begin(), candidate.locs.end(), tl, tl + key_loc_stride_))
+    return false;
+  const long* ti = key_ints(tk.id);
+  if (!std::equal(candidate.ints.begin(), candidate.ints.end(), ti, ti + key_int_stride_))
+    return false;
   out = std::move(candidate);
   return true;
 }
@@ -1518,8 +1552,7 @@ bool Otf::online_is_nq(int v) {
   if (qc[v] == 2) {
     const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
     SymState state;
-    state.locs = ki.locs;
-    state.ints = ki.ints;
+    key_state(ki.id, state);
     qc[v] = holds(q, state) ? 1 : 0;
   }
   return qc[v] == 0;
@@ -1535,8 +1568,7 @@ bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
   if (!online_eg_prune_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   SymState s;
-  s.locs = ki.locs;
-  s.ints = ki.ints;
+  key_state(ki.id, s);
   zread(v, s.zone);
   if (time_diverges(s)) return true;
 
@@ -1604,8 +1636,7 @@ bool Otf::online_leadsto_witness(int v, bool no_successor) {
   if (!leadsto_early_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   SymState s;
-  s.locs = ki.locs;
-  s.ints = ki.ints;
+  key_state(ki.id, s);
   if (holds(q, s) || !p_discrete(s)) return false;   // cheap discrete reject before any zone work
   zread(v, s.zone);
   return leadsto_witness(s, no_successor, ki.may_deadlock);
@@ -1686,18 +1717,11 @@ int Otf::intern(SymState&& s) {
     return true;
   };
   if (use_alu) {
-    bL.assign(net.nclocks + 1, kAluNegInf);
-    bU.assign(net.nclocks + 1, kAluNegInf);
     if (net.lbound_loc.empty()) {
       bL = aL;
       bU = aU;
     } else {
-      for (int pr = 0; pr < net.nprocs(); ++pr)
-        for (int c = 1; c <= net.nclocks; ++c) {
-          bL[c] = std::max(bL[c], net.lbound_loc[pr][s.locs[pr]][c]);
-          bU[c] = std::max(bU[c], net.ubound_loc[pr][s.locs[pr]][c]);
-        }
-      bL[0] = bU[0] = 0;
+      local_bounds(s.locs.data(), bL, bU);
     }
     // The per-location bounds must carry the non-diagonal atoms' constants too, for the same
     // reason the global arrays do in Otf::setup: raising L or U only makes a_LU finer, and the
@@ -2037,8 +2061,9 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // fixpoint has to do the confining itself: `W[v]` starts at `Z_v /\ psi(v)`, not at `Z_v`. The
   // seed is otherwise left unmaterialised (see `seeded`), so only the nodes that actually need
   // cutting are written down here.
-  std::vector<Federation> psi_seed(N);
   const bool confine = avoid_ && !avoid_forward_;
+  std::vector<Federation> psi_seed;
+  if (confine) psi_seed.resize(N);          // only the region route ever writes one
   if (confine)
     for (int v : S) {
       SymState cst;
@@ -2202,13 +2227,20 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     }
   }
 
-  // ::PreNode explains why these are cached rather than recomputed inside `Pre`. The cache is
-  // filled lazily: a node that never appears as the source or target of a live edge never pays.
+  // ::PreNode explains why these are cached rather than recomputed inside `Pre`. Only nodes that
+  // are actually the source or target of a live edge get one, so the table is an index plus a
+  // deque grown on demand rather than N records: where the prune above left nothing to sweep it
+  // costs one `int` per node instead of a whole PreNode, and the deque keeps references stable
+  // across growth, which ::relax relies on when it holds two of them at once.
   const int dim = net.nclocks + 1;
-  std::vector<PreNode> pcache(N);
+  std::vector<std::int32_t> pindex;
+  std::deque<PreNode> pnodes;
   auto prep = [&](int v) -> const PreNode& {
-    PreNode& pn = pcache[v];
-    if (pn.ready) return pn;
+    if (pindex.empty()) pindex.assign(N, -1);
+    if (pindex[v] >= 0) return pnodes[static_cast<std::size_t>(pindex[v])];
+    pindex[v] = static_cast<std::int32_t>(pnodes.size());
+    pnodes.emplace_back();
+    PreNode& pn = pnodes.back();
     pn.ready = true;
     const LocVec& locs = node[v].locs;
     all_invariants(net, locs, pn.inv);
@@ -2961,8 +2993,7 @@ void Otf::online_seed_key(int key_id) {
   const int nc = net.nclocks;
   OnlineKeyInfo& ki = *online_key_by_id_.at(key_id);
   SymState u;
-  u.locs = ki.locs;
-  u.ints = ki.ints;
+  key_state(ki.id, u);
   bool fc, fu;
   frozen_flags(*dead_net, u.locs, u.ints, &fc, &fu);
   std::vector<Constraint> ci;
@@ -3084,8 +3115,7 @@ void Otf::online_pullback(const OnlineKeyEdge& e, const AtomC& atom) {
   OnlineKeyInfo& si = *online_key_by_id_.at(e.src);
   if (!si.inv_ready) {
     SymState rep;
-    rep.locs = si.locs;
-    rep.ints = si.ints;
+    key_state(si.id, rep);
     si.inv_ready = true;
     Dbm inv;
     if (key_invariant(*dead_net, rep, net.nclocks, inv))
@@ -3144,8 +3174,11 @@ int Otf::online_register_key(const LocVec& locs, const IntVec& ints,
     h = disc_hash(locs, ints);
     slots = &online_key_index_[h];
     for (int id : *slots) {
-      const OnlineKeyInfo& old = *online_key_by_id_[id];
-      if (old.locs == locs && old.ints == ints) return id;
+      const int* kl = key_locs(id);
+      if (!std::equal(locs.begin(), locs.end(), kl, kl + key_loc_stride_)) continue;
+      const long* kint = key_ints(id);
+      if (!std::equal(ints.begin(), ints.end(), kint, kint + key_int_stride_)) continue;
+      return id;
     }
   }
 
@@ -3153,57 +3186,10 @@ int Otf::online_register_key(const LocVec& locs, const IntVec& ints,
   OnlineKeyInfo& ki = online_keys_.back();
   ki.id = static_cast<int>(online_key_by_id_.size());
   ki.packed_key = packed;
-  ki.locs = locs;
-  ki.ints = ints;
+  key_locs_.insert(key_locs_.end(), locs.begin(), locs.end());
+  key_ints_.insert(key_ints_.end(), ints.begin(), ints.end());
   online_key_by_id_.push_back(&ki);
   online_dirty_queued_.push_back(0);
-  const std::size_t dim = static_cast<std::size_t>(net.nclocks + 1);
-  if (online_local_bounds_narrow_) {
-    constexpr std::int16_t narrow_inf = std::numeric_limits<std::int16_t>::min();
-    const auto pack = [](std::int32_t value) {
-      return value == kAluNegInf ? std::numeric_limits<std::int16_t>::min()
-                                 : static_cast<std::int16_t>(value);
-    };
-    const std::size_t off = online_local_l16_.size();
-    online_local_l16_.resize(off + dim, narrow_inf);
-    online_local_u16_.resize(off + dim, narrow_inf);
-    if (net.lbound_loc.empty()) {
-      for (std::size_t c = 0; c < dim; ++c) {
-        online_local_l16_[off + c] = pack(net.lbound[c]);
-        online_local_u16_[off + c] = pack(net.ubound[c]);
-      }
-    } else {
-      for (int pr = 0; pr < net.nprocs(); ++pr)
-        for (int c = 1; c <= net.nclocks; ++c) {
-          online_local_l16_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_l16_[off + static_cast<std::size_t>(c)],
-              pack(net.lbound_loc[pr][locs[pr]][c]));
-          online_local_u16_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_u16_[off + static_cast<std::size_t>(c)],
-              pack(net.ubound_loc[pr][locs[pr]][c]));
-        }
-      online_local_l16_[off] = online_local_u16_[off] = 0;
-    }
-  } else {
-    const std::size_t off = online_local_l_.size();
-    online_local_l_.resize(off + dim, kAluNegInf);
-    online_local_u_.resize(off + dim, kAluNegInf);
-    if (net.lbound_loc.empty()) {
-      std::copy(net.lbound.begin(), net.lbound.end(), online_local_l_.begin() + off);
-      std::copy(net.ubound.begin(), net.ubound.end(), online_local_u_.begin() + off);
-    } else {
-      for (int pr = 0; pr < net.nprocs(); ++pr)
-        for (int c = 1; c <= net.nclocks; ++c) {
-          online_local_l_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_l_[off + static_cast<std::size_t>(c)],
-              net.lbound_loc[pr][locs[pr]][c]);
-          online_local_u_[off + static_cast<std::size_t>(c)] = std::max(
-              online_local_u_[off + static_cast<std::size_t>(c)],
-              net.ubound_loc[pr][locs[pr]][c]);
-        }
-      online_local_l_[off] = online_local_u_[off] = 0;
-    }
-  }
   if (online_packed_key_usable_) {
     if ((online_packed_key_count_ + 1) * 10 >= online_packed_key_values_.size() * 7) {
       std::vector<std::uint64_t> old_keys = std::move(online_packed_key_keys_);
@@ -3442,8 +3428,7 @@ void Otf::online_expand(int u) {
   const OnlineKeyInfo& src_info = *online_key_by_id_[src];
   const bool profile = online_perf.enabled;
   SymState usc;
-  usc.locs = src_info.locs;
-  usc.ints = src_info.ints;
+  key_state(src_info.id, usc);
   zread(u, usc.zone);
   std::chrono::steady_clock::time_point successor_start;
   if (profile) successor_start = std::chrono::steady_clock::now();
@@ -3479,7 +3464,7 @@ void Otf::online_expand(int u) {
     // participating process list.  Integer vectors are normally empty; when present, compare
     // them exactly and patch only changed fields.
     for (std::size_t v = 0; v < succ[k].ints.size(); ++v) {
-      if (succ[k].ints[v] == src_info.ints[v]) continue;
+      if (succ[k].ints[v] == key_ints(src_info.id)[v]) continue;
       const int field = net.nprocs() + static_cast<int>(v);
       const std::uint64_t field_mask = online_disc_mask_[field] << online_disc_shift_[field];
       const std::uint64_t value = static_cast<std::uint64_t>(succ[k].ints[v] - net.intvars[v].lo);
@@ -3683,8 +3668,7 @@ void Otf::online_finalize_graph() {
     adj.resize(node.size());
     for (std::size_t v = 0; v < node.size(); ++v) {
       const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
-      node[v].locs = ki.locs;
-      node[v].ints = ki.ints;
+      key_state(ki.id, node[v]);
       std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
       for (OtfEdge& edge : raw) {
         // Materialised targets keep their own identity, even after leaving the active forward
@@ -3703,32 +3687,32 @@ void Otf::online_finalize_graph() {
   } else {
     // Reindex only when refinement really left inactive materialised records.  No successor is
     // recomputed and no D decision is revisited.
+    //
+    // IN PLACE. Compaction only ever DROPS, so the new index of a survivor is at most its old
+    // one, and rewriting ascending can therefore only overwrite slots already read. Building the
+    // compacted graph beside the original instead put two copies of the zone store, the node
+    // vector and the adjacency in memory at once -- an 86 MB spike on fischer10, on a graph the
+    // refinement had thinned from 614212 records to 260998.
     std::vector<int> remap(node.size(), -1);
-    std::vector<SymState> compact_nodes;
-    compact_nodes.reserve(node.size());
-    ptctlmc::ZoneStore compact_zones;
-    compact_zones.reset(zdim_);
+    std::size_t kept = 0;
+    Dbm zsc;
     for (std::size_t old = 0; old < node.size(); ++old) {
       if (!expanded[old] || online_raw_slot_[old] < 0) continue;
-      const int now = static_cast<int>(compact_nodes.size());
+      const int now = static_cast<int>(kept++);
       remap[old] = now;
       const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[old]];
-      SymState s;
-      s.locs = ki.locs;
-      s.ints = ki.ints;
-      Dbm z;
-      zread(static_cast<int>(old), z);
-      compact_zones.store(now, z);
-      compact_nodes.push_back(std::move(s));
+      zread(static_cast<int>(old), zsc);    // read `old` before `now <= old` is overwritten
+      zs_.store(now, zsc);
+      key_state(ki.id, node[now]);
     }
-    std::vector<std::vector<OtfEdge>> compact_adj(compact_nodes.size());
+    // The adjacency moves the same way, and each raw vector is moved out rather than copied.
+    adj.clear();
+    adj.resize(kept);
     for (std::size_t old = 0; old < node.size(); ++old) {
       const int now = remap[old];
       if (now < 0) continue;
-      const int raw_slot = online_raw_slot_[old];
-      std::vector<OtfEdge>& out = compact_adj[now];
-      out.reserve(online_raw_adj_[raw_slot].size());
-      for (const OtfEdge& e : online_raw_adj_[raw_slot]) {
+      std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[old]];
+      for (OtfEdge& e : raw) {
         int representative = e.tgt;
         if (representative < 0 || representative >= static_cast<int>(node.size()) ||
             !expanded[representative] || online_raw_slot_[representative] < 0)
@@ -3736,12 +3720,14 @@ void Otf::online_finalize_graph() {
         if (representative < 0) { online_failed_ = true; return; }
         const int tgt = remap[representative];
         if (tgt < 0) { online_failed_ = true; return; }
-        out.push_back(OtfEdge{tgt, e.tag});
+        e.tgt = tgt;
+        e.deferred = -1;
       }
+      adj[now] = std::move(raw);
     }
-    node.swap(compact_nodes);
-    adj.swap(compact_adj);
-    zs_ = std::move(compact_zones);
+    node.resize(kept);
+    node.shrink_to_fit();
+    zs_.truncate(kept);
   }
   bucket.clear();
   for (std::size_t v = 0; v < node.size(); ++v)
@@ -3761,10 +3747,10 @@ void Otf::online_finalize_graph() {
   online_inq_.clear();
   online_work_.clear();
   online_key_by_id_.clear();
-  online_local_l16_.clear();
-  online_local_u16_.clear();
-  online_local_l_.clear();
-  online_local_u_.clear();
+  key_locs_.clear();
+  key_ints_.clear();
+  key_loc_stride_ = net.nprocs();
+  key_int_stride_ = static_cast<int>(net.intvars.size());
   online_key_of_.clear();
   online_next_in_key_.clear();
   online_keys_.clear();
