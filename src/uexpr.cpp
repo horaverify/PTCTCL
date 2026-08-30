@@ -1,17 +1,13 @@
-// uexpr.cpp — tokenizer and recursive-descent parser for the UPPAAL modelling
-// subset (see expr.hpp). Written from the language's documented syntax and
-// semantics; it deliberately shares no code with UTAP, which is LGPL, while
-// HORA is MIT and links neither UTAP nor UDBM.
+// uexpr.cpp — tokenizer and recursive-descent parser for the UPPAAL modelling subset (see
+// expr.hpp). Written from the language's documented syntax and semantics; it deliberately shares no
+// code with UTAP, which is LGPL, while HORA is MIT and links neither UTAP nor UDBM.
 //
-// Supported: integer expressions with the usual C precedence, arrays (flattened
-// to consecutive cells), user functions with locals/if/while/for/return,
-// `const`, `typedef int[a,b]`, and the assignment sugar (`=`, `+=`, `-=`, `++`,
-// `--`) that real models use.
+// Supported: integer expressions with the usual C precedence, arrays (flattened to consecutive
+// cells), user functions with locals/if/while/for/return, `const`, `typedef int[a,b]`, and the
+// assignment sugar (`=`, `+=`, `-=`, `++`, `--`) that real models use.
 //
 // Deliberately NOT supported (rejected loudly rather than mis-modelled): structs,
-// pointers/references, clocks inside functions, and recursion. A model using
-// them raises ParseError instead of being silently under-verified -- the failure
-// mode that let viking12..20 masquerade as viking10 before the <system> fix.
+// pointers/references, clocks inside functions, and recursion.
 #include "hora/expression.hpp"
 
 #include <cctype>

@@ -13,15 +13,15 @@ namespace hora {
 namespace detail {
 
 // Shared dense-zone interner for the GPU driver's passed set. NOT currently wired in -- see the
-// note at the passed-set declaration in the GPU driver for why (it is a memory/time trade that
-// only pays on low-distinct-zone models and needs per-model routing to be a win).
+// note at the passed-set declaration in the GPU driver for why (it is a memory/time trade that only
+// pays on low-distinct-zone models and needs per-model routing to be a win).
 //
 // The GPU merge kernels consume dense matrices, so unlike the CPU path (which stores minimal
 // constraint systems, see ZoneIntern) this keeps zones dense -- but it stores each distinct zone
-// once and hands out an index. The passed set then costs 4 bytes per (discrete state, zone)
-// instead of d2 words. On models with few distinct zones the saving is enormous (viking15: 2.77M
-// stored zones, 120 distinct); on models where every zone differs it costs one hash per survivor
-// and nothing is lost, because the dense copy had to be written anyway.
+// once and hands out an index. The passed set then costs 4 bytes per (discrete state, zone) instead
+// of d2 words. On models with few distinct zones the saving is enormous; on models where every zone
+// differs it costs one hash per survivor and nothing is lost, because the dense copy had to be
+// written anyway.
 //
 // Thread-safety mirrors the CPU interner: records live in fixed-size chunks that are never moved,
 // so an index handed out to a reader stays valid while other threads intern. `n` is published with
@@ -37,7 +37,7 @@ struct GpuZoneIntern {
   // largest clock constant is M every finite entry lies in [-2M-1, 2M+1] (an entry is a shortest
   // path, and any path to or from the reference clock is bounded by two direct border edges). So
   // whenever M is small -- every real timed-automata model -- the whole passed set fits in 16-bit
-  // entries, halving what is by far the biggest resident structure at scale: fischer16 stores
+  // entries, halving what is by far the biggest resident structure at scale:
   // 4.95M zones of 289 entries, which is 5.7 GB dense in 32-bit and 2.9 GB in 16.
   //
   // The pools and kernels stay 32-bit; only this arena narrows, and the gather/rebuild loops that
@@ -114,7 +114,7 @@ struct GpuZoneIntern {
   // Return a slot to the pool. In Append mode the arena would otherwise grow with the cumulative
   // number of interned zones rather than the live one -- and the rebuild re-interns a bucket's
   // whole antichain every time the bucket is touched, so a bucket touched k times over the search
-  // costs k*|antichain| slots. Measured on fischer12: ~2000 chunks x 5.4 MB = 10.9 GB of arena
+  // costs k*|antichain| slots, so an unbounded chunk count is an unbounded arena
   // for 2.7M live zones (1.8 GB of actual data). With the free list the arena is bounded by the
   // peak live set. Striped by index so the 12 rebuild threads do not share one lock.
   // Slots are recycled one level late. The frontier holds arena indices rather than copies of
@@ -171,12 +171,12 @@ struct GpuZoneIntern {
 
   // Hash the whole zone, in four independent lanes.
   //
-  // Two failure modes to avoid. Hashing a prefix is catastrophic: canonical DBMs routinely agree
-  // on their leading rows, so a prefix key collapses hundreds of thousands of distinct zones into
-  // one bucket and the linear scan below goes quadratic (fischer11: 2.6s -> 395s). Hashing all
-  // words with textbook FNV is correct but serial -- one multiply per word on the critical path,
-  // and this runs for every merged zone on every level. Four lanes give the same coverage with
-  // four multiplies in flight, then mix once at the end.
+  // Two failure modes to avoid. Hashing a prefix is catastrophic: canonical DBMs routinely agree on
+  // their leading rows, so a prefix key collapses hundreds of thousands of distinct zones into one
+  // bucket and the linear scan below goes quadratic. Hashing all words with textbook FNV is correct
+  // but serial -- one multiply per word on the critical path, and this runs for every merged zone
+  // on every level. Four lanes give the same coverage with four multiplies in flight, then mix once
+  // at the end.
   std::uint64_t hash(const std::uint32_t* z) const {
     std::uint64_t h0 = 1469598103934665603ULL, h1 = h0 ^ 0x9e3779b97f4a7c15ULL,
                   h2 = h0 ^ 0xc2b2ae3d27d4eb4fULL, h3 = h0 ^ 0x165667b19e3779f9ULL;
@@ -192,16 +192,16 @@ struct GpuZoneIntern {
     h ^= h >> 29; h *= 0xbf58476d1ce4e5b9ULL; h ^= h >> 32;   // final avalanche
     return h;
   }
-  // lock-free in the common case. This used to take `growMtx_` on every call, which serialised
-  // all 12 threads on one mutex for millions of zones -- 8-12 CPU-seconds of contention per run,
-  // and the dominant cost of the passed rebuild. The index comes from an atomic bump; the mutex
-  // is taken only when a chunk boundary is crossed (once per kChunk allocations), and then only
-  // to install the chunk.
+  // lock-free in the common case. This used to take `growMtx_` on every call, which serialised all
+  // 12 threads on one mutex for millions of zones -- 8-12 CPU-seconds of contention per run, and
+  // the dominant cost of the passed rebuild. The index comes from an atomic bump; the mutex is
+  // taken only when a chunk boundary is crossed (once per kChunk allocations), and then only to
+  // install the chunk.
   //
   // `chunks_` is pre-sized and never resized: growing it with push_back would reallocate the
-  // pointer array under readers calling get() concurrently, which is a use-after-free (it
-  // segfaulted on fischer11). Slots are published with release / read with acquire, so a reader
-  // that sees the pointer also sees the storage it points to.
+  // pointer array under readers calling get() concurrently, which is a use-after-free. Slots are
+  // published with release / read with acquire, so a reader that sees the pointer also sees the
+  // storage it points to.
   int alloc() {
     if (mode_ == Mode::Append) {   // reuse a released slot before growing the arena
       Stripe& s = stripes_[next_free_.fetch_add(1, std::memory_order_relaxed) & (kStripes - 1)];

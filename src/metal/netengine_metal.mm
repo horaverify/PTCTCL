@@ -35,10 +35,9 @@
 namespace hora {
 namespace {
 
-// The kernels' private arrays are sized by PT_DIM -- the model's real dimension -- so this is
-// only an eligibility bound now, not a per-thread cost. It used to be 24, which turned the GPU
-// off for arbiter24 and up (24 clocks) and silently dropped them onto the CPU path. Matched to
-// HDBM's kDbmMaxDim, which bounds dbm_try_union's host scratch.
+// The kernels' private arrays are sized by PT_DIM -- the model's real dimension -- so this is only
+// an eligibility bound now, not a per-thread cost. Matched to HDBM's kDbmMaxDim, which bounds
+// dbm_try_union's host scratch.
 constexpr int kMaxDim = 64;
 
 #define HORA_MTL_CHECK(cond, msg) \
@@ -56,11 +55,9 @@ using namespace metal;
 // specialized AT pipeline build. The host compiles this source once per network with
 // -DPT_DIM/-DPT_NP/-DPT_NI/-DPT_NC set to that network's real sizes, so every private array is
 // exactly as big as the model needs instead of the 24-clock worst case. It matters a lot: a
-// thread's zone was `int z[24*24]` = 2304 B whatever the model, and net_merge held four such
-// arrays (zn, zw, plus try_union's H and R) = 9 KB of thread-local device memory per lane.
-// fischer11 (dim 12) needs 576 B, a 4x cut in the spill footprint, and every loop bound becomes
-// a compile-time constant so the index arithmetic strength-reduces and the small loops unroll.
-// The fallbacks keep the source standalone-compilable (e.g. for a Metal debugger session).
+// thread's zone was `int z[24*24]` = 2304 B whatever the model, and net_merge held four such arrays
+// (zn, zw, plus try_union's H and R) = 9 KB of thread-local device memory per lane. The fallbacks
+// keep the source standalone-compilable (e.g. for a Metal debugger session).
 #ifndef PT_DIM
 #define PT_DIM 24
 #endif
@@ -139,14 +136,12 @@ inline bool apply_inv(thread int* z, int dim, int nprocs, thread const int* nloc
   return true;
 }
 
-// ---- threadgroup-resident variants of the expand ops ------------------------------
-// net_expand keeps its zone in `int z[MAXDIM*MAXDIM]` = 2304 B of private array. A thread
-// has on the order of 128-256 registers, so that array cannot live in registers: it spills
-// to thread-local device memory, and every one of the ~2600 DBM ops per successor then runs
-// at device-memory latency. Measured consequence: 100% of lanes survive to do full work on
-// viking15 (so divergence is NOT the problem) yet the GPU still runs at ~0.5% of compute
-// peak. These variants take the zone in threadgroup memory (on-chip) instead, sized by the
-// real dim rather than MAXDIM. Bodies are identical to the d_* versions.
+// ---- threadgroup-resident variants of the expand ops ------------------------------ net_expand
+// keeps its zone in `int z[MAXDIM*MAXDIM]` = 2304 B of private array. A thread has on the order of
+// 128-256 registers, so that array cannot live in registers: it spills to thread-local device
+// memory, and every one of the ~2600 DBM ops per successor then runs at device-memory latency.
+// These variants take the zone in threadgroup memory (on-chip) instead, sized by the real dim
+// rather than MAXDIM. Bodies are identical to the d_* versions.
 inline bool g_empty(threadgroup const int* d, int dim) {
   for (int i = 0; i < dim; ++i) if (d[i*dim+i] < kZeroLe) return true;
   return false;
@@ -561,9 +556,9 @@ kernel void net_expand(
     if (!apply_inv(z, dim, nprocs, nlocs, locbase, inv_off, inv_data)) return;
   }
 
-  // Reset clocks inactive at every process's target location and not read by the query.
-  // One bitmask load per process, OR'd together — was nprocs*nclocks separate loads out of the
-  // [loc][clock] table (289 of them on arbiter17, on par with the whole rest of the pipeline).
+  // Reset clocks inactive at every process's target location and not read by the query. One bitmask
+  // load per process, OR'd together — was nprocs*nclocks separate loads out of the [loc][clock]
+  // table.
   {
     uint amask = qbits;
     for (int q = 0; q < nprocs; ++q) amask |= act_mask[locbase[q] + nlocs[q]];
@@ -576,9 +571,7 @@ kernel void net_expand(
 
   // pack the discrete key here. The host's bucketing pass is the level's serial section, and it
   // used to read this successor's nprocs locations plus nintvars integers back out of unified
-  // memory (48 bytes on fischer12) purely to recompute this 8-byte key. Emitting the key means
-  // the host reads 8 bytes per successor and the per-successor location array is not written at
-  // all -- 41.6M x 13 words of kernel stores saved over a fischer12 run.
+  // memory purely to recompute this 8-byte key.
   ulong dk = 0;
   for (int q = 0; q < nprocs; ++q) dk |= ulong(uint(nlocs[q])) << dshift[q];
   for (int v = 0; v < nintvars; ++v)
@@ -734,12 +727,10 @@ class NetGpuMetal : public NetGpuExpander {
   NetGpuMetal(const Network& net, NetEncoding&& en) : net_(&net), en_(std::move(en)) {
     device_ = MTLCreateSystemDefaultDevice();
     HORA_MTL_CHECK(device_ != nil, "no system default Metal device");
-    // bounded command-buffer pool. Each compute encoder makes the driver allocate a scratch
-    // region sized by the kernel's per-thread stack times the threads it will keep in flight
-    // (measured: ~5.4 MB apiece, and ~1950 of them live = 10.3 GB on fischer12 -- the real
-    // occupant of the process's MALLOC_LARGE, dwarfing our own pools). The default queue keeps
-    // up to 64 of those alive; we submit strictly one command buffer at a time and wait on it,
-    // so a small pool is all we can ever use.
+    // bounded command-buffer pool. Each compute encoder makes the driver allocate a scratch region
+    // sized by the kernel's per-thread stack times the threads it will keep in flight. The default
+    // queue keeps up to 64 of those alive; we submit strictly one command buffer at a time and wait
+    // on it, so a small pool is all we can ever use.
     queue_ = [device_ newCommandQueueWithMaxCommandBufferCount:2];
     NSError* err = nil;
     // Specialize the shader for this network: the kernels' private arrays and loop bounds are
@@ -928,20 +919,17 @@ class NetGpuMetal : public NetGpuExpander {
     out_valid = out_locs = out_ints = nullptr;
     out_zones = nullptr; out_dk = nullptr;
 
-    // ---- recipe enumeration: parallel, two-pass, straight into the GPU buffers ------------
-    // This used to be one serial loop that push_back'd into six host vectors and then uploaded
-    // them into six freshly-allocated MTLBuffers per level. Measured at 286 ms of a 1756 ms
-    // fischer11 run (and 719 ms of arbiter17's 3537 ms) it was the largest single serial
-    // section left — an Amdahl ceiling that no kernel work can get under.
+    // ---- recipe enumeration: parallel, two-pass, straight into the GPU buffers ------------ This
+    // used to be one serial loop that push_back'd into six host vectors and then uploaded them into
+    // six freshly-allocated MTLBuffers per level.
     //
     // Pass 1 counts each state's recipes and participants; a prefix sum turns those into exact
-    // per-state write offsets; pass 2 re-runs the identical enumeration and writes each recipe
-    // at its own slot. Because every state's slot range is disjoint and assigned by index, the
-    // result is bit-identical to the serial version's ordering — the convex-union merge's
-    // order sensitivity is preserved exactly. The double enumeration costs ~1.6x the scalar
-    // work but spreads it over 12 cores, and it removes the host vectors entirely: the writing
-    // pass targets unified memory the kernel reads, so there is no upload copy and no
-    // per-level allocation.
+    // per-state write offsets; pass 2 re-runs the identical enumeration and writes each recipe at
+    // its own slot. Because every state's slot range is disjoint and assigned by index, the result
+    // is bit-identical to the serial version's ordering — the convex-union merge's order
+    // sensitivity is preserved exactly. The double enumeration costs ~1.6x the scalar work but
+    // spreads it over 12 cores, and it removes the host vectors entirely: the writing pass targets
+    // unified memory the kernel reads, so there is no upload copy and no per-level allocation.
     const int NT = eth_;
     if (static_cast<int>(scr_.size()) < NT) scr_.resize(NT);
     cnt_rec_.resize(static_cast<std::size_t>(nstates) + 1);
@@ -1094,14 +1082,10 @@ class NetGpuMetal : public NetGpuExpander {
                     b_ni = fill(pb_mni_, new_idx), b_noff = fill(pb_mnoff_, new_off),
                     b_nc = fill(pb_mnc_, new_cnt), b_L = fill32(pb_mL_, L), b_U = fill32(pb_mU_, U);
       id<MTLBuffer> b_oc = pb_moc_; { iptr(pb_moc_, nb); b_oc = pb_moc_; }
-      // Convex-union is ON by default on the GPU merge. It used to be off because the test was
-      // O(dim^5) per pair and cost 60%+ of the merge; with the minimal-graph facet set and the
-      // incremental close (dbm_try_union, dbm_ops.hpp) it is O(dim^3) and measures free or
-      // better -- while cutting stored states 37% on csma14 and peak RSS 24% on fischer12,
-      // because every zone it absorbs is a zone the next level does not expand.
-      // union_on doubles as the bounded-union cap: K = merge against the last K only. The
-      // bound is effectively unreachable -- no antichain is a million zones long -- so the
-      // union is unconditional; the parameter stays because the kernel reads it.
+      // Convex-union is ON by default on the GPU merge. union_on doubles as the bounded-union cap:
+      // K = merge against the last K only. The bound is effectively unreachable -- no antichain is
+      // a million zones long -- so the union is unconditional; the parameter stays because the
+      // kernel reads it.
       constexpr int kUnionCap = 1 << 20;
       MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0, kUnionCap};
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
@@ -1182,21 +1166,14 @@ class NetGpuMetal : public NetGpuExpander {
   id<MTLBuffer> grow(__strong id<MTLBuffer>& b, std::size_t bytes) {
     if (bytes == 0) bytes = 16;
     if (b == nil || static_cast<std::size_t>(b.length) < bytes) {
-      // Release the old pool before allocating the new one. Otherwise both are live across the
-      // allocation and the driver reclaims the old pages lazily, so several generations of a
-      // growing pool stay resident — which measured as GBs of RSS above what the buffers report.
-      // Grow geometrically (>=1.5x) so a steadily-widening BFS re-allocates a handful of times
-      // instead of on nearly every level.
-      // Grow geometrically (>=1.5x). Measured: with exact sizing a steadily-widening BFS re-allocates
-      // the pool on nearly every level, and each dropped generation is reclaimed by the driver only
-      // lazily, so ~1 GB of stale pools stays resident. Over-allocating ~0.5 GB to make growth rare is
-      // a net ~0.5 GB win (5.00 -> 4.50 GB on Fischer N11) at no cost in run time.
+      // Release the old pool before allocating the new one. Grow geometrically so a
+      // steadily-widening BFS re-allocates a handful of times instead of on nearly every level.
+      // Grow geometrically. Over-allocating ~0.5 GB to make growth rare is a net ~0.5 GB win at no
+      // cost in run time.
       const std::size_t want = std::max(bytes, static_cast<std::size_t>(b ? b.length * 3 / 2 : 0));
-      // Releasing the old buffer is not enough: measured on fischer12, our live pools summed to
-      // 6.35 GB while Metal had 11.26 GB mapped — ~5 GB of pages belonging to dropped pool
-      // generations that the driver reclaims only lazily. Marking the buffer empty declares its
-      // contents dead so the pages come back now. Safe here because grow() does not preserve
-      // contents (grow_keep copies first, then calls through to this).
+      // Marking the buffer empty declares its contents dead so the pages come back now. Safe here
+      // because grow() does not preserve contents (grow_keep copies first, then calls through to
+      // this).
       if (b != nil) { [b setPurgeableState:MTLPurgeableStateEmpty]; b = nil; }
       b = [device_ newBufferWithLength:want options:MTLResourceStorageModeShared];
     }
@@ -1217,9 +1194,7 @@ class NetGpuMetal : public NetGpuExpander {
       b_dshift_, b_intlo_;
   id<MTLBuffer> pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_;   // persistent expand in/out zone+disc pools
   id<MTLBuffer> pb_work_, pb_wi_;                         // persistent merge work pool + isnew
-  // Persistent expand input staging (recipes + frontier locs + post-update ints). These used to
-  // be freshly allocated MTLBuffers every level; on fischer11 the transient generations were
-  // ~1.6 GB of RSS the memory profiler could not account for.
+  // Persistent expand input staging (recipes + frontier locs + post-update ints).
   id<MTLBuffer> pb_ws_, pb_po_, pb_pc_, pb_pp_, pb_pe_, pb_wi_in_, pb_fl_;
   // Persistent merge input staging (the same problem on the merge side).
   id<MTLBuffer> pb_moff_, pb_mec_, pb_mni_, pb_mnoff_, pb_mnc_, pb_mL_, pb_mU_, pb_moc_;

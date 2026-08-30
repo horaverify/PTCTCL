@@ -1158,13 +1158,11 @@ Network load_uppaal_network(const std::string& path) {
   SystemDecl sd;
   if (const Xml* sys = nta.first("system")) sd = parse_system(sys->text);
 
-  // Resolve the process list: (instance name, defining template). Without a
-  // `system ...;` line, fall back to one process per template in document order.
-  // A process entry is (instance name, template, parameter binding). A template
-  // with a parameter over a bounded type -- `Train(const id_t id)` -- is
-  // instantiated once per value, which is what `system Train, Gate;` means in
-  // UPPAAL. Treating it as a single process is exactly the silent
-  // under-modelling that made viking12..20 masquerade as viking10.
+  // Resolve the process list: (instance name, defining template). Without a `system ...;` line,
+  // fall back to one process per template in document order. A process entry is (instance name,
+  // template, parameter binding). A template with a parameter over a bounded type -- `Train(const
+  // id_t id)` -- is instantiated once per value, which is what `system Train, Gate;` means in
+  // UPPAAL.
   struct PEntry {
     std::string name;
     const Xml* tmpl;

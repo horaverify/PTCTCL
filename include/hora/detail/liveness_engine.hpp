@@ -227,13 +227,11 @@ class LivenessEngine {
   std::size_t outer_nodes = 0;
   bool fwd_ok_ = false;
 
-  // Final graph storage.  The ZoneStore owns dense zone matrices; node[i].zone is scratch-only
-  // once a record is interned.
-  // The final graph's discrete half. The exact/inclusion route keeps it in `node`; the online
-  // route leaves it in the key arenas and points at them through `node_key_`, because several
-  // records share a key (447598 nodes over 260998 keys on fischer10) and copying the locations
-  // into every one of them cost more than the arenas themselves. ::nlocs is the one place that
-  // knows which representation is live.
+  // Final graph storage. The ZoneStore owns dense zone matrices; node[i].zone is scratch-only once
+  // a record is interned. The final graph's discrete half. The exact/inclusion route keeps it in
+  // `node`; the online route leaves it in the key arenas and points at them through `node_key_`,
+  // because several records share a key and copying the locations into every one of them cost more
+  // than the arenas themselves. ::nlocs is the one place that knows which representation is live.
   std::vector<detail::SymState> node;
   std::vector<int> node_key_;
   // Records created so far. In online mode `node` stays empty until the graph is sealed, so it

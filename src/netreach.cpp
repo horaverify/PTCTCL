@@ -1911,12 +1911,11 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           if (tag >= 0) { pz[i] = tag; continue; }   // kept: already stored, already interned
           raw_t* pzi = tmp.data();
           for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones + slot * d2, k);
-          // The high bit of the stored index records "added during the current level". The
-          // frontier is read off these flags once the level is finished (see the level-advance
-          // step), NOT here -- because a later batch of the same level can still absorb this zone
-          // into a convex union, and emitting it now would put a state in the frontier that the
-          // level's own merge went on to delete. That is what made batching cost fischer12 2.5x
-          // its state count.
+          // The high bit of the stored index records "added during the current level". The frontier
+          // is read off these flags once the level is finished (see the level-advance step), NOT
+          // here -- because a later batch of the same level can still absorb this zone into a
+          // convex union, and emitting it now would put a state in the frontier that the level's
+          // own merge went on to delete.
           pz[i] = zi.intern(pzi) | kNewBit;
         }
         // Slots the merge dropped (subsumed, or absorbed into a convex union) are garbage now.
@@ -2210,14 +2209,8 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 ///
 /// Measured, `E[] <clock bound>`, states explored, per-location / global:
 ///
-///     fischer4 x0<=100   55.8x      arbiter4 x0<=50   5.2x
-///     fischer5 x0<=100  413.4x      twolock4 x0<=50   9.1x
-///     fischer5 x0<=20     7.1x      phil4    c0<=50   1.00x
-///     fischer6 x0<=20    12.0x      grc4     x0<=50   0.62x
-///
-/// grc4 is the one model that gains, and phil4 is indifferent; everything else loses heavily.
-/// Verdicts are unchanged throughout, so this is a cost question and not a soundness one. Kept
-/// behind the switch because the grc4 direction suggests the picture depends on how much the
+/// It is behind a switch because the direction of the effect depends on how much the query
+/// constrains the clocks; see docs/design.md section 8.
 /// per-location bounds actually vary across the location vector, which is worth revisiting.
 static bool use_loc_lu() {
   static const bool v = [] { const char* e = std::getenv("HORA_EG_LOCLU"); return e && *e == '1'; }();
@@ -2271,11 +2264,10 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   // The avoided region's constants must reach the LU bounds, and its clocks must stay live.
   //
   // For a convex psi this is automatic: the conjunction became a location invariant above, so
-  // compute_bounds derived the bounds from it and compute_active saw the clocks read everywhere.
-  // A non-convex psi has no such invariant -- the region is routed around, not conjoined -- so
+  // compute_bounds derived the bounds from it and compute_active saw the clocks read everywhere. A
+  // non-convex psi has no such invariant -- the region is routed around, not conjoined -- so
   // nothing tells the abstraction about it, and a_LU subsumption or Extra_LU+ then merges zones
-  // lying on opposite sides of the very boundary the region draws. Measured: without this,
-  // `A<> x0 >= 1 && x0 <= 3` on fischer4 and eight sibling queries flip.
+  // lying on opposite sides of the very boundary the region draws.
   Network bounded;
   const Network* engine_net = &net;
   if (!av.parts.empty()) {
@@ -2326,12 +2318,10 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   // the model, the query or the answer changes -- only where the search looks first.
   //
   // It looks there because the witnesses are local and the search is not. TChecker's lasso for
-  // arbiter9 `E[] x0 <= 40` is three steps of C0 and the arbiter with all eight other clients
+  // A witness is often a handful of steps of one process while every other stays put,
   // sitting in `idle`; the breadth-first search reaches it only after enumerating every
   // interleaving of nine processes down to that depth. Same witness, 2816 states against 3.
   //
-  //     arbiter9  E[] x0 <= 40    2816 states  ->  3
-  //     grc8      E[] x0 <= 15   28458 states  ->  8   (7.4s -> 0.05s)
   //
   // soundness rests on two things and is checked rather than assumed:
   //
@@ -2428,14 +2418,12 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
           sub.procs[p].edges.clear();
           sub.procs[p].build_edge_index();
         }
-      // The abstraction data IS recomputed for the sub-system. Carrying the full network's
-      // bounds over looks conservative -- they are larger, and a larger bound only makes a_LU
-      // finer -- but the active-clock marks come with them, and a clock marked active only
-      // because a now-suppressed process reads it keeps a dimension alive that the sub-system
-      // never constrains. The zones then differ on a coordinate the run does not care about and
-      // the cycle never closes: arbiter4 explores its 3 nodes and reports no witness. Recomputing
-      // is also sound in its own right -- every guard the smaller bounds must dominate is still
-      // present, since only edges were removed.
+      // The abstraction data IS recomputed for the sub-system. Carrying the full network's bounds
+      // over looks conservative -- they are larger, and a larger bound only makes a_LU finer -- but
+      // the active-clock marks come with them, and a clock marked active only because a
+      // now-suppressed process reads it keeps a dimension alive that the sub-system never
+      // constrains. Recomputing is also sound in its own right -- every guard the smaller bounds
+      // must dominate is still present, since only edges were removed.
       sub.compute_bounds();
       sub.compute_loc_bounds();
       sub.compute_active();

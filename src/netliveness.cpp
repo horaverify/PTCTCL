@@ -856,7 +856,7 @@ void LivenessEngine::setup() {
 /// So split the fold. A process whose bound for clock `c` is the same at all of its locations
 /// contributes a constant, folded once here into @ref base_l_ / @ref base_u_. Only the
 /// (process, clock) pairs that really vary stay in @ref vary_clocks_, and the per-key fold walks
-/// those alone --- 17 entries instead of 289 on arbiter16, for the identical result.
+/// those alone, for the identical result.
 void LivenessEngine::build_local_bound_tables() {
   const int dim = net.nclocks + 1;
   base_l_.assign(dim, kAluNegInf);
@@ -1222,9 +1222,9 @@ bool LivenessEngine::online_covers(const SymState& a, int b, int key) {
   online_configure_bounds(key);
   const OnlineKeyInfo& ki = *online_key_by_id_[key];
   // A key with no diagonal atom needs only the base relation, and ::alu_le_stored /
-  // ::stored_includes evaluate that against the stored operand at its own entry type. Widening
-  // it first, as the atom path must, is a full ZoneStore::load per probe -- and the probe is the
-  // hottest call in the forward phase (654M times on grc6, where 857 of 920 keys carry no atom).
+  // ::stored_includes evaluate that against the stored operand at its own entry type. Widening it
+  // first, as the atom path must, is a full ZoneStore::load per probe -- and the probe is the
+  // hottest call in the forward phase.
   if (!ki.diag)
     return use_alu ? alu_le_stored(a.zone, b) : stored_includes(b, a.zone);
   Dbm bsc;
@@ -1292,11 +1292,11 @@ bool LivenessEngine::online_cover_rec(const Dbm& a, const Dbm& b, const std::vec
 }
 
 int LivenessEngine::online_append(SymState&& s, int key) {
-  // NO SymState IS pushed. During the online phase the discrete half lives once in the key
-  // arenas and the zone lives in the ZoneStore, so `node`'s entry would be three empty vector
-  // headers -- 80 bytes a record, and the search materialises far more records than it keeps
-  // (614212 against 447598 on fischer10, so 49 MB of placeholder). The vector is built once, at
-  // its final size, in ::online_finalize_graph; until then `online_nrec_` is the id counter.
+  // NO SymState IS pushed. During the online phase the discrete half lives once in the key arenas
+  // and the zone lives in the ZoneStore, so `node`'s entry would be three empty vector headers --
+  // 80 bytes a record, and the search materialises far more records than it keeps. The vector is
+  // built once, at its final size, in ::online_finalize_graph; until then `online_nrec_` is the id
+  // counter.
   const int id = static_cast<int>(online_nrec_++);
   Dbm z = std::move(s.zone);
   zstore(id, std::move(z));
@@ -1811,15 +1811,11 @@ int LivenessEngine::intern(SymState&& s) {
         intern_grew = true;
         return b[k];
       }
-  // exact convex-union merge. Dbm::try_union succeeds only when the union of the two zones
-  // really is a single zone, so the stored zone afterwards denotes exactly the set the two it
-  // replaced denoted: no point added, none removed. That exactness is what makes the merge
-  // usable here at all — unlike a convex hull it is not an over-approximation, so it cannot
-  // invent a certificate in the under-approximating backward lane.
-  //
-  // It earns its keep on antichains: grc4 stores ~14.5 zones per discrete key without it,
-  // against 1.00–1.44 on every other family, which is the shape of an antichain of zones whose
-  // pairwise unions happen to be convex.
+  // exact convex-union merge. Dbm::try_union succeeds only when the union of the two zones really
+  // is a single zone, so the stored zone afterwards denotes exactly the set the two it replaced
+  // denoted: no point added, none removed. That exactness is what makes the merge usable here at
+  // all — unlike a convex hull it is not an over-approximation, so it cannot invent a certificate
+  // in the under-approximating backward lane.
   {
     for (int j : b) {
       if (!same_disc(j)) continue;
@@ -2039,11 +2035,8 @@ Federation LivenessEngine::stop_set(int u) {
   if (orig_time_open(su)) return f;               // a deadlock here continues by delaying
   Federation d;
   // Deadlock is judged in `dead_net`, which is the unrestricted network when `E[] psi` supplied
-  // one. Maximality is a property of the original system: a run that can only continue by
-  // leaving psi is not maximal, it is simply not a witness. Judging it against the psi-restricted
-  // network instead reads "psi stops holding" as "time stops" and reports the resulting timelock
-  // as a maximal run -- `E[] P0.idle && x0 <= 40` on fischer4 becomes satisfied, where the true
-  // answer is that every continuation past x0 = 40 leaves psi.
+  // one. Maximality is a property of the original system: a run that can only continue by leaving
+  // psi is not maximal, it is simply not a witness.
   //
   // Divergence is the other way round and stays on `net`: the run must diverge inside psi, so the
   // restricted invariant is exactly the right one to consult.
@@ -2113,44 +2106,25 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
   // its entries and never an allocation.
   Dbm vsc, jsc;
   SymState vst, jst;
-  // round-robin lockstep sweep, deliberately, not for want of a worklist. Replacing it with a
-  // chaotic worklist keyed on the reverse edges saves 0.1% of Pre calls on fischer7 and turns grc4
-  // `T0.in --> T0.far` from satisfied into unusable: reordering cannot change the limit of a
-  // monotone descending iteration, but it does change the intermediate federation shapes, and
-  // `fedcap` is a resource bound on those. The lockstep sweep acts as a de-facto normaliser.
-  // See docs/design.md, "Measured and rejected", for the numbers -- and docs/limitations.md for why
-  // the same sensitivity is what blocks a parallel schedule here.
-  // SCC-decomposed lockstep. The sweep above is kept verbatim; what changes is the set it is
-  // swept over.
+  // round-robin lockstep sweep, deliberately, not for want of a worklist. The lockstep sweep acts
+  // as a de-facto normaliser. SCC-decomposed lockstep. The sweep above is kept verbatim; what
+  // changes is the set it is swept over.
   //
-  // A node's `cand` reads only its successors' W, so the descent propagates emptiness one edge
-  // per global round and the round count tracks the graph's diameter, not anything about the
-  // property. grc5 `E[] x0 <= 15 && !T0.in` needed 47 rounds over 14610 nodes -- 1.59M Pre calls
-  // -- where its satisfied sibling needed 6 on the identical graph.
+  // A node's `cand` reads only its successors' W, so the descent propagates emptiness one edge per
+  // global round and the round count tracks the graph's diameter, not anything about the property.
   //
-  // Iterating strongly connected components in reverse topological order removes exactly that.
-  // When a component is reached its successors outside it are already final, so it converges
-  // against fixed outside values and is never revisited; the result is the same greatest fixpoint
-  // because the operator is local and Tarjan emits components successors-first.
+  // Iterating strongly connected components in reverse topological order removes exactly that. When
+  // a component is reached its successors outside it are already final, so it converges against
+  // fixed outside values and is never revisited; the result is the same greatest fixpoint because
+  // the operator is local and Tarjan emits components successors-first.
   //
-  // This is NOT the chaotic worklist recorded as measured and rejected. That one reordered the
-  // visits and changed the intermediate federation shapes, which `fedcap` bounds -- it turned
-  // grc4 `T0.in --> T0.far` unusable. Here the lockstep round-robin survives inside each
-  // component, so the de-facto normalisation it provides is kept where the iteration actually
-  // happens; only the outer partition into components is new.
-  // Enabled for `E[] psi` and not for `p --> q`, which is a measured split rather than a
-  // preference. `E[] psi` reads one node, so emptiness has to propagate the full diameter back to
-  // it and the round count is dominated by that; `p --> q` reads every p-node and settles long
-  // before diameter matters. Best of two runs, decomposed / undecomposed:
-  //
-  //     E[]        grc5 x0<=15 && !T0.in  0.69     fischer7 x0<=40   0.75
-  //                fischer6 x0<=40        0.76     grc5 x0<=15       0.98
-  //     leads-to   fischer6 P0.req        0.77     csma6 Bus         0.91
-  //                arbiter8 C0.cs         1.00     grc4 T0.in        1.02
-  //                phil6 P0.Eat           1.06     grc5 T0.in        1.26  <-- the one loss
-  //
-  // grc5 leads-to is the biggest leads-to case in the suite and it loses a quarter, so the
-  // decomposition does not go there. HORA_GFP_SCC=0 or =1 overrides either way, for measuring.
+  // Here the lockstep round-robin survives inside each component, so the de-facto normalisation it
+  // provides is kept where the iteration actually happens; only the outer partition into components
+  // is new. Enabled for `E[] psi` and not for `p --> q`. `E[] psi` reads ONE node, so emptiness has
+  // to propagate the full diameter back to it and the round count is dominated by that; `p --> q`
+  // reads every p-node and settles long before diameter matters. HORA_GFP_SCC=0 or =1 overrides
+  // either way. See docs/design.md section 8 for the measurements behind the split. decomposition
+  // does not go there. HORA_GFP_SCC=0 or =1 overrides either way, for measuring.
   const bool scc_on = [&] {
     const char* e = std::getenv("HORA_GFP_SCC");
     if (e) return *e == '1';
@@ -2270,10 +2244,8 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
   const int dim = net.nclocks + 1;
   std::vector<std::int32_t> pindex;
   std::deque<PreNode> pnodes;
-  // One arena for every node's invariants, with the spans interned. The invariant list is a
-  // function of the location vector, and across a zone graph the same list recurs constantly --
-  // on twolock9 the arena is ~120 bytes per node stored naively, which is more than the record it
-  // belongs to. Interning by content collapses that to one copy per distinct list.
+  // One arena for every node's invariants, with the spans interned. Interning by content collapses
+  // that to one copy per distinct list.
   std::vector<Constraint> pinvs;
   std::vector<Constraint> iscratch;
   std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint32_t, std::uint32_t>>> pinv_index;
@@ -2418,20 +2390,13 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
 
   // worklist inside A component, for `E[] psi` only. `relax` reads only v's successors, so v can
   // change only after one of them has -- and the lockstep sweep re-reads every node of the
-  // component every round regardless. That is free where the decomposition is fine-grained
-  // (grc5: 2717 components over |S|=7079, 58916 node visits) and ruinous where the closure is a
-  // single component, which is the common shape here:
+  // component every round regardless. That is free where the decomposition is fine-grained and
+  // ruinous where the closure is a single component, which is the common shape here.
   //
-  //     fischer7  |S|=3774  sccs=1     280 rounds   985707 visits   3.45M Pre   26.3s
-  //     twolock7  |S|=4158  sccs=1     126 rounds   449145 visits   1.57M Pre   12.6s
-  //     grc5      |S|=7079  sccs=2717 5458 rounds    58916 visits   0.30M Pre    2.5s
-  //
-  // docs/design.md records a chaotic worklist as measured and rejected, because reordering changes
-  // the intermediate federation shapes and `fedcap` bounds those -- it turned grc4
-  // `T0.in --> T0.far` unusable. That measurement was on leads-to, which is why this is confined
-  // to @ref scc_iter_, which is now on for `p --> q` as well; see its declaration.
-  // The E[] suite runs at a maximum federation width of 186 against a cap of 4096, with zero cap
-  // hits across 108 rows, so the bound that killed it there is not close to binding here.
+  // That measurement was on leads-to, which is why this is confined to @ref scc_iter_, which is now
+  // on for `p --> q` as well; see its declaration. The E[] suite runs at a maximum federation width
+  // of 186 against a cap of 4096, with zero cap hits across 108 rows, so the bound that killed it
+  // there is not close to binding here.
   const bool worklist = scc_on && [] {
     const char* e = std::getenv("HORA_GFP_WORKLIST");
     return !e || *e != '0';
@@ -2728,14 +2693,13 @@ bool LivenessEngine::build_atom_map(AtomMap& am) {
   // deadlock IS judged IN @ref dead_net, SO the completion must BE built there too.
   //
   // For `p --> q` the two are the same automaton and this is a no-op. For `E[] psi` they are not:
-  // the search runs on the psi-restricted network, psi's clock conjunction having been adjoined
-  // to every location invariant, while ::LivenessEngine::stop_set asks hora::detail::state_has_deadlock
-  // about the unrestricted one -- maximality is a property of the original system. Deriving
-  // Dead(q) from `net` here would complete the covering for the restricted automaton's deadlocks
-  // and leave the fixpoint reading the unrestricted automaton's, so the covering could merge two
-  // states that differ in exactly the property the completion exists to preserve. That is the
-  // grc5 `E[] x0 <= 15 && !T0.in` wrong answer, and it is why the sibling `E[] !T0.in`, which
-  // has no clock part and therefore no second network, was always right.
+  // the search runs on the psi-restricted network, psi's clock conjunction having been adjoined to
+  // every location invariant, while ::LivenessEngine::stop_set asks
+  // hora::detail::state_has_deadlock about the unrestricted one -- maximality is a property of the
+  // original system. Deriving Dead(q) from `net` here would complete the covering for the
+  // restricted automaton's deadlocks and leave the fixpoint reading the unrestricted automaton's,
+  // so the covering could merge two states that differ in exactly the property the completion
+  // exists to preserve.
 
   const int nc = net.nclocks;
   am.diag.clear();
@@ -2793,18 +2757,15 @@ bool LivenessEngine::build_atom_map(AtomMap& am) {
     }
     if (!some_escapes) continue;                              // Dead(q) = Inv(q): atoms implied
     ++am.seed_keys;
-    // which zones TO read the atoms off -- two exact representations of the same set, computed
-    // both ways and the cheaper kept.
+    // which zones TO read the atoms off -- two exact representations of the same set, computed both
+    // ways and the cheaper kept.
     //
     // Dead(q) = Inv(q) \ union Esc(q), and every stored zone satisfies Inv(q). Membership in
-    // Dead(q) is therefore decided either by the atoms of the residue's disjoint pieces, or by
-    // the atoms of the escape zones alone -- one convex zone per outgoing transition -- since a
-    // valuation is dead iff it escapes by none of them. Neither dominates: the residue's cut
-    // constraints are artefacts of the peeling order and blow up on grc4 (3234 occurrences
-    // against 25 for the escapes), while the escapes carry diagonals that pull back through
-    // resets into non-diagonal atoms and cost CSMA four clock bounds the residue does not. A
-    // non-diagonal atom is weighted four times heavier in the comparison because it is
-    // discharged by raising that clock to M globally rather than by a local cell.
+    // Dead(q) is therefore decided either by the atoms of the residue's disjoint pieces, or by the
+    // atoms of the escape zones alone -- one convex zone per outgoing transition -- since a
+    // valuation is dead iff it escapes by none of them. A non-diagonal atom is weighted four times
+    // heavier in the comparison because it is discharged by raising that clock to M globally rather
+    // than by a local cell.
     //
     // The atoms come from the minimal graph, not the dense matrix: a canonical DBM's redundant
     // entries are implied by shortest paths through the others, so the non-redundant edges alone
@@ -3759,14 +3720,11 @@ void LivenessEngine::online_finalize_graph() {
       adj[v] = std::move(raw);
     }
   } else {
-    // Reindex only when refinement really left inactive materialised records.  No successor is
+    // Reindex only when refinement really left inactive materialised records. No successor is
     // recomputed and no D decision is revisited.
     //
-    // IN place. Compaction only ever drops, so the new index of a survivor is at most its old
-    // one, and rewriting ascending can therefore only overwrite slots already read. Building the
-    // compacted graph beside the original instead put two copies of the zone store, the node
-    // vector and the adjacency in memory at once -- an 86 MB spike on fischer10, on a graph the
-    // refinement had thinned from 614212 records to 260998.
+    // IN place. Compaction only ever drops, so the new index of a survivor is at most its old one,
+    // and rewriting ascending can therefore only overwrite slots already read.
     std::vector<int> remap(nrec(), -1);
     std::size_t kept = 0;
     // Count first, then size the key index exactly.
@@ -3878,14 +3836,12 @@ void LivenessEngine::base_forward() {
         if (!inq[v]) { inq[v] = 1; work.push_back(v); }
       };
       push(0);
-      // early witness probe. `E[] psi` is satisfied on 220 of the 254 decided rows of the
-      // benchmark suite, and on those the whole forward graph is built to certify a witness that
-      // a fraction of it already contains -- fischer8 `E[] x0 <= 40 && !P1.cs` needs 292 of its
-      // 129468 nodes. ::LivenessEngine::eg_probe is sound in the sat direction on a partial graph, so the
-      // search may stop the moment one fires; NOT is never concluded here.
+      // early witness probe. ::LivenessEngine::eg_probe is sound in the sat direction on a partial
+      // graph, so the search may stop the moment one fires; NOT is never concluded here.
       //
-      // Hoisted out of the per-edge test below: ::LivenessEngine::is_nq opens with a ::LivenessEngine::grow it does not
-      // need here, the loop running right after one, and at one call per edge that is not free.
+      // Hoisted out of the per-edge test below: ::LivenessEngine::is_nq opens with a
+      // ::LivenessEngine::grow it does not need here, the loop running right after one, and at one
+      // call per edge that is not free.
       const bool psi_prune = eg_early_;
       //
       // when TO probe: amortization, not tuning. A probe that misses is wasted work whose cost
@@ -3901,7 +3857,7 @@ void LivenessEngine::base_forward() {
       //
       // The alternative, a geometric schedule on the node count, needs a first size and a ratio,
       // and both are fitted: ratio 4 puts consecutive checkpoints at 25% and 100% of the final
-      // graph, which is why grc7 -- whose witness is only provable at 57% -- explored all of it.
+      // graph, so a witness only provable late costs the whole exploration.
       const auto clk_now = [] { return std::chrono::steady_clock::now(); };
       static const bool probe_dbg = [] { return std::getenv("HORA_EG_PROBEDBG") != nullptr; }();
       long long probe_ns = 0;                  // cumulative cost of every probe so far
@@ -3914,18 +3870,15 @@ void LivenessEngine::base_forward() {
         inq[u] = 0;
         expand(u);                                  // no-op if still expanded
         grow();
-        // A successor needs work exactly when it has no adjacency of its own: brand new, or
-        // reset because a merge enlarged it.
+        // A successor needs work exactly when it has no adjacency of its own: brand new, or reset
+        // because a merge enlarged it.
         //
-        // AND, for `E[] psi`, only if it still satisfies psi. psi's clock part is folded into the
-        // restricted network's invariants, so the forward search never leaves it; its discrete
-        // part is not, and was left to ::LivenessEngine::is_nq at closure time -- so the search explored the
-        // whole reachable graph and then discarded 73% of it on fischer7. A maximal psi-run is in
-        // psi at every step, so a run reaching a non-psi node has already left psi and neither
-        // that node nor anything beyond it can lie on a witness. Not expanding it therefore
-        // removes nothing from ::LivenessEngine::eg_closure: a psi-node reachable only through a non-psi
-        // node was never admitted to it in the first place. It removes 3x the stored nodes and
-        // almost no time, because those nodes were never in the closure the fixpoint iterates.
+        // AND, for `E[] psi`, only if it still satisfies psi. A maximal psi-run is in psi at every
+        // step, so a run reaching a non-psi node has already left psi and neither that node nor
+        // anything beyond it can lie on a witness. Not expanding it therefore removes nothing from
+        // ::LivenessEngine::eg_closure: a psi-node reachable only through a non-psi node was never
+        // admitted to it in the first place. It removes 3x the stored nodes and almost no time,
+        // because those nodes were never in the closure the fixpoint iterates.
         for (const auto& e : adj[u])
           if (!expanded[e.tgt] && !(psi_prune && !is_nq_fast(e.tgt))) push(e.tgt);
         if (psi_prune &&
@@ -4205,9 +4158,6 @@ void LivenessEngine::fill_stats(GfpStats* gs) {
     gs->passes = passes;
     gs->pre_calls = pre_calls;
     gs->early = settled_early;
-    // The reported state count excludes the initial state, matching verifyta: its `E<> p`
-    // figures are this count minus one on every query measured (5 against 6, 6 against 7, 9
-    // against 10), which pins the convention as "states generated", not "states stored".
     gs->outer_nodes = outer_nodes;
     gs->outer_expands = outer_expands;
   }

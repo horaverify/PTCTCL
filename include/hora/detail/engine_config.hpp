@@ -21,7 +21,7 @@ namespace detail {
 
 /// @brief Work threshold for a dense mirror: a chain is promoted once `visits * length` reaches
 /// this. Generalises the old length-only rule -- a length-16 chain promotes on its first visit,
-/// a length-8 chain on its second. Measured on phil13 (t32 c4): 8.56 s against 9.12 s for a
+/// a length-8 chain on its second.
 /// fixed length-16 rule and 13.34 s un-mirrored, with fischer/twolock memory unchanged.
 constexpr std::size_t kHotWork = 16;
 
@@ -29,7 +29,7 @@ constexpr std::size_t kHotWork = 16;
 ///
 /// A gate is required, not optional: mirroring a length-1 chain stores a dense private copy of
 /// a zone the interner was sharing, so it defeats interning and inflates the map every insert
-/// probes. Measured with the gate at 4, twolock12 went 0.76 -> 1.21 GB and +3% time; 8 is the
+/// probes. A smaller gate costs resident memory for no time; 8 is the
 /// smallest value that leaves every process-network family byte-identical to the un-mirrored run.
 constexpr std::size_t kHotMinLen = 8;
 

@@ -17,7 +17,7 @@ namespace detail {
 
 // ---- zone interning --------------------------------------------------------
 // Discrete-heavy symmetric models (viking) reach millions of states but only a
-// handful of distinct zone matrices (~120 for viking15's 2.77M states). Storing
+// handful of distinct zone matrices. Storing
 // each distinct DBM once and referencing it by a 4-byte index collapses the
 // resident zone set from ~1.5 GB to a few KB (L2-resident), removing the
 // memory-bandwidth wall that made large viking trail LTSmin. Interned zones are
@@ -49,17 +49,16 @@ namespace detail {
 // the zone before this thread's next get(), so one scratch per thread is safe.
 struct ZoneIntern {
   // sharded. This table used to be one arena behind one mutex, and intern() sits on the
-  // per-successor hot path, so every inserted state serialized there. The per-thread cache
-  // below cannot absorb that: a symbolic run interns each distinct zone exactly once (on
-  // arbiter16, 589,824 states -> 589,824 distinct zones and 1 cache hit in 589,825 calls),
-  // so ~100% of calls reached the lock. Hold time was tiny (~0.2 CPU-s) but the acquisition
-  // rate was not -- threads waited ~20x longer than the lock was ever held, and the wait grew
-  // with thread count (0.5 / 2.5 / 4.5 CPU-s at 4 / 8 / 12), capping speedup at ~5.5x.
+  // per-successor hot path, so every inserted state serialized there. The per-thread cache below
+  // cannot absorb that: a symbolic run interns each distinct zone exactly once, so ~100% of calls
+  // reached the lock. Hold time was tiny (~0.2 CPU-s) but the acquisition rate was not -- threads
+  // waited ~20x longer than the lock was ever held, and the wait grew with thread count (0.5 / 2.5
+  // / 4.5 CPU-s at 4 / 8 / 12), capping speedup at ~5.5x.
   //
-  // The table is now split into independent shards selected by the zone's hash, each with its
-  // own mutex, arena, and htab -- the same fine-grained-locking shape the passed list already
-  // uses for its stripes. A given zone always hashes to the same shard, so distinct-zone
-  // identity is unchanged and state counts stay identical.
+  // The table is now split into independent shards selected by the zone's hash, each with its own
+  // mutex, arena, and htab -- the same fine-grained-locking shape the passed list already uses for
+  // its stripes. A given zone always hashes to the same shard, so distinct-zone identity is
+  // unchanged and state counts stay identical.
   static constexpr int kShardBits = 6;
   static constexpr int kShards = 1 << kShardBits;
   static constexpr std::uint64_t kShardMask = kShards - 1;
@@ -72,11 +71,11 @@ struct ZoneIntern {
   // over all shards stays small (~2 MB), not per table as before.
   //
   // capacity. These used to be 1<<10 / 1<<11 -> 2.1M zones/shard, ~134M total, and that cap was
-  // reachable: twolock15 and twolock16 hit it and died. The throw below is raised inside an
+  // reachable on large instances. The throw below is raised inside an
   // `omp parallel` region, where an exception may not leave the structured block, so it did not
   // surface as main()'s "error:" line -- every worker called std::terminate and the process took
   // SIGABRT. The benchmark harness saw only a nonzero exit and recorded err at a suspiciously
-  // repeatable 16.5 GB (twolock15) / 21.0 GB (twolock16), identical at 24 and 32 threads because
+  // repeatable, and identical at 24 and 32 threads because
   // the trigger is a zone count, not a time. At 16 threads the same runs merely timed out first,
   // which is why the crash looked thread-count-dependent and was not.
   //
@@ -93,9 +92,7 @@ struct ZoneIntern {
   static constexpr int kChunks = 1 << 12;               // -> 16.8M zones/shard, ~1.07G total
   // Slabs start small and double, so 64 shards do not each commit a big slab up front. The cap
   // matters as much as the floor: whatever a shard's final slab is, the unused tail of it is
-  // wasted, and that waste is paid 64 times. Doubling all the way to 4 MB cost ~40 MB on
-  // arbiter17 (+17% RSS); capping at 128 KB bounds total slack to kShards * 128 KB (~8 MB
-  // worst case) while still keeping the slab count low for large runs.
+  // wasted, and that waste is paid 64 times.
   static constexpr std::size_t kSlabMin = 1u << 14;     // 16 KB
   static constexpr std::size_t kSlabMax = 1u << 17;     // 128 KB
   static constexpr int kHtabInitBits = 10;              // 1024 slots/shard, grows by rehash
@@ -151,14 +148,12 @@ struct ZoneIntern {
     for (std::size_t i = 0; i < len; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
     return h;
   }
-  // Shard selector. must NOT reuse the low bits that index a shard's htab (`h & hmask`):
-  // every key routed to shard s has `h & kShardMask == s`, so if the slot index also came from
-  // the low bits, only hmask/kShards of a shard's slots could ever be a home position -- the
-  // other 63/64 are reachable only by linear probing. At the 70% growth trigger that packs
-  // ~0.7*cap entries into cap/64 home slots (~45 deep each), and a probe is not cheap here: it
-  // chases chunks[][] and byte-compares the record. Measured on arbiter16 that cost 31.2
-  // probes per locked lookup versus 1.68 for the unsharded table -- which is what ate the
-  // sharding win. Mixing and taking the high bits makes the two indices independent.
+  // Shard selector. must NOT reuse the low bits that index a shard's htab (`h & hmask`): every key
+  // routed to shard s has `h & kShardMask == s`, so if the slot index also came from the low bits,
+  // only hmask/kShards of a shard's slots could ever be a home position -- the other 63/64 are
+  // reachable only by linear probing. At the 70% growth trigger that packs ~0.7*cap entries into
+  // cap/64 home slots (~45 deep each), and a probe is not cheap here: it chases chunks[][] and
+  // byte-compares the record. Mixing and taking the high bits makes the two indices independent.
   static int shard_of(std::uint64_t h) {
     std::uint64_t x = h;
     x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33;
@@ -174,7 +169,7 @@ struct ZoneIntern {
   ///
   /// Memoised on the last index decoded by this thread. Callers hit the same index repeatedly --
   /// the expand path alone reads `zi.get(frontier[i].second)` from several call sites per state --
-  /// and each miss costs a full mindbm_unpack, which is an O(dim^3) closure. On viking12 the
+  /// and each miss costs a full mindbm_unpack, which is an O(dim^3) closure. The
   /// decode path (this plus mindbm_unpack) is 40% of all instructions, because that family stores
   /// ~1 zone per discrete state and so re-decodes zones it has just touched.
   ///
@@ -184,15 +179,11 @@ struct ZoneIntern {
   /// there invalidates every memo at once.
   // Lines in the per-thread decode cache. 16 dense zones per thread is ~28 KB at dim 21, so the
   // whole cache stays L1/L2-resident where the packed records it replaces do not.
-  //
-  // A one-entry memo was tried first and recovered only ~4% of the ~40% that decoding costs on
-  // viking12: it catches consecutive reads of the same index, but within a level the reads are
-  // spread over many distinct indices, so almost every one missed.
   static constexpr int kDecodeLinesMax = 64;
   /// @brief Lines in the per-thread decode cache. Power of two.
   ///
   /// Not a free parameter in one direction: 1 line and 16 lines favour different families. 16
-  /// wins on viking (viking17 -7.9%, viking20 -6.4%) where a level touches many distinct zones;
+  /// wins where a level touches many distinct zones;
   /// 1 was better on single, whose long chains re-read one zone repeatedly and whose working set
   /// then fits without evicting it. 16 is the shipping value.
   static constexpr int decode_lines() { return 16; }
@@ -200,7 +191,7 @@ struct ZoneIntern {
   /// @brief Decode zone @p idx into a per-thread cache and return it.
   ///
   /// Decoding is the price of minimal-graph storage and it is charged per zone touched, not per
-  /// zone stored: reconstructing the redundant entries is an $O(dim^3)$ closure. On viking12 the
+  /// zone stored: reconstructing the redundant entries is an O(dim^3) closure. The
   /// decode path was 40% of all instructions, because that family keeps ~1 zone per discrete
   /// state and so re-decodes records it touched moments earlier.
   ///
@@ -390,16 +381,14 @@ struct ZoneIntern {
     }
     // invalidate the per-thread caches. Mandatory for soundness, not an optimisation.
     //
-    // A cache line is (record hash -> index), and intern()'s fast path validates a hit by
-    // comparing the record bytes. Sweeping does not erase a freed record -- it pushes the
-    // memory onto freeRecs and the index onto freeIdx -- so a freed entry still compares
-    // equal to the zone it used to hold, and the fast path would hand back an index that is
-    // on the free list. The caller stores that index in a passed-list node; the next intern()
-    // that pops the same index writes a different record into chunks[loc], and the node now
-    // denotes a different zone. That is not a lost optimisation, it is a wrong answer: the
-    // state keeps its discrete key and acquires someone else's zone, so the search explores
-    // states the model cannot reach (found on fischer6+, where it turned a satisfied mutual-
-    // exclusion property into a spurious counterexample).
+    // A cache line is (record hash -> index), and intern()'s fast path validates a hit by comparing
+    // the record bytes. Sweeping does not erase a freed record -- it pushes the memory onto
+    // freeRecs and the index onto freeIdx -- so a freed entry still compares equal to the zone it
+    // used to hold, and the fast path would hand back an index that is on the free list. The caller
+    // stores that index in a passed-list node; the next intern() that pops the same index writes a
+    // different record into chunks[loc], and the node now denotes a different zone. That is not a
+    // lost optimisation, it is a wrong answer: the state keeps its discrete key and acquires
+    // someone else's zone, so the search explores states the model cannot reach.
     //
     // Byte equality cannot distinguish the two cases, so the cache has to be dropped. It costs
     // nthreads * 2^kCacheBits stores on a sweep, and sweeps are O(log) in the run.

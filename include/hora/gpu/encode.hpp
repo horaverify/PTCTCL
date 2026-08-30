@@ -24,9 +24,8 @@ struct NetEncoding {
   std::vector<int> active;             // [total_locs*(nclocks+1)]
   // Same information as `active`, one bit per clock (bit c = clock c active here). The kernel's
   // reset-inactive step needs the union over all processes' target locations; with the [loc][clk]
-  // table that is nprocs*nclocks device loads per successor (289 on arbiter17, comparable to the
-  // whole rest of the zone pipeline). With the mask it is nprocs loads and a bitwise OR.
-  // kMaxDim is 24, so 23 clocks always fit in a uint32.
+  // table that is nprocs*nclocks device loads per successor. With the mask it is nprocs loads and a
+  // bitwise OR. kMaxDim is 24, so 23 clocks always fit in a uint32.
   std::vector<std::uint32_t> active_mask;   // [total_locs]
   std::uint32_t qmask_bits = 0;             // clocks the query reads (same bit layout)
   std::vector<int> qmask;              // [nclocks+1]
