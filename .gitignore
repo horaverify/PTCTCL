@@ -113,3 +113,6 @@ old_stuff/
 /tests/models/liveness-regressions/
 
 
+UppalOMP/
+HORA/
+d_sim_results/
