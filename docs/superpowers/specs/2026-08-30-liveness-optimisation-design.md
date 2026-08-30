@@ -331,13 +331,87 @@ Peak RSS on those rows falls by up to 31× (`fischer9` 221.6 MB → 7.1 MB), bec
 stops instead of building the graph. Cycle-witness rows are unchanged in both, which is the
 evidence that the witness does not fire where it must not.
 
+### Large models, and the reference comparison
+
+Wall time is not comparable across machines, so the recorded `verifyta`/`tchecker` results are
+not a timing baseline. **Peak RSS is**, which makes the memory column the one that can be read
+against them directly. Both PTCTLMC builds were re-run here; the reference columns are the
+recorded ones.
+
+```
+model        base GB   new GB      x  |  tchecker  vs tck  |  time base -> new
+arbiter15      0.326    0.252   1.29x |     0.273   1.08x  |   2.47s -> 1.98s  1.25x
+arbiter16      0.743    0.550   1.35x |     0.563   1.02x  |   5.88s -> 4.77s  1.23x
+arbiter17      1.572    1.170   1.34x |     1.182   1.01x  |  13.95s -> 11.34s 1.23x
+arbiter18      3.212    2.552   1.26x |     2.500   0.98x  |  32.69s -> 26.50s 1.23x
+fischer10      0.529    0.280   1.89x |     1.089   3.89x  |   2.88s -> 1.87s  1.54x
+fischer11      1.694    0.920   1.84x |     4.986   5.42x  |  11.25s -> 7.44s  1.51x
+twolock10      0.541    0.273   1.98x |     0.914   3.35x  |   2.37s -> 1.76s  1.35x
+twolock11      1.704    0.929   1.83x |     4.153   4.47x  |   9.31s -> 7.00s  1.33x
+csma12         0.221    0.139   1.59x |     0.136   0.98x  |   1.34s -> 1.10s  1.22x
+phil11         0.338    0.188   1.80x |     5.566  29.61x  |  17.73s -> 3.97s  4.47x
+```
+
+Verdicts agree on every row. We are 3.4–29× under `tchecker` where the quotient wins on state
+count, and at **parity** — arbiter18 and csma12 marginally worse — where it does not. Before this
+work arbiter18 stood at 0.78× of `tchecker`.
+
+### The gap that remains: bytes per stored state
+
+Normalising by states stored is what the totals hide.
+
+```
+model        ours base  ours new | tchecker  verifyta |  our states  tck states  vta states
+arbiter18         1316      1045 |      975         - |     2621440     2752512           -
+fischer11         1242       674 |      389         - |     1464971    13764960           -
+twolock11         1230       671 |      401         - |     1487499    11108023           -
+phil11            1423       814 |      679        31 |      247943     8808014     2120725
+```
+
+**`verifyta` holds 2.12 M states of phil11 in 0.061 GB — 31 bytes a state, against our 814.** It
+uses 3× less memory in total while exploring 8.5× more states. `tchecker` is also better than us
+per state (389 against 674 on fischer11) and loses only because it stores 9.4× more.
+
+So the whole of our memory advantage is **state count**, from the D/a_LU quotient and the exact
+convex-union merge; none of it is footprint. Measured, our 814 bytes a state on phil11 are:
+
+| | B/state |
+|---|---|
+| ZoneStore, all records (dense `dim²`, retired ones included) | 204 |
+| key arenas + `OnlineKeyInfo` | 137 |
+| adjacency edges | 67 |
+| adjacency vector-of-vectors headers | 40 |
+| per-node side arrays | 38 |
+| backward `W` federations | ~156 |
+
+The lever nobody has pulled is the first line: HDBM already ships `mindbm`, a minimal-graph
+packing an order of magnitude smaller, and `zone_store.hpp` records why it is not used — the
+covering test reads the stored operand at an arbitrary `(i, j)`, which a minimal graph cannot
+answer without re-running its closure. That is precisely the trade UPPAAL makes, and it is the
+one plausible route to `verifyta`'s footprint. It must be measured against the probe rate before
+it is believed: grc6 scans **357 active records per intern** and runs 654 M cover probes.
+
 ## 10. What was measured and rejected
+
 
 - **A whole-zone stop-set shortcut.** `NoSucc(v) = Z_v` puts `v` at its fixpoint immediately.
   Implemented, verified against 102 queries, measured — and it never fires: the stopping term is
   **empty at every node of every model in the suite**, leads-to and E[] alike. Removed rather than
   carried. The corollary is worth recording: on this suite the backward fixpoint is purely
   `W = W /\ Pre(W)`, and its memory is the transient `W` federations of the descent, not `nosucc`.
+- **The rest of the D reserve.** The online search materialises far more records than it keeps
+  (614212 against 447598 on fischer10) and every excess record is UNEXPANDED when dropped; they
+  are held only because a later D atom could revoke the cover that retired them, and on arbiter,
+  fischer, twolock and phil D never gains an atom at all. Two ways to reclaim them were sized:
+  *batch pre-reduction* is worth nothing (`deact_sib = 0` — not one retirement is by a same-batch
+  sibling), and *freeing the retired zone slot* needs a slot free list, which breaks the direct
+  node-to-slot map the in-place finalize compaction relies on, plus an 8-byte replay recipe per
+  record wherever the cover is a_LU-only rather than literal inclusion (100% of retirements on
+  phil and csma, 90% on grc, but 0% on fischer and twolock). Netted against the ~121 bytes a slot
+  it recovers: 1.2–4.3% of peak per family, for an indirection on a path called 654M times.
+  Declined. What sizing it *did* turn up was two straight copies of data that already existed —
+  the placeholder `node` during construction and the per-record copy of each key — which are the
+  two changes that took peak memory from 1.1× to 1.4–2.0×.
 - **`comps.shrink_to_fit()` and a flatter `PreNode`** as memory fixes for the E[] regression: both
   made it *worse*. Bisecting across the branch and instrumenting the E[] phases found the actual
   cause (the invariant arena at ~120 B/node); interning the spans fixed it.
