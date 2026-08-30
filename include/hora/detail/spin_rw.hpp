@@ -12,10 +12,10 @@
 namespace hora {
 namespace detail {
 
-// A stripe lock that SPINS before it blocks.
+// A stripe lock that spins before it blocks.
 //
 // Contention on the stripe locks is only 2-3%, but with std::shared_mutex each collision cost
-// 0.3-1.8 MILLISECONDS: the loser blocks, the kernel deschedules it, and it waits for a whole
+// 0.3-1.8 milliseconds: the loser blocks, the kernel deschedules it, and it waits for a whole
 // scheduling quantum to service a critical section that runs in microseconds. On phil13 that
 // convoy consumed ~378 of 759 CPU-seconds -- literally half the machine sat blocked, which is
 // why utilisation pinned at ~400% of 800%.
@@ -25,7 +25,7 @@ namespace detail {
 // quantum spinning against a descheduled holder. 8 bytes per stripe instead of ~56 also matters
 // at 16k stripes.
 //
-// Two variants were measured and REMOVED, so don't reintroduce them: test-and-test-and-set with
+// Two variants were measured and removed, so don't reintroduce them: test-and-test-and-set with
 // exponential back-off (no gain, slightly worse -- a waiter that probes less often misses the
 // release window), and writer preference (it moved wait from writers to readers and total wait
 // did not change, because the stripes are genuinely serialized rather than unfairly scheduled).
@@ -39,7 +39,7 @@ class SpinRW {
     asm volatile("yield" ::: "memory");
 #endif
   }
-  // Pauses before falling back to yield(). yield() is a SYSCALL, and it is only the right move
+  // Pauses before falling back to yield(). yield() is a syscall, and it is only the right move
   // when the lock holder has been descheduled -- i.e. when threads outnumber cores. At threads <=
   // cores the holder is running and will release in microseconds, so yielding costs more than the
   // wait it avoids: phil13 measured 14.5M yields, tens of CPU-seconds of pure syscall on a 239

@@ -77,17 +77,17 @@ int run(const char* model, const char* query, hora::Backend backend) {
       bool sat = false;
       ReachStats st;
       std::cout << "Verifying formula: " << q.raw << "\n";
-      // A single automaton is verified by the NETWORK engine (as a 1-process network), not by
+      // A single automaton is verified by the network engine (as a 1-process network), not by
       // the single-TA one. The two are not equally developed: reach.cpp's passed list only ever
-      // APPENDS -- it tests whether a new zone is already covered, but never retires a stored
+      // appends -- it tests whether a new zone is already covered, but never retires a stored
       // zone that a more general one subsumes, and never runs the convex-union merge -- so on a
       // clock-heavy automaton it is not an antichain at all. The network engine has the interned
       // packed zones, aLU subsumption with per-location bounds, the merge and the sharded passed
       // list. Measured on single6 (one location, 6 independent clocks): 20278 stored zones and
       // 8.46s the old way, 3676 and 1.47s this way -- UPPAAL stores 3673 and takes 4.79s.
       //
-      // EXCEPT with DIAGONAL constraints, where the single-TA engine is the better one: it
-      // SPLITS locations on the truth of each diagonal atom and stays exact, while the network
+      // except with diagonal constraints, where the single-TA engine is the better one: it
+      // splits locations on the truth of each diagonal atom and stays exact, while the network
       // engine can only keep diagonals exact and relax clock-vs-zero, behind a state cap. So
       // diagonal models keep the old route.
       if (!net_loaded) {

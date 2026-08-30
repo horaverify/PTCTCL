@@ -127,7 +127,7 @@ void test_reachability() {
 
 // ---- delay_avoiding: time may pass, but never through the convex region `forbid` ----
 //
-// The operator behind a liveness predicate that must be AVOIDED rather than maintained, i.e.
+// The operator behind a liveness predicate that must be avoided rather than maintained, i.e.
 // the complement of a conjunction, which is a disjunction and so is not an invariant.
 void test_delay_avoiding() {
   using detail::delay_avoiding;

@@ -2,12 +2,12 @@
 //
 // Many benchmark networks are built from N copies of the same template wired in a ring or a
 // clique: the dining philosophers, Fischer, arbiter, CSMA. Permuting the copies maps the network
-// onto itself, so the reachable state space is covered by exploring ONE representative per orbit.
+// onto itself, so the reachable state space is covered by exploring one representative per orbit.
 // For an N-fold symmetry that is up to N times fewer states, N times less memory, and N times
 // less work — a reduction no amount of parallelism can give you, and one that composes with it.
 //
-// This finds the symmetry itself: an `Automorphism` is a permutation of PROCESSES together with
-// the induced permutations of CLOCKS and CHANNELS, and it is only accepted after being verified
+// This finds the symmetry itself: an `Automorphism` is a permutation of processes together with
+// the induced permutations of clocks and channels, and it is only accepted after being verified
 // structurally against the network, so a wrong guess by the search cannot make the result wrong
 // — it can only fail to find a symmetry and lose the reduction.
 //
@@ -22,11 +22,11 @@
 
 namespace hora {
 
-/// @brief A network automorphism: process, clock, channel and integer-VALUE permutations that
+/// @brief A network automorphism: process, clock, channel and integer-value permutations that
 ///        agree.
 ///
 /// The value permutations are what make Fischer-style models reachable. There the shared `id`
-/// holds a PROCESS INDEX, so permuting processes has to permute `id`'s values in step -- a
+/// holds a process index, so permuting processes has to permute `id`'s values in step -- a
 /// network symmetric in every other respect is not an automorphism until the data moves too.
 /// Values are only permuted, never reinterpreted: variables compared with `<`/`<=` are refused,
 /// since an arbitrary permutation need not preserve an ordering.
@@ -50,7 +50,7 @@ struct Automorphism {
 ///
 /// Returns a single (identity) element when no symmetry is found or the network is out of
 /// scope. Out of scope for now: networks with integer variables, because a permutation of
-/// processes generally has to permute index-VALUED data too (Fischer's `id`), which needs the
+/// processes generally has to permute index-valued data too (Fischer's `id`), which needs the
 /// variable's meaning, not just the network's shape.
 ///
 /// @param cap Maximum group size to materialise; the search stops early beyond it.

@@ -8,9 +8,9 @@
 ///
 /// @par What the parser refuses
 /// A construct that cannot be represented faithfully is rejected, so a query over it reports
-/// UNSUPPORTED rather than being answered against different semantics. The one place this rule is
+/// unsupported rather than being answered against different semantics. The one place this rule is
 /// broken today is `urgent chan`, which is accepted and downgraded silently — see
-/// KNOWN_LIMITATION.md §1.
+/// docs/limitations.md §1.
 ///
 /// @warning Declarations are matched textually. Any keyword test must therefore check both sides
 ///          of the match for identifier characters; testing only the prefix would split an
@@ -541,7 +541,7 @@ std::vector<Query> load_queries(const std::string& path) {
 /// @param backend which expansion backend to run
 /// @param[out] stats optional statistics; unchanged when null
 /// @return @c false if the query is unsupported or its condition does not resolve against @p ta
-/// @note A @c false return is reported to the user as UNSUPPORTED. It never means "not
+/// @note A @c false return is reported to the user as unsupported. It never means "not
 ///       satisfied", which is why @p satisfied is left untouched.
 bool check_query(const TimedAutomaton& ta, const Query& q_in, bool* satisfied, Backend backend,
                  ReachStats* stats) {
@@ -818,7 +818,7 @@ void parse_decl_block(const std::string& text, const std::string& prefix, Networ
                       std::unordered_map<std::string, int>& chm, DeclCtx& dc) {
   const std::vector<std::string> stmts = split_decls(text);
 
-  // Pass 1: register function NAMES so bodies and guards can call them in any order.
+  // Pass 1: register function names so bodies and guards can call them in any order.
   std::vector<std::pair<std::size_t, std::string>> fn_bodies;  // (func index, raw text)
   for (const std::string& raw : stmts) {
     const std::string s = trim(raw);
@@ -1102,7 +1102,7 @@ ExprP and_expr(ExprP a, ExprP b) {
 /// An urgent channel stops time exactly while a synchronisation on it is enabled. Enabledness is
 /// therefore consulted at every state, and the whole design rests on it being decidable from the
 /// discrete state alone: locations plus the integer valuation. A clock guard on such an edge
-/// would make enabledness a property of the ZONE, and worse, one that can switch on partway
+/// would make enabledness a property of the zone, and worse, one that can switch on partway
 /// through a delay — the delay would then have to be clipped at that instant, a zone subtraction
 /// whose result is in general non-convex.
 ///
@@ -1122,7 +1122,7 @@ static void check_urgent_chan_guards(const Network& net) {
           "clock guard on an edge synchronising over the urgent channel '" +
           net.channels[e.sync_chan] + "' (process " + proc.name + ", " +
           proc.locations[e.src].name + " -> " + proc.locations[e.tgt].name +
-          "). Urgent-channel synchronisation may not be clock-guarded; see KNOWN_LIMITATION.md.");
+          "). Urgent-channel synchronisation may not be clock-guarded; see docs/limitations.md.");
     }
 }
 
@@ -1162,7 +1162,7 @@ Network load_uppaal_network(const std::string& path) {
   // `system ...;` line, fall back to one process per template in document order.
   // A process entry is (instance name, template, parameter binding). A template
   // with a parameter over a bounded type -- `Train(const id_t id)` -- is
-  // instantiated ONCE PER VALUE, which is what `system Train, Gate;` means in
+  // instantiated once per value, which is what `system Train, Gate;` means in
   // UPPAAL. Treating it as a single process is exactly the silent
   // under-modelling that made viking12..20 masquerade as viking10.
   struct PEntry {
@@ -1217,10 +1217,10 @@ Network load_uppaal_network(const std::string& path) {
 
   for (const auto& pr : plist) {
     const Xml& tmpl = *pr.tmpl;
-    // Per-instance scope. Template-local declarations are parsed PER INSTANCE
+    // Per-instance scope. Template-local declarations are parsed per instance
     // with the instance name as a prefix, so N instances of `Train` (each
     // declaring `clock x`) get N distinct clocks Train0.x .. TrainN-1.x --- v1
-    // refused this case outright. The template parameter is a CONSTANT in this
+    // refused this case outright. The template parameter is a constant in this
     // scope, which is what makes `appr[id]` fold to a concrete channel.
     DeclCtx ldc = dc;
     if (pr.has_param) {
@@ -1394,7 +1394,7 @@ Network load_uppaal_network(const std::string& path) {
     net.procs.push_back(std::move(proc));
   }
   net.nclocks = (int)net.clock_names.size() - 1;
-  // Narrow declared integer ranges to the values actually reachable BEFORE the discrete key is
+  // Narrow declared integer ranges to the values actually reachable before the discrete key is
   // laid out, since the key spends bits(hi-lo+1) per cell. Opt-in (--narrow) while it is new:
   // it is an over-approximation and therefore sound, but it changes the packing of every model
   // with integer state, so the parity gate decides when it becomes the default.
@@ -1419,9 +1419,9 @@ Network load_uppaal_network(const std::string& path) {
 /// @param[out] stats optional statistics; unchanged when null
 /// @return @c false if the query is unsupported or does not resolve against @p net
 ///
-/// @note A @c false return is reported as UNSUPPORTED and never means "not satisfied", which is
+/// @note A @c false return is reported as unsupported and never means "not satisfied", which is
 ///       why @p satisfied is left untouched. This is the path a liveness predicate mentioning a
-///       clock takes; see KNOWN_LIMITATION.md §3.
+///       clock takes; see docs/limitations.md §3.
 bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backend backend,
                      ReachStats* stats) {
   if (!q.supported) return false;
@@ -1452,14 +1452,14 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     }
     return true;
   };
-  // Conjunction of LOCATION/INT atoms -> DiscPred (liveness; clock atoms rejected).
+  // Conjunction of location/int atoms -> DiscPred (liveness; clock atoms rejected).
   // Parse a list of atoms into `out`, optionally negating each one as it is pushed.
   //
-  // Negating atom by atom is what lets a DISJUNCTION be accepted: `a \/ b` is `!(!a /\ !b)`, and
+  // Negating atom by atom is what lets a disjunction be accepted: `a \/ b` is `!(!a /\ !b)`, and
   // the engine represents a conjunction and the negation of a conjunction, so a disjunction of
   // single atoms lands in the second class. It does not represent anything wider, which is why an
   // atom whose own negation is not a single atom -- a clock equality, since `x == 5` parses to
-  // TWO constraints and negates to a disjunction -- is refused here rather than approximated.
+  // two constraints and negates to a disjunction -- is refused here rather than approximated.
   auto build_atoms = [&](const std::vector<std::string>& atoms, DiscPred& out, bool neg) -> bool {
     for (auto atom : atoms) {
       atom = trim(atom);
@@ -1509,7 +1509,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   };
   // ---- general boolean predicates -------------------------------------------------------
   //
-  // Anything that is not a plain conjunction is handled by putting the NEGATION of the predicate
+  // Anything that is not a plain conjunction is handled by putting the negation of the predicate
   // into disjunctive normal form. Each resulting term is a conjunction, hence a discrete guard
   // plus a convex clock region, which is the only shape the engine ever has to represent; the
   // non-convexity lives in the union of terms and is absorbed by intersecting the per-term delay
@@ -1523,7 +1523,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     std::vector<BExpr> kids;
   };
   // A hand-rolled parser rather than reuse of parse_expression: that one yields an arithmetic
-  // ExprP over integer state, while what is needed here is the boolean SKELETON, with the leaves
+  // ExprP over integer state, while what is needed here is the boolean skeleton, with the leaves
   // left as text for parse_net_atom to interpret as a location, integer or clock atom.
   struct BParse {
     const std::string& t; std::size_t i = 0; bool ok = true;
@@ -1597,14 +1597,14 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     return {};
   };
 
-  // Build the predicate a liveness query must MAINTAIN, from the query text.
+  // Build the predicate a liveness query must maintain, from the query text.
   //
   // `want_negated` says whether the caller wants `!text` (as `A<>` does) rather than `text`.
   // Either way the result is a conjunction plus a flag, because those are the two shapes the
   // engine represents; a disjunction is turned into the negation of a conjunction of negated
   // atoms, which flips the flag. Mixing `&&` and `||` in one predicate is refused: the result
   // would be neither shape.
-  // Split `psi` into an arbitrary boolean over DISCRETE atoms and a CONJUNCTION of clock atoms.
+  // Split `psi` into an arbitrary boolean over discrete atoms and a conjunction of clock atoms.
   //
   // This is the fragment the backward engine decides. The clock conjunction is convex, so it
   // becomes an invariant of a restricted network and the run stays inside it by construction; the
@@ -1614,7 +1614,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   // operator for it -- Pre through a delay routed around an obstacle -- does not exist yet.
   //
   // @param[out] cc  the clock conjunction
-  // @param[out] ndnf  DNF of the NEGATED discrete part, i.e. where V_psi does NOT hold
+  // @param[out] ndnf  DNF of the negated discrete part, i.e. where V_psi does NOT hold
   std::function<bool(const BExpr&, std::vector<const BExpr*>&)> flatten_and =
       [&](const BExpr& e, std::vector<const BExpr*>& out) -> bool {
     if (e.kind == BExpr::And) return flatten_and(e.kids[0], out) && flatten_and(e.kids[1], out);
@@ -1650,12 +1650,12 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
       nonconvex.push_back(k);                        // clock under a disjunction or a negation
     }
     // A conjunct putting a clock under a disjunction or a negation is not an invariant: the run
-    // must stay inside a non-convex region. Its NEGATION goes into DNF, giving convex terms with
+    // must stay inside a non-convex region. Its negation goes into DNF, giving convex terms with
     // discrete guards that detail::DelayAvoidSet routes each delay around -- forward through
     // delay_avoiding, backward through pre_avoiding.
     for (const BExpr* k : nonconvex)
       for (const auto& term : to_dnf(*k, /*neg=*/true)) {
-        // A negated literal can itself be a disjunction -- `x == 3` parses to TWO constraints, so
+        // A negated literal can itself be a disjunction -- `x == 3` parses to two constraints, so
         // `!(x == 3)` is `x < 3 \/ x > 3` -- and a forbidden term must stay a conjunction, so the
         // term splits into one copy per alternative, cross-producted over every such literal.
         DiscTerm base;
@@ -1797,7 +1797,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
     // `p --> q` is violated by EF(p /\ EG !q), so the two operands are handled differently.
     //
     // `q` supplies psi = !q, exactly as A<> does: split_psi on the negated text yields the clock
-    // conjunction of psi and the DNF of !psi, which is q itself -- the region the run must AVOID
+    // conjunction of psi and the DNF of !psi, which is q itself -- the region the run must avoid
     // wherever q's discrete part holds.
     //
     // `p` is evaluated at one valuation under EF, with no obligation along a delay, so it needs
@@ -1842,7 +1842,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
       // Purely discrete and single-term on both sides: the long-standing path, untouched.
     }
     if (!build_pred(q.lhs, p) || !build_pred(q.note, qq)) return false;
-    // THE BACKWARD GREATEST FIXPOINT IS THE ENGINE. Forward SCC search closes cycles that
+    // the backward greatest fixpoint IS the engine. Forward SCC search closes cycles that
     // subsumption invented; the backward fixpoint only ever reads a target's W as an upper
     // bound, so subsumption is harmless to it.
     GfpStats gs;

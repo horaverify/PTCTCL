@@ -33,13 +33,13 @@ struct NEdge {
 
   // General modelling-language guard/update, used only when the edge needs more
   // than `var OP const` / `var := const` -- array elements, arithmetic, or a call
-  // (`e == front()`, `enqueue(e)`). Kept SEPARATE from the fast-path vectors
+  // (`e == front()`, `enqueue(e)`). Kept separate from the fast-path vectors
   // above so the existing static analyses (Extra_LU bounds, aLU per-location
   // bounds, active-clock reduction) and the validated Fischer/viking behaviour
   // are untouched: those read int_guard/int_updates, which stay exactly as
   // before for models that do not need this.
   //
-  // Semantics: gen_guard is ANDed with int_guard; gen_update runs AFTER
+  // Semantics: gen_guard is ANDed with int_guard; gen_update runs after
   // int_updates. A faulting guard is false; a faulting update kills the edge.
   ExprP gen_guard;
   StmtP gen_update;
@@ -54,7 +54,7 @@ struct NProc {
 
   // Outgoing edges indexed by source location, built once by build_edge_index().
   // successors_net() is called once per (state, process) and used to call
-  // edges_from() there, which allocated a fresh vector and linearly scanned ALL
+  // edges_from() there, which allocated a fresh vector and linearly scanned all
   // edges every time -- the dominant malloc/scan cost on discrete-heavy models
   // (viking). Reading edges_of(loc) instead is allocation-free.
   std::vector<std::vector<int>> edges_by_loc;
@@ -71,7 +71,7 @@ struct Network {
   std::vector<std::string> channels;
   std::vector<char> chan_broadcast;  // 1 if declared `broadcast chan` (fires with 0+ receivers)
   // 1 if declared `urgent chan`: time may not pass in any state where a synchronisation on this
-  // channel is enabled. Unlike an urgent LOCATION, whose urgency is a property of the location
+  // channel is enabled. Unlike an urgent location, whose urgency is a property of the location
   // vector alone, this is a property of the whole discrete state -- which processes sit where AND
   // the integer valuation, since the participants' integer guards decide enabledness.
   //
@@ -80,7 +80,7 @@ struct Network {
   // UPPAAL imposes). load_uppaal_network rejects a model that breaks it. Were clock guards
   // allowed, enabledness could switch on partway through a delay and the delay would have to be
   // clipped at that instant, which is a zone subtraction with a non-convex result. See
-  // KNOWN_LIMITATION.md.
+  // docs/limitations.md.
   std::vector<char> chan_urgent;
   // True iff any entry of `chan_urgent` is set. Every urgency test is gated on this first, so a
   // network without urgent channels runs exactly the code it ran before they existed.
@@ -92,12 +92,12 @@ struct Network {
   std::vector<Func> funcs;
 
   std::vector<std::int32_t> lbound, ubound;  // global Extra_LU bounds over clocks
-  // Per-LOCATION LU bounds (static guard analysis): lbound_loc[p][l][c] = max lower
+  // Per-location LU bounds (static guard analysis): lbound_loc[p][l][c] = max lower
   // guard constant on clock c reachable from process p's location l without c being
   // reset first; kAluNegInf ("−∞") if c is never guarded from there. These make the
   // aLU subsumption far coarser away from guards — the key to UPPAAL's zone count.
   std::vector<std::vector<std::vector<std::int32_t>>> lbound_loc, ubound_loc;
-  // The same per-location bounds as RAW bounds, i.e. carrying each guard's strictness rather
+  // The same per-location bounds as raw bounds, i.e. carrying each guard's strictness rather
   // than only its constant. This is the diagonal-free G(q) of the G-simulation: by Cor. 3.6/3.10
   // a diagonal-free constraint map collapses to at most one upper and one lower bound per clock,
   // so G adds exactly one bit per bound over L/U -- which is what dbm_is_g_le consumes.
@@ -107,7 +107,7 @@ struct Network {
   // being reset (active-clock reduction: inactive clocks are reset to collapse zones).
   std::vector<std::vector<std::vector<char>>> active;
   // Same information as one bit per clock: active_mask[p][l] has bit c set iff active[p][l][c].
-  // The active set of a LOCATION VECTOR is then nprocs OR-s instead of an nprocs x nclocks
+  // The active set of a location vector is then nprocs OR-s instead of an nprocs x nclocks
   // scan, which reset_inactive runs once per generated successor (8.6% of phil10). Empty when
   // nclocks > 63; the caller falls back to the byte form there.
   std::vector<std::vector<std::uint64_t>> active_mask;
@@ -115,11 +115,11 @@ struct Network {
   void compute_bounds();
   void compute_loc_bounds();
   void compute_active();
-  // iread[p][l][v] = 1 if process p, starting at location l, may READ integer cell v before p
+  // iread[p][l][v] = 1 if process p, starting at location l, may read integer cell v before p
   // itself writes it. The discrete analogue of `active` for clocks, and computed the same way:
   // a per-process backwards fixpoint, no product construction.
   //
-  // A cell is DEAD at a location vector L when iread[p][L[p]][v] is 0 for EVERY process p (and
+  // A cell is dead at a location vector L when iread[p][L[p]][v] is 0 for every process p (and
   // the query does not read it). Two states differing only in a dead cell have the same future:
   // any read of v is performed by some process q from L[q], and every path of q from there
   // writes v before reading it, so no read anywhere in any run observes the entry value. The
@@ -145,7 +145,7 @@ struct Network {
 // actually hold (src/intrange.cpp). The discrete key spends bits(hi-lo+1) per cell, and UPPAAL's
 // default range for an undeclared `int` is [-32768,32767], so a model with a few unannotated
 // array cells overflows the 63-bit key on width alone rather than on state count. Returns true
-// when at least one variable narrowed. OVER-approximates: no reachable value is ever excluded,
+// when at least one variable narrowed. over-approximates: no reachable value is ever excluded,
 // which is what keeps it sound against gen_apply's range check.
 bool narrow_int_ranges(Network& net);
 

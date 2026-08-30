@@ -17,43 +17,43 @@ namespace detail {
 
 // ---- zone interning --------------------------------------------------------
 // Discrete-heavy symmetric models (viking) reach millions of states but only a
-// handful of DISTINCT zone matrices (~120 for viking15's 2.77M states). Storing
+// handful of distinct zone matrices (~120 for viking15's 2.77M states). Storing
 // each distinct DBM once and referencing it by a 4-byte index collapses the
 // resident zone set from ~1.5 GB to a few KB (L2-resident), removing the
 // memory-bandwidth wall that made large viking trail LTSmin. Interned zones are
-// IMMUTABLE: subsumption and try_union only ever READ the stored zone (mutating
+// immutable: subsumption and try_union only ever read the stored zone (mutating
 // the incoming fresh one), so reads need no lock; only the first sight of a new
 // distinct zone takes the mutex. A per-thread byte-keyed cache skips the mutex
 // once a thread has seen a zone -- for viking, after the first BFS level every
 // intern is a lock-free hit. Low-sharing models (fischer, ~80% distinct) simply
 // intern more zones; correctness is unaffected -- two byte-identical canonical
 // DBMs are the same zone, and the merge is unchanged.
-// Distinct zones are stored as MINIMAL-GRAPH packed records (see mindbm.hpp): only the
+// Distinct zones are stored as minimal-graph packed records (see mindbm.hpp): only the
 // non-redundant constraints, 16-bit bounds when they fit, ~144 B for a 21-clock zone vs 1764 B
 // dense. Dedup on the packed bytes is exact (packing is a deterministic function of the
 // canonical matrix), so byte-identical records are the same zone.
 //
 // The interner is engineered so its *bookkeeping* stays a small fraction of the zone bytes --
 // the node-based std::unordered_map it replaced cost as much as the zones themselves (and the
-// per-thread map caches DOUBLED that). Three structures instead:
-//   * a BUMP ARENA of slabs owns the packed bytes contiguously (no per-record vector object or
+// per-thread map caches doubled that). Three structures instead:
+//   * a bump arena of slabs owns the packed bytes contiguously (no per-record vector object or
 //     malloc header/rounding -- ~40 B/zone saved),
-//   * a FLAT open-addressing table holds one int32 index per slot (0=empty); the KEY BYTES are
+//   * a flat open-addressing table holds one int32 index per slot (0=empty); the key bytes are
 //     recovered from the stored record on probe, so the table is ~5.7 B/zone, not ~56,
-//   * a small fixed per-thread DIRECT-MAPPED cache (bounded, ~0.5 MB/thread) absorbs repeat
+//   * a small fixed per-thread direct-mapped cache (bounded, ~0.5 MB/thread) absorbs repeat
 //     interns lock-free -- all a high-sharing model (viking: ~120 distinct zones) needs, and
 //     cheap for a low-sharing one (fischer) where no cache would help anyway.
 //
-// `get(idx)` UNPACKS on read into a per-thread dense scratch Dbm (the algebra needs a dense
+// `get(idx)` unpacks on read into a per-thread dense scratch Dbm (the algebra needs a dense
 // matrix); stored bytes are immutable, so reads are lock-free. Every get() call site consumes
 // the zone before this thread's next get(), so one scratch per thread is safe.
 struct ZoneIntern {
-  // SHARDED. This table used to be one arena behind one mutex, and intern() sits on the
+  // sharded. This table used to be one arena behind one mutex, and intern() sits on the
   // per-successor hot path, so every inserted state serialized there. The per-thread cache
-  // below cannot absorb that: a symbolic run interns each distinct zone exactly ONCE (on
+  // below cannot absorb that: a symbolic run interns each distinct zone exactly once (on
   // arbiter16, 589,824 states -> 589,824 distinct zones and 1 cache hit in 589,825 calls),
   // so ~100% of calls reached the lock. Hold time was tiny (~0.2 CPU-s) but the acquisition
-  // RATE was not -- threads waited ~20x longer than the lock was ever held, and the wait grew
+  // rate was not -- threads waited ~20x longer than the lock was ever held, and the wait grew
   // with thread count (0.5 / 2.5 / 4.5 CPU-s at 4 / 8 / 12), capping speedup at ~5.5x.
   //
   // The table is now split into independent shards selected by the zone's hash, each with its
@@ -63,26 +63,26 @@ struct ZoneIntern {
   static constexpr int kShardBits = 6;
   static constexpr int kShards = 1 << kShardBits;
   static constexpr std::uint64_t kShardMask = kShards - 1;
-  // zidx = (local << kShardBits) | shard. INTERLEAVED on purpose: with the shard in the high
+  // zidx = (local << kShardBits) | shard. interleaved on purpose: with the shard in the high
   // bits the maximum index would be kShards x the zone count, and the GC's `alive` array is
   // sized by that bound. Interleaved, the bound stays ~= the zone count.
   //
   // Chunk-pointer arrays are preallocated and never resized, so lock-free readers in record()
   // cannot race a reallocation. Both constants are therefore sized so the fixed cost summed
-  // over ALL shards stays small (~2 MB), not per table as before.
+  // over all shards stays small (~2 MB), not per table as before.
   //
-  // CAPACITY. These used to be 1<<10 / 1<<11 -> 2.1M zones/shard, ~134M total, and that cap was
-  // REACHABLE: twolock15 and twolock16 hit it and died. The throw below is raised inside an
+  // capacity. These used to be 1<<10 / 1<<11 -> 2.1M zones/shard, ~134M total, and that cap was
+  // reachable: twolock15 and twolock16 hit it and died. The throw below is raised inside an
   // `omp parallel` region, where an exception may not leave the structured block, so it did not
   // surface as main()'s "error:" line -- every worker called std::terminate and the process took
-  // SIGABRT. The benchmark harness saw only a nonzero exit and recorded ERR at a suspiciously
+  // SIGABRT. The benchmark harness saw only a nonzero exit and recorded err at a suspiciously
   // repeatable 16.5 GB (twolock15) / 21.0 GB (twolock16), identical at 24 and 32 threads because
-  // the trigger is a zone COUNT, not a time. At 16 threads the same runs merely timed out first,
+  // the trigger is a zone count, not a time. At 16 threads the same runs merely timed out first,
   // which is why the crash looked thread-count-dependent and was not.
   //
   // Sized now so RAM is always the binding constraint and the harness's memory guard reports an
-  // honest MEMOUT instead of a crash: 16.8M zones/shard x 64 = ~1.07G zones, which at the ~127 B
-  // per zone these models cost would need ~136 GB. The hard ceiling is the ENCODING, not this
+  // honest memout instead of a crash: 16.8M zones/shard x 64 = ~1.07G zones, which at the ~127 B
+  // per zone these models cost would need ~136 GB. The hard ceiling is the encoding, not this
   // choice -- zidx is a signed 32-bit int (see enc() and NetPassed::Node::zidx), so
   // kChunkBits + log2(kChunks) + kShardBits must stay < 31. 12 + 12 + 6 = 30 leaves one bit of
   // margin; widening past 2.1G zones would mean a 64-bit zidx in every passed-set node, which
@@ -91,7 +91,7 @@ struct ZoneIntern {
   static constexpr int kChunk = 1 << kChunkBits;        // 4096 zones/chunk (32 KB of pointers)
   static constexpr int kChunkMask = kChunk - 1;
   static constexpr int kChunks = 1 << 12;               // -> 16.8M zones/shard, ~1.07G total
-  // Slabs start small and double, so 64 shards do not each commit a big slab up front. The CAP
+  // Slabs start small and double, so 64 shards do not each commit a big slab up front. The cap
   // matters as much as the floor: whatever a shard's final slab is, the unused tail of it is
   // wasted, and that waste is paid 64 times. Doubling all the way to 4 MB cost ~40 MB on
   // arbiter17 (+17% RSS); capping at 128 KB bounds total slack to kShards * 128 KB (~8 MB
@@ -119,7 +119,7 @@ struct ZoneIntern {
     // record slot returns to a free-list keyed by its exact byte length (packed records take
     // only a few distinct lengths per model, so reuse is near-total); a freed local index
     // returns to `freeIdx`. intern() reuses both before growing the arena, so slab memory is
-    // bounded by the PEAK LIVE working set -- RSS never depends on the OS reclaiming.
+    // bounded by the peak live working set -- RSS never depends on the OS reclaiming.
     std::unordered_map<std::uint32_t, std::vector<std::uint8_t*>> freeRecs;
     std::vector<int> freeIdx;
     std::vector<std::int32_t> htabScratch;              // reused sweep buffer (avoids per-level realloc)
@@ -135,7 +135,7 @@ struct ZoneIntern {
   std::vector<std::vector<CacheLine>> tcache;           // [thread][line] direct-mapped
   int dim;                                              // clock dim (nclocks+1); all zones share it
   // Bumped by every sweep(). get()'s decode memo is only valid within one epoch: a sweep
-  // recycles indices in place, so afterwards the same idx can denote a DIFFERENT zone.
+  // recycles indices in place, so afterwards the same idx can denote a different zone.
   std::uint64_t epoch = 0;
 
   ZoneIntern(int dim2_, int nthreads)
@@ -151,14 +151,14 @@ struct ZoneIntern {
     for (std::size_t i = 0; i < len; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
     return h;
   }
-  // Shard selector. MUST NOT reuse the low bits that index a shard's htab (`h & hmask`):
+  // Shard selector. must NOT reuse the low bits that index a shard's htab (`h & hmask`):
   // every key routed to shard s has `h & kShardMask == s`, so if the slot index also came from
   // the low bits, only hmask/kShards of a shard's slots could ever be a home position -- the
   // other 63/64 are reachable only by linear probing. At the 70% growth trigger that packs
   // ~0.7*cap entries into cap/64 home slots (~45 deep each), and a probe is not cheap here: it
   // chases chunks[][] and byte-compares the record. Measured on arbiter16 that cost 31.2
   // probes per locked lookup versus 1.68 for the unsharded table -- which is what ate the
-  // sharding win. Mixing and taking the HIGH bits makes the two indices independent.
+  // sharding win. Mixing and taking the high bits makes the two indices independent.
   static int shard_of(std::uint64_t h) {
     std::uint64_t x = h;
     x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33;
@@ -178,15 +178,15 @@ struct ZoneIntern {
   /// decode path (this plus mindbm_unpack) is 40% of all instructions, because that family stores
   /// ~1 zone per discrete state and so re-decodes zones it has just touched.
   ///
-  /// SOUNDNESS: the memo is keyed on (interner, epoch, index), not index alone. sweep() recycles
-  /// a dead zidx in place, so after a sweep the same index can denote a DIFFERENT zone -- exactly
+  /// soundness: the memo is keyed on (interner, epoch, index), not index alone. sweep() recycles
+  /// a dead zidx in place, so after a sweep the same index can denote a different zone -- exactly
   /// the aliasing that made the per-thread intern cache unsound (see sweep()). Bumping the epoch
   /// there invalidates every memo at once.
   // Lines in the per-thread decode cache. 16 dense zones per thread is ~28 KB at dim 21, so the
   // whole cache stays L1/L2-resident where the packed records it replaces do not.
   //
-  // A ONE-entry memo was tried first and recovered only ~4% of the ~40% that decoding costs on
-  // viking12: it catches consecutive reads of the SAME index, but within a level the reads are
+  // A one-entry memo was tried first and recovered only ~4% of the ~40% that decoding costs on
+  // viking12: it catches consecutive reads of the same index, but within a level the reads are
   // spread over many distinct indices, so almost every one missed.
   static constexpr int kDecodeLinesMax = 64;
   /// @brief Lines in the per-thread decode cache. Power of two.
@@ -199,16 +199,16 @@ struct ZoneIntern {
 
   /// @brief Decode zone @p idx into a per-thread cache and return it.
   ///
-  /// Decoding is the price of minimal-graph storage and it is charged per zone TOUCHED, not per
+  /// Decoding is the price of minimal-graph storage and it is charged per zone touched, not per
   /// zone stored: reconstructing the redundant entries is an $O(dim^3)$ closure. On viking12 the
   /// decode path was 40% of all instructions, because that family keeps ~1 zone per discrete
   /// state and so re-decodes records it touched moments earlier.
   ///
-  /// INDEXING: on the LOCAL-index bits, not the low bits of @p idx. A zidx is
+  /// indexing: on the local-index bits, not the low bits of @p idx. A zidx is
   /// @c (local << kShardBits) | shard, so its low bits are the shard number -- indexing on those
   /// would map every zone of a shard onto the same handful of lines and defeat the cache.
   ///
-  /// SOUNDNESS: keyed on (interner, epoch, index). sweep() recycles a dead zidx IN PLACE, so
+  /// soundness: keyed on (interner, epoch, index). sweep() recycles a dead zidx IN place, so
   /// after a sweep the same index can denote a different zone; keying on the index alone is the
   /// aliasing that made the intern cache unsound (see sweep()). The epoch is bumped there, which
   /// invalidates every line at once.
@@ -249,7 +249,7 @@ struct ZoneIntern {
   void get_into_raw(int idx, raw_t* out) const { mindbm_unpack(record(idx), out); }
   int zdim() const { return dim; }
 
-  // Probe one shard's table for the packed bytes [q,q+qlen). Returns the shard-LOCAL index or
+  // Probe one shard's table for the packed bytes [q,q+qlen). Returns the shard-local index or
   // -1; on miss, *slot is the empty table position to insert at. Caller holds sh.mtx.
   static int find_locked(const Shard& sh, const std::uint8_t* q, std::size_t qlen,
                          std::uint64_t h, std::size_t* slot) {
@@ -263,7 +263,7 @@ struct ZoneIntern {
     *slot = i;
     return -1;
   }
-  // Grow one shard's table. Rebuilt from the LIVE htab entries rather than by walking
+  // Grow one shard's table. Rebuilt from the live htab entries rather than by walking
   // 0..n-1: after a sweep, indices sitting in `freeIdx` are not live, and their chunk slots
   // still point at records that have been returned to `freeRecs` (and may already have been
   // handed to a different zone). Re-inserting those would put stale entries in the table and
@@ -298,7 +298,7 @@ struct ZoneIntern {
     const std::uint64_t h = hash_bytes(qbuf.data(), qlen);
 
     // Lock-free fast path: per-thread direct-mapped cache. Verify bytes (a 64-bit-hash clash
-    // returning the wrong index would be UNSOUND), so a hit is always correct.
+    // returning the wrong index would be unsound), so a hit is always correct.
     CacheLine& cl = tcache[tid][static_cast<std::uint32_t>(h) & kCacheMask];
     if (cl.idx >= 0 && cl.h == h) {
       const std::uint8_t* rec = record(cl.idx);
@@ -332,7 +332,7 @@ struct ZoneIntern {
         sh.bumpPtr += qlen; sh.bumpLeft -= qlen;
       }
       std::memcpy(rec, qbuf.data(), qlen);
-      // A local index: reuse a freed one, else grow. The record pointer is published BEFORE
+      // A local index: reuse a freed one, else grow. The record pointer is published before
       // the release-store of `n`, so any reader holding an index < n sees readable storage.
       if (!sh.freeIdx.empty()) {
         loc = sh.freeIdx.back();
@@ -360,7 +360,7 @@ struct ZoneIntern {
   // return to the size-classed free-list and their zidx to `freeIdx` (recycled in place -- no
   // rebuild, no remap); the htab is rebuilt from survivors. The per-thread caches are NOT
   // cleared: a hit verifies bytes, so a stale hash->idx entry (idx since recycled to another
-  // zone) simply fails the byte-compare and falls through. STOP-THE-WORLD (all workers joined).
+  // zone) simply fails the byte-compare and falls through. stop-the-world (all workers joined).
   void sweep(const std::vector<std::uint8_t>& alive) {
     for (int sid = 0; sid < kShards; ++sid) {
       Shard& sh = shards[sid];
@@ -388,15 +388,15 @@ struct ZoneIntern {
       sh.hmask = nmask;
       sh.hcount = live;
     }
-    // INVALIDATE THE PER-THREAD CACHES. Mandatory for soundness, not an optimisation.
+    // invalidate the per-thread caches. Mandatory for soundness, not an optimisation.
     //
     // A cache line is (record hash -> index), and intern()'s fast path validates a hit by
-    // comparing the RECORD BYTES. Sweeping does not erase a freed record -- it pushes the
+    // comparing the record bytes. Sweeping does not erase a freed record -- it pushes the
     // memory onto freeRecs and the index onto freeIdx -- so a freed entry still compares
     // equal to the zone it used to hold, and the fast path would hand back an index that is
     // on the free list. The caller stores that index in a passed-list node; the next intern()
     // that pops the same index writes a different record into chunks[loc], and the node now
-    // denotes a DIFFERENT zone. That is not a lost optimisation, it is a wrong answer: the
+    // denotes a different zone. That is not a lost optimisation, it is a wrong answer: the
     // state keeps its discrete key and acquires someone else's zone, so the search explores
     // states the model cannot reach (found on fischer6+, where it turned a satisfied mutual-
     // exclusion property into a spurious counterexample).
@@ -407,7 +407,7 @@ struct ZoneIntern {
     ++epoch;   // invalidates every thread's get() decode memo, same reason as above
   }
 
-  // Records currently handed out: live zones PLUS garbage not yet reclaimed. `n` is a
+  // Records currently handed out: live zones plus garbage not yet reclaimed. `n` is a
   // high-water index counter that never shrinks (sweep recycles indices into `freeIdx`
   // instead of renumbering), so `n` alone cannot drive the sweep trigger -- it crosses any
   // fixed threshold once and stays there. This is the quantity a growth-based trigger must

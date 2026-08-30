@@ -16,9 +16,9 @@ namespace detail {
 // note at the passed-set declaration in the GPU driver for why (it is a memory/time trade that
 // only pays on low-distinct-zone models and needs per-model routing to be a win).
 //
-// The GPU merge kernels consume DENSE matrices, so unlike the CPU path (which stores minimal
+// The GPU merge kernels consume dense matrices, so unlike the CPU path (which stores minimal
 // constraint systems, see ZoneIntern) this keeps zones dense -- but it stores each distinct zone
-// ONCE and hands out an index. The passed set then costs 4 bytes per (discrete state, zone)
+// once and hands out an index. The passed set then costs 4 bytes per (discrete state, zone)
 // instead of d2 words. On models with few distinct zones the saving is enormous (viking15: 2.77M
 // stored zones, 120 distinct); on models where every zone differs it costs one hash per survivor
 // and nothing is lost, because the dense copy had to be written anyway.
@@ -33,7 +33,7 @@ struct GpuZoneIntern {
   static constexpr int kMaxChunks = 1 << 17;            // 1G zones ceiling
   static constexpr int kStripes = 512;
 
-  // NARROW STORAGE. A DBM entry is (value << 1) | weak, and in a zone graph over a model whose
+  // narrow storage. A DBM entry is (value << 1) | weak, and in a zone graph over a model whose
   // largest clock constant is M every finite entry lies in [-2M-1, 2M+1] (an entry is a shortest
   // path, and any path to or from the reference clock is bounded by two direct border edges). So
   // whenever M is small -- every real timed-automata model -- the whole passed set fits in 16-bit
@@ -55,7 +55,7 @@ struct GpuZoneIntern {
     const std::int16_t* q = reinterpret_cast<const std::int16_t*>(p);
     for (int k = 0; k < d2_; ++k) out[k] = (q[k] == kInf16) ? kInf : static_cast<raw_t>(q[k]);
   }
-  // As load(), but into the NARROW device frontier buffer: when the arena is already narrow
+  // As load(), but into the narrow device frontier buffer: when the arena is already narrow
   // this is a plain memcpy, which is the common case.
   void load_gz(int idx, gz_t* out) const {
     const std::uint8_t* p = base(idx);
@@ -111,13 +111,13 @@ struct GpuZoneIntern {
     return idx;
   }
 
-  // Return a slot to the pool. In Append mode the arena would otherwise grow with the CUMULATIVE
-  // number of interned zones rather than the LIVE one -- and the rebuild re-interns a bucket's
-  // WHOLE antichain every time the bucket is touched, so a bucket touched k times over the search
+  // Return a slot to the pool. In Append mode the arena would otherwise grow with the cumulative
+  // number of interned zones rather than the live one -- and the rebuild re-interns a bucket's
+  // whole antichain every time the bucket is touched, so a bucket touched k times over the search
   // costs k*|antichain| slots. Measured on fischer12: ~2000 chunks x 5.4 MB = 10.9 GB of arena
   // for 2.7M live zones (1.8 GB of actual data). With the free list the arena is bounded by the
   // peak live set. Striped by index so the 12 rebuild threads do not share one lock.
-  // Slots are recycled ONE LEVEL LATE. The frontier holds arena indices rather than copies of
+  // Slots are recycled one level late. The frontier holds arena indices rather than copies of
   // the zones, so a slot it names must survive until that frontier has been expanded -- and the
   // merges that drop slots run during exactly the level that is consuming it. Releases therefore
   // go to a pending list and only reach the free list at the level boundary, by which point the
@@ -169,7 +169,7 @@ struct GpuZoneIntern {
     return true;
   }
 
-  // Hash the WHOLE zone, in four independent lanes.
+  // Hash the whole zone, in four independent lanes.
   //
   // Two failure modes to avoid. Hashing a prefix is catastrophic: canonical DBMs routinely agree
   // on their leading rows, so a prefix key collapses hundreds of thousands of distinct zones into
@@ -192,7 +192,7 @@ struct GpuZoneIntern {
     h ^= h >> 29; h *= 0xbf58476d1ce4e5b9ULL; h ^= h >> 32;   // final avalanche
     return h;
   }
-  // LOCK-FREE in the common case. This used to take `growMtx_` on every call, which serialised
+  // lock-free in the common case. This used to take `growMtx_` on every call, which serialised
   // all 12 threads on one mutex for millions of zones -- 8-12 CPU-seconds of contention per run,
   // and the dominant cost of the passed rebuild. The index comes from an atomic bump; the mutex
   // is taken only when a chunk boundary is crossed (once per kChunk allocations), and then only

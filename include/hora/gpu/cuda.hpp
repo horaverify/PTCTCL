@@ -11,7 +11,7 @@
 
 namespace hora {
 
-// GPU zone-graph reachability over a DIAGONAL-FREE automaton `ta` (the caller applies
+// GPU zone-graph reachability over a diagonal-free automaton `ta` (the caller applies
 // diagonal splitting first). `accept[loc]` marks target locations; `tgt_clocks` are the
 // target's clock constraints; `L`/`U` are the precomputed Extra_LU+ bounds. Successor
 // generation runs on the GPU; host does the subsumption merge.

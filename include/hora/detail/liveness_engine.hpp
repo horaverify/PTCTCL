@@ -236,7 +236,7 @@ class Otf {
   // knows which representation is live.
   std::vector<detail::SymState> node;
   std::vector<int> node_key_;
-  // Records created so far. In online mode `node` stays EMPTY until the graph is sealed, so it
+  // Records created so far. In online mode `node` stays empty until the graph is sealed, so it
   // cannot serve as the counter; ::nrec is the one place that knows which is authoritative.
   std::size_t online_nrec_ = 0;
   std::vector<std::vector<OtfEdge>> adj;

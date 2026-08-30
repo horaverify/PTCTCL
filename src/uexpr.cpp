@@ -177,9 +177,9 @@ class Parser {
     return primary();
   }
 
-  // `x++` / `x--` appearing INSIDE an expression -- the idiom that matters is
+  // `x++` / `x--` appearing inside an expression -- the idiom that matters is
   // `list[len++] = element` in train-gate's enqueue(). The expression yields the
-  // CURRENT value; the increment is queued and runs after the enclosing
+  // current value; the increment is queued and runs after the enclosing
   // statement, so `list[len] = element` is followed by `len = len + 1`.
   ExprP postfix(ExprP value, const SymTab::Sym& sym) {
     const bool inc = lx_.is("++");

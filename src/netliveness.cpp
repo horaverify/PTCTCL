@@ -285,7 +285,7 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
     }
   }
 
-  // ---- broadcast: a! fires together with EVERY enabled a? (0 or more receivers) ----
+  // ---- broadcast: a! fires together with every enabled a? (0 or more receivers) ----
   for (int i = 0; i < net.nprocs(); ++i) {
     for (int ei : net.procs[i].edges_of(s.locs[i])) {
       const NEdge& se = net.procs[i].edges[ei];
@@ -364,7 +364,7 @@ static Dbm gfp_empty(int nclocks) {
   return z;
 }
 
-/// @brief Everything ::gfp_pre needs about one node that depends only on its DISCRETE state.
+/// @brief Everything ::gfp_pre needs about one node that depends only on its discrete state.
 ///
 /// `Pre` is evaluated once per (edge, target zone) pair and the fixpoint sweeps the graph many
 /// times, so every quantity here used to be rebuilt millions of times from data that never
@@ -395,7 +395,7 @@ struct PreNode {
 ///               if !frozen' { delay ; /\ inv' }
 ///     backward: undo the active-clock reduction at the target ; /\ inv' ; down ; /\ inv' ;
 ///               /\ (x_r = 0 for every reset r) ; free those r ; /\ (all guards) ;
-///               down (the delay BEFORE the action) ; /\ inv(src)
+///               down (the delay before the action) ; /\ inv(src)
 ///
 /// @param net   the network under analysis
 /// @param t     the tag produced for this transition by ::gfp_succ_tagged
@@ -411,7 +411,7 @@ struct PreNode {
 ///       the result is the exact concrete predecessor. Abstraction enters the fixpoint only
 ///       through the caller's confinement `W_v subseteq Z_v`.
 ///
-/// @note Neither node's ZONE is read, only its discrete data. The caller must not materialise
+/// @note Neither node's zone is read, only its discrete data. The caller must not materialise
 ///       one: doing so decompressed two full DBMs out of the ZoneStore per call, for nothing.
 /// @note The two clock sets are quantified out with ::dbm_free_many rather than a `free` per
 ///       clock. Both are exact; the batch form relaxes every flagged clock at once.
@@ -430,7 +430,7 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const
   };
 
   // Undo the active-clock reduction at the target. Those clocks appear in no edge's reset set,
-  // so without this Pre would silently demand that they also read 0 at the SOURCE -- an
+  // so without this Pre would silently demand that they also read 0 at the source -- an
   // over-constrained Pre that collapses the fixpoint and misses violations. Freeing them is the
   // exact inverse of the reduction, and it is sound because they are dead: nothing reads them.
   if (tn.dead) {
@@ -459,21 +459,21 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const
   // so they apply after the resets have been freed and before the pre-action delay.
   if (!t.abstain.empty() && !apply_all(Y, t.abstain)) return gfp_empty(net.nclocks);
 
-  // Delay BEFORE the action. A stored zone is delay-closed as a SET, which is why the forward
+  // Delay before the action. A stored zone is delay-closed as a set, which is why the forward
   // operator may write `Z /\ g`; a single valuation may still have to let time pass first.
   if (!sn.frozen) Y.down();
   if (!apply(Y, sinv, sn.inv_len)) return gfp_empty(net.nclocks);
   return Y;
 }
 
-/// @brief ::gfp_pre for a run confined to a NON-CONVEX predicate.
+/// @brief ::gfp_pre for a run confined to a non-convex predicate.
 ///
 /// @param avoid the forbidden region; must be non-null
 /// @param[in,out] out  the pieces of the predecessor are appended
 ///
 /// @par Why this is federation-valued
 /// ::gfp_pre takes two time-predecessors, one at the target and one at the source. With a region
-/// to avoid, each of them routes around it and each can therefore SPLIT, so the predecessor of a
+/// to avoid, each of them routes around it and each can therefore split, so the predecessor of a
 /// single zone is in general several zones. Collapsing them to one -- by hull, or by keeping the
 /// largest -- under-approximates `Pre`, and `Pre` occurs positively in the fixpoint, so that
 /// silently loses witnesses: it turned `E[] x <= 2 || x >= 8` on a model whose witness is an
@@ -571,7 +571,7 @@ static bool gfp_fed_subset(const Federation& a, const Federation& b) {
 /// Drops empty members, drops members already covered by one that is kept, replaces a kept
 /// member by a newcomer that contains it, and merges any pair whose union is *exactly* convex.
 ///
-/// The containment test runs BOTH ways. `z` inside a kept `o` is dropped; a kept `o` inside `z`
+/// The containment test runs both ways. `z` inside a kept `o` is dropped; a kept `o` inside `z`
 /// is overwritten by `z`, which denotes the same union — `o subseteq z` and `z` was going to be
 /// added regardless — and leaves one member where the one-directional test left two.
 ///
@@ -601,7 +601,7 @@ static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
     if (out.size() > cap) { *capped = true; break; }
   }
   // One settling pass: a merge can make an earlier member redundant against a later one. It is
-  // gated on a merge having HAPPENED, because without one no member was reshaped, so the second
+  // gated on a merge having happened, because without one no member was reshaped, so the second
   // pass would re-test exactly the pairs the first already rejected — and each of those tests is
   // a try_union.
   if (!*capped && merged && out.size() > 1) {
@@ -627,10 +627,10 @@ static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
 /// are pinned to the empty federation. The limit of the confined iteration is a post-fixpoint
 /// of the operator on the finished graph, and by Knaster–Tarski the post-fixpoints of a
 /// greatest fixpoint are exactly its under-approximations (`X ⊆ F(X) ⇒ X ⊆ νF`). A non-empty
-/// value at a `p /\ !q` node of @c S is therefore already a sound VIOLATED verdict, even though
+/// value at a `p /\ !q` node of @c S is therefore already a sound violated verdict, even though
 /// the graph outside @c S has never been looked at.
 ///
-/// @warning A node may enter @c S only if it is EXPANDED. The stopping term ::Otf::stop_set
+/// @warning A node may enter @c S only if it is expanded. The stopping term ::Otf::stop_set
 ///          reads the *absence* of successors (`adj[v].empty()`), and an unexpanded node has an
 ///          empty adjacency for the wrong reason. Every other term reads only edges that exist,
 ///          so it survives a partial graph unchanged.
@@ -639,7 +639,7 @@ static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
 ///       *pre*-fixpoints, hence over-approximations, hence conclusive in neither direction.
 ///       Only the converged limit may be read; see ::Otf::certificate_in.
 ///
-/// @see @c DESIGN.md, "On-the-fly liveness", for the full argument.
+/// @see @c docs/design.md, "On-the-fly liveness", for the full argument.
 /// @}
 
 
@@ -790,7 +790,7 @@ bool Otf::base_cover(const Dbm& a, const Dbm& b) const {
 /// zone graph then comes from a_LU subsumption, not from extrapolation, and the two settings
 /// must move together: plain inclusion does not bound the zone graph, so with a_LU off the only
 /// thing that terminates the search is Extra_LU+, and with Extra_LU+ on every stored zone
-/// over-approximates the reachable set. See DESIGN.md, "Stored zones must be exact", for the
+/// over-approximates the reachable set. See docs/design.md, "Stored zones must be exact", for the
 /// counterexample; in short, ::Otf::stop_set asks whether some valuation of the stored zone
 /// enables *nothing*, enabledness is monotone rather than invariant under extrapolation, and a
 /// spurious stop valuation occurs positively in the fixpoint operator, so it fabricates a
@@ -808,18 +808,9 @@ void Otf::setup() {
   M[0] = 0;
   use_alu = !force_exact_ && !network_has_diagonal(net);
   emode = network_has_diagonal(net) ? ExNoDiag : (use_alu ? ExNone : ExLuPlus);
-  // EXPERIMENT ONLY (HORA_GFP_EXTRAP=1): keep a_LU covering but extrapolate the stored zones
-  // as well, i.e. local Extra_LU+ PLUS subsumption. The invariant above says this is unsound, and
-  // says why -- a spurious stop valuation enters the fixpoint positively and fabricates a
-  // counterexample. The switch exists to measure the claim, not to be used.
-  static const bool force_extrap = [] {
-    const char* e = std::getenv("HORA_GFP_EXTRAP");
-    return e && *e == '1';
-  }();
-  if (force_extrap && use_alu) emode = ExLuPlus;
   // Clocks the query forces to stay live. A leads-to predicate carries no clock constraints, so
   // this starts all-zero; reset_inactive reads it as "additionally keep alive", so all-zero is
-  // MAXIMAL reduction, not none. The reduction is safe for a backward analysis because gfp_pre
+  // maximal reduction, not none. The reduction is safe for a backward analysis because gfp_pre
   // frees every clock dead at the target before undoing the step.
   qmask.assign(net.nclocks + 1, 0);
   aL = net.lbound;
@@ -829,7 +820,7 @@ void Otf::setup() {
   // The constraint map has two global effects (see ::AtomMap):
   //
   // (1) A non-diagonal atom is discharged by raising its clock's L and U. Raising either only
-  //     ever makes a_LU FINER, so it is sound wherever applied; applying it to the global
+  //     ever makes a_LU finer, so it is sound wherever applied; applying it to the global
   //     arrays here and to the per-location arrays in Otf::intern keeps it consistent along
   //     every path, which is what the simulation argument needs.
   // (2) reset_inactive pins clocks no guard will read again to 0, but the atoms DO read them --
@@ -862,7 +853,7 @@ void Otf::setup() {
 /// a clock is typically constrained by the one process that owns it, and every other process
 /// contributes the same value from every one of its locations.
 ///
-/// So split the fold. A process whose bound for clock `c` is the SAME at all of its locations
+/// So split the fold. A process whose bound for clock `c` is the same at all of its locations
 /// contributes a constant, folded once here into @ref base_l_ / @ref base_u_. Only the
 /// (process, clock) pairs that really vary stay in @ref vary_clocks_, and the per-key fold walks
 /// those alone --- 17 entries instead of 289 on arbiter16, for the identical result.
@@ -916,7 +907,7 @@ void Otf::local_bounds(const int* locs, std::vector<std::int32_t>& outL,
 }
 
 bool Otf::holds(const DiscPred& pr, const SymState& s) const {
-  // A predicate carrying a DNF denotes the DISJUNCTION of its terms, not a conjunction. Only the
+  // A predicate carrying a DNF denotes the disjunction of its terms, not a conjunction. Only the
   // E[] entry point builds one, and only ever from discrete literals: it needs `!psi_discrete`,
   // which for an arbitrary boolean `psi` is a disjunction and has no conjunctive form.
   if (pr.is_dnf || !pr.forbid.empty()) {
@@ -959,7 +950,7 @@ void Otf::grow() {
   if (ntag_out_.size() < n) ntag_out_.resize(n, 0);
 }
 
-/// @brief The discrete OVER-approximation of `p` at one state; see ::Otf::is_p.
+/// @brief The discrete over-approximation of `p` at one state; see ::Otf::is_p.
 bool Otf::p_discrete(const SymState& s) const {
   if (!p.is_dnf && p.forbid.empty()) return holds(p, s);
   for (const auto& t : p.forbid) {
@@ -992,11 +983,11 @@ Federation Otf::p_region_of(const SymState& s) const {
 bool Otf::is_p(int i) {
   grow();
   if (pc[i] != 2) return pc[i] != 0;
-  // The OVER-approximation: does some term's DISCRETE guard hold, so the node could contain a
+  // The over-approximation: does some term's discrete guard hold, so the node could contain a
   // p-valuation at all? Seeding the accepting closure wide is harmless, because the verdict is
   // decided by the exact region test in ::Otf::certificate_in.
   //
-  // ::Otf::holds is deliberately not reused. Its DNF branch SKIPS a term that constrains a clock,
+  // ::Otf::holds is deliberately not reused. Its DNF branch skips a term that constrains a clock,
   // which is right for `q` -- there the clock part is carried by the forbidden region and a term
   // cannot exclude a whole vertex -- and exactly wrong for `p`, where such a term is the reason
   // the node is interesting. Reusing it made `x >= 0 --> P.wait` hold vacuously: no term counted,
@@ -1231,7 +1222,7 @@ bool Otf::online_covers(const SymState& a, int b, int key) {
   online_configure_bounds(key);
   const OnlineKeyInfo& ki = *online_key_by_id_[key];
   // A key with no diagonal atom needs only the base relation, and ::alu_le_stored /
-  // ::stored_includes evaluate that against the STORED operand at its own entry type. Widening
+  // ::stored_includes evaluate that against the stored operand at its own entry type. Widening
   // it first, as the atom path must, is a full ZoneStore::load per probe -- and the probe is the
   // hottest call in the forward phase (654M times on grc6, where 857 of 920 keys carry no atom).
   if (!ki.diag)
@@ -1301,7 +1292,7 @@ bool Otf::online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>&
 }
 
 int Otf::online_append(SymState&& s, int key) {
-  // NO SymState IS PUSHED. During the online phase the discrete half lives once in the key
+  // NO SymState IS pushed. During the online phase the discrete half lives once in the key
   // arenas and the zone lives in the ZoneStore, so `node`'s entry would be three empty vector
   // headers -- 80 bytes a record, and the search materialises far more records than it keeps
   // (614212 against 447598 on fischer10, so 49 MB of placeholder). The vector is built once, at
@@ -1515,7 +1506,7 @@ int Otf::online_intern(SymState&& s, int key, int source, int ordinal, int* defe
   if (profile) join_start = std::chrono::steady_clock::now();
   if (cover < 0) {
     Dbm old;
-    // Iterated to a fixpoint, not stopped at the first success: each union ENLARGES the
+    // Iterated to a fixpoint, not stopped at the first success: each union enlarges the
     // candidate, and a larger zone can be convex with an active record the smaller one was not.
     // Still exact -- Dbm::try_union succeeds only when the union really is one zone -- so this
     // adds no point and removes none; it only leaves a tighter antichain behind, which is one
@@ -1627,12 +1618,12 @@ bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
 /// @brief Certify a `p --> q` counterexample at a freshly expanded node, before the graph is done.
 ///
 /// `p --> q` fails exactly when some reachable state satisfies `p /\ EG !q`. A valuation that
-/// satisfies `p`, sits at a `!q` key, and can END a maximal run -- by deadlocking, or by letting
+/// satisfies `p`, sits at a `!q` key, and can end a maximal run -- by deadlocking, or by letting
 /// time diverge -- witnesses `EG !q` outright: the run stops (or runs on) there and never leaves
 /// `!q`. So the forward search can stop the moment one is reached, with no backward pass and no
 /// finished graph.
 ///
-/// Every online record holds an EXACT reachable zone, so a valuation found here is genuinely
+/// Every online record holds an exact reachable zone, so a valuation found here is genuinely
 /// reachable and the witness is concrete: no subsumption edge takes part in it. That exactness is
 /// also why this is confined to the a_LU lane. Where extrapolation is load-bearing (the diagonal
 /// route) a stored zone over-approximates, and a stop valuation enters positively here, so a
@@ -1643,7 +1634,7 @@ bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
 /// @return @c true iff a `p`-satisfying valuation of @p v ends a maximal `!q` run
 bool Otf::leadsto_witness(const SymState& s, bool no_successor, bool key_may_deadlock) {
   if (!leadsto_early_ || !use_alu) return false;
-  // With a forbidden region in force, `q` is only PARTLY discrete: ::Otf::holds deliberately
+  // With a forbidden region in force, `q` is only partly discrete: ::Otf::holds deliberately
   // ignores a term that constrains a clock, because ::detail::DelayAvoidSet carries that part and
   // the backward pass cuts the zone with it. A stop valuation could then satisfy `q` through the
   // clock part while `holds` reports `!q`, and this witness would claim a violation that is not
@@ -1721,11 +1712,11 @@ static std::uint64_t disc_hash(const LocVec& locs, const IntVec& ints) {
 int Otf::intern(SymState&& s) {
   intern_grew = false;
   std::string bkey = disc_key_bytes(s.locs, s.ints);
-  // THE CELL TAG. `tag` is the In-mask and `tag_out` the Out-mask of ::classify_atoms; a zone
+  // the cell tag. `tag` is the In-mask and `tag_out` the Out-mask of ::classify_atoms; a zone
   // set in neither straddles that atom, and every obligation a straddle leaves undecidable is
   // deferred to Otf::cover_rec.
   //
-  // The obligation the tag enforces is the IMPLICATION `Z |= phi => Z' |= phi`, in that
+  // The obligation the tag enforces is the implication `Z |= phi => Z' |= phi`, in that
   // direction only, where Z covers Z'. Dead(q) = Inv(q) /\ AND_e !Esc_e with each Esc_e a
   // conjunction of atoms, so a stuck valuation needs, per outgoing edge e, some atom of Esc_e
   // that its simulator also falsifies. Equivalently `tag(Z) & ~tag(Z') == 0`, which is strictly
@@ -1766,7 +1757,7 @@ int Otf::intern(SymState&& s) {
     // reason the global arrays do in Otf::setup: raising L or U only makes a_LU finer, and the
     // simulation argument needs the raise to hold along every path.
     //
-    // Raising one clock to `max(L, U)` is a_M ON THAT CLOCK: the three clauses of the LU
+    // Raising one clock to `max(L, U)` is a_M ON that clock: the three clauses of the LU
     // preorder — nu'(x) = nu(x), or L(x) < nu'(x) < nu(x), or U(x) < nu(x) < nu'(x) — collapse
     // to "equal, or both above M(x)", which is symmetric, hence a bisimulation, hence
     // deadlock-preserving (Behrmann–Bouyer–Larsen–Pelánek, STTT 8(3), 2006, Lemma 1 against
@@ -1790,7 +1781,7 @@ int Otf::intern(SymState&& s) {
     if (tagcheck && (ntag_[j] & ~tag) != 0) return false;   // Z |= phi but Z' does not: refuse
     return use_alu ? alu_le_stored(s.zone, j) : stored_includes(j, s.zone);
   };
-  // WHAT THE REWRITING PATHS OWE.
+  // what the rewriting paths owe.
   //
   //   In-place enlargement replaces the stored zone by the newcomer, which under a_LU need not
   //   be a superset of it, so everything already routed to j must still be covered. That is
@@ -1803,7 +1794,7 @@ int Otf::intern(SymState&& s) {
   //   Growing the right-hand side of an exists-witness cannot invalidate a witness, and the
   //   newcomer is covered by the result via the identity witness.
   //
-  // Both paths must REFRESH the stored masks, since the stored zone changed.
+  // Both paths must refresh the stored masks, since the stored zone changed.
   auto covers = [&](int j) {
     if (reccheck) {
       return cover_rec(zread(j, zsc), ntag_[j], s.zone, tag_out, *atoms, 0);
@@ -1820,7 +1811,7 @@ int Otf::intern(SymState&& s) {
         intern_grew = true;
         return b[k];
       }
-  // EXACT CONVEX-UNION MERGE. Dbm::try_union succeeds only when the union of the two zones
+  // exact convex-union merge. Dbm::try_union succeeds only when the union of the two zones
   // really is a single zone, so the stored zone afterwards denotes exactly the set the two it
   // replaced denoted: no point added, none removed. That exactness is what makes the merge
   // usable here at all — unlike a convex hull it is not an over-approximation, so it cannot
@@ -1873,7 +1864,7 @@ void Otf::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
 /// @return the index into ::Otf::tags_ that ::OtfEdge::tag must carry
 ///
 /// @note Tags are immutable once pooled, and ::gfp_pre only ever reads them, so sharing one
-///       between edges is safe. Deduplication is by VALUE, not by identity: two transitions
+///       between edges is safe. Deduplication is by value, not by identity: two transitions
 ///       that fire the same participants with the same abstain constraints invert identically.
 int Otf::intern_tag(const GfpTag& t) {
   const std::uint64_t h = gfp_tag_hash(t);
@@ -1992,14 +1983,14 @@ bool Otf::time_diverges(const SymState& s) const {
 ///       whole. Only the third — partial deadlock — needs the per-valuation subtraction, and
 ///       hora::detail::state_has_deadlock supplies it, recomputing the delay closure first so
 ///       that the active-clock reduction cannot leave the stored zone unclosed.
-/// @brief Can time run away for ever here in the UNRESTRICTED system?
+/// @brief Can time run away for ever here in the unrestricted system?
 ///
 /// @param s the state; only its location vector and integers are read
 /// @return @c true iff the original invariant leaves every clock unbounded after a delay, so a
 ///         valuation with no enabled transition continues by delaying rather than stopping
 ///
 /// @note Only meaningful when a `psi`-restriction is in force. It is what separates a genuine
-///       TIMELOCK -- a state that truly cannot be extended, and therefore ends a maximal run --
+///       timelock -- a state that truly cannot be extended, and therefore ends a maximal run --
 ///       from a state that merely cannot be extended *inside psi*.
 bool Otf::orig_time_open(const SymState& s) const {
   if (net.nclocks == 0) return false;
@@ -2037,8 +2028,8 @@ Federation Otf::stop_set(int u) {
   // dropped for leaving psi, and a run that can only continue by leaving psi is not maximal, it
   // is simply not a witness. Two things genuinely end a maximal psi-run:
   //
-  //   (i)  time diverges INSIDE psi -- judged on the restricted invariant, which is `net`;
-  //   (ii) the state is timelocked in the ORIGINAL system -- no transition is ever enabled AND
+  //   (i)  time diverges inside psi -- judged on the restricted invariant, which is `net`;
+  //   (ii) the state is timelocked in the original system -- no transition is ever enabled AND
   //        the original invariant caps the delay, so there is no divergent continuation either.
   //
   // Dropping (ii)'s second half is what made `E[] x <= 3` on af-sat.xml report satisfied: the
@@ -2047,14 +2038,14 @@ Federation Otf::stop_set(int u) {
   if (time_diverges(su)) { f.push_back(su.zone); return f; }
   if (orig_time_open(su)) return f;               // a deadlock here continues by delaying
   Federation d;
-  // Deadlock is judged in `dead_net`, which is the UNRESTRICTED network when `E[] psi` supplied
+  // Deadlock is judged in `dead_net`, which is the unrestricted network when `E[] psi` supplied
   // one. Maximality is a property of the original system: a run that can only continue by
-  // LEAVING psi is not maximal, it is simply not a witness. Judging it against the psi-restricted
+  // leaving psi is not maximal, it is simply not a witness. Judging it against the psi-restricted
   // network instead reads "psi stops holding" as "time stops" and reports the resulting timelock
   // as a maximal run -- `E[] P0.idle && x0 <= 40` on fischer4 becomes satisfied, where the true
   // answer is that every continuation past x0 = 40 leaves psi.
   //
-  // Divergence is the other way round and stays on `net`: the run must diverge INSIDE psi, so the
+  // Divergence is the other way round and stays on `net`: the run must diverge inside psi, so the
   // restricted invariant is exactly the right one to consult.
   if (state_has_deadlock(*dead_net, su, &d)) f.swap(d);
   return f;
@@ -2072,7 +2063,7 @@ Federation Otf::stop_set(int u) {
 /// @post If @ref capped or @ref cancelled fired, the iteration did **not** converge and @p W is
 ///       an arbitrary intermediate iterate. It proves nothing in either direction.
 ///
-/// @warning @ref capped is sticky. A capped pass must be reported as UNUSABLE, never laundered
+/// @warning @ref capped is sticky. A capped pass must be reported as unusable, never laundered
 ///          into a verdict; see ::Otf::certificate_in.
 void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   ++passes;
@@ -2081,7 +2072,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   for (int v : S) inS[v] = 1;
   W.assign(N, Federation{});
   std::vector<Federation> nosucc(N);
-  // THE SEED IS NOT MATERIALISED. Every node of S starts at its own zone, and writing all |S|
+  // the seed IS NOT materialised. Every node of S starts at its own zone, and writing all |S|
   // of those copies down before the sweep begins is the peak of the entire run -- one full
   // dense DBM per node, held simultaneously, on top of the copy already in `node`. `seeded[v]`
   // stands in for that copy: it means "W[v] is logically { node[v].zone }". The sweep
@@ -2122,18 +2113,18 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // its entries and never an allocation.
   Dbm vsc, jsc;
   SymState vst, jst;
-  // ROUND-ROBIN LOCKSTEP SWEEP, deliberately, not for want of a worklist. Replacing it with a
+  // round-robin lockstep sweep, deliberately, not for want of a worklist. Replacing it with a
   // chaotic worklist keyed on the reverse edges saves 0.1% of Pre calls on fischer7 and turns grc4
-  // `T0.in --> T0.far` from SATISFIED into UNUSABLE: reordering cannot change the limit of a
-  // monotone descending iteration, but it does change the intermediate federation SHAPES, and
+  // `T0.in --> T0.far` from satisfied into unusable: reordering cannot change the limit of a
+  // monotone descending iteration, but it does change the intermediate federation shapes, and
   // `fedcap` is a resource bound on those. The lockstep sweep acts as a de-facto normaliser.
-  // See DESIGN.md, "Measured and rejected", for the numbers -- and KNOWN_LIMITATION.md for why
+  // See docs/design.md, "Measured and rejected", for the numbers -- and docs/limitations.md for why
   // the same sensitivity is what blocks a parallel schedule here.
-  // SCC-DECOMPOSED LOCKSTEP. The sweep above is kept verbatim; what changes is the SET it is
+  // SCC-decomposed lockstep. The sweep above is kept verbatim; what changes is the set it is
   // swept over.
   //
-  // A node's `cand` reads only its SUCCESSORS' W, so the descent propagates emptiness one edge
-  // per global round and the round count tracks the graph's DIAMETER, not anything about the
+  // A node's `cand` reads only its successors' W, so the descent propagates emptiness one edge
+  // per global round and the round count tracks the graph's diameter, not anything about the
   // property. grc5 `E[] x0 <= 15 && !T0.in` needed 47 rounds over 14610 nodes -- 1.59M Pre calls
   // -- where its satisfied sibling needed 6 on the identical graph.
   //
@@ -2143,12 +2134,12 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // because the operator is local and Tarjan emits components successors-first.
   //
   // This is NOT the chaotic worklist recorded as measured and rejected. That one reordered the
-  // visits and changed the intermediate federation SHAPES, which `fedcap` bounds -- it turned
-  // grc4 `T0.in --> T0.far` UNUSABLE. Here the lockstep round-robin survives INSIDE each
+  // visits and changed the intermediate federation shapes, which `fedcap` bounds -- it turned
+  // grc4 `T0.in --> T0.far` unusable. Here the lockstep round-robin survives inside each
   // component, so the de-facto normalisation it provides is kept where the iteration actually
   // happens; only the outer partition into components is new.
   // Enabled for `E[] psi` and not for `p --> q`, which is a measured split rather than a
-  // preference. `E[] psi` reads ONE node, so emptiness has to propagate the full diameter back to
+  // preference. `E[] psi` reads one node, so emptiness has to propagate the full diameter back to
   // it and the round count is dominated by that; `p --> q` reads every p-node and settles long
   // before diameter matters. Best of two runs, decomposed / undecomposed:
   //
@@ -2166,7 +2157,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     return scc_iter_;
   }();
   // Tarjan runs unconditionally: the emptiness prune below reads its components, and the sweep
-  // reads them as an ORDER only when `scc_on`.
+  // reads them as an order only when `scc_on`.
   std::vector<std::vector<int>> comps;
   {
     std::vector<int> idx(N, -1), low(N, 0), stk;
@@ -2217,14 +2208,14 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     }
   }
 
-  // STRUCTURAL EMPTINESS, decided on the graph alone.
+  // structural emptiness, decided on the graph alone.
   //
   // At the fixpoint, `W[v] = W[v] /\ (NoSucc(v) \/ \/_e Pre_e(W[j_e]))`. So a non-empty W[v]
   // needs either a non-empty stop set at v, or a successor inside S that is itself non-empty.
   // Chase the second case: it yields an unbounded walk of non-empty nodes inside S, which in a
   // finite graph must revisit a node and therefore meets a cycle. Every node with a non-empty
   // value can thus reach, inside S, a node that is on a cycle or can stop --- and every node
-  // that cannot is EXACTLY empty, with no zone computation at all.
+  // that cannot is exactly empty, with no zone computation at all.
   //
   // Nothing here reads a zone. `nosucc` is already built for all of S, and Tarjan emits
   // components successors-first, so one pass in that order settles it: a singleton's successors
@@ -2279,7 +2270,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   const int dim = net.nclocks + 1;
   std::vector<std::int32_t> pindex;
   std::deque<PreNode> pnodes;
-  // One arena for every node's invariants, with the spans INTERNED. The invariant list is a
+  // One arena for every node's invariants, with the spans interned. The invariant list is a
   // function of the location vector, and across a zone graph the same list recurs constantly --
   // on twolock9 the arena is ~120 bytes per node stored naively, which is more than the record it
   // belongs to. Interning by content collapses that to one copy per distinct list.
@@ -2345,7 +2336,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     return pn;
   };
 
-  // One reset mask per TAG, not per edge: tags are pooled by value, so two edges with the same
+  // One reset mask per tag, not per edge: tags are pooled by value, so two edges with the same
   // transition recipe share it. Built lazily for the same reason as ::PreNode.
   std::vector<std::vector<unsigned char>> rmask(tags_.size());
   std::vector<char> rmask_ready(tags_.size(), 0);
@@ -2360,8 +2351,8 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     return rmask[tag];
   };
 
-  // ONE NODE'S REFINEMENT, `W[v] /\ (NoSucc(v) \/ Pre(W))`. Factored out so the lockstep sweep
-  // and the worklist below drive exactly the same operator; only the ORDER differs.
+  // one node'S refinement, `W[v] /\ (NoSucc(v) \/ Pre(W))`. Factored out so the lockstep sweep
+  // and the worklist below drive exactly the same operator; only the order differs.
   auto relax = [&](int v) -> bool {
     if (!seeded[v] && gfp_fed_empty(W[v])) return false;
     Federation cand = nosucc[v];
@@ -2393,12 +2384,12 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     // `W[v] /\ cand`, computed directly rather than as the double complement
     // `subtract(z, subtract(z, cand))` the textbook formulation uses. Both denote the same
     // set, but the inner subtraction peels z by every constraint of every member of cand, so
-    // its output is an ARRANGEMENT whose size is not bounded by |cand| at all, and the outer
+    // its output is an arrangement whose size is not bounded by |cand| at all, and the outer
     // subtraction then peels z by all of those. The intersection of two zones is a single
     // zone, so the direct form needs exactly |cand| pieces.
     Federation nw;
     // A converged sweep still visits every node, and near the fixpoint most visits change
-    // nothing. Detect that per member: if some `c` in cand already CONTAINS z, then
+    // nothing. Detect that per member: if some `c` in cand already contains z, then
     // `z /\ cand == z`, and every other product `z /\ c'` is a subset of that, so the inner
     // loop below can only produce pieces the compaction would absorb again. Emit z and move on.
     //
@@ -2425,7 +2416,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     return shrank;
   };
 
-  // WORKLIST INSIDE A COMPONENT, for `E[] psi` only. `relax` reads only v's SUCCESSORS, so v can
+  // worklist inside A component, for `E[] psi` only. `relax` reads only v's successors, so v can
   // change only after one of them has -- and the lockstep sweep re-reads every node of the
   // component every round regardless. That is free where the decomposition is fine-grained
   // (grc5: 2717 components over |S|=7079, 58916 node visits) and ruinous where the closure is a
@@ -2435,9 +2426,9 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   //     twolock7  |S|=4158  sccs=1     126 rounds   449145 visits   1.57M Pre   12.6s
   //     grc5      |S|=7079  sccs=2717 5458 rounds    58916 visits   0.30M Pre    2.5s
   //
-  // DESIGN.md records a chaotic worklist as measured and REJECTED, because reordering changes
+  // docs/design.md records a chaotic worklist as measured and rejected, because reordering changes
   // the intermediate federation shapes and `fedcap` bounds those -- it turned grc4
-  // `T0.in --> T0.far` UNUSABLE. That measurement was on leads-to, which is why this is confined
+  // `T0.in --> T0.far` unusable. That measurement was on leads-to, which is why this is confined
   // to @ref scc_iter_, which is now on for `p --> q` as well; see its declaration.
   // The E[] suite runs at a maximum federation width of 186 against a cap of 4096, with zero cap
   // hits across 108 rows, so the bound that killed it there is not close to binding here.
@@ -2474,7 +2465,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     }
     continue;
    }
-   // A predecessor OUTSIDE the component needs no attention: Tarjan emits components
+   // A predecessor outside the component needs no attention: Tarjan emits components
    // successors-first, so such a predecessor lives in a component not yet processed and will
    // read this one's final value when its own turn comes.
    for (int v : comp) in_comp[v] = 1;
@@ -2526,8 +2517,8 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
 ///
 /// @warning A @c false return is meaningful only when @ref capped is clear. A capped pass did
 ///          not converge and proves nothing in either direction; returning @c false for it
-///          would launder "out of federation budget" into a silent SATISFIED. Callers must
-///          check @ref capped and report UNUSABLE.
+///          would launder "out of federation budget" into a silent satisfied. Callers must
+///          check @ref capped and report unusable.
 bool Otf::certificate_in(const std::vector<int>& S) {
   if (S.empty()) return false;
   std::vector<Federation> W;
@@ -2575,7 +2566,7 @@ bool Otf::build_all() {
     if (!apply_all(s0.zone, inv)) return false;     // unreachable init: caller sees no nodes
     bool c, u;
     frozen_flags(net, s0.locs, s0.ints, &c, &u);
-    // The forbidden region applies to the ROOT too, and it must REPLACE the delay rather than
+    // The forbidden region applies to the root too, and it must replace the delay rather than
     // follow it. This construction does not go through close_succ_zone, and a plain delay
     // followed by a restriction is the very error the psi-restriction exists to avoid: the zone
     // travels through the region first and is only cut afterwards, so the root ends up holding
@@ -2586,7 +2577,7 @@ bool Otf::build_all() {
       if (!c && !u) avoid_->delay(s0.zone, s0.locs, s0.ints, parts);
       else avoid_->restrict(s0.zone, s0.locs, s0.ints, parts);
       // The root must be a single zone. Merge only where the union is exactly convex; otherwise
-      // keep the largest piece, which UNDER-approximates the root and so can lose a witness but
+      // keep the largest piece, which under-approximates the root and so can lose a witness but
       // never invent one.
       Dbm merged;
       bool have = false;
@@ -2630,7 +2621,7 @@ bool Otf::build_all() {
 /// @return every expanded node reachable through `!q` edges only from an expanded `p /\ !q`
 ///         node, the accepting nodes themselves included
 ///
-/// @note Restricting the final pass to this set is EXACT, not an approximation. The operator is
+/// @note Restricting the final pass to this set is exact, not an approximation. The operator is
 ///       defined per node from that node's own successors, so an accepting node's value depends
 ///       on exactly this closure; and `p --> q` is decided by the accepting nodes alone, so
 ///       nothing outside it is ever read.
@@ -2688,7 +2679,7 @@ bool Otf::dtheta_empty() {
     bool open = true;
     for (int c = 1; c <= net.nclocks; ++c)
       if (inv.get(c, 0) != kInf) { open = false; break; }
-    // The time-open drop is a claim about DIVERGENCE, so it is available only where time can
+    // The time-open drop is a claim about divergence, so it is available only where time can
     // pass. At a committed/urgent key no positive delay is legal, so Inv(q) is the undelayed
     // universe and trivially bounds no clock -- exactly when this test would fire and exactly
     // when it would be wrong. Frozen keys fall through to the Dead=Inv test instead.
@@ -2734,12 +2725,12 @@ static bool key_invariant(const Network& net, const SymState& rep, int nc, Dbm& 
 }
 
 bool Otf::build_atom_map(AtomMap& am) {
-  // DEADLOCK IS JUDGED IN @ref dead_net, SO THE COMPLETION MUST BE BUILT THERE TOO.
+  // deadlock IS judged IN @ref dead_net, SO the completion must BE built there too.
   //
   // For `p --> q` the two are the same automaton and this is a no-op. For `E[] psi` they are not:
-  // the search runs on the psi-RESTRICTED network, psi's clock conjunction having been adjoined
+  // the search runs on the psi-restricted network, psi's clock conjunction having been adjoined
   // to every location invariant, while ::Otf::stop_set asks hora::detail::state_has_deadlock
-  // about the UNRESTRICTED one -- maximality is a property of the original system. Deriving
+  // about the unrestricted one -- maximality is a property of the original system. Deriving
   // Dead(q) from `net` here would complete the covering for the restricted automaton's deadlocks
   // and leave the fixpoint reading the unrestricted automaton's, so the covering could merge two
   // states that differ in exactly the property the completion exists to preserve. That is the
@@ -2802,22 +2793,22 @@ bool Otf::build_atom_map(AtomMap& am) {
     }
     if (!some_escapes) continue;                              // Dead(q) = Inv(q): atoms implied
     ++am.seed_keys;
-    // WHICH ZONES TO READ THE ATOMS OFF -- two exact representations of the same set, computed
+    // which zones TO read the atoms off -- two exact representations of the same set, computed
     // both ways and the cheaper kept.
     //
     // Dead(q) = Inv(q) \ union Esc(q), and every stored zone satisfies Inv(q). Membership in
-    // Dead(q) is therefore decided either by the atoms of the RESIDUE's disjoint pieces, or by
-    // the atoms of the ESCAPE zones alone -- one convex zone per outgoing transition -- since a
+    // Dead(q) is therefore decided either by the atoms of the residue's disjoint pieces, or by
+    // the atoms of the escape zones alone -- one convex zone per outgoing transition -- since a
     // valuation is dead iff it escapes by none of them. Neither dominates: the residue's cut
     // constraints are artefacts of the peeling order and blow up on grc4 (3234 occurrences
     // against 25 for the escapes), while the escapes carry diagonals that pull back through
-    // resets into non-diagonal atoms and cost csma four clock bounds the residue does not. A
+    // resets into non-diagonal atoms and cost CSMA four clock bounds the residue does not. A
     // non-diagonal atom is weighted four times heavier in the comparison because it is
-    // discharged by raising that clock to M GLOBALLY rather than by a local cell.
+    // discharged by raising that clock to M globally rather than by a local cell.
     //
-    // The atoms come from the MINIMAL GRAPH, not the dense matrix: a canonical DBM's redundant
+    // The atoms come from the minimal graph, not the dense matrix: a canonical DBM's redundant
     // entries are implied by shortest paths through the others, so the non-redundant edges alone
-    // decide membership. Reading the dense matrix seeds one atom per DERIVED bound and buys
+    // decide membership. Reading the dense matrix seeds one atom per derived bound and buys
     // nothing.
     const int dim = nc + 1;
     std::vector<std::uint32_t> mbits(mindbm_bits2words(std::uint32_t(dim) * std::uint32_t(dim)));
@@ -2835,8 +2826,8 @@ bool Otf::build_atom_map(AtomMap& am) {
             const raw_t r = d.get(a, b2);
             if (r >= kInf) continue;
             if (a == 0 && r >= kZeroLe) continue;               // x_b2 >= 0: trivial
-            // BOTH CONSTANT CASES. Every stored zone at q satisfies Inv(q), so an atom Inv(q)
-            // IMPLIES is true on all of them and an atom Inv(q) is DISJOINT from is false on all
+            // both constant cases. Every stored zone at q satisfies Inv(q), so an atom Inv(q)
+            // implies is true on all of them and an atom Inv(q) is disjoint from is false on all
             // of them; either way its tag bit never varies and it distinguishes nothing. On a
             // canonical DBM both are one entry comparison.
             if (inv.get(a, b2) <= r) continue;                  // implied by Inv(q): always true
@@ -2944,7 +2935,7 @@ bool Otf::build_atom_map(AtomMap& am) {
             if (iv2.get(i2, j2) <= a.b) continue;                             // Inv(q) implies
             // ...and, symmetrically, Inv(q) refutes: the pullback lands outside the source key's
             // invariant, so no zone stored there can ever satisfy it. A closure atom is a
-            // constraint from some OTHER key's deadlock, and the further it is pulled back the
+            // constraint from some other key's deadlock, and the further it is pulled back the
             // less it has to do with the invariant it arrives at, so this drop matters more here
             // than at the seed.
             if (raw_add(iv2.get(j2, i2), a.b) < kZeroLe) {
@@ -3522,7 +3513,7 @@ void Otf::online_expand(int u) {
   if (profile) successor_done = std::chrono::steady_clock::now();
 
   // A concrete terminal/divergent witness is conclusive immediately.  Unlike the old repeated
-  // GFP probe this performs no backward pass on a changing graph; if it misses, construction
+  // gfp probe this performs no backward pass on a changing graph; if it misses, construction
   // continues to D-quiescence and the one normal backward pass decides the query.
   if (eg_early_ && online_eg_terminal_witness(u, succ.empty())) {
     eg_early_hit_ = true;
@@ -3646,7 +3637,7 @@ void Otf::online_drain_forward_work() {
     if (!online_active_[u] || expanded[u]) continue;
     if (online_eg_prune_ && !online_is_nq(u)) {
       // E[] never returns to psi after leaving it.  Keep the target vertex for incoming edge
-      // redirection and D seeding, but its successors cannot influence the initial-state GFP.
+      // redirection and D seeding, but its successors cannot influence the initial-state gfp.
       expanded[u] = 1;
       if (online_raw_slot_[u] < 0) {
         online_raw_slot_[u] = static_cast<int>(online_raw_adj_.size());
@@ -3665,7 +3656,7 @@ void Otf::online_drain_forward_work() {
 /// its exact zone is parked, not deleted.  This is what lets a concrete terminal witness be
 /// reached with the small D quotient.  If no such witness exists, the backward solver needs the
 /// exact incoming image of every materialised record, so those parked records are activated and
-/// expanded here before the single GFP starts.  No state is rediscovered from the root and no
+/// expanded here before the single gfp starts.  No state is rediscovered from the root and no
 /// graph is rebuilt: this drains retained records through the same online-D worklist.
 void Otf::online_complete_eg_history() {
   online_eg_repair_ = true;
@@ -3771,7 +3762,7 @@ void Otf::online_finalize_graph() {
     // Reindex only when refinement really left inactive materialised records.  No successor is
     // recomputed and no D decision is revisited.
     //
-    // IN PLACE. Compaction only ever DROPS, so the new index of a survivor is at most its old
+    // IN place. Compaction only ever drops, so the new index of a survivor is at most its old
     // one, and rewriting ascending can therefore only overwrite slots already read. Building the
     // compacted graph beside the original instead put two copies of the zone store, the node
     // vector and the adjacency in memory at once -- an 86 MB spike on fischer10, on a graph the
@@ -3843,7 +3834,7 @@ void Otf::online_finalize_graph() {
   online_inq_.clear();
   online_work_.clear();
   online_key_by_id_.clear();
-  // key_locs_/key_ints_ and the strides deliberately SURVIVE: `node_key_` points into them for
+  // key_locs_/key_ints_ and the strides deliberately survive: `node_key_` points into them for
   // the rest of the run.  ::online_reset releases them at the start of the next construction.
   online_key_of_.clear();
   online_next_in_key_.clear();
@@ -3887,19 +3878,19 @@ void Otf::base_forward() {
         if (!inq[v]) { inq[v] = 1; work.push_back(v); }
       };
       push(0);
-      // EARLY WITNESS PROBE. `E[] psi` is satisfied on 220 of the 254 decided rows of the
+      // early witness probe. `E[] psi` is satisfied on 220 of the 254 decided rows of the
       // benchmark suite, and on those the whole forward graph is built to certify a witness that
       // a fraction of it already contains -- fischer8 `E[] x0 <= 40 && !P1.cs` needs 292 of its
-      // 129468 nodes. ::Otf::eg_probe is sound in the SAT direction on a partial graph, so the
+      // 129468 nodes. ::Otf::eg_probe is sound in the sat direction on a partial graph, so the
       // search may stop the moment one fires; NOT is never concluded here.
       //
-      // Hoisted out of the per-EDGE test below: ::Otf::is_nq opens with a ::Otf::grow it does not
+      // Hoisted out of the per-edge test below: ::Otf::is_nq opens with a ::Otf::grow it does not
       // need here, the loop running right after one, and at one call per edge that is not free.
       const bool psi_prune = eg_early_;
       //
-      // WHEN TO PROBE: amortization, not tuning. A probe that misses is wasted work whose cost
+      // when TO probe: amortization, not tuning. A probe that misses is wasted work whose cost
       // grows with the graph, so it has to be paid for. The rule is that exploration since the
-      // last probe must have cost at least as much as ALL the probing done so far; only then is
+      // last probe must have cost at least as much as all the probing done so far; only then is
       // another probe affordable. Two things follow with no constant anywhere:
       //
       //   * total probe time can never exceed total exploration time, so a query whose witness
@@ -3926,14 +3917,14 @@ void Otf::base_forward() {
         // A successor needs work exactly when it has no adjacency of its own: brand new, or
         // reset because a merge enlarged it.
         //
-        // AND, for `E[] psi`, only if it still satisfies psi. psi's CLOCK part is folded into the
-        // restricted network's invariants, so the forward search never leaves it; its DISCRETE
+        // AND, for `E[] psi`, only if it still satisfies psi. psi's clock part is folded into the
+        // restricted network's invariants, so the forward search never leaves it; its discrete
         // part is not, and was left to ::Otf::is_nq at closure time -- so the search explored the
         // whole reachable graph and then discarded 73% of it on fischer7. A maximal psi-run is in
         // psi at every step, so a run reaching a non-psi node has already left psi and neither
         // that node nor anything beyond it can lie on a witness. Not expanding it therefore
         // removes nothing from ::Otf::eg_closure: a psi-node reachable only through a non-psi
-        // node was never admitted to it in the first place. It removes 3x the STORED nodes and
+        // node was never admitted to it in the first place. It removes 3x the stored nodes and
         // almost no time, because those nodes were never in the closure the fixpoint iterates.
         for (const auto& e : adj[u])
           if (!expanded[e.tgt] && !(psi_prune && !is_nq_fast(e.tgt))) push(e.tgt);
@@ -3976,7 +3967,7 @@ std::vector<int> Otf::eg_closure() {
   std::vector<int> S;
   if (nrec() == 0) return S;
   grow();
-  // The psi-closure REACHED FROM THE INITIAL VERTEX. ::Otf::accepting_closure seeds from every
+  // The psi-closure reached from the initial vertex. ::Otf::accepting_closure seeds from every
   // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
   // state, so a node reachable only by leaving psi and coming back must not be admitted.
   if (!expanded[0] || !is_nq(0)) return S;
@@ -4042,7 +4033,7 @@ bool Otf::run(GfpStats* gs) {
 /// The map begins empty, but this is not a preliminary LU graph.  Active exact records and raw
 /// semantic edges are built once; a provisionally covered successor is represented only by its
 /// source-edge replay handle.  Atom pullback and expansion share one worklist, and only the
-/// stable active quotient reaches the backward GFP.
+/// stable active quotient reaches the backward gfp.
 bool Otf::run_online_d(GfpStats* gs) {
   // A violated `p --> q` needs no finished graph: see ::Otf::leadsto_witness. Armed before either
   // delegation below, so the exact and structurally-empty-D routes get it too. Disabled with
@@ -4214,7 +4205,7 @@ void Otf::fill_stats(GfpStats* gs) {
     gs->passes = passes;
     gs->pre_calls = pre_calls;
     gs->early = settled_early;
-    // The reported state count EXCLUDES the initial state, matching verifyta: its `E<> p`
+    // The reported state count excludes the initial state, matching verifyta: its `E<> p`
     // figures are this count minus one on every query measured (5 against 6, 6 against 7, 9
     // against 10), which pins the convention as "states generated", not "states stored".
     gs->outer_nodes = outer_nodes;
@@ -4225,14 +4216,14 @@ void Otf::fill_stats(GfpStats* gs) {
 /// @brief `E[] psi` from the initial state, decided by the backward greatest fixpoint.
 ///
 /// @param net the network, already restricted by `psi`'s clock conjunction if it had one
-/// @param nq  a predicate holding exactly where `psi`'s DISCRETE part fails, so `V_psi` is its
+/// @param nq  a predicate holding exactly where `psi`'s discrete part fails, so `V_psi` is its
 ///            complement; carry an arbitrary boolean through hora::DiscPred::forbid
 /// @param[out] gs statistics; may be null
 /// @return @c true iff the initial state admits a maximal execution all of whose states satisfy
 ///         `psi`
 ///
 /// The forward construction and D refinement are the same persistent construction used by
-/// leads-to.  The difference is only the seed and readout of the final GFP: E[] starts from the
+/// leads-to.  The difference is only the seed and readout of the final gfp: E[] starts from the
 /// initial node and reads that node's value, whereas leads-to seeds every `p /\ !q` node.
 ///
 /// @note @p witness_only remains in the public helper signature for compatibility.  The online
@@ -4335,7 +4326,7 @@ bool leads_to_clocks(const Network& net, const DiscPred& p, const DiscPred& nq, 
 /// A provisionally covered successor is kept only as an edge replay handle.  If a later atom
 /// invalidates its certificate, that one successor is regenerated and materialised; the graph is
 /// never rebuilt.  Once the coupled worklist stabilises, existing edges are redirected to the
-/// active D representatives and one backward GFP decides the verdict.
+/// active D representatives and one backward gfp decides the verdict.
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs) {
   Otf e(net, p, q);
   return e.run_online_d(gs);

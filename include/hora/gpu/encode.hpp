@@ -22,7 +22,7 @@ struct NetEncoding {
   std::vector<int> inv_off, inv_data;  // per-loc invariant: triples (i,j,bound)
   std::vector<int> frozen;             // per-loc: bit0 committed, bit1 urgent
   std::vector<int> active;             // [total_locs*(nclocks+1)]
-  // Same information as `active`, one BIT per clock (bit c = clock c active here). The kernel's
+  // Same information as `active`, one bit per clock (bit c = clock c active here). The kernel's
   // reset-inactive step needs the union over all processes' target locations; with the [loc][clk]
   // table that is nprocs*nclocks device loads per successor (289 on arbiter17, comparable to the
   // whole rest of the zone pipeline). With the mask it is nprocs loads and a bitwise OR.
@@ -34,7 +34,7 @@ struct NetEncoding {
   std::vector<int> edge_chan;          // [E] sync channel (-1 none)
   std::vector<int> edge_dir;           // [E] +1 '!', -1 '?', 0 none
   std::vector<char> chan_bcast;        // [nchan] broadcast?
-  // host-only: per (process, location) the global edge indices of ALL its edges
+  // host-only: per (process, location) the global edge indices of all its edges
   // Back-pointer from a global edge index to the NEdge it was flattened from.
   // The tables above only capture the `var OP const` / `var := const` fast
   // paths; an edge may additionally carry gen_guard/gen_update (arithmetic,

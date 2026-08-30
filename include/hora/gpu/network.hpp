@@ -4,7 +4,7 @@
 // include it; the Metal implementation lives in src/metal/netengine_metal.mm and is only
 // built when HORA_HAVE_METAL is defined.
 //
-// STAGE 1 scope: non-diagonal, channel-free networks (shared int variables only). Each
+// stage 1 scope: non-diagonal, channel-free networks (shared int variables only). Each
 // (frontier-state, process, location-edge) is expanded on the GPU running the exact
 // successors_net pipeline (int guard -> clock guard -> resets -> combined invariant ->
 // delay-if-not-frozen -> combined invariant -> reset_inactive -> emptiness). The host still
@@ -27,7 +27,7 @@ struct Network;
 // Storage type of the two biggest device zone buffers -- the frontier and the expand output.
 // Both are only ever read or written a whole matrix at a time through a per-entry loop, so a
 // narrow entry costs nothing there and halves the allocation (and the expand kernel's store
-// traffic). The zone ALGEBRA is untouched: kernels and the CPU merge still work on raw_t.
+// traffic). The zone algebra is untouched: kernels and the CPU merge still work on raw_t.
 // kGzInf is the sentinel for raw_t's kInf; a backend only narrows when the model's constants
 // make overflow impossible (see GpuZoneIntern in netreach.cpp, same bound).
 using gz_t = std::int16_t;
@@ -41,8 +41,8 @@ class NetGpuExpander {
 
   // Expand `nstates` frontier states. Inputs are row-major:
   //   locs[s*nprocs + p], ints[s*nintvars + v], zones[s*(dim*dim) + k].
-  // An EMPTY `zones` means the frontier buffer was already filled through stage_frontier().
-  // Returns the number of work items W. Outputs point INTO the expander's persistent buffers
+  // An empty `zones` means the frontier buffer was already filled through stage_frontier().
+  // Returns the number of work items W. Outputs point into the expander's persistent buffers
   // (valid until the next expand/merge call): work item w is a successor iff out_valid[w],
   // with discrete state out_locs[w*nprocs..], out_ints[w*nintvars..] (int32) and zone
   // out_zones[w*(dim*dim)..] — read in place, no compaction copy.
@@ -62,7 +62,7 @@ class NetGpuExpander {
   virtual void set_key_layout(const std::vector<int>& dshift, const std::vector<int>& intlo) {}
 
   // Stage the frontier-zone buffer for `nstates` states and hand back a host-writable pointer
-  // into it (unified memory). The caller fills it and then passes an EMPTY `zones` to expand(),
+  // into it (unified memory). The caller fills it and then passes an empty `zones` to expand(),
   // which takes that as "already staged". The frontier itself is arena indices, so this is where
   // its zones are widened -- writing them straight here saves a whole pass over the batch.
   virtual void stage_frontier(std::size_t nstates, int d2, gz_t*& zones) = 0;
@@ -74,20 +74,20 @@ class NetGpuExpander {
   //   new zones in order: new_zones[new_off[b]*d2 .. +new_cnt[b]*d2)
   //   aLU bounds:         L[b*dim .. b*dim+dim), U[...]  (has_diag => plain inclusion instead)
   // Outputs the final antichain per bucket: out_zones with out_off[b] the zone-unit start,
-  // and out_isnew[i] = 1 for zones added THIS level (i.e. the next frontier).
+  // and out_isnew[i] = 1 for zones added this level (i.e. the next frontier).
   // Stage the merge work buffer (persistent, unified memory) and hand back a pointer the caller
-  // fills DIRECTLY (no host vectors, no upload copy): for bucket b, write its EXISTING antichain
+  // fills directly (no host vectors, no upload copy): for bucket b, write its existing antichain
   // to work_buf[work_off[b]*d2 ..] (exist_cnt[b] zones). `work_zones` = total (exist+new)
   // work-pool capacity. New zones are NOT staged — the merge reads them in place from the expand
   // output by work-item index (see `new_idx` below), so successor zones are never copied.
   // `isnew` is the per-work-pool-slot "added during the current level" flag array; the caller
-  // seeds it for the EXISTING zones (a zone an earlier batch of this level added is still new)
+  // seeds it for the existing zones (a zone an earlier batch of this level added is still new)
   // and the merge preserves it through compaction, flagging appended zones with 1.
   virtual void stage_merge(std::size_t work_zones, int d2, gz_t*& work_buf, int*& isnew) = 0;
 
   // Per-bucket subsumption + convex-union merge. Existing zones come from the staged work buffer;
-  // NEW zones are read in place from the previous expand's output at the given work-item indices:
-  // bucket b's new zones are expand items new_idx[new_off[b] .. +new_cnt[b]]. Outputs point INTO
+  // new zones are read in place from the previous expand's output at the given work-item indices:
+  // bucket b's new zones are expand items new_idx[new_off[b] .. +new_cnt[b]]. Outputs point into
   // the persistent work buffer (valid until the next expand/merge call): bucket b's final
   // antichain is out_zones[(out_work_off[b]+i)*d2 ..] for i in [0, out_count[b]), with
   // out_isnew[out_work_off[b]+i] flagging survivors — read straight from unified memory.
@@ -99,17 +99,17 @@ class NetGpuExpander {
                      std::vector<int>& out_work_off, std::vector<int>& out_count,
                      const gz_t*& out_zones, const int*& out_isnew) = 0;
 
-  // CPU-EXPAND / GPU-MERGE hybrid. Measurements say the two phases want different
+  // CPU-expand / GPU-merge hybrid. Measurements say the two phases want different
   // hardware: successor generation is branchy, serially-dependent small-matrix work
   // (the CPU wins), while the per-bucket subsumption/convex-union merge is thousands
   // of independent bucket jobs (the GPU wins — 3x over 12 OpenMP threads on Fischer).
-  // On unified memory we can have both: this stages the SAME output buffers the GPU
+  // On unified memory we can have both: this stages the same output buffers the GPU
   // expand would have produced and hands back host-writable pointers, so the CPU
   // expander fills them in place and the existing merge path runs on the GPU with
-  // ZERO copies. Capacity is `nwork` work items.
+  // zero copies. Capacity is `nwork` work items.
   //
   // The caller cannot know the successor count before expanding, so it stages an
-  // ESTIMATED capacity, fills it, and — on the rare level where the estimate was too
+  // estimated capacity, fills it, and — on the rare level where the estimate was too
   // small — calls again with the true size and `preserve=true`, which keeps the bytes
   // already written so only the overflow tail has to be appended.
   virtual void stage_expand(std::size_t nwork, int nprocs, int nintvars, int d2,

@@ -144,7 +144,7 @@ inline bool urgent_sync_enabled(const Network& net, const LocVec& locs, const In
 ///       enabled stays enabled. It is folded in here rather than tested separately at each call
 ///       site so that the two engines cannot drift on it; see the file-level warning.
 /// @note This takes the integer valuation as well as the location vector, which an urgent
-///       LOCATION never needed. An urgent channel's urgency depends on a synchronisation being
+///       location never needed. An urgent channel's urgency depends on a synchronisation being
 ///       enabled, and the participants' integer guards are part of that.
 inline void frozen_flags(const Network& net, const LocVec& locs, const IntVec& ints,
                          bool* committed, bool* urgent) {
@@ -294,7 +294,7 @@ inline void build_broadcast_parts(const Network& net, const SymState& s, const N
 /// @brief Time-predecessor of @p x under a delay that never enters the convex region @p forbid.
 ///
 /// The exact inverse of ::delay_avoiding, and what lets a predicate the run must stay inside be
-/// non-convex in the BACKWARD direction as well as the forward one.
+/// non-convex in the backward direction as well as the forward one.
 ///
 /// @param x       the target set
 /// @param forbid  the convex region the delay may never enter
@@ -387,7 +387,7 @@ inline void delay_avoiding(const Dbm& z, const Dbm& forbid, const Dbm& fup, Fede
 /// @note The delay operator distributes over that union rather than needing a new one. A segment
 ///       avoids a union exactly when it avoids every member, and for a fixed endpoint the best
 ///       start is the latest point of `Z` on its trajectory whichever member is being avoided —
-///       so the reachable set is the INTERSECTION of the per-member results, each of which
+///       so the reachable set is the intersection of the per-member results, each of which
 ///       ::delay_avoiding already computes exactly.
 struct DelayAvoidSet {
   std::vector<DelayAvoid> parts;
@@ -518,7 +518,7 @@ close_succ_zone(const Network& net, const LocVec& tgt_locs, const IntVec& tgt_in
   if (!apply_all(z, inv)) return false;
   bool tgt_committed, tgt_urgent;
   frozen_flags(net, tgt_locs, tgt_ints, &tgt_committed, &tgt_urgent);
-  // Is a region forbidden HERE? `avoid->when` makes this a property of the target's discrete
+  // Is a region forbidden here? `avoid->when` makes this a property of the target's discrete
   // state, which is what lets one operator serve a predicate mixing discrete and clock atoms.
   const bool av = avoid && avoid->applies(tgt_locs, tgt_ints);
   Federation parts;

@@ -10,7 +10,7 @@
 // expressible as var-op-const, so such models were rejected outright.
 //
 // Design notes:
-//  * Arrays are FLATTENED at parse time into consecutive IntVar cells
+//  * Arrays are flattened at parse time into consecutive IntVar cells
 //    (`list[0] .. list[N]`), so the packed discrete state stays exactly what the
 //    engine already indexes -- an array element is just another int cell. An
 //    Index node therefore carries the base cell plus the number of cells, and
@@ -19,7 +19,7 @@
 //    trip count depends on `len`, so it has to run against the concrete state.
 //  * Locals (function parameters and function-body declarations) live in a
 //    separate frame indexed at parse time, so evaluation needs no name lookup.
-//  * Everything is side-effect-free EXCEPT via Stmt, which is what an edge
+//  * Everything is side-effect-free except via Stmt, which is what an edge
 //    update executes. Guards evaluate Expr only, so a guard can call a function
 //    (`front()`) but a function that writes globals would be a modelling error;
 //    we simply evaluate it against a scratch copy (see eval_guard).

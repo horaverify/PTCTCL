@@ -8,7 +8,7 @@
 /// throughout. That rewrite is tractable for one automaton, whose diagonal atoms are few, and is
 /// what lets the GPU backends accept diagonal models here.
 ///
-/// @see netreach.cpp for the network case, and KNOWN_LIMITATION.md §2 for why networks take the
+/// @see netreach.cpp for the network case, and docs/limitations.md §2 for why networks take the
 ///      slower route instead.
 
 #include "hora/reach.hpp"
@@ -378,7 +378,7 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
   };
   auto add = [&](int loc, const Dbm& z) { pk[loc].insert(key(z)); pz[loc].push_back(z); };
 
-  // Safety cap on the DIAGONAL path only (diagonal-free terminates via Extra_LU+). An
+  // Safety cap on the diagonal path only (diagonal-free terminates via Extra_LU+). An
   // unbounded-clock diagonal model has no finite exact zone graph — give up loudly
   // instead of looping. Diagonal-free models are never capped.
   constexpr std::size_t kStateCap = 40000;

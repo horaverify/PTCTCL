@@ -3,7 +3,7 @@
 // The GPU parallelizes the expensive part of zone exploration: computing the
 // successor zone for every (frontier-state, edge) pair. Each thread runs the full
 // DBM pipeline (guard ∩, reset, target-invariant ∩, delay, extrapolate) using the
-// SAME __host__ __device__ ops the CPU is validated on (dbm_ops.hpp). The host does
+// same __host__ __device__ ops the CPU is validated on (dbm_ops.hpp). The host does
 // the serial passed-list subsumption merge (the hard-to-parallelize inclusion step),
 // mirroring the OpenMP engine.
 //

@@ -116,7 +116,7 @@ Federation fed_minus(const Federation& F, const Federation& G) {
 }
 // fed_union comes from HDBM's fed.hpp. This file used to carry its own copy ("concat + light
 // subsumption reduce"), which became an ambiguous overload once HDBM published the federation
-// set algebra. They compute the same POINT SET; HDBM's is the better representation, because its
+// set algebra. They compute the same point set; HDBM's is the better representation, because its
 // fed_add also drops members that the incoming zone subsumes (the local one only skipped the
 // incoming zone when an existing member already covered it, so subsumed members accumulated) and
 // it screens empty zones explicitly. Nothing here depends on the representation: the fixpoint
@@ -203,7 +203,7 @@ struct Engine {
       grow = false;
       for (const auto& e : E) {
         if (observable(e.act)) continue;  // τ = non-observable
-        // The source invariant is re-imposed AFTER extrapolation: extrapolation may only
+        // The source invariant is re-imposed after extrapolation: extrapolation may only
         // widen, and a τ chain may not pass through a location whose invariant fails here.
         Federation ex = fed_intersect(extrapolate_fed(edge_pre(e, T[e.dst], M), M), IV[e.src]);
         Federation nu = fed_union(T[e.src], ex);
@@ -234,7 +234,7 @@ struct Engine {
             S = fed_union(S, fed_intersect(edge_pre(f, Tgt[f.dst], M), OIV[f.src]));
         return S;
       }
-      // WEAK observable:  τ0* ; a-edge ; τ0*
+      // weak observable:  τ0* ; a-edge ; τ0*
       Map T2 = Tgt; tau0_pre_close(O, T2);
       Map A1(loLocs);
       for (const auto& f : OE)
@@ -244,13 +244,13 @@ struct Engine {
       Map T3 = A1; tau0_pre_close(O, T3);
       return T3[Lo];
     }
-    // WEAK, challenger τ: responder answers with τ0* (incl. staying put).
+    // weak, challenger τ: responder answers with τ0* (incl. staying put).
     Map T2 = Tgt; tau0_pre_close(O, T2);
     return T2[Lo];
   }
 
   // §3.2 delay-stability of one federation. `avail` is the set of product valuations the
-  // CHALLENGER's own invariant lets it delay into: InvA[lA] for a simulation, InvA ∪ InvB for
+  // challenger's own invariant lets it delay into: InvA[lA] for a simulation, InvA ∪ InvB for
   // a bisimulation (either side may issue the delay challenge). Because R ⊆ InvA ∩ InvB by
   // construction, `avail \ R` already contains both failure modes — "the delay leaves the
   // relation" and "the responder's invariant forbids that much time" — so one subtraction
@@ -286,7 +286,7 @@ struct Engine {
     bool changed = true;
     while (changed) {
       changed = false;
-      // (1) delay-stability. Pure delay only (down): a τ move is a silent ACTION, matched
+      // (1) delay-stability. Pure delay only (down): a τ move is a silent action, matched
       // in action-stability by the other side's own τ — it must NOT unconditionally remove
       // points here (that breaks reflexivity). Holds for strong and weak alike.
       for (int lA = 0; lA < laA; ++lA)
@@ -390,7 +390,7 @@ Engine build(const BAut& A, const BAut& B, BisimKind kind) {
   std::vector<std::vector<Constraint>> ia, ib;
   E.invA = lift_invariants(A, 0, A.nclocks + B.nclocks, &ia);
   E.invB = lift_invariants(B, A.nclocks, A.nclocks + B.nclocks, &ib);
-  // max constants over BOTH automata (per product clock). Invariant constants count: Extra_M
+  // max constants over both automata (per product clock). Invariant constants count: Extra_M
   // only widens bounds strictly above le(M[i]), so an invariant x<=k survives iff M[x] >= k.
   E.M.assign(E.dim, 0);
   auto bump = [&](const Constraint& c) {

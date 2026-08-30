@@ -1,8 +1,8 @@
-// netengine_cuda.cu — CUDA GPU successor generation + subsumption merge for NETWORKS.
+// netengine_cuda.cu — CUDA GPU successor generation + subsumption merge for networks.
 //
 // Device-for-device peer of netengine_metal.mm: the same two-kernel design (net_expand over
 // successor "recipes", net_merge over discrete-state buckets) and the same host flat driver in
-// netreach.cpp drive it — only the device layer differs. The kernels call the SAME __host__
+// netreach.cpp drive it — only the device layer differs. The kernels call the same __host__
 // __device__ DBM ops as the CPU (dbm_ops.hpp), so the GPU runs CPU-validated algebra. Buffers the
 // host reads/writes each level use CUDA managed (unified) memory so netreach.cpp's flat driver —
 // which writes merge inputs and reads outputs through raw pointers — works unchanged.
@@ -313,7 +313,7 @@ class NetGpuCuda : public NetGpuExpander {
     const int nwork = static_cast<int>(ws.size());
     if (nwork == 0) return 0;
 
-    // Frontier -> PERSISTENT managed buffers. These were re-uploaded (cudaMalloc + memcpy +
+    // Frontier -> persistent managed buffers. These were re-uploaded (cudaMalloc + memcpy +
     // cudaFree) every BFS level; `zones` is frtot*d2 raw_t, i.e. GBs on the large models, and both
     // cudaMalloc and cudaFree synchronize the device. Metal keeps the same pools persistent for
     // exactly this reason (see netengine_metal.mm grow()).
@@ -390,7 +390,7 @@ class NetGpuCuda : public NetGpuExpander {
   NetEncoding en_;
   DevNet d_{};
 
-  // Upload a static (per-run) table and RECORD it so the destructor frees it. Recording happens
+  // Upload a static (per-run) table and record it so the destructor frees it. Recording happens
   // immediately, so a throw from a later upload still leaves the earlier ones owned.
   template <class T> T* own(const std::vector<T>& v) {
     T* p = dev_upload(v);
@@ -404,14 +404,14 @@ class NetGpuCuda : public NetGpuExpander {
   template <class T> T* grow_m(Managed<T>& m, std::size_t n) {
     if (n == 0) n = 1;                       // never hand back an unallocated pointer
     if (m.cap < n) {
-      // Grow GEOMETRICALLY (>=1.5x), mirroring the Metal allocator: a steadily-widening BFS
+      // Grow geometrically (>=1.5x), mirroring the Metal allocator: a steadily-widening BFS
       // otherwise re-allocates on nearly every level, and cudaFree/cudaMallocManaged both
       // synchronize the device.
       const std::size_t want = std::max(n, m.cap + m.cap / 2);
       if (m.p) cudaFree(m.p);
       CUDA_CHECK(cudaMallocManaged(reinterpret_cast<void**>(&m.p), want * sizeof(T)));
       m.cap = want;
-      // The --adaptive merge routing runs the per-bucket merge on the HOST over these managed
+      // The --adaptive merge routing runs the per-bucket merge on the host over these managed
       // buffers. On a discrete GPU that would fault-and-migrate every page; tell the driver both
       // processors touch them so the runtime can keep them mapped instead.
       cudaMemAdvise(m.p, want * sizeof(T), cudaMemAdviseSetAccessedBy, cudaCpuDeviceId);

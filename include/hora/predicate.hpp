@@ -2,7 +2,7 @@
 /// @brief Predicates over the discrete part of a state, and over a convex clock region.
 ///
 /// The query front end lowers a parsed formula into these; the engines evaluate them. A
-/// hora::DiscPred is read as a DISJUNCTION of its terms when `is_dnf` is set, and as a single
+/// hora::DiscPred is read as a disjunction of its terms when `is_dnf` is set, and as a single
 /// conjunction otherwise — the two readings are not interchangeable, and which one applies is
 /// recorded on the predicate rather than inferred at each use.
 #pragma once
@@ -48,7 +48,7 @@ struct DiscPred {
   /// integer atom does: one stored zone can hold valuations on both sides of it. It is handled
   /// by restricting the zones rather than by filtering the vertices — the conjunction is
   /// adjoined to every location invariant, which is exact because a conjunction of constraints
-  /// is convex and delay inside a convex region is `(Z /\ C)^ /\ C`. Intersecting only AFTER
+  /// is convex and delay inside a convex region is `(Z /\ C)^ /\ C`. Intersecting only after
   /// the delay would be unsound: for `Z = {x=0}` and this predicate `x>=5`, it yields
   /// `[5,inf)` where the true answer is empty, since every run leaving `x=0` passes through
   /// valuations violating the predicate.
@@ -69,10 +69,10 @@ struct DiscPred {
   ///       non-convex set as a predicate: the non-convexity lives in the union of terms, which
   ///       hora::detail::DelayAvoidSet handles by intersecting per-term results.
   std::vector<DiscTerm> forbid;
-  /// @brief Read @ref forbid as the predicate even when it is EMPTY, i.e. as `false`.
+  /// @brief Read @ref forbid as the predicate even when it is empty, i.e. as `false`.
   ///
   /// Without this an empty predicate is an empty conjunction, which is `true`. The `E[]` entry
-  /// point needs the opposite reading: it passes "where psi's discrete part FAILS", and a psi
+  /// point needs the opposite reading: it passes "where psi's discrete part fails", and a psi
   /// with no discrete part fails nowhere. Read as a conjunction that would hold everywhere and
   /// empty `V_psi`, turning every such query into NOT satisfied.
   bool is_dnf = false;

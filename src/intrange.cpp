@@ -1,18 +1,18 @@
 // intrange.cpp — interval analysis over the integer cells, to pack `dk` from the values a
 // variable can actually take rather than from the range its declaration happens to allow.
 //
-// WHY. The discrete key is a lossless bit-packing of the location vector plus every integer
+// why. The discrete key is a lossless bit-packing of the location vector plus every integer
 // cell, and a cell costs bits(hi - lo + 1) of the 63 available. UPPAAL's default range for an
 // undeclared `int` is [-32768, 32767], i.e. 16 bits, so a model that writes `int list[N+1];
 // int len;` spends 80 bits on five cells whose real contents are train ids and a queue length
 // -- three bits each. train0 is rejected outright today ("discrete state needs 91 bits but the
 // packed key holds 63") while verifyta verifies it in 55 stored states.
 //
-// WHAT. A flow-INSENSITIVE, whole-network abstract interpretation over intervals: one interval
+// what. A flow-insensitive, whole-network abstract interpretation over intervals: one interval
 // per cell, joined over every assignment anywhere in the network, iterated to a fixpoint.
 // Guards are ignored, every branch of every `if` is taken, and array writes through a
 // non-constant index hit every cell the index range can reach. All four make the result an
-// OVER-approximation of the reachable values, which is the only direction that is sound here:
+// over-approximation of the reachable values, which is the only direction that is sound here:
 // the engine discards a transition whose write leaves the variable's range (gen_apply), so
 // narrowing below a reachable value would silently delete behaviour. Over-approximating cannot,
 // because no reachable write lands outside an over-approximation.

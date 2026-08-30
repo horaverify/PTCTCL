@@ -219,7 +219,7 @@ bool verify(const Network& net, const Automorphism& a) {
       if (hit[static_cast<std::size_t>(x - iv.lo)]) return false;   // not a bijection
       hit[static_cast<std::size_t>(x - iv.lo)] = 1;
     }
-    // The INITIAL valuation has to be a fixed point, otherwise g(initial) need not be reachable
+    // The initial valuation has to be a fixed point, otherwise g(initial) need not be reachable
     // and "s reachable => g(s) reachable" -- the whole basis of exploring one per orbit -- fails.
     if (a.map_val(static_cast<int>(v), iv.init, iv.lo) != iv.init) return false;
   }
@@ -295,7 +295,7 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
   if (sig[0] != sig[q]) return false;
   if (!bind_proc(0, q)) return false;
 
-  // Propagate on PARTIAL information: an unmapped process is narrowed by whichever of its clocks
+  // Propagate on partial information: an unmapped process is narrowed by whichever of its clocks
   // and channels already have images, and is fixed as soon as one candidate survives. Requiring
   // every slot to be bound first would stall immediately -- seeding "fork 0 -> fork 1" binds two
   // of a philosopher's four channels, and it is exactly those two that pin down which
@@ -333,11 +333,11 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
       progress = true;
     }
   }
-  // Propagation alone only finishes when the processes are CHAINED by shared structure -- phil's
+  // Propagation alone only finishes when the processes are chained by shared structure -- phil's
   // philosophers and forks share channels, so fixing one fixes the next. Fischer's do not: each
   // process owns a private clock and a private `id` value and touches nothing else, so after the
   // seed every remaining process is equally plausible and the loop above stalls with all of them
-  // ambiguous. That ambiguity is the signature of a FULLY symmetric family, where any completion
+  // ambiguous. That ambiguity is the signature of a fully symmetric family, where any completion
   // is as good as any other, so complete it greedily -- lowest unmapped process to lowest
   // consistent image -- and let verify() have the last word.
   for (bool done = false; !done;) {
@@ -346,9 +346,9 @@ bool build_from_seed(const Network& net, const std::vector<std::string>& sig,
       if (a.proc[p] != -1) continue;
       const Slots& sp = slots[p];
       int pick = -1;
-      // Candidate order matters for the SIZE of the group we end up with, not its validity. In a
+      // Candidate order matters for the size of the group we end up with, not its validity. In a
       // fully symmetric family every completion verifies, and taking the lowest free image yields
-      // a transposition, whose cyclic closure has order 2. Offering the SHIFTED image first
+      // a transposition, whose cyclic closure has order 2. Offering the shifted image first
       // (p + delta, delta fixed by the seed 0 -> q) yields the N-cycle instead, whose closure has
       // order N -- the difference between a 2x and an Nx reduction on Fischer.
       const int delta = q;
@@ -534,11 +534,11 @@ std::vector<Automorphism> symmetry_group(const Network& net, std::size_t cap) {
   if (gens.empty()) return group;
 
   // Close under composition. Compositions of automorphisms are automorphisms, so the closure
-  // needs no re-verification -- but it MUST be complete. Canonicalisation picks the minimum over
+  // needs no re-verification -- but it must be complete. Canonicalisation picks the minimum over
   // G, and if G is missing a composition then rep(g(s)) can differ from rep(s), so a state and
   // its image get explored as different representatives while the target orbit -- also built from
   // G -- no longer contains the element that would recognise the witness. A truncated closure is
-  // therefore not "less reduction", it is wrong. Overflow falls back to the largest CYCLIC
+  // therefore not "less reduction", it is wrong. Overflow falls back to the largest cyclic
   // subgroup that fits, which is closed by construction.
   auto closure = [&](const std::vector<Automorphism>& gs) {
     std::vector<Automorphism> g{id};

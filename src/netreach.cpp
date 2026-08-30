@@ -26,12 +26,12 @@
 ///          universally quantified negative property and is *not* preserved;
 ///          hora::deadlock_reachable therefore runs the same engine over a network whose
 ///          bound arrays have been collapsed to `L = U = M`, which makes the relation symmetric
-///          and hence a bisimulation. See @c DESIGN.md.
+///          and hence a bisimulation. See @c docs/design.md.
 ///
 /// @par Design notes
 /// The correctness arguments and the measurements behind the choices here — why stored zones
 /// must be exact, why deadlock needs a bisimulation, and what was measured and rejected — are
-/// collected in @c DESIGN.md at the repository root.
+/// collected in @c docs/design.md at the repository root.
 
 #include "hora/zone.hpp"
 #include "hora/config.hpp"
@@ -339,7 +339,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
     }
   }
 
-  // ---- broadcast synchronisation: a! fires with ALL enabled a? (0 or more) ----
+  // ---- broadcast synchronisation: a! fires with all enabled a? (0 or more) ----
   for (int i = 0; i < net.nprocs(); ++i) {
     for (int ei : net.procs[i].edges_of(s.locs[i])) {
       const NEdge& se = net.procs[i].edges[ei];
@@ -398,7 +398,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
 /// The tables are thread-local, so lookups take no lock and workers share nothing.
 ///
 /// @note Enabled by `--memo`; see hora::set_memo.
-/// @see DESIGN.md §8.13 for why the adaptive rule tests reuse density and not hit rate.
+/// @see docs/design.md §8.13 for why the adaptive rule tests reuse density and not hit rate.
 /// @}
 
 /// @brief Key of the transition memo: everything the successor pipeline reads, and nothing more.
@@ -515,7 +515,7 @@ inline bool memo_tick(SuccMemo& sm) {
     // Two criteria, because hit rate alone admits tables that are large and thinly reused: a
     // high hit rate spread over very many entries still costs more in lookups and memory
     // pressure than the pipeline it saves. Reuse density (lookups per entry) separates those
-    // cases where hit rate does not. See DESIGN.md 8.13.
+    // cases where hit rate does not. See docs/design.md 8.13.
     const double density = sm.m.empty() ? 0.0 : double(sm.lookups) / double(sm.m.size());
     const bool thin = sm.m.size() > 4096 && density < SuccMemo::kMinDensity;
     if (thin || double(sm.winHits) / double(sm.winLookups) < SuccMemo::kMinHit) {
@@ -565,10 +565,10 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
                            int szidx) {
   thread_local std::vector<Constraint> inv;
   SuccMemo& sm = tls_succ_memo();
-  // The memo key is (source zone, edge, target LOCATION signature) — it does not carry the
+  // The memo key is (source zone, edge, target location signature) — it does not carry the
   // integer valuation, which was sound while the closing pipeline read only the target locations
   // and the zone. With urgent channels the delay in close_succ_zone additionally depends on the
-  // target INTEGER valuation, so two states agreeing on all three key components but differing
+  // target integer valuation, so two states agreeing on all three key components but differing
   // in their integers would alias to one entry with the wrong delay. Widening the key would tax
   // every model; disabling the memo taxes only models that declare an urgent channel.
   const bool memo = memo_enabled() && szidx >= 0 && !net.has_urgent_chan;
@@ -585,7 +585,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
       if (e.sync_chan >= 0) continue;
       if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints.data(), s.ints.size())) continue;
       SymState& ns = slot();
-      // The DISCRETE half first, so the memo can be consulted before any DBM work. This is a
+      // The discrete half first, so the memo can be consulted before any DBM work. This is a
       // pure reordering: every `continue` below is a discrete decision that does not read the
       // zone, and on the miss path the zone pipeline runs exactly as before.
       ns.locs.assign(s.locs.begin(), s.locs.end());
@@ -604,7 +604,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
           ++on;
           continue;
         }
-        // MISS: run the pipeline, then record. `memo_pend` marks that we owe an insert.
+        // miss: run the pipeline, then record. `memo_pend` marks that we owe an insert.
         ns.zone = szone;
         if (!apply_all(ns.zone, e.clock_guard)) { sm.m.emplace(mk, Dbm()); continue; }
         for (int r : e.clock_resets) ns.zone.reset(r);
@@ -642,7 +642,7 @@ std::size_t gen_succ_reuse(const Network& net, const SymState& s, const Dbm& szo
           if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints.data(), s.ints.size())) continue;
           SymState& ns = slot();
           // Discrete half first, so the memo can be consulted before any DBM work. Channel
-          // models (viking, phil) take almost ALL their transitions through this path, so
+          // models (viking, phil) take almost all their transitions through this path, so
           // memoising only the local-edge site above leaves them untouched.
           ns.locs.assign(s.locs.begin(), s.locs.end());
           ns.locs[i] = se.tgt;
@@ -865,7 +865,7 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
                              const std::int32_t* L, const std::int32_t* U,
                              int dim, bool has_diag, int* WI) {
   const int d2 = dim * dim;
-  // The pool keeps NARROW entries; the algebra stays raw_t. dbm_includes / dbm_is_alu_le /
+  // The pool keeps narrow entries; the algebra stays raw_t. dbm_includes / dbm_is_alu_le /
   // dbm_try_union are templated on their read-only operand's entry type (dbm_ops.hpp), so `zw`
   // can point straight into the pool -- no widening pass per bucket.
   gz_t* W = work_buf + static_cast<std::size_t>(work_off_b) * d2;
@@ -1351,7 +1351,7 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
 /// @note @p cancel is polled at the level boundary rather than per state, so it costs one relaxed
 ///       load per level. Abandoning between levels leaves nothing half-built, since the caller
 ///       discards the whole engine.
-/// @see DESIGN.md §4 for why stored zones must be exact and what that costs.
+/// @see docs/design.md §4 for why stored zones must be exact and what that costs.
 template <class TargetFn>
 static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&& is_target,
                          bool force_exact, Backend backend, ReachStats* stats,
@@ -1380,7 +1380,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // Switching mid-run leaves a mixed passed list, and both directions stay sound: a stored exact
   // zone that fails to subsume a new widened one costs one extra stored state, and a stored
   // widened zone that subsumes a new exact one genuinely contains it. Finiteness holds from the
-  // switch onwards. See DESIGN.md 4.
+  // switch onwards. See docs/design.md 4.
   constexpr double kAdaptRatio = 4.0;  ///< zones per discrete state at which widening turns on
   std::vector<char> qmask(net.nclocks + 1, 0);  // clocks the query reads; kept active
   for (const auto& c : target.clock_cond) { if (c.i > 0) qmask[c.i] = 1; if (c.j > 0) qmask[c.j] = 1; }
@@ -1580,7 +1580,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     }
     // Orbit of the target: with symmetry every state is stored as its orbit representative, so a
     // target that is not itself symmetric has to be tested against every image of the property.
-    // Each image's required LOCATIONS are a fixed bit pattern in the packed key, so the test stays
+    // Each image's required locations are a fixed bit pattern in the packed key, so the test stays
     // |G| integer compares against the key (and only a key that matches pays for decoding ints).
     struct OrbitTest { std::uint64_t mask, val; const NetTarget* t; };
     std::vector<OrbitTest> tgt_tests;
@@ -1598,12 +1598,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
     }
     const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
-    // --chunking: expand the level in bounded BATCHES so the GPU pools are sized to a batch
+    // --chunking: expand the level in bounded batches so the GPU pools are sized to a batch
     // rather than to the widest BFS level (which is what makes peak memory blow up: the expand
     // output pool is nwork * dim^2 words, and nwork is ~12x the frontier on fischer).
     //
     // The batch boundary must NOT move states between BFS levels. `fl` holds what is left of the
-    // CURRENT level and `nf*` accumulates the NEXT one; a batch is taken from the front of `fl`
+    // current level and `nf*` accumulates the next one; a batch is taken from the front of `fl`
     // and its survivors go to `nf*`, which only becomes the frontier once `fl` is exhausted.
     // Appending the un-expanded tail to the survivors and swapping would mix level k and level
     // k+1 states into one frontier, losing strict BFS and inflating the explored-state count.
@@ -1723,7 +1723,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       //
       // This loop is serial by measurement rather than by omission: it is bound by streaming the
       // expand output out of unified memory while the GPU competes for the same bandwidth, not by
-      // the hashing, so parallelising the hashing moves little. See DESIGN.md 8.10.
+      // the hashing, so parallelising the hashing moves little. See docs/design.md 8.10.
       bidx.begin_level(prev_nb);
       bdk.clear(); bcnt.clear();
       w_bucket.assign(nwork, -1);                         // work item -> bucket id (-1 = not a successor)
@@ -1911,7 +1911,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           if (tag >= 0) { pz[i] = tag; continue; }   // kept: already stored, already interned
           raw_t* pzi = tmp.data();
           for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones + slot * d2, k);
-          // The high bit of the stored index records "added during the CURRENT level". The
+          // The high bit of the stored index records "added during the current level". The
           // frontier is read off these flags once the level is finished (see the level-advance
           // step), NOT here -- because a later batch of the same level can still absorb this zone
           // into a convex union, and emitting it now would put a state in the frontier that the
@@ -1961,7 +1961,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     //
     // Per-thread local antichains were tried here and removed: they are correct but consistently
     // slower, because a private antichain cannot consult the shared read-only kill probe that
-    // answers most successors. See DESIGN.md 8.9 before reconsidering.
+    // answers most successors. See docs/design.md 8.9 before reconsidering.
     //
     // Dynamic-schedule chunk for the frontier expansion, loop-invariant so OpenMP accepts a
     // runtime value.
@@ -2082,7 +2082,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
           collect_next_frontier(smap, lay, tls_touched, nthreads, single, level);
       // Reordering a level to expand its most general zones first was tried and removed: it is
       // sound but does not pay, because zone retirement is driven by zones arriving levels apart,
-      // which no intra-level ordering can reach. See DESIGN.md 8.14.
+      // which no intra-level ordering can reach. See docs/design.md 8.14.
       frontier.swap(next);
       // Re-read the zones-per-discrete-state signal now that the level is complete and every
       // worker has joined, and switch widening on if the antichains are filling up. Once on it
@@ -2185,7 +2185,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 ///       `phi.clocks` is adjoined to every location invariant of a private copy of the network,
 ///       and the search then runs unchanged on that copy. This is exact rather than merely sound
 ///       because a conjunction of constraints is convex, and the set reachable by delay while
-///       STAYING in a convex `C` is `(Z /\ C)^ /\ C` — every intermediate point of the segment
+///       staying in a convex `C` is `(Z /\ C)^ /\ C` — every intermediate point of the segment
 ///       is a convex combination of its endpoints. Restricting only after the delay would
 ///       over-approximate: for `Z = {x=0}` and `phi = (x>=5)` it gives `[5,inf)` where the true
 ///       answer is empty, and the search would report a witness that does not exist.
@@ -2203,9 +2203,9 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 ///
 /// Off by default because it was measured and it loses. Per-location bounds are pointwise coarser
 /// than the global pair, so they relax each individual zone further -- but this search dedups
-/// nodes by EXACT zone equality and has no subsumption at all, so what it needs from an
+/// nodes by exact zone equality and has no subsumption at all, so what it needs from an
 /// abstraction is not that each zone be relaxed further, it is that many zones be mapped onto the
-/// SAME representative. One global L/U puts every zone in one lattice; per-location bounds give
+/// same representative. One global L/U puts every zone in one lattice; per-location bounds give
 /// each discrete state its own, and zones that would have become identical no longer do.
 ///
 /// Measured, `E[] <clock bound>`, states explored, per-location / global:
@@ -2270,7 +2270,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
 
   // The avoided region's constants must reach the LU bounds, and its clocks must stay live.
   //
-  // For a CONVEX psi this is automatic: the conjunction became a location invariant above, so
+  // For a convex psi this is automatic: the conjunction became a location invariant above, so
   // compute_bounds derived the bounds from it and compute_active saw the clocks read everywhere.
   // A non-convex psi has no such invariant -- the region is routed around, not conjoined -- so
   // nothing tells the abstraction about it, and a_LU subsumption or Extra_LU+ then merges zones
@@ -2319,13 +2319,13 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
 
   // ---- witness search in a sub-system, before the full one -----------------
   //
-  // `E[] psi` needs ONE run, and a run in which some processes never take an edge is a perfectly
+  // `E[] psi` needs one run, and a run in which some processes never take an edge is a perfectly
   // legal run of the whole system: a transition is an option, never an obligation. So a maximal
   // psi-run found with a set of processes' edges suppressed IS a maximal psi-run of the network
-  // as given, and `SAT` from such a search is a verdict for the network as given. Nothing about
+  // as given, and `sat` from such a search is a verdict for the network as given. Nothing about
   // the model, the query or the answer changes -- only where the search looks first.
   //
-  // It looks there because the witnesses are LOCAL and the search is not. TChecker's lasso for
+  // It looks there because the witnesses are local and the search is not. TChecker's lasso for
   // arbiter9 `E[] x0 <= 40` is three steps of C0 and the arbiter with all eight other clients
   // sitting in `idle`; the breadth-first search reaches it only after enumerating every
   // interleaving of nine processes down to that depth. Same witness, 2816 states against 3.
@@ -2333,18 +2333,18 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   //     arbiter9  E[] x0 <= 40    2816 states  ->  3
   //     grc8      E[] x0 <= 15   28458 states  ->  8   (7.4s -> 0.05s)
   //
-  // SOUNDNESS rests on two things and is checked rather than assumed:
+  // soundness rests on two things and is checked rather than assumed:
   //
-  //   * maximality is judged in the FULL network. `net_in` goes in as the unrestricted network
+  //   * maximality is judged in the full network. `net_in` goes in as the unrestricted network
   //     exactly as below, so ::Otf::stop_set takes its restricted branch and asks
   //     hora::detail::state_has_deadlock about `net_in` -- a state that only looks stuck
   //     because its neighbours were suppressed is not read as the end of a maximal run.
-  //   * nothing may FORCE a suppressed process to move. Urgent and committed locations do, and
+  //   * nothing may force a suppressed process to move. Urgent and committed locations do, and
   //     so does an urgent channel, so the lane declines outright when any suppressed process has
   //     such a location or the network uses urgent channels. Time-passage is otherwise identical:
   //     the invariants are untouched, only edges are withheld.
   //
-  // Only SAT is believed. A sub-system that finds nothing has proved nothing -- the witness may
+  // Only sat is believed. A sub-system that finds nothing has proved nothing -- the witness may
   // need every process -- so the search falls through to the full one below.
   const std::size_t nprocs = engine_net->procs.size();
   if (!net_in.has_urgent_chan && nprocs > 1) {
@@ -2380,7 +2380,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
         for (const auto& c : l.invariant)
           if ((c.i > 0 && psi_clock[c.i]) || (c.j > 0 && psi_clock[c.j])) keep[p] = 1;
     }
-    // Synchronisation closure, and it is ONE partner per channel and direction, not all of them.
+    // Synchronisation closure, and it is one partner per channel and direction, not all of them.
     // A kept process's `c!` edge needs somebody offering `c?` to fire; it does not need everybody
     // who could. Keeping every partner is what makes this lane useless on exactly the models it
     // is for -- arbiter's nine clients all share `acq`/`rel`, so "keep all partners" closes over
@@ -2492,10 +2492,10 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
 ///          bare universe for such a state therefore receives `Dead` computed against the
 ///          universe rather than against `Inv(q)`, which over-approximates. This is the
 ///          conservative direction and costs precision only, but such a caller must intersect the
-///          result with `Inv(q)` itself. See KNOWN_LIMITATION.md.
+///          result with `Inv(q)` itself. See docs/limitations.md.
 /// @note Enabledness is invariant under LU-extrapolation, so working on the extrapolated zone is
 ///       sound — the same assumption the rest of the engine relies on.
-/// @see DESIGN.md §2 for the deadlock completion this feeds.
+/// @see docs/design.md §2 for the deadlock completion this feeds.
 bool detail::state_has_deadlock(const Network& net, const SymState& s,
                                 Federation* stuck, Federation* escapes) {
   if (s.zone.empty()) return false;
@@ -2561,7 +2561,7 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
     // Pruning before down() is sound because W subseteq W' implies down(W) subseteq down(W'), so
     // the union of the time-pasts is unchanged.
     if (guarded.empty()) return;
-    // THE WHOLE-ZONE ESCAPE, detected where it is produced rather than after the fact. `guarded`
+    // the whole-zone escape, detected where it is produced rather than after the fact. `guarded`
     // starts as Z and is only ever constrained, and dbm_constrain writes only a strictly tighter
     // bound -- which, on a canonical DBM, strictly shrinks the set. So `guarded == Z` entrywise
     // iff nothing tightened, iff this transition is enabled from every valuation of Z. Then
@@ -2716,7 +2716,7 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
 ///       which — unlike `Extra_LU+` — can neither invent nor destroy a deadlock.
 /// @note The predicate closes over the *original* network. It reads guards, invariants and edges,
 ///       never the bound arrays, so the collapse does not reach it.
-/// @see DESIGN.md §3 for the full argument and the measured comparison against exact zones.
+/// @see docs/design.md §3 for the full argument and the measured comparison against exact zones.
 bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
                         const std::atomic<bool>* cancel) {
   // The GPU drivers cannot express this target. deadlock_reachable never asks for a GPU backend,

@@ -40,7 +40,7 @@ namespace hora {
 /// @param[out] stats  optional counters; may be null
 /// @return @c true iff the initial state admits a maximal `psi`-execution
 /// @note Decided by hora::exists_invariant_run_otf, i.e. backward. The forward cycle search
-///       that used to live here was unsound on a subsumed graph; see KNOWN_LIMITATION.md.
+///       that used to live here was unsound on a subsumed graph; see docs/limitations.md.
 bool exists_invariant_run(const Network& net, const std::vector<Constraint>& psi_clocks,
                           const DiscPred& nq, ReachStats* stats = nullptr,
                           const std::vector<DiscTerm>* forbid = nullptr);
@@ -90,12 +90,12 @@ struct GfpStats {
 /// @return @c true if the property holds
 /// @post If @p gs is non-null and `gs->capped` is set, the return value is meaningless and the
 ///       query must be reported as unresolved rather than answered.
-/// @see netliveness.cpp for the engine, and DESIGN.md for why a partial backward pass is already
+/// @see netliveness.cpp for the engine, and docs/design.md for why a partial backward pass is already
 ///      a certificate.
 /// @brief `E[] psi` from the initial state, on the backward greatest-fixpoint engine.
 ///
 /// @param net the network, already restricted by `psi`'s clock conjunction if it had one
-/// @param nq  holds exactly where `psi`'s DISCRETE part fails, so `V_psi` is its complement;
+/// @param nq  holds exactly where `psi`'s discrete part fails, so `V_psi` is its complement;
 ///            an arbitrary boolean travels in hora::DiscPred::forbid
 /// @param[out] gs statistics; may be null
 /// @return @c true iff the initial state admits a maximal execution all of whose states satisfy
@@ -140,7 +140,7 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q,
 /// @note Explored on the exact-hash LU-extrapolated zone graph. Extrapolation preserves guard
 ///       enabledness — guards only compare clocks to constants at most the maximum — so a state
 ///       deadlocks exactly when its extrapolated image does. The completion that makes this hold
-///       for the subsumption test as well is described in DESIGN.md.
+///       for the subsumption test as well is described in docs/design.md.
 bool deadlock_reachable(const Network& net, Backend backend = Backend::Seq,
                         ReachStats* stats = nullptr,
                         const std::atomic<bool>* cancel = nullptr);

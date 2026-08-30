@@ -27,14 +27,14 @@ constexpr std::size_t kHotWork = 16;
 
 /// @brief Minimum chain length below which a chain is never mirrored, however hot.
 ///
-/// A gate is required, not optional: mirroring a length-1 chain stores a dense PRIVATE copy of
-/// a zone the interner was SHARING, so it defeats interning and inflates the map every insert
+/// A gate is required, not optional: mirroring a length-1 chain stores a dense private copy of
+/// a zone the interner was sharing, so it defeats interning and inflates the map every insert
 /// probes. Measured with the gate at 4, twolock12 went 0.76 -> 1.21 GB and +3% time; 8 is the
 /// smallest value that leaves every process-network family byte-identical to the un-mirrored run.
 constexpr std::size_t kHotMinLen = 8;
 
 /// @brief Byte ceiling on all dense mirrors, process-wide: a quarter of physical RAM clamped to
-/// [1 GB, 32 GB]. Admission control is sound because a mirror is a PURE CACHE -- the packed
+/// [1 GB, 32 GB]. Admission control is sound because a mirror is a pure cache -- the packed
 /// records remain the storage of record, so refusing to promote can never change a result.
 std::size_t hot_budget();
 
@@ -45,10 +45,10 @@ std::atomic<std::size_t>& hot_bytes();
 
 /// @brief Newest live zones a new zone attempts to convex-merge with.
 ///
-/// This CHANGES WHAT IS STORED, so it is a precision/time trade, not a pure optimisation. 32 is
+/// This changes what IS stored, so it is a precision/time trade, not a pure optimisation. 32 is
 /// a measured optimum in both directions: a window of 8 stores 1.65x more zones and runs 3.2x
 /// slower (a narrow window misses the merges that collapse the antichain), while unbounded pays
-/// 28x the try_union calls and, because merging is non-confluent, explores MORE states.
+/// 28x the try_union calls and, because merging is non-confluent, explores more states.
 constexpr std::size_t kMergeScan = 32;
 
 // --------------------------------------------------------------------- programmatic options

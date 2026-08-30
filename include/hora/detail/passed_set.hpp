@@ -115,7 +115,7 @@ struct NetPassed {
   // detail::kHotWork. Promoting on accumulated work rather than on length alone lets short but
   // heavily hammered chains promote too, which a length-only rule can never do, and introduces no
   // model-specific constant: a chain earns its mirror by being expensive, which is exactly the
-  // property that makes the mirror pay. See DESIGN.md 8.11.
+  // property that makes the mirror pay. See docs/design.md 8.11.
   //
   // Mirror policy, the merge window and the legacy-engine switch all live in
   // detail/engine_config.hpp, since they are process-wide policy rather than per-table state.
