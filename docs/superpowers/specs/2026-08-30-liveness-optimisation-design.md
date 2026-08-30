@@ -356,24 +356,53 @@ Verdicts agree on every row. We are 3.4–29× under `tchecker` where the quotie
 count, and at **parity** — arbiter18 and csma12 marginally worse — where it does not. Before this
 work arbiter18 stood at 0.78× of `tchecker`.
 
-### The gap that remains: bytes per stored state
+### Per-state footprint, and a statistic that does not mean what it looks like
 
-Normalising by states stored is what the totals hide.
+Normalising total memory by states is tempting and, across tools, wrong. `bench.py` scrapes
+`verifyta`'s count from **`States explored`** — a cumulative visit counter — while ours is
+expanded nodes. Dividing resident memory by the first gives bytes per *visit*, not bytes per
+stored state, and for a tool that re-explores those differ by orders of magnitude.
+
+The arithmetic makes it concrete. On phil11 (22 processes, 11 clocks) the floor for **one**
+stored state is about 58 bytes: ~6 for a bit-packed discrete state plus ~53 for a minimal-graph
+zone at dimension 12. `verifyta`'s recorded 0.061 GB over 2 120 725 counted states is **30.9
+bytes**, below that floor — so the counted number is not the resident set, and no conclusion
+about footprint can be drawn from it.
+
+What the recorded numbers *do* show is the algorithm. UPPAAL decides `p --> q` as
+`A[](p imply A<> q)` by running a nested `A<>` search from each reachable `p`-state: the passed
+list only ever holds one of those searches, so memory stays flat while the explored counter
+accumulates across all of them. The throughput gives it away —
 
 ```
-model        ours base  ours new | tchecker  verifyta |  our states  tck states  vta states
-arbiter18         1316      1045 |      975         - |     2621440     2752512           -
-fischer11         1242       674 |      389         - |     1464971    13764960           -
-twolock11         1230       671 |      401         - |     1487499    11108023           -
-phil11            1423       814 |      679        31 |      247943     8808014     2120725
+verifyta   arbiter7   183524 explored   127.0s  ->    1445 states/s
+           csma7      324899 explored    97.4s  ->    3334 states/s
+           twolock7   282072 explored    27.5s  ->   10251 states/s
+           phil11    2120725 explored     9.7s  ->  217957 states/s
 ```
 
-**`verifyta` holds 2.12 M states of phil11 in 0.061 GB — 31 bytes a state, against our 814.** It
-uses 3× less memory in total while exploring 8.5× more states. `tchecker` is also better than us
-per state (389 against 674 on fischer11) and loses only because it stores 9.4× more.
+— 1445 states/s being nowhere near UPPAAL's reachability throughput.
 
-So the whole of our memory advantage is **state count**, from the D/a_LU quotient and the exact
-convex-union merge; none of it is footprint. Measured, our 814 bytes a state on phil11 are:
+Head to head on every model where both have a recorded row:
+
+| | verifyta | ours | |
+|---|---|---|---|
+| arbiter7 | 127.0 s, 0.035 GB | 0.004 s, 0.007 GB | 5× less memory |
+| csma7 | 97.4 s, 0.049 GB | 0.01 s, 0.008 GB | 6× less |
+| fischer7 | 111.6 s, 0.065 GB | 0.03 s, 0.014 GB | 4.6× less |
+| twolock7 | 27.5 s, 0.043 GB | 0.03 s, 0.014 GB | 3× less |
+| phil11 | 9.7 s, 0.061 GB | 4.15 s, 0.189 GB | 3× more |
+
+So we are under `verifyta` on memory on four of five, and far faster on all five. phil11 is where
+its side of the trade pays, not the general case.
+
+The real distinction is architectural and should be stated as such rather than as a compression
+gap: **we materialise an edge-labelled graph and solve one backward fixpoint on it; UPPAAL keeps
+no graph and re-explores.** Memory-heavy and fast against memory-light and slow.
+
+### Where our own footprint goes, and what compressing the zone buys
+
+Measured, our ~827 bytes a stored state on phil11:
 
 | | B/state |
 |---|---|
@@ -384,12 +413,30 @@ convex-union merge; none of it is footprint. Measured, our 814 bytes a state on 
 | per-node side arrays | 38 |
 | backward `W` federations | ~156 |
 
-The lever nobody has pulled is the first line: HDBM already ships `mindbm`, a minimal-graph
-packing an order of magnitude smaller, and `zone_store.hpp` records why it is not used — the
-covering test reads the stored operand at an arbitrary `(i, j)`, which a minimal graph cannot
-answer without re-running its closure. That is precisely the trade UPPAAL makes, and it is the
-one plausible route to `verifyta`'s footprint. It must be measured against the probe rate before
-it is believed: grc6 scans **357 active records per intern** and runs 654 M cover probes.
+`--zones packed` stores each zone as the minimal graph `mindbm` packs instead of the dense
+matrix, and unpacks it on every read. Verdicts and state counts are identical — the codec round
+trips a canonical DBM bit for bit — so it trades memory against time and nothing else.
+
+```
+model        states | dense GB  packed GB  saved | dense s  packed s   cost
+arbiter15    278528 |    0.251     0.196  1.28x |    2.20      8.47  3.85x
+arbiter16    589824 |    0.551     0.428  1.29x |    5.34     21.70  4.06x
+arbiter17   1245184 |    1.165     0.884  1.32x |   12.71     53.75  4.23x
+fischer10    447598 |    0.279     0.244  1.14x |    1.99      5.67  2.85x
+fischer11   1464971 |    0.921     0.758  1.22x |    7.75     22.70  2.93x
+twolock10    457838 |    0.274     0.251  1.09x |    1.86      5.45  2.93x
+twolock11   1487499 |    0.916     0.743  1.23x |    7.43     21.84  2.94x
+csma12       120832 |    0.138     0.117  1.18x |    1.14      2.98  2.61x
+phil10        73455 |    0.060     0.056  1.07x |    0.76      1.56  2.05x
+phil11       247943 |    0.191     0.165  1.16x |    4.15      9.16  2.21x
+grc5          12184 |    0.015     0.015  1.00x |    2.40      4.10  1.71x
+```
+
+1.0–1.3× of memory for 1.7–4.2× of time, so dense stays the default and the choice is the
+user's. The codec delivers exactly what it promises — on arbiter17 the zone goes from 289 bytes
+to about 53, a 5.5× compression — but the zone is only a quarter of what a stored state costs, so
+the total barely moves. `grc5` is the clearest case for leaving it off: small zones already, and
+it scans 357 active records per intern, so it pays the unpack with nothing to show.
 
 ## 10. What was measured and rejected
 
