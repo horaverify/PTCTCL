@@ -23,9 +23,9 @@
 #include <vector>
 
 #include "hora/zone.hpp"
-#include "hora/net_gpu.hpp"
-#include "hora/net_gpu_encode.hpp"
-#include "hora/netreach.hpp"   // gen_ok / gen_apply — shared with the CPU path
+#include "hora/gpu/network.hpp"
+#include "hora/gpu/encode.hpp"
+#include "hora/reachability.hpp"   // gen_ok / gen_apply — shared with the CPU path
 #include "hora/network.hpp"
 
 #ifdef HORA_HAVE_OPENMP

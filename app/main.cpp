@@ -7,10 +7,10 @@
 #include <string>
 
 #include "hora/zone.hpp"
-#include "hora/bisim.hpp"
-#include "hora/netreach.hpp"
+#include "hora/bisimulation.hpp"
+#include "hora/config.hpp"
 #include "hora/reach.hpp"
-#include "hora/ta.hpp"
+#include "hora/automaton.hpp"
 #include "hora/uppaal.hpp"
 
 /// @brief `--stats`: append successor-generation counts to each verdict line.

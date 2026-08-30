@@ -2,7 +2,7 @@
 /// @brief Definitions for the engine's configuration surface (see engine_config.hpp).
 #include "hora/detail/engine_config.hpp"
 
-#include "hora/netreach.hpp"
+#include "hora/config.hpp"
 
 #include <algorithm>
 

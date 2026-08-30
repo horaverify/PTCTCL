@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "hora/zone.hpp"
-#include "hora/bisim.hpp"
+#include "hora/bisimulation.hpp"
 
 using namespace hora;
 

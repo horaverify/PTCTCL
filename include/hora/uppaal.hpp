@@ -10,10 +10,9 @@
 #include <string>
 #include <vector>
 
-#include "hora/netreach.hpp"
 #include "hora/network.hpp"
 #include "hora/reach.hpp"
-#include "hora/ta.hpp"
+#include "hora/automaton.hpp"
 
 namespace hora {
 

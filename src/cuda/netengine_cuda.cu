@@ -20,8 +20,8 @@
 #include <vector>
 
 #include "hora/zone.hpp"
-#include "hora/net_gpu.hpp"
-#include "hora/net_gpu_encode.hpp"
+#include "hora/gpu/network.hpp"
+#include "hora/gpu/encode.hpp"
 #include "hora/network.hpp"
 
 namespace hora {

@@ -12,11 +12,11 @@
 /// A non-empty value at a `p /\ !q` node is a counterexample.
 ///
 /// Transition semantics are shared with reachability through
-/// @ref hora/detail/net_semantics.hpp so the two engines use the same local, binary, and
+/// @ref hora/detail/semantics.hpp so the two engines use the same local, binary, and
 /// broadcast rules.
 
 #include "hora/zone.hpp"
-#include "hora/netliveness.hpp"
+#include "hora/detail/liveness_engine.hpp"
 
 #ifdef HORA_HAVE_OPENMP
 #include <omp.h>
@@ -42,7 +42,7 @@
 #include <mach/mach.h>
 #endif
 #include "hdbm/mindbm.hpp"
-#include "hora/detail/net_semantics.hpp"
+#include "hora/detail/semantics.hpp"
 
 namespace hora {
 namespace {

@@ -19,7 +19,9 @@
 
 #include "hora/uppaal.hpp"
 
-#include "hora/netreach.hpp"
+#include "hora/config.hpp"
+#include "hora/liveness.hpp"
+#include "hora/reachability.hpp"
 
 #include <cctype>
 #include <cstdlib>

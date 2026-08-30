@@ -34,7 +34,9 @@
 /// collected in @c DESIGN.md at the repository root.
 
 #include "hora/zone.hpp"
-#include "hora/netreach.hpp"
+#include "hora/config.hpp"
+#include "hora/liveness.hpp"
+#include "hora/reachability.hpp"
 #include "hora/symmetry.hpp"
 #include <cstdio>
 #include <sys/resource.h>
@@ -75,10 +77,10 @@
 #include "hora/detail/sym_state.hpp"
 #include "hora/detail/zone_intern.hpp"
 #include "hora/detail/gpu_zone_intern.hpp"
-#include "hora/detail/net_passed.hpp"
-#include "hora/detail/net_semantics.hpp"
+#include "hora/detail/passed_set.hpp"
+#include "hora/detail/semantics.hpp"
 #include "hdbm/mindbm.hpp"   // minimal-graph packed zone storage (UDBM mingraph port)
-#include "hora/net_gpu.hpp"
+#include "hora/gpu/network.hpp"
 
 #ifdef HORA_HAVE_OPENMP
 #include <omp.h>
@@ -228,7 +230,7 @@ bool network_has_diagonal(const Network& net) {
 }
 
 /// @brief Alias of ::hora::network_has_diagonal for the GPU expanders, which reach it through
-///        the @c netgpu declaration in @ref hora/net_gpu_encode.hpp. One body, two names.
+///        the @c netgpu declaration in @ref hora/gpu/encode.hpp. One body, two names.
 namespace netgpu { bool network_has_diagonal(const Network& net) { return hora::network_has_diagonal(net); } }
 
 namespace {

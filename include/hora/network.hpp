@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "hora/expr.hpp"
-#include "hora/ta.hpp"
+#include "hora/expression.hpp"
+#include "hora/automaton.hpp"
 
 namespace hora {
 
@@ -154,5 +154,15 @@ struct NetTarget {
   std::vector<IntAtom> int_cond;
   std::vector<Constraint> clock_cond;
 };
+
+/// @brief Does @p net compare two clocks anywhere, i.e. contain a constraint `x_i - x_j ~ c`?
+///
+/// @param net the network under analysis
+/// @return @c true if any guard or invariant in @p net is diagonal
+/// @note The LU and a_LU abstractions are unsound in the presence of diagonal constraints
+///       (Bouyer, FMSD 24(3), 2004), so a network for which this returns @c true is explored
+///       with diagonals kept exact instead.
+/// @note Defined once, in netreach.cpp; callers that need only the predicate declare it here.
+bool network_has_diagonal(const Network& net);
 
 }  // namespace hora

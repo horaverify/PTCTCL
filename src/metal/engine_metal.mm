@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "hora/zone.hpp"
-#include "hora/metal_reach.hpp"
+#include "hora/gpu/metal.hpp"
 
 namespace hora {
 namespace {

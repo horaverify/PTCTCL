@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "hora/reach.hpp"
-#include "hora/ta.hpp"
+#include "hora/automaton.hpp"
 
 namespace hora {
 

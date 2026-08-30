@@ -1,5 +1,5 @@
 // Validation of the timed-bisimulation engine against the 7 hand-verified examples.
-#include "hora/bisim.hpp"
+#include "hora/bisimulation.hpp"
 #include <cstdio>
 using namespace hora;
 enum { a = 0, b = 1, c = 2, tau = 9 };

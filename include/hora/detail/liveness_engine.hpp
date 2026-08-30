@@ -1,4 +1,4 @@
-/// @file hora/netliveness.hpp
+/// @file hora/detail/liveness_engine.hpp
 /// @brief Private data model for the network-liveness engine.
 ///
 /// This header is deliberately private to the liveness implementation.  The public query API
@@ -33,7 +33,7 @@
 #include <vector>
 
 #include "hora/zone.hpp"
-#include "hora/netreach.hpp"
+#include "hora/liveness.hpp"
 #include "hdbm/zone_store.hpp"
 #include "hora/detail/sym_state.hpp"
 

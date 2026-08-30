@@ -24,7 +24,7 @@
 
 #include "hora/zone.hpp"
 #include "hdbm/fed.hpp"  // Federation
-#include "hora/ta.hpp"   // Constraint
+#include "hora/automaton.hpp"   // Constraint
 
 namespace hora {
 

@@ -21,8 +21,8 @@
 #include <unordered_set>
 #include <utility>
 
-#include "hora/cuda_reach.hpp"
-#include "hora/metal_reach.hpp"
+#include "hora/gpu/cuda.hpp"
+#include "hora/gpu/metal.hpp"
 
 #ifdef HORA_HAVE_OPENMP
 #include <omp.h>

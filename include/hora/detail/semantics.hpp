@@ -25,7 +25,9 @@
 
 #include "hora/zone.hpp"
 #include "hora/network.hpp"
-#include "hora/netreach.hpp"
+#include "hora/config.hpp"
+#include "hora/liveness.hpp"
+#include "hora/reachability.hpp"
 #include "hora/detail/sym_state.hpp"
 
 namespace hora {

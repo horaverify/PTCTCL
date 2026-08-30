@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "hora/zone.hpp"
-#include "hora/cuda_reach.hpp"
+#include "hora/gpu/cuda.hpp"
 
 namespace hora {
 namespace {

@@ -12,7 +12,7 @@
 // pointers/references, clocks inside functions, and recursion. A model using
 // them raises ParseError instead of being silently under-verified -- the failure
 // mode that let viking12..20 masquerade as viking10 before the <system> fix.
-#include "hora/expr.hpp"
+#include "hora/expression.hpp"
 
 #include <cctype>
 #include <cstdlib>

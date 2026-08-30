@@ -2,7 +2,7 @@
 /// @brief Shared dense-zone interner for the GPU driver a s passed set.
 #pragma once
 
-#include "hora/net_gpu.hpp"
+#include "hora/gpu/network.hpp"
 
 #include <atomic>
 #include <cstdint>

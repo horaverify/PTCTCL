@@ -18,7 +18,7 @@
 ///       is too large, never too small.
 /// @see bisim.hpp for the precise semantics of states, delays and edge enabling.
 #include "hora/zone.hpp"
-#include "hora/bisim.hpp"
+#include "hora/bisimulation.hpp"
 
 #include <cstdint>
 

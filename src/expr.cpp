@@ -14,7 +14,7 @@
 /// @warning Every recursive entry point must check @c fault on return and propagate it. A fault
 ///          that is observed but not propagated turns an abandoned computation into a committed
 ///          value of 0.
-#include "hora/expr.hpp"
+#include "hora/expression.hpp"
 
 #include <algorithm>
 

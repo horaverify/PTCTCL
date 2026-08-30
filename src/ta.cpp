@@ -1,4 +1,4 @@
-#include "hora/ta.hpp"
+#include "hora/automaton.hpp"
 
 #include <algorithm>
 #include <cstdlib>

@@ -3,8 +3,8 @@
 
 #include "hora/zone.hpp"
 #include "hora/reach.hpp"
-#include "hora/ta.hpp"
-#include "hora/detail/net_semantics.hpp"
+#include "hora/automaton.hpp"
+#include "hora/detail/semantics.hpp"
 
 namespace {
 int g_fail = 0, g_checks = 0;
