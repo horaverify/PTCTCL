@@ -21,6 +21,8 @@ void set_slice(bool on) { detail::options().slice = on; }
 bool slice_on() { return detail::options().slice; }
 void set_gsim(bool on) { detail::options().gsim = on; }
 bool gsim_on() { return detail::options().gsim; }
+void set_packed_zones(bool on) { detail::options().packed_zones = on; }
+bool packed_zones_on() { return detail::options().packed_zones; }
 
 namespace detail {
 

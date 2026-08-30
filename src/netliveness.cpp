@@ -799,7 +799,7 @@ bool Otf::base_cover(const Dbm& a, const Dbm& b) const {
 ///       inclusion covering and extrapolation stays load-bearing there.
 void Otf::setup() {
   zdim_ = net.nclocks + 1;
-  zs_.reset(zdim_);
+  zs_.reset(zdim_, packed_zones_on());
   L = net.lbound;
   U = net.ubound;
   M.resize(net.nclocks + 1);
@@ -3787,8 +3787,9 @@ void Otf::online_finalize_graph() {
       if (!expanded[old] || online_raw_slot_[old] < 0) continue;
       const int now = static_cast<int>(kept++);
       remap[old] = now;
-      zread(static_cast<int>(old), zsc);    // read `old` before `now <= old` is overwritten
-      zs_.store(now, zsc);
+      // Alias rather than store: a packed record must not be re-encoded (see ZoneStore::alias),
+      // and even dense this is a memcpy instead of a load-and-re-store.
+      zs_.alias(now, static_cast<int>(old));
       node_key_[now] = online_key_of_[old];
     }
     // The adjacency moves the same way, and each raw vector is moved out rather than copied.
