@@ -2480,12 +2480,16 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   if (std::getenv("PTCTLMC_GFP_PROFILE")) {
     std::size_t big = 0, nontrivial = 0;
     for (const auto& c : sccs) { big = std::max(big, c.size()); if (c.size() > 1) ++nontrivial; }
-    std::size_t stopn = 0;
-    for (int v : S) if (!nosucc[v].empty()) ++stopn;
+    std::size_t stopn = 0, stopmembers = 0, wmembers = 0;
+    for (int v : S) {
+      if (!nosucc[v].empty()) { ++stopn; stopmembers += nosucc[v].size(); }
+      wmembers += W[v].size();
+    }
     std::fprintf(stderr, "GFP-PROFILE |S|=%zu N=%zu sccs=%zu nontrivial=%zu maxcomp=%zu "
-                 "visits=%zu pre=%zu stopnodes=%zu fedmax=%zu live=%zu\n",
-                 S.size(), N, sccs.size(), nontrivial, big, it, pre_calls, stopn, fed_max,
-                 live_count);
+                 "visits=%zu pre=%zu stopnodes=%zu stopmembers=%zu wmembers=%zu "
+                 "fedmax=%zu live=%zu\n",
+                 S.size(), N, sccs.size(), nontrivial, big, it, pre_calls, stopn, stopmembers,
+                 wmembers, fed_max, live_count);
   }
 }
 
