@@ -441,8 +441,18 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
       grew = false;
       for (int j = ki.active_head; j >= 0; j = online_active_next_[j]) {
         if (j == 0 || !online_active_[j]) continue;
+        // A record the candidate already contains has nothing to add: their union IS the
+        // candidate. Every record absorbed by an earlier pass is in that state, so without this
+        // test each one is re-analysed in full on every later pass, which is what made the
+        // fixpoint quadratic in the width of the antichain.
+        if (includes_stored(s.zone, j)) continue;
+        // Read the stored operand at its own entry type. ::dbm_try_union is templated on it, so
+        // widening it into a scratch first is a ZoneStore::load bought for nothing.
         Dbm joined = s.zone;
-        if (!joined.try_union(zread(j, old)) || joined == s.zone) continue;
+        const bool merged = zs_.with(j, [&](const auto* pz) {
+          return dbm_try_union(joined.data().data(), pz, zdim_);
+        });
+        if (!merged || joined == s.zone) continue;
         s.zone = std::move(joined);
         grew = true;
       }

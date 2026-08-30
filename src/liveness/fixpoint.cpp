@@ -302,9 +302,27 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
 
   // one node'S refinement, `W[v] /\ (NoSucc(v) \/ Pre(W))`. Factored out so the lockstep sweep
   // and the worklist below drive exactly the same operator; only the order differs.
+  // `W[v] /\ (NoSucc(v) \/ \/_e Pre_e(W[j]))`, with the union accumulated in `cand`.
+  //
+  // That union is MONOTONE in the edges already processed, so the moment `cand` covers all of
+  // W[v] the result is W[v] whatever the remaining edges contribute -- the intersection cannot
+  // shrink below what a subset of the union already contains. The sweep can stop there, skipping
+  // both the remaining predecessors and the compaction of `cand` altogether. Near the fixpoint
+  // most visits are of exactly that shape, which is where the work was going.
+  auto covers_value = [&](const Dbm& z, int v) {
+    // A seeded node's value is its own stored zone, which ::includes_stored reads at its own
+    // entry type -- widening it into a scratch on every probe is the cost this test exists to
+    // avoid paying elsewhere.
+    if (seeded[v]) return includes_stored(z, v);
+    for (const auto& w : W[v])
+      if (!w.empty() && !z.includes(w)) return false;
+    return true;
+  };
   auto relax = [&](int v) -> bool {
     if (!seeded[v] && fed_is_empty(W[v])) return false;
     Federation cand = nosucc[v];
+    for (const auto& c : cand)
+      if (covers_value(c, v)) return false;
     for (const auto& e : adj[v]) {
       const int j = e.tgt;
       if (!inS[j]) continue;
@@ -322,7 +340,9 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
         } else {
           Dbm pz = exact_predecessor(net, tags_[e.tag], *pv, *pj, pinvs, tag_resets(e.tag),
                            dead_scratch.data(), Y);
-          if (!pz.empty()) cand.push_back(std::move(pz));
+          if (pz.empty()) continue;
+          if (covers_value(pz, v)) return false;   // the union already covers W[v]; see above
+          cand.push_back(std::move(pz));
         }
       }
     }
