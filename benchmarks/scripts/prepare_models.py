@@ -4,12 +4,12 @@
 The generators emit XML on stdout; this script drives them over a size range and
 writes everything into a layout the harness understands:
 
-    benchmarks/models/<family><N>.xml     PTCTLMC / verifyta input
+    benchmarks/models/<family><N>.xml     HORA / verifyta input
     benchmarks/queries/<family>.q         one safety query per family (platform-independent)
     benchmarks/so_<plat>/<family><N>.so   opaal+LTSmin PINS module (with --so)
 
 Building .so modules needs opaal, which is Python 2 (see gen_so_linux.sh/gen_so_macos.sh);
-without it the three-way comparison degrades to verifyta vs PTCTLMC, which the harness
+without it the three-way comparison degrades to verifyta vs HORA, which the harness
 handles by skipping the LTSmin rows rather than failing.
 
     python3 prepare_models.py                 # models + queries for every family (auto-detect platform)
@@ -74,7 +74,7 @@ FAMILIES = {
                 "C0.cs --> C0.idle"),
     # No mutual exclusion to state on csma: the interesting invariant is that the bus is never
     # transmitting while two senders are both in Send. Reproduces the documented figures --
-    # csma14 = 618496 states for PTCTLMC against 991232 for verifyta.
+    # csma14 = 618496 states for HORA against 991232 for verifyta.
     "csma":    ((4, 22), "A[] not (S0.Send and S1.Send and Bus.Transmitting)",
                 # The BUS is the component with forced progress, not a station: `S0.Send -->
                 # S0.Wait` is refuted in 8 states (a collision sends it to Retry instead).
@@ -83,7 +83,7 @@ FAMILIES = {
     # singleN is ONE process with ONE location and N independent clocks (self-loop per clock).
     # It has no critical section, so the mutex query copied from the fischer/arbiter families
     # referenced a location that does not exist: verifyta rejected it with "has no member named
-    # cs" and PTCTLMC reported UNSUPPORTED, so every single* row was an error for both tools.
+    # cs" and HORA reported UNSUPPORTED, so every single* row was an error for both tools.
     # The clocks are global, so constrain one directly. x0<=6 is the location invariant, so the
     # property HOLDS and the whole state space is explored (x0<=2 is refuted by both tools, so
     # it is not vacuous).

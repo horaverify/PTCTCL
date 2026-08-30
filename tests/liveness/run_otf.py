@@ -9,7 +9,7 @@ wall clock, so a change to the liveness engine can be diffed against a recorded 
 
 There is ONE liveness engine: `leads_to_otf`, the on-the-fly backward greatest
 fixpoint. It used to share the binary with two other implementations selected by
-PTCTLMC_LIVENESS -- `gfp` (the whole-graph three-phase form) and `net` (the original
+HORA_LIVENESS -- `gfp` (the whole-graph three-phase form) and `net` (the original
 forward SCC search) -- which this harness ran side by side looking for a disagreement.
 It never found one: the last full differential, 46 queries over 7 model families,
 agreed on every query that all three answered, and `net` timed out on the one
@@ -38,12 +38,12 @@ UNSUPPORTED = re.compile(r"Formula is UNSUPPORTED")
 def find_binary(explicit):
     if explicit:
         return explicit
-    cands = [os.path.join(REPO, d, "ptctlmc")
+    cands = [os.path.join(REPO, d, "hora")
              for d in ("build", "build-freshmain", "build-fix", "build-base")]
     for c in cands:
         if os.path.isfile(c) and os.access(c, os.X_OK):
             return c
-    sys.exit("no ptctlmc binary found; pass --bin (looked in: %s)" % ", ".join(cands))
+    sys.exit("no hora binary found; pass --bin (looked in: %s)" % ", ".join(cands))
 
 
 def load_queries(path):
@@ -62,7 +62,7 @@ def load_queries(path):
 def run(binary, model, p, q, timeout, backend):
     env = dict(os.environ)
     xml = os.path.join(MODELS, model + ".xml")
-    # The query goes in a file: `ptctlmc <model> <queries>` is the only shape the CLI takes.
+    # The query goes in a file: `hora <model> <queries>` is the only shape the CLI takes.
     with tempfile.NamedTemporaryFile("w", suffix=".q", delete=False) as qf:
         qf.write("%s --> %s\n" % (p, q))
         qpath = qf.name

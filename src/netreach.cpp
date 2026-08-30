@@ -2,16 +2,16 @@
 /// @brief The forward engine: symbolic reachability over a network of timed automata.
 ///
 /// This translation unit implements every "is a state satisfying X reachable?" query in the
-/// build — ptctlmc::reachable_net, ptctlmc::exists_invariant_run and
-/// ptctlmc::deadlock_reachable, all declared in @ref ptctlmc/netreach.hpp — on top of one
-/// engine, ::reach_engine. It also owns ptctlmc::detail::state_has_deadlock, which the liveness
+/// build — hora::reachable_net, hora::exists_invariant_run and
+/// hora::deadlock_reachable, all declared in @ref hora/netreach.hpp — on top of one
+/// engine, ::reach_engine. It also owns hora::detail::state_has_deadlock, which the liveness
 /// engine in @ref netliveness.cpp calls for its stopping term.
 ///
 /// @par Shape of the search
 /// Level-synchronous breadth-first exploration of the symbolic state space. A symbolic state is
 /// a discrete part (a location per process plus the integer variables) and a zone. The discrete
 /// part is packed losslessly into a @c uint64_t key (::DiscKeyCodec); the zone is interned
-/// (ptctlmc::detail::ZoneIntern) and referenced by index, so the frontier and the passed set
+/// (hora::detail::ZoneIntern) and referenced by index, so the frontier and the passed set
 /// carry integers rather than DBMs. The passed set is sharded into stripes
 /// (::StripeLayout) so that workers contend only when they touch the same discrete state.
 ///
@@ -24,7 +24,7 @@
 ///
 /// @warning Covering is a simulation, so it preserves existential properties only. Deadlock is a
 ///          universally quantified negative property and is *not* preserved;
-///          ptctlmc::deadlock_reachable therefore runs the same engine over a network whose
+///          hora::deadlock_reachable therefore runs the same engine over a network whose
 ///          bound arrays have been collapsed to `L = U = M`, which makes the relation symmetric
 ///          and hence a bisimulation. See @c DESIGN.md.
 ///
@@ -33,8 +33,9 @@
 /// must be exact, why deadlock needs a bisimulation, and what was measured and rejected — are
 /// collected in @c DESIGN.md at the repository root.
 
-#include "ptctlmc/netreach.hpp"
-#include "ptctlmc/symmetry.hpp"
+#include "hora/zone.hpp"
+#include "hora/netreach.hpp"
+#include "hora/symmetry.hpp"
 #include <cstdio>
 #include <sys/resource.h>
 #include <array>
@@ -68,23 +69,22 @@
 #include <unordered_set>
 #include <vector>
 
-#include "ptctlmc/fed.hpp"
-#include "ptctlmc/dbm_ops_legacy.hpp"
-#include "ptctlmc/detail/engine_config.hpp"
-#include "ptctlmc/detail/spin_rw.hpp"
-#include "ptctlmc/detail/sym_state.hpp"
-#include "ptctlmc/detail/zone_intern.hpp"
-#include "ptctlmc/detail/gpu_zone_intern.hpp"
-#include "ptctlmc/detail/net_passed.hpp"
-#include "ptctlmc/detail/net_semantics.hpp"
-#include "ptctlmc/mindbm.hpp"   // minimal-graph packed zone storage (UDBM mingraph port)
-#include "ptctlmc/net_gpu.hpp"
+#include "hdbm/dbm_ops_legacy.hpp"
+#include "hora/detail/engine_config.hpp"
+#include "hora/detail/spin_rw.hpp"
+#include "hora/detail/sym_state.hpp"
+#include "hora/detail/zone_intern.hpp"
+#include "hora/detail/gpu_zone_intern.hpp"
+#include "hora/detail/net_passed.hpp"
+#include "hora/detail/net_semantics.hpp"
+#include "hdbm/mindbm.hpp"   // minimal-graph packed zone storage (UDBM mingraph port)
+#include "hora/net_gpu.hpp"
 
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #include <omp.h>
 #endif
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 using detail::SpinRW;
 using detail::SymState;
@@ -145,7 +145,7 @@ static std::size_t linux_heap_bytes() {
 ///          @c src/cuda must apply exactly these semantics, and duplicating them there is how a
 ///          backend once diverged silently — a Metal expander that dropped the general update
 ///          explored roughly half of viking's state space and still reported a verdict. One
-///          body, every backend. Declared in @ref ptctlmc/netreach.hpp.
+///          body, every backend. Declared in @ref hora/netreach.hpp.
 /// @}
 
 /// @brief Evaluate @p e's general guard.
@@ -227,9 +227,9 @@ bool network_has_diagonal(const Network& net) {
   return false;
 }
 
-/// @brief Alias of ::ptctlmc::network_has_diagonal for the GPU expanders, which reach it through
-///        the @c netgpu declaration in @ref ptctlmc/net_gpu_encode.hpp. One body, two names.
-namespace netgpu { bool network_has_diagonal(const Network& net) { return ptctlmc::network_has_diagonal(net); } }
+/// @brief Alias of ::hora::network_has_diagonal for the GPU expanders, which reach it through
+///        the @c netgpu declaration in @ref hora/net_gpu_encode.hpp. One body, two names.
+namespace netgpu { bool network_has_diagonal(const Network& net) { return hora::network_has_diagonal(net); } }
 
 namespace {
 
@@ -395,7 +395,7 @@ void successors_net(const Network& net, const SymState& s, const Dbm& szone,
 ///
 /// The tables are thread-local, so lookups take no lock and workers share nothing.
 ///
-/// @note Enabled by `--memo`; see ptctlmc::set_memo.
+/// @note Enabled by `--memo`; see hora::set_memo.
 /// @see DESIGN.md §8.13 for why the adaptive rule tests reuse density and not hit rate.
 /// @}
 
@@ -833,12 +833,12 @@ static void canonicalize(const std::vector<Automorphism>& G, const Network& net,
   }
 }
 
-#if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
+#if defined(HORA_HAVE_METAL) || defined(HORA_HAVE_CUDA)
 /// @brief Host port of the GPU merge kernel, for one discrete-state bucket.
 ///
 /// The GPU merge runs one thread per bucket, so a level made of few but very wide buckets stalls
 /// on a handful of slow lanes. This lets the flat driver merge such buckets across all CPU cores
-/// instead, which is what ptctlmc::set_adaptive_merge routes between.
+/// instead, which is what hora::set_adaptive_merge routes between.
 ///
 /// @param[in,out] work_buf  zone storage; the bucket's existing antichain occupies
 ///                          `work_buf[work_off_b .. work_off_b + exist_cnt_b)`
@@ -919,7 +919,7 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
 /// @note The message lists the widest fields because the offender is usually a small number of
 ///       integer variables declared over the language's default range, and narrowing those is
 ///       the only part of this the user can act on.
-/// @see ptctlmc::set_narrow_ranges, which derives tighter ranges and often avoids this.
+/// @see hora::set_narrow_ranges, which derives tighter ranges and often avoids this.
 [[noreturn]] static void throw_disc_key_too_wide(const Network& net, int bits_needed,
                                                  int (*field_bits)(long)) {
   std::vector<std::pair<int, std::string>> widest;
@@ -1072,7 +1072,7 @@ struct StripeLayout {
   }
 };
 
-#if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
+#if defined(HORA_HAVE_METAL) || defined(HORA_HAVE_CUDA)
 // ---- flat GPU driver helpers ----------------------------------------------------------
 
 /// @brief Per-level map from packed discrete key to bucket id, for the flat GPU driver.
@@ -1196,13 +1196,13 @@ static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassed>& smap
                                     const std::vector<std::pair<std::uint64_t, int>>& frontier,
                                     int nthreads, std::size_t floor_) {
   std::vector<std::uint8_t> alive(zi.index_bound(), 0);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
 #endif
   for (long s = 0; s < static_cast<long>(smap.size()); ++s)
     for (const auto& nd : smap[s].arena)
       if (!nd.dead) __atomic_store_n(&alive[nd.zidx], std::uint8_t(1), __ATOMIC_RELAXED);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(static) num_threads(nthreads)
 #endif
   for (long k = 0; k < static_cast<long>(frontier.size()); ++k)
@@ -1242,7 +1242,7 @@ static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
   if (single) {
     part[0].assign(tls_touched[0].begin(), tls_touched[0].end());
   } else {
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(static) num_threads(nthreads)
 #endif
     for (long t = 0; t < static_cast<long>(nthreads); ++t) {
@@ -1251,7 +1251,7 @@ static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
     }
   }
   std::vector<std::vector<std::pair<std::uint64_t, int>>> nf(nbuk);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 1) num_threads(nthreads)
 #endif
   for (long b = 0; b < static_cast<long>(nbuk); ++b) {
@@ -1325,7 +1325,7 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
 /// @param target    the query's target, needed for its clock constants — which floor the a_LU
 ///                  bounds and build @c qmask — and for the GPU driver's flat target test
 /// @param is_target what makes a symbolic state a witness. A predicate rather than a
-///                  ptctlmc::NetTarget so that a target may inspect the *zone*, which deadlock
+///                  hora::NetTarget so that a target may inspect the *zone*, which deadlock
 ///                  must
 /// @param force_exact  compare stored zones by plain inclusion instead of the a_LU test
 /// @param backend   which expansion backend to run
@@ -1341,7 +1341,7 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
 ///          valuation-sensitive target such as deadlock would be unsound without it. It also
 ///          changes how finiteness is obtained; see the extrapolation mode below.
 /// @warning A caller passing a predicate target must pass a default-constructed @p target and
-///          keep the GPU path off: an empty ptctlmc::NetTarget matches every state, so the GPU
+///          keep the GPU path off: an empty hora::NetTarget matches every state, so the GPU
 ///          driver's flat test would report a witness immediately.
 /// @warning Because cancellation and exhaustion both return @c false, the result of a search the
 ///          caller cancelled carries no information and must not be consulted.
@@ -1491,14 +1491,14 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // rewrites each successor to its orbit representative on the host, and the GPU drivers have no
   // such step. The condition is repeated per backend rather than wrapped around the block because
   // the two #ifdefs are independent and a wrapping brace would not pair.
-#ifdef PTCTLMC_HAVE_METAL
+#ifdef HORA_HAVE_METAL
   if (!force_exact && !use_sym && backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
 #endif
-#ifdef PTCTLMC_HAVE_CUDA
+#ifdef HORA_HAVE_CUDA
   if (!force_exact && !use_sym && backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
 #endif
   use_gpu = (gpu != nullptr);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
   // The CPU path runs multi-threaded for --backend omp AND for a GPU backend that fell back.
   parallel = (backend == Backend::Omp) || (!use_gpu && backend != Backend::Seq);
   if (parallel) nthreads = omp_get_max_threads();
@@ -1515,7 +1515,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   if (use_sym) canonicalize(*sym, net, s0);
   canon_ints(s0.locs, s0.ints);
 
-#if defined(PTCTLMC_HAVE_METAL) || defined(PTCTLMC_HAVE_CUDA)
+#if defined(HORA_HAVE_METAL) || defined(HORA_HAVE_CUDA)
   // ---- Flat GPU-resident driver (Metal / CUDA) -------------------------------------------
   // State stays in flat zone arrays across levels: no round-trip through SymState and no
   // per-level rebuild of a map of DBM copies. The GPU performs the expansion and the per-bucket
@@ -1535,7 +1535,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     //
     // The arena narrows to 16-bit entries when the model's constants make overflow impossible.
     // The bound is 2*M + 1 for the largest clock constant M anywhere in the model or the query;
-    // the margin applied below is deliberately generous. See ptctlmc::detail::GpuZoneIntern.
+    // the margin applied below is deliberately generous. See hora::detail::GpuZoneIntern.
     std::int32_t maxc = 0;
     for (int c = 0; c <= net.nclocks; ++c) {
       if (L[c] != kAluNegInf) maxc = std::max(maxc, L[c]);
@@ -1640,7 +1640,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         const std::size_t ftot = foff.back();
         if (ftot == 0) break;
         fl.resize(ftot * np); fi.resize(ftot * niw); fz.resize(ftot);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 64)
 #endif
         for (long t = 0; t < static_cast<long>(touched.size()); ++t) {
@@ -1687,7 +1687,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         // passed set and a level-wide dense copy would store every one of them twice.
         gz_t* fzbuf = nullptr;
         gpu->stage_frontier(static_cast<std::size_t>(nfr), d2, fzbuf);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(static)
 #endif
         for (long i = 0; i < static_cast<long>(nfr); ++i)   // arena is already narrow: a memcpy
@@ -1791,7 +1791,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       gpu->stage_merge(wtot, d2, work_buf, work_isnew);
       // Gather only the existing antichains into the unified-memory work buffer; successor zones
       // stay in the expand output and are read in place by the merge kernel.
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 32)
 #endif
       for (int b = 0; b < nb; ++b) {
@@ -1843,7 +1843,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             host_isnew_v[static_cast<std::size_t>(work_off[b]) + i] = pit->second[i];
         }
         host_count.assign(nb, 0);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 8)
 #endif
         for (int b = 0; b < nb; ++b)
@@ -1886,7 +1886,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // inserts.
       pzp.assign(nb, nullptr);
       for (int b = 0; b < nb; ++b) if (fr_cnt[b] > 0) { pzp[b] = &passed[bdk[b]]; touched.push_back(bdk[b]); }
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 32)
 #endif
       for (int b = 0; b < nb; ++b) {
@@ -2000,7 +2000,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // sequential state counts.
       std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
       std::vector<std::size_t> tls_gen(nthreads, 0);
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel num_threads(nthreads)
       {
         const int tid = omp_get_thread_num();
@@ -2094,7 +2094,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
       }
       // Reclaim dead arena tombstones: one thread per stripe (exclusive), between levels.
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 8) num_threads(nthreads)
 #endif
       for (long s = 0; s < static_cast<long>(smap.size()); ++s) smap[s].maybe_compact();
@@ -2124,7 +2124,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 ///
 /// @note a_LU subsumption is sound here because the property is evaluated per symbolic state
 ///       rather than per valuation, so covering preserves it. Contrast
-///       ptctlmc::deadlock_reachable, which is not.
+///       hora::deadlock_reachable, which is not.
 bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                    ReachStats* stats) {
   // Symmetry reduction explores one representative per orbit, so a target that is not itself
@@ -2197,7 +2197,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 /// @note Zones must be extrapolated here rather than kept exact, because termination of the
 ///       cycle search depends on the zone graph being finite; a_LU pruning alone does not give
 ///       that for a greatest-fixpoint search.
-/// @brief Opt IN to per-location LU bounds in ::exists_invariant_run (PTCTLMC_EG_LOCLU=1).
+/// @brief Opt IN to per-location LU bounds in ::exists_invariant_run (HORA_EG_LOCLU=1).
 ///
 /// Off by default because it was measured and it loses. Per-location bounds are pointwise coarser
 /// than the global pair, so they relax each individual zone further -- but this search dedups
@@ -2218,7 +2218,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
 /// behind the switch because the grc4 direction suggests the picture depends on how much the
 /// per-location bounds actually vary across the location vector, which is worth revisiting.
 static bool use_loc_lu() {
-  static const bool v = [] { const char* e = std::getenv("PTCTLMC_EG_LOCLU"); return e && *e == '1'; }();
+  static const bool v = [] { const char* e = std::getenv("HORA_EG_LOCLU"); return e && *e == '1'; }();
   return v;
 }
 
@@ -2335,7 +2335,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   //
   //   * maximality is judged in the FULL network. `net_in` goes in as the unrestricted network
   //     exactly as below, so ::Otf::stop_set takes its restricted branch and asks
-  //     ptctlmc::detail::state_has_deadlock about `net_in` -- a state that only looks stuck
+  //     hora::detail::state_has_deadlock about `net_in` -- a state that only looks stuck
   //     because its neighbours were suppressed is not read as the end of a maximal run.
   //   * nothing may FORCE a suppressed process to move. Urgent and committed locations do, and
   //     so does an urgent channel, so the lane declines outright when any suppressed process has
@@ -2414,7 +2414,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
       for (const auto& l : engine_net->procs[p].locations)
         if (l.urgent || l.committed) safe = false;      // urgency would force it to move
     }
-    if (std::getenv("PTCTLMC_EG_SUBDBG")) {
+    if (std::getenv("HORA_EG_SUBDBG")) {
       std::string k;
       for (std::size_t p = 0; p < nprocs; ++p) k += keep[p] ? '+' : '.';
       std::fprintf(stderr, "SUB keep=[%s] frozen=%zu safe=%d\n", k.c_str(), frozen, (int)safe);
@@ -2442,7 +2442,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
       const bool sub_sat = exists_invariant_run_otf(sub, nq, &gsub, &net_in,
                                                     av.parts.empty() ? nullptr : &av,
                                                     /*witness_only=*/true);
-      if (std::getenv("PTCTLMC_EG_SUBDBG"))
+      if (std::getenv("HORA_EG_SUBDBG"))
         std::fprintf(stderr, "SUB result=%s nodes=%zu\n", sub_sat ? "SAT" : "no witness",
                      (std::size_t)gsub.outer_nodes);
       if (sub_sat) {
@@ -2744,4 +2744,4 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
 
 
 
-}  // namespace ptctlmc
+}  // namespace hora

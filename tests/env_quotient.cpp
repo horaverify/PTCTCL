@@ -6,8 +6,8 @@
 // growing with the number of environment processes k, an `Ehat` can be built automatically and
 // the environment-abstraction lead is alive.
 //
-// Build: cmake --build build-mostopt --target ptctlmc_envquot -j8
-// Run:   ptctlmc_envquot sizes|quot|cmp ...   (see usage() at the bottom)
+// Build: cmake --build build-mostopt --target hora_envquot -j8
+// Run:   hora_envquot sizes|quot|cmp ...   (see usage() at the bottom)
 
 #include <algorithm>
 #include <chrono>
@@ -18,10 +18,10 @@
 #include <string>
 #include <vector>
 
-#include "ptctlmc/bisim.hpp"
-#include "ptctlmc/fed.hpp"
+#include "hora/zone.hpp"
+#include "hora/bisim.hpp"
 
-using namespace ptctlmc;
+using namespace hora;
 
 // ── the model ───────────────────────────────────────────────────────────────────────
 //
@@ -280,10 +280,10 @@ struct UF {
 int main(int argc, char** argv) {
   auto usage = [] {
     std::puts("usage:\n"
-              "  ptctlmc_envquot sizes  <kmax> [K]\n"
-              "  ptctlmc_envquot quot   <k> <alphabet 1|2|3> <weak|strong> [K]\n"
-              "  ptctlmc_envquot cmp    <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n"
-              "  ptctlmc_envquot ctx    <nobs> <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n");
+              "  hora_envquot sizes  <kmax> [K]\n"
+              "  hora_envquot quot   <k> <alphabet 1|2|3> <weak|strong> [K]\n"
+              "  hora_envquot cmp    <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n"
+              "  hora_envquot ctx    <nobs> <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n");
     return 2;
   };
   if (argc < 3) return usage();

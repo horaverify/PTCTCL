@@ -1,7 +1,7 @@
 // Validation of the timed-bisimulation engine against the 7 hand-verified examples.
-#include "ptctlmc/bisim.hpp"
+#include "hora/bisim.hpp"
 #include <cstdio>
-using namespace ptctlmc;
+using namespace hora;
 enum { a = 0, b = 1, c = 2, tau = 9 };
 static Constraint ge(int clk, int k) { return c_ge(clk, k); }  // x_clk >= k
 static Constraint leq(int clk, int k) { return c_le(clk, k); }  // x_clk <= k

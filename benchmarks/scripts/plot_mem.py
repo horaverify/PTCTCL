@@ -13,6 +13,8 @@ Blank cells (OOM/timeout) are simply skipped for that curve.
 import csv, os, sys
 from collections import defaultdict
 import matplotlib
+
+from tool_names import canonical  # pre-rename CSVs say 'ptctlmc'
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 

@@ -1,15 +1,15 @@
 // dbm_tests.cpp — unit tests for the DBM zone algebra.
 #include <cstdio>
 
-#include "ptctlmc/dbm.hpp"
-#include "ptctlmc/reach.hpp"
-#include "ptctlmc/ta.hpp"
-#include "ptctlmc/detail/net_semantics.hpp"
+#include "hora/zone.hpp"
+#include "hora/reach.hpp"
+#include "hora/ta.hpp"
+#include "hora/detail/net_semantics.hpp"
 
 namespace {
 int g_fail = 0, g_checks = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
-using namespace ptctlmc;
+using namespace hora;
 
 // 1-clock zone [lo,hi]  (hi<0 => unbounded above).
 Dbm zone1(int lo, int hi) {

@@ -1,118 +1,73 @@
-# Build directories
+# Build trees
 /build*/
-/dist/
 /cmake-build-*/
+/dist/
 
-# Dependencies and third-party
-/deps/
-/third_party/
+# CMake in-source droppings
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# Compiled output
+*.o
+*.obj
 *.a
 *.so
 *.dylib
 *.dll
+*.exe
+*.out
 
-# Old/backup files
+# Vendored or sibling checkouts that are not part of this repository.
+# Root-anchored: `include/hora/` and `src/...` must not be caught by these.
+/HDBM/
+/HORA/
+/UDBM/
+/UppalOMP/
+/PCTLMC/
+HDBM_local/
+
+# Local-only working material, superseded material, and sweep scratch
 /old_docs/
-*_nottrack*
-*_corrupted
-*_old/
-*_old
-*old_
-*old
-Old/
-OLD/
-.old/
-*.backup
+/old_stuff/
+/d_sim_results/
+/.tmp/
+/.cache/
 *.bak
 *.orig
+*.backup
 
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-*.swp
-*~
+# Deliberately untracked regression models -- see
+# tests/models/liveness-regressions/README.md. Ignored so that a broad
+# `git add -A tests` cannot re-add them; that has happened twice.
+/tests/models/liveness-regressions/
+
+# Sweep runtime artefacts (pid/pgid of a live driver, not results)
+/benchmarks/results_complete/complete.pid
+/benchmarks/results_complete/complete.pgid
 
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
 *.egg-info/
-dist/
-build/
+.venv/
+venv/
 
-# IDE/Editor
+# Editors and OS
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 .project
 .cproject
 .settings/
 *.sublime-project
 *.sublime-workspace
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-CMakeUserPresets.json
-Makefile
-cmake_install.cmake
-compile_commands.json
-
-# Generated files
-*.o
-*.obj
-*.exe
-*.out
-
-# LaTeX
-*.aux
-*.log
-*.out
-*.toc
-*.pdf
-*.dvi
-*.ps
-*.synctex.gz
-*.fls
-*.fdb_latexmk
-*.latexmain
-
-# OS-specific
-Thumbs.db
+*.swp
+*.swo
+*~
 .DS_Store
 .AppleDouble
-
-
-/HDBM/
-HDBM_local/
-/UDBM/
-UDBM
-
-# clangd background index (editor cache, not source)
-.cache/
-
-# sweep runtime artifacts (pid/pgid of a live driver, not results)
-benchmarks/results_complete/complete.pid
-benchmarks/results_complete/complete.pgid
-
-# local-only archive of superseded material
-old_stuff/
-
-.tmp/
-
-# Deliberately untracked regression models (see tests/models/liveness-regressions/README.md).
-# Ignored so a broad `git add -A tests` cannot re-add them; this has happened twice.
-/tests/models/liveness-regressions/
-
-
-UppalOMP/
-HORA/
-d_sim_results/
+.LSOverride
+Thumbs.db

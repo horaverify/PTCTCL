@@ -1,4 +1,4 @@
-model       ptctlmc   uppaal     states  t_ptctlmc   t_uppaal  query
+model       hora   uppaal     states  t_hora   t_uppaal  query
 fischer4        SAT      SAT        248      0.010      0.058  E[] x0 <= 40
 fischer4        SAT      SAT        248      0.008      0.057  E[] x0 <= 40 && !P1.cs
 fischer4        NOT      NOT        248      0.024      0.082  E[] (P0.idle || P0.wait) && x0 <= 40

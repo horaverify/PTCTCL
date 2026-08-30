@@ -1,8 +1,8 @@
 /// @file engine_config.cpp
 /// @brief Definitions for the engine's configuration surface (see engine_config.hpp).
-#include "ptctlmc/detail/engine_config.hpp"
+#include "hora/detail/engine_config.hpp"
 
-#include "ptctlmc/netreach.hpp"
+#include "hora/netreach.hpp"
 
 #include <algorithm>
 
@@ -13,7 +13,7 @@
 #include <unistd.h>
 #endif
 
-namespace ptctlmc {
+namespace hora {
 
 void set_narrow_ranges(bool on) { detail::options().narrow_ranges = on; }
 bool narrow_ranges_on() { return detail::options().narrow_ranges; }
@@ -83,4 +83,4 @@ bool chunking() { return detail::options().chunking; }
 void set_symmetry(bool on) { detail::options().symmetry = on; }
 bool symmetry_on() { return detail::options().symmetry; }
 
-}  // namespace ptctlmc
+}  // namespace hora

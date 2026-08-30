@@ -4,14 +4,14 @@ set -euo pipefail
 # Run from anywhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-RESULTS_DIR="$BENCH_DIR/recheability_results"
+RESULTS_DIR="$BENCH_DIR/reachability_results"
 
 # Never trust an inherited TMPDIR: under nohup it can point at a since-removed
 # session tmp dir, and mktemp failing there kills the whole script under set -e.
 export TMPDIR="$BENCH_DIR/.tmp"
 mkdir -p "$TMPDIR"
 
-PTCTLMC_DIR="$RESULTS_DIR/ptctlmc_gsim"
+HORA_DIR="$RESULTS_DIR/hora_gsim"
 UPPAAL_DIR="$RESULTS_DIR/uppaal"
 LTSMIN_DIR="$RESULTS_DIR/ltsmin"
 TCHECKER_DIR="$RESULTS_DIR/tchecker"
@@ -40,7 +40,7 @@ run_verifyta_continue() {
   done_file="$(mktemp)"
   trap 'rm -f "$all_file" "$done_file"' RETURN
 
-  families_in "$PTCTLMC_DIR"/*.csv > "$all_file"
+  families_in "$HORA_DIR"/*.csv > "$all_file"
   if [[ -f "$UPPAAL_DIR/verifyta.csv" ]]; then
     families_in "$UPPAAL_DIR/verifyta.csv" > "$done_file"
   else
@@ -75,7 +75,7 @@ run_ltsmin_continue() {
   done_file="$(mktemp)"
   trap 'rm -f "$all_file" "$done_file"' RETURN
 
-  families_in "$PTCTLMC_DIR"/*.csv > "$all_file"
+  families_in "$HORA_DIR"/*.csv > "$all_file"
   if ls "$LTSMIN_DIR"/*.csv >/dev/null 2>&1; then
     families_in "$LTSMIN_DIR"/*.csv > "$done_file"
   else

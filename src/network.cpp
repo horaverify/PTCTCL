@@ -12,12 +12,12 @@
 ///       constrain a run can only make a bound larger, or a clock or cell look live when it is
 ///       not, and each analysis is used only where over-approximating is safe.
 
-#include "ptctlmc/network.hpp"
+#include "hora/network.hpp"
 
 #include <algorithm>
 #include <cstdlib>
 
-namespace ptctlmc {
+namespace hora {
 
 /// @brief Outgoing edges of a location, computed by scanning.
 /// @param loc the source location index
@@ -176,7 +176,7 @@ void Network::compute_loc_bounds() {
 ///
 /// A clock is *active* at a location when some invariant or guard reachable from that location
 /// reads it before it is reset. A clock that is not active cannot influence any future behaviour,
-/// so ::ptctlmc::detail::reset_inactive may zero it and thereby merge zones differing only in it.
+/// so ::hora::detail::reset_inactive may zero it and thereby merge zones differing only in it.
 ///
 /// @pre ::Network::compute_bounds has run, so the edge index exists.
 /// @post `active_mask` is populated iff `nclocks <= 63`; wider networks leave it empty and the
@@ -284,7 +284,7 @@ static void gen_cells(const StmtP& t, std::vector<char>& s) {
 ///
 /// A cell is *live* at a location when some edge reachable from it reads the cell before
 /// overwriting it. A cell that is not live cannot influence any run from that location, so
-/// ptctlmc::set_slice may canonicalise it and thereby merge states differing only in it. This is
+/// hora::set_slice may canonicalise it and thereby merge states differing only in it. This is
 /// the discrete analogue of ::Network::compute_active.
 ///
 /// @pre ::Network::compute_bounds has run, so the edge index exists.
@@ -346,4 +346,4 @@ void Network::compute_int_live() {
   }
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

@@ -7,8 +7,8 @@
 // host reads/writes each level use CUDA managed (unified) memory so netreach.cpp's flat driver —
 // which writes merge inputs and reads outputs through raw pointers — works unchanged.
 //
-// Built for sm_90 (H100). Only compiled when PTCTLMC_HAVE_CUDA is defined.
-#ifdef PTCTLMC_HAVE_CUDA
+// Built for sm_90 (H100). Only compiled when HORA_HAVE_CUDA is defined.
+#ifdef HORA_HAVE_CUDA
 
 #include <cuda_runtime.h>
 
@@ -19,12 +19,12 @@
 #include <string>
 #include <vector>
 
-#include "ptctlmc/dbm_ops.hpp"
-#include "ptctlmc/net_gpu.hpp"
-#include "ptctlmc/net_gpu_encode.hpp"
-#include "ptctlmc/network.hpp"
+#include "hora/zone.hpp"
+#include "hora/net_gpu.hpp"
+#include "hora/net_gpu_encode.hpp"
+#include "hora/network.hpp"
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 constexpr int kMaxDim = 24;    // <= 23 clocks (matches metal / single-TA engine)
@@ -437,6 +437,6 @@ std::unique_ptr<NetGpuExpander> make_net_gpu_cuda(const Network& net, const std:
   }
 }
 
-}  // namespace ptctlmc
+}  // namespace hora
 
-#endif  // PTCTLMC_HAVE_CUDA
+#endif  // HORA_HAVE_CUDA

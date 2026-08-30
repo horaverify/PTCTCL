@@ -6,8 +6,8 @@
 // subsumption merge. The MSL DBM ops are the same line-for-line port of dbm_ops.hpp used by
 // engine_metal.mm, so the GPU runs validated algebra.
 //
-// Only compiled when PTCTLMC_HAVE_METAL is defined (see CMake).
-#ifdef PTCTLMC_HAVE_METAL
+// Only compiled when HORA_HAVE_METAL is defined (see CMake).
+#ifdef HORA_HAVE_METAL
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -22,17 +22,17 @@
 #include <string>
 #include <vector>
 
-#include "ptctlmc/dbm_ops.hpp"
-#include "ptctlmc/net_gpu.hpp"
-#include "ptctlmc/net_gpu_encode.hpp"
-#include "ptctlmc/netreach.hpp"   // gen_ok / gen_apply — shared with the CPU path
-#include "ptctlmc/network.hpp"
+#include "hora/zone.hpp"
+#include "hora/net_gpu.hpp"
+#include "hora/net_gpu_encode.hpp"
+#include "hora/netreach.hpp"   // gen_ok / gen_apply — shared with the CPU path
+#include "hora/network.hpp"
 
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #include <omp.h>
 #endif
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 // The kernels' private arrays are sized by PT_DIM -- the model's REAL dimension -- so this is
@@ -41,7 +41,7 @@ namespace {
 // HDBM's kDbmMaxDim, which bounds dbm_try_union's host scratch.
 constexpr int kMaxDim = 64;
 
-#define PTCTLMC_MTL_CHECK(cond, msg) \
+#define HORA_MTL_CHECK(cond, msg) \
   do { if (!(cond)) throw std::runtime_error(std::string("Metal(net): ") + (msg)); } while (0)
 
 struct NetParams {
@@ -733,7 +733,7 @@ class NetGpuMetal : public NetGpuExpander {
   // Needed because gen_guard/gen_update are evaluated host-side via gen_ok/gen_apply.
   NetGpuMetal(const Network& net, NetEncoding&& en) : net_(&net), en_(std::move(en)) {
     device_ = MTLCreateSystemDefaultDevice();
-    PTCTLMC_MTL_CHECK(device_ != nil, "no system default Metal device");
+    HORA_MTL_CHECK(device_ != nil, "no system default Metal device");
     // BOUNDED command-buffer pool. Each compute encoder makes the driver allocate a scratch
     // region sized by the kernel's per-thread stack times the threads it will keep in flight
     // (measured: ~5.4 MB apiece, and ~1950 of them live = 10.3 GB on fischer12 -- the real
@@ -753,21 +753,21 @@ class NetGpuMetal : public NetGpuExpander {
       @"PT_NC"  : @(en_.nclocks),
     };
     id<MTLLibrary> lib = [device_ newLibraryWithSource:kNetSource options:copts error:&err];
-    PTCTLMC_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
+    HORA_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
                                       (err ? err.localizedDescription.UTF8String : "?"));
     id<MTLFunction> fn = [lib newFunctionWithName:@"net_expand"];
-    PTCTLMC_MTL_CHECK(fn != nil, "kernel 'net_expand' not found");
+    HORA_MTL_CHECK(fn != nil, "kernel 'net_expand' not found");
     pso_ = [device_ newComputePipelineStateWithFunction:fn error:&err];
-    PTCTLMC_MTL_CHECK(pso_ != nil, "pipeline creation failed");
-#ifdef PTCTLMC_HAVE_OPENMP
+    HORA_MTL_CHECK(pso_ != nil, "pipeline creation failed");
+#ifdef HORA_HAVE_OPENMP
     eth_ = omp_get_max_threads();
 #endif
     scr_.resize(eth_);
     // gpusplit: SIMD-group-per-bucket cooperative work-stealing merge is the GPU merge.
     id<MTLFunction> fmsg = [lib newFunctionWithName:@"net_merge_sg"];
-    PTCTLMC_MTL_CHECK(fmsg != nil, "kernel 'net_merge_sg' not found");
+    HORA_MTL_CHECK(fmsg != nil, "kernel 'net_merge_sg' not found");
     pso_merge_sg_ = [device_ newComputePipelineStateWithFunction:fmsg error:&err];
-    PTCTLMC_MTL_CHECK(pso_merge_sg_ != nil, "merge_sg pipeline creation failed");
+    HORA_MTL_CHECK(pso_merge_sg_ != nil, "merge_sg pipeline creation failed");
     // static (per-run) buffers
     b_edge_tgt_ = ibuf(en_.edge_tgt); b_cg_off_ = ibuf(en_.cg_off); b_cg_data_ = ibuf(en_.cg_data);
     b_rs_off_ = ibuf(en_.rs_off); b_rs_clk_ = ibuf(en_.rs_clk);
@@ -947,12 +947,12 @@ class NetGpuMetal : public NetGpuExpander {
     cnt_rec_.resize(static_cast<std::size_t>(nstates) + 1);
     cnt_part_.resize(static_cast<std::size_t>(nstates) + 1);
     const long nst = nstates;
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 64) num_threads(NT)
 #endif
     for (long s = 0; s < nst; ++s) {
       int tid = 0;
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
       tid = omp_get_thread_num();
 #endif
       int nr = 0, npt = 0;
@@ -982,13 +982,13 @@ class NetGpuMetal : public NetGpuExpander {
     int* part_proc= iptr(pb_pp_, acc_p);
     int* part_edge= iptr(pb_pe_, acc_p);
     int* wints    = iptr(pb_wi_in_, acc_r * static_cast<std::size_t>(ni ? ni : 1));
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 64) num_threads(NT)
 #endif
     for (long s = 0; s < nst; ++s) {
       if (cnt_rec_[s] == cnt_rec_[s + 1]) continue;    // this state emitted nothing
       int tid = 0;
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
       tid = omp_get_thread_num();
 #endif
       int w = cnt_rec_[s], po = cnt_part_[s];
@@ -1047,7 +1047,7 @@ class NetGpuMetal : public NetGpuExpander {
       [enc endEncoding];
       [cb commit];
       [cb waitUntilCompleted];
-      PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
+      HORA_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
 
       out_valid = static_cast<const int*>(b_ov.contents);   // read valid rows in place
       out_dk = static_cast<const std::uint64_t*>(b_ol.contents);
@@ -1128,7 +1128,7 @@ class NetGpuMetal : public NetGpuExpander {
       [enc endEncoding];
       [cb commit];
       [cb waitUntilCompleted];
-      PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "merge kernel failed");
+      HORA_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "merge kernel failed");
       const int* oc = static_cast<const int*>(b_oc.contents);
       out_work_off = work_off;
       for (int b = 0; b < nb; ++b) out_count[b] = oc[b];
@@ -1248,6 +1248,6 @@ std::unique_ptr<NetGpuExpander> make_net_gpu_metal(const Network& net,
   }
 }
 
-}  // namespace ptctlmc
+}  // namespace hora
 
-#endif  // PTCTLMC_HAVE_METAL
+#endif  // HORA_HAVE_METAL

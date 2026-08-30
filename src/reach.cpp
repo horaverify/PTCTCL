@@ -11,7 +11,7 @@
 /// @see netreach.cpp for the network case, and KNOWN_LIMITATION.md §2 for why networks take the
 ///      slower route instead.
 
-#include "ptctlmc/reach.hpp"
+#include "hora/reach.hpp"
 
 #include <atomic>
 #include <cstdlib>
@@ -21,14 +21,14 @@
 #include <unordered_set>
 #include <utility>
 
-#include "ptctlmc/cuda_reach.hpp"
-#include "ptctlmc/metal_reach.hpp"
+#include "hora/cuda_reach.hpp"
+#include "hora/metal_reach.hpp"
 
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #include <omp.h>
 #endif
 
-namespace ptctlmc {
+namespace hora {
 
 static int g_omp_chunk = 8;  ///< OpenMP dynamic-schedule chunk; see ::set_omp_chunk
 
@@ -345,13 +345,13 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
       accept[loc] = ok ? 1 : 0;
     }
     if (backend == Backend::Cuda) {
-#ifdef PTCTLMC_HAVE_CUDA
+#ifdef HORA_HAVE_CUDA
       return reachable_cuda(W, accept, tgt_clocks, L, U, stats);
 #else
       throw std::runtime_error("CUDA backend not available in this build");
 #endif
     }
-#ifdef PTCTLMC_HAVE_METAL
+#ifdef HORA_HAVE_METAL
     return reachable_metal(W, accept, tgt_clocks, L, U, stats);
 #else
     throw std::runtime_error("Metal backend not available in this build");
@@ -394,7 +394,7 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
   add(W.initial, z0);
   if (stats) ++stats->explored;
 
-#ifndef PTCTLMC_HAVE_OPENMP
+#ifndef HORA_HAVE_OPENMP
   parallel = false;
 #endif
 
@@ -419,7 +419,7 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
     return false;
   }
 
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
   const int nthreads = omp_get_max_threads();
   std::vector<std::pair<int, Dbm>> frontier;
   frontier.emplace_back(W.initial, z0);
@@ -470,4 +470,4 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
 #endif
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

@@ -2,8 +2,8 @@
 /// @brief Front end: parses model files and query files into the engine's own structures.
 ///
 /// Everything here is translation, never analysis. It reads the modelling language's XML format
-/// and produces either a ptctlmc::TimedAutomaton (single automaton) or a ptctlmc::Network
-/// (parallel composition), plus the ptctlmc::Query list a run checks. It also owns the query
+/// and produces either a hora::TimedAutomaton (single automaton) or a hora::Network
+/// (parallel composition), plus the hora::Query list a run checks. It also owns the query
 /// routers ::check_query and ::check_net_query, which choose an engine per query kind.
 ///
 /// @par What the parser refuses
@@ -17,9 +17,9 @@
 ///          identifier that merely begins or ends with the keyword and drop the declaration with
 ///          no diagnostic.
 
-#include "ptctlmc/uppaal.hpp"
+#include "hora/uppaal.hpp"
 
-#include "ptctlmc/netreach.hpp"
+#include "hora/netreach.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -29,9 +29,9 @@
 #include <sstream>
 #include <unordered_map>
 
-#include "ptctlmc/reach.hpp"
+#include "hora/reach.hpp"
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 // ---- a minimal XML tree, sufficient for the flat model format ---------------
@@ -486,7 +486,7 @@ TimedAutomaton load_uppaal_xml(const std::string& path) {
 
 /// @brief Load a query file.
 /// @param path path to the query file
-/// @return one ptctlmc::Query per query line
+/// @return one hora::Query per query line
 /// @throws UppaalError if the file cannot be opened
 /// @post A query whose operator is not supported is returned with `supported == false` and a note
 ///       explaining why, rather than being dropped — so every input line is accounted for in the
@@ -768,7 +768,7 @@ bool starts_word(const std::string& s, const char* w) {
 /// @return @c false if @p tok does not name a known type
 /// @note An unannotated integer type takes the language's default range, which is wide. That
 ///       width is charged to the packed discrete key, so models relying on it can exceed the key
-///       and be rejected; ptctlmc::set_narrow_ranges exists for exactly that case.
+///       and be rejected; hora::set_narrow_ranges exists for exactly that case.
 bool type_range(const std::string& tok, std::size_t* pos, const DeclCtx& dc,
                 const std::vector<Func>& funcs, long* lo, long* hi) {
   std::string s = trim(tok);
@@ -1407,8 +1407,8 @@ Network load_uppaal_network(const std::string& path) {
 
 /// @brief Resolve and decide one query against a network, routing it to the right engine.
 ///
-/// Reachability and safety go to ptctlmc::reachable_net, deadlock to
-/// ptctlmc::deadlock_reachable, and the liveness forms to the greatest-fixpoint engine.
+/// Reachability and safety go to hora::reachable_net, deadlock to
+/// hora::deadlock_reachable, and the liveness forms to the greatest-fixpoint engine.
 ///
 /// @param net the network
 /// @param q   the query, with its condition text unresolved
@@ -1511,7 +1511,7 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   // into disjunctive normal form. Each resulting term is a conjunction, hence a discrete guard
   // plus a convex clock region, which is the only shape the engine ever has to represent; the
   // non-convexity lives in the union of terms and is absorbed by intersecting the per-term delay
-  // results. See ptctlmc::detail::DelayAvoidSet.
+  // results. See hora::detail::DelayAvoidSet.
   //
   // Grammar: or := and ('||' and)* ; and := unary ('&&' unary)* ; unary := '!' unary | '(' or ')'
   //          | atom. `and`/`or`/`not` spell the operators too, and ',' reads as '&&'.
@@ -1857,4 +1857,4 @@ bool check_net_query(const Network& net, const Query& q, bool* satisfied, Backen
   return false;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

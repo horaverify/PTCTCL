@@ -21,14 +21,14 @@
 // terminates on its own, but `len++` inside a loop would crawl one unit per round, so both the
 // outer fixpoint and every `while` widen to the declared range once they exceed a round budget.
 // Widening only ever loses precision, never soundness.
-#include "ptctlmc/network.hpp"
+#include "hora/network.hpp"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 // An interval over one cell. `bot` marks "no value seen yet", which is the identity for join
@@ -334,4 +334,4 @@ bool narrow_int_ranges(Network& net) {
   return narrowed;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

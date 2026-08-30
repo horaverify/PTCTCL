@@ -22,10 +22,10 @@ mixed discrete+clock predicates.
 
 ## The disagreement round 1 originally found, and how it was closed
 
-    A<> x >= 5 && x <= 10      ptctlmc: UNSUPPORTED      UPPAAL: NOT satisfied
+    A<> x >= 5 && x <= 10      hora: UNSUPPORTED      UPPAAL: NOT satisfied
 
 `A<> phi = !E[] !phi`, and the complement of a two-atom conjunction is a disjunction, which the
-delay-inside-a-convex-region argument does not cover — so PTCTLMC refused what UPPAAL decides.
+delay-inside-a-convex-region argument does not cover — so HORA refused what UPPAAL decides.
 
 Closed by `detail::delay_avoiding`: the region to AVOID is `phi` itself, which is convex even
 though `!phi` is not, so the delay is routed around it in closed form rather than the predicate
@@ -39,7 +39,7 @@ enumeration, no mismatch.
 
 ## Still refused
 
-    A<> P.T && x >= 0          ptctlmc: UNSUPPORTED      UPPAAL: satisfied
+    A<> P.T && x >= 0          hora: UNSUPPORTED      UPPAAL: satisfied
 
 A negation spanning a discrete atom and a clock atom is a disjunction across two different kinds
 of state, which neither mechanism represents. See KNOWN_LIMITATION.md 3.
@@ -47,7 +47,7 @@ of state, which neither mechanism represents. See KNOWN_LIMITATION.md 3.
 ## Not a disagreement
 
 Round 2's flagged row is a typo in the harness: `E[] P0.Eat && x0 >= 0` names clock `x0`, which
-phil4 does not have (its clocks are `c0..c3`). Both tools refuse it — PTCTLMC as UNSUPPORTED,
+phil4 does not have (its clocks are `c0..c3`). Both tools refuse it — HORA as UNSUPPORTED,
 UPPAAL as an error. Re-run with `c0`, both say NOT satisfied.
 
 ## Agreement worth naming

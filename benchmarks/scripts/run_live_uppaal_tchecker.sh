@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Liveness sweep, tchecker THEN verifyta, strictly sequential.
 #
-# ptctlmc already has its liveness table (live_results/ptctlmc) and ltsmin is excluded from
+# hora already has its liveness table (live_results/hora) and ltsmin is excluded from
 # liveness for every family by UNMEASURABLE_LIVE (its cndfs decides Buchi emptiness with no
 # time-divergence test, so it answers a different question), which is why those two are not
 # re-run here. Both remaining tools resume from their existing CSV: rows already measured are

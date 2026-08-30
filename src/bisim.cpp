@@ -17,14 +17,13 @@
 ///       the relation is the largest one that is stable, so an early stop yields a relation that
 ///       is too large, never too small.
 /// @see bisim.hpp for the precise semantics of states, delays and edge enabling.
-#include "ptctlmc/bisim.hpp"
+#include "hora/zone.hpp"
+#include "hora/bisim.hpp"
 
 #include <cstdint>
 
-#include "ptctlmc/dbm.hpp"
-#include "ptctlmc/fed.hpp"
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 // ---- product-lifted automaton -------------------------------------------------
@@ -440,4 +439,4 @@ std::vector<Federation> bisim_relation(const BAut& A, const BAut& B, BisimKind k
   return R;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

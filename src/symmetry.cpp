@@ -2,7 +2,7 @@
 /// @brief Discovery of the network's process-symmetry automorphism group.
 ///
 /// An automorphism permutes processes, and with them clocks, channels and integer values, while
-/// preserving the transition relation. ptctlmc::set_symmetry then explores one representative per
+/// preserving the transition relation. hora::set_symmetry then explores one representative per
 /// orbit.
 ///
 /// @par Shape of the search
@@ -20,7 +20,7 @@
 /// @warning Steps 1–3 are heuristics; step 4 is not. Only ::verify decides whether a candidate is
 ///          an automorphism, so a search that guesses badly costs a missed reduction and can never
 ///          produce a wrong answer. Any future shortcut must preserve that division.
-#include "ptctlmc/symmetry.hpp"
+#include "hora/symmetry.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -29,7 +29,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 /// @brief Order-of-first-use numbering of clocks, channels and integer constants.
@@ -564,4 +564,4 @@ std::vector<Automorphism> symmetry_group(const Network& net, std::size_t cap) {
   return best;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

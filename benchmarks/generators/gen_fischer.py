@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fischer's mutual-exclusion protocol, flattened to N concrete processes (the
 classic scalable timed benchmark). Global int `id` (0 = free), one clock per
-process. Emits a UPPAAL .xml valid for verifyta AND parseable by PTCTLMC.
+process. Emits a UPPAAL .xml valid for verifyta AND parseable by HORA.
 
   gen_fischer.py N [k]  > fischer.xml
 """

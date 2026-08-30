@@ -1,24 +1,24 @@
 /// @file expr.cpp
 /// @brief Evaluator for the modelling-language expression and statement subset.
 ///
-/// Guards evaluate an ptctlmc::Expr; edge updates execute a ptctlmc::Stmt. Both may call user
+/// Guards evaluate an hora::Expr; edge updates execute a hora::Stmt. Both may call user
 /// functions, which are interpreted against the live integer cells rather than constant-folded,
 /// since a function may loop over an array and depend on the current state.
 ///
 /// @par Fault handling
 /// Faults — an index out of range, division by zero, a runaway loop or exceeded call depth — do
-/// **not** throw. They set ptctlmc::EvalCtx::fault and yield 0, leaving the decision to the
+/// **not** throw. They set hora::EvalCtx::fault and yield 0, leaving the decision to the
 /// caller. A faulting guard is treated as false and a faulting update abandons the edge, so a
 /// malformed model loses transitions rather than silently producing a wrong verdict.
 ///
 /// @warning Every recursive entry point must check @c fault on return and propagate it. A fault
 ///          that is observed but not propagated turns an abandoned computation into a committed
 ///          value of 0.
-#include "ptctlmc/expr.hpp"
+#include "hora/expr.hpp"
 
 #include <algorithm>
 
-namespace ptctlmc {
+namespace hora {
 
 namespace {
 /// Maximum user-function call depth. The language's functions are not recursive, so this is a
@@ -178,4 +178,4 @@ bool eval_guard(const ExprP& e, const long* cells, int ncells,
   return !cx.fault && v != 0;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

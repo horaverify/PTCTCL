@@ -12,12 +12,13 @@
 /// A non-empty value at a `p /\ !q` node is a counterexample.
 ///
 /// Transition semantics are shared with reachability through
-/// @ref ptctlmc/detail/net_semantics.hpp so the two engines use the same local, binary, and
+/// @ref hora/detail/net_semantics.hpp so the two engines use the same local, binary, and
 /// broadcast rules.
 
-#include "ptctlmc/netliveness.hpp"
+#include "hora/zone.hpp"
+#include "hora/netliveness.hpp"
 
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #include <omp.h>
 #endif
 
@@ -40,14 +41,14 @@
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #endif
-#include "ptctlmc/mindbm.hpp"
-#include "ptctlmc/detail/net_semantics.hpp"
+#include "hdbm/mindbm.hpp"
+#include "hora/detail/net_semantics.hpp"
 
-namespace ptctlmc {
+namespace hora {
 namespace {
-/// @brief Resident set in MiB, for the PTCTLMC_RSS phase report; 0 when it is not asked for.
+/// @brief Resident set in MiB, for the HORA_RSS phase report; 0 when it is not asked for.
 std::size_t rss_mb() {
-  static const bool on = std::getenv("PTCTLMC_RSS") != nullptr;
+  static const bool on = std::getenv("HORA_RSS") != nullptr;
   if (!on) return 0;                       // do not pay a syscall for a diagnostic nobody reads
 #if defined(__APPLE__)
   ::mach_task_basic_info info;
@@ -82,7 +83,7 @@ using detail::state_has_deadlock;
 // Temporary profiling is intentionally opt-in: it is useful for separating successor
 // generation from quotient maintenance without perturbing normal benchmark runs.
 struct OnlinePerf {
-  bool enabled = std::getenv("PTCTLMC_ONLINE_PROFILE") != nullptr;
+  bool enabled = std::getenv("HORA_ONLINE_PROFILE") != nullptr;
   std::uint64_t cover_calls = 0;
   std::uint64_t cover_ns = 0;
   std::uint64_t intern_calls = 0;
@@ -189,8 +190,8 @@ class OnlinePerfTimer {
 /// @param net    the network under analysis
 /// @param s      the source symbolic state
 /// @param L,U    per-clock lower/upper bounds for extrapolation
-/// @param qmask  clocks the query forces to stay live (see ptctlmc::detail::reset_inactive)
-/// @param emode  extrapolation mode: ptctlmc::detail::ExNone, ExLuPlus or ExNoDiag
+/// @param qmask  clocks the query forces to stay live (see hora::detail::reset_inactive)
+/// @param emode  extrapolation mode: hora::detail::ExNone, ExLuPlus or ExNoDiag
 /// @param[out] out   successors, appended
 /// @param[out] tags  one tag per appended successor
 ///
@@ -807,12 +808,12 @@ void Otf::setup() {
   M[0] = 0;
   use_alu = !force_exact_ && !network_has_diagonal(net);
   emode = network_has_diagonal(net) ? ExNoDiag : (use_alu ? ExNone : ExLuPlus);
-  // EXPERIMENT ONLY (PTCTLMC_GFP_EXTRAP=1): keep a_LU covering but extrapolate the stored zones
+  // EXPERIMENT ONLY (HORA_GFP_EXTRAP=1): keep a_LU covering but extrapolate the stored zones
   // as well, i.e. local Extra_LU+ PLUS subsumption. The invariant above says this is unsound, and
   // says why -- a spurious stop valuation enters the fixpoint positively and fabricates a
   // counterexample. The switch exists to measure the claim, not to be used.
   static const bool force_extrap = [] {
-    const char* e = std::getenv("PTCTLMC_GFP_EXTRAP");
+    const char* e = std::getenv("HORA_GFP_EXTRAP");
     return e && *e == '1';
   }();
   if (force_extrap && use_alu) emode = ExLuPlus;
@@ -1989,7 +1990,7 @@ bool Otf::time_diverges(const SymState& s) const {
 /// @note Two of the three cases are whole-zone and exact as such: an empty adjacency means every
 ///       valuation is stuck, and ::time_diverges is a property of the delay-closed zone as a
 ///       whole. Only the third — partial deadlock — needs the per-valuation subtraction, and
-///       ptctlmc::detail::state_has_deadlock supplies it, recomputing the delay closure first so
+///       hora::detail::state_has_deadlock supplies it, recomputing the delay closure first so
 ///       that the active-clock reduction cannot leave the stored zone unclosed.
 /// @brief Can time run away for ever here in the UNRESTRICTED system?
 ///
@@ -2158,9 +2159,9 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   //                phil6 P0.Eat           1.06     grc5 T0.in        1.26  <-- the one loss
   //
   // grc5 leads-to is the biggest leads-to case in the suite and it loses a quarter, so the
-  // decomposition does not go there. PTCTLMC_GFP_SCC=0 or =1 overrides either way, for measuring.
+  // decomposition does not go there. HORA_GFP_SCC=0 or =1 overrides either way, for measuring.
   const bool scc_on = [&] {
-    const char* e = std::getenv("PTCTLMC_GFP_SCC");
+    const char* e = std::getenv("HORA_GFP_SCC");
     if (e) return *e == '1';
     return scc_iter_;
   }();
@@ -2441,7 +2442,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // The E[] suite runs at a maximum federation width of 186 against a cap of 4096, with zero cap
   // hits across 108 rows, so the bound that killed it there is not close to binding here.
   const bool worklist = scc_on && [] {
-    const char* e = std::getenv("PTCTLMC_GFP_WORKLIST");
+    const char* e = std::getenv("HORA_GFP_WORKLIST");
     return !e || *e != '0';
   }();
 
@@ -2499,7 +2500,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   for (int v : S)
     if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
   gfp_iters += it;
-  if (std::getenv("PTCTLMC_GFP_PROFILE")) {
+  if (std::getenv("HORA_GFP_PROFILE")) {
     std::size_t big = 0, nontrivial = 0;
     for (const auto& c : sccs) { big = std::max(big, c.size()); if (c.size() > 1) ++nontrivial; }
     std::size_t stopn = 0, stopmembers = 0, wmembers = 0;
@@ -2559,7 +2560,7 @@ bool Otf::certificate_in(const std::vector<int>& S) {
 /// @post On success node 0 exists and is the (only) root of the search.
 /// @note The construction order — invariants, then delay unless the initial location is frozen,
 ///       then invariants again, then the active-clock reduction, then extrapolation — must match
-///       ptctlmc::detail::close_succ_zone, or the root would sit in a different abstraction from
+///       hora::detail::close_succ_zone, or the root would sit in a different abstraction from
 ///       every state reached from it.
 bool Otf::build_all() {
   SymState s0;
@@ -2737,7 +2738,7 @@ bool Otf::build_atom_map(AtomMap& am) {
   //
   // For `p --> q` the two are the same automaton and this is a no-op. For `E[] psi` they are not:
   // the search runs on the psi-RESTRICTED network, psi's clock conjunction having been adjoined
-  // to every location invariant, while ::Otf::stop_set asks ptctlmc::detail::state_has_deadlock
+  // to every location invariant, while ::Otf::stop_set asks hora::detail::state_has_deadlock
   // about the UNRESTRICTED one -- maximality is a property of the original system. Deriving
   // Dead(q) from `net` here would complete the covering for the restricted automaton's deadlocks
   // and leave the fixpoint reading the unrestricted automaton's, so the covering could merge two
@@ -3911,7 +3912,7 @@ void Otf::base_forward() {
       // and both are fitted: ratio 4 puts consecutive checkpoints at 25% and 100% of the final
       // graph, which is why grc7 -- whose witness is only provable at 57% -- explored all of it.
       const auto clk_now = [] { return std::chrono::steady_clock::now(); };
-      static const bool probe_dbg = [] { return std::getenv("PTCTLMC_EG_PROBEDBG") != nullptr; }();
+      static const bool probe_dbg = [] { return std::getenv("HORA_EG_PROBEDBG") != nullptr; }();
       long long probe_ns = 0;                  // cumulative cost of every probe so far
       auto since_probe = clk_now();            // when exploration resumed after the last one
       while (!work.empty()) {
@@ -4045,9 +4046,9 @@ bool Otf::run(GfpStats* gs) {
 bool Otf::run_online_d(GfpStats* gs) {
   // A violated `p --> q` needs no finished graph: see ::Otf::leadsto_witness. Armed before either
   // delegation below, so the exact and structurally-empty-D routes get it too. Disabled with
-  // PTCTLMC_LEADSTO_EARLY=0, for measuring what it saves.
+  // HORA_LEADSTO_EARLY=0, for measuring what it saves.
   leadsto_early_ = [] {
-    const char* e = std::getenv("PTCTLMC_LEADSTO_EARLY");
+    const char* e = std::getenv("HORA_LEADSTO_EARLY");
     return !e || *e != '0';
   }();
 
@@ -4111,7 +4112,7 @@ bool Otf::run_online_d(GfpStats* gs) {
   if (online_failed_ || cancelled()) capped = true;
   const bool violated = fwd_ok_ && !online_failed_ && !cancelled() && final_verdict_violated();
   const auto solved = std::chrono::steady_clock::now();
-  if (std::getenv("PTCTLMC_RSS"))
+  if (std::getenv("HORA_RSS"))
     std::fprintf(stderr, "RSS-MB forward=%zu finalize=%zu backward=%zu\n", rss_fwd, rss_fin, rss_mb());
   if (online_perf.enabled) {
     const auto ms = [](auto d) {
@@ -4192,7 +4193,7 @@ bool Otf::eg_from_initial_online_d(GfpStats* gs) {
   if (online_failed_ || cancelled()) { capped = true; fill_stats(gs); return false; }
   const std::size_t rss_fin = rss_mb();
   const bool r = eg_verdict(gs);
-  if (std::getenv("PTCTLMC_RSS"))
+  if (std::getenv("HORA_RSS"))
     std::fprintf(stderr, "RSS-MB eg_forward=%zu eg_finalize=%zu eg_backward=%zu nodes=%zu\n",
                  rss_fwd, rss_fin, rss_mb(), nrec());
   return r;
@@ -4225,7 +4226,7 @@ void Otf::fill_stats(GfpStats* gs) {
 ///
 /// @param net the network, already restricted by `psi`'s clock conjunction if it had one
 /// @param nq  a predicate holding exactly where `psi`'s DISCRETE part fails, so `V_psi` is its
-///            complement; carry an arbitrary boolean through ptctlmc::DiscPred::forbid
+///            complement; carry an arbitrary boolean through hora::DiscPred::forbid
 /// @param[out] gs statistics; may be null
 /// @return @c true iff the initial state admits a maximal execution all of whose states satisfy
 ///         `psi`
@@ -4280,7 +4281,7 @@ bool leads_to_clocks(const Network& net, const DiscPred& p, const DiscPred& nq, 
     av.parts[i].when = (guards[i].locs.empty() && guards[i].ints.empty()) ? nullptr : &guards[i];
 
   // The region's constants must reach the LU bounds and its clocks must stay live, for the same
-  // reason they must in ptctlmc::exists_invariant_run: nothing else tells the abstraction that
+  // reason they must in hora::exists_invariant_run: nothing else tells the abstraction that
   // the boundary matters, and a_LU would merge zones across it.
   Network bounded = net;
   if (!av.parts.empty()) {
@@ -4340,4 +4341,4 @@ bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpS
   return e.run_online_d(gs);
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

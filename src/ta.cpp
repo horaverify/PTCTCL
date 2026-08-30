@@ -1,9 +1,9 @@
-#include "ptctlmc/ta.hpp"
+#include "hora/ta.hpp"
 
 #include <algorithm>
 #include <cstdlib>
 
-namespace ptctlmc {
+namespace hora {
 
 void TimedAutomaton::compute_max_constants() {
   max_const.assign(nclocks + 1, 0);
@@ -39,4 +39,4 @@ std::vector<int> TimedAutomaton::edges_from(int loc) const {
   return out;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora

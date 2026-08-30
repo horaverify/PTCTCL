@@ -9,7 +9,7 @@
 //
 // Compiles for sm_90 (H100). Correctness rests on the shared DBM ops (CPU-tested)
 // and the CPU engine's validated control flow.
-#ifdef PTCTLMC_HAVE_CUDA
+#ifdef HORA_HAVE_CUDA
 
 #include <cuda_runtime.h>
 
@@ -17,11 +17,10 @@
 #include <string>
 #include <vector>
 
-#include "ptctlmc/cuda_reach.hpp"
-#include "ptctlmc/dbm.hpp"
-#include "ptctlmc/dbm_ops.hpp"
+#include "hora/zone.hpp"
+#include "hora/cuda_reach.hpp"
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 constexpr int kMaxDim = 24;  // up to 23 clocks
@@ -244,6 +243,6 @@ bool reachable_cuda(const TimedAutomaton& ta, const std::vector<char>& accept,
   return found;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora
 
-#endif  // PTCTLMC_HAVE_CUDA
+#endif  // HORA_HAVE_CUDA

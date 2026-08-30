@@ -1,7 +1,7 @@
 // uexpr.cpp — tokenizer and recursive-descent parser for the UPPAAL modelling
 // subset (see expr.hpp). Written from the language's documented syntax and
 // semantics; it deliberately shares no code with UTAP, which is LGPL, while
-// PTCTLMC is MIT and links neither UTAP nor UDBM.
+// HORA is MIT and links neither UTAP nor UDBM.
 //
 // Supported: integer expressions with the usual C precedence, arrays (flattened
 // to consecutive cells), user functions with locals/if/while/for/return,
@@ -12,13 +12,13 @@
 // pointers/references, clocks inside functions, and recursion. A model using
 // them raises ParseError instead of being silently under-verified -- the failure
 // mode that let viking12..20 masquerade as viking10 before the <system> fix.
-#include "ptctlmc/expr.hpp"
+#include "hora/expr.hpp"
 
 #include <cctype>
 #include <cstdlib>
 #include <stdexcept>
 
-namespace ptctlmc {
+namespace hora {
 
 const SymTab::Sym* SymTab::find(const std::string& name) const {
   for (auto it = syms.rbegin(); it != syms.rend(); ++it)  // innermost wins
@@ -492,4 +492,4 @@ long const_eval(const ExprP& e, const std::vector<Func>& funcs) {
   return v;
 }
 
-}  // namespace ptctlmc
+}  // namespace hora
