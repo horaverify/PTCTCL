@@ -557,6 +557,10 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
     # Seed from this file plus any --seed files: a run that DEFINITIVELY finished (OK, or a
     # real TIMEOUT/MEMOUT) is never repeated. ERR is left to re-run -- it is cheap and may
     # be transient.
+    def qidx_of(r):
+        q = r.get("qidx")
+        return q if q and q != "-" else "0"
+
     done, all_rows = {}, []
     for src in list(a.seed) + [out_csv]:
         if not os.path.exists(src):
@@ -569,7 +573,7 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
                           r.get("mergescan") or "-", r.get("hotlen") or "-",
                           r.get("chunk") or "-", r.get("sim") or "-",
                           r.get("engine") or "-", r.get("queries") or "reach",
-                          r.get("qidx") or "0")] = r
+                          qidx_of(r))] = r
 
     # Per-(family, tool, knobs) timeout streaks, seeded from disk so the rule survives a
     # restart. A size counts as timed out iff it has runs and NONE finished OK.
@@ -579,7 +583,7 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
         # Keyed by QUERY as well as family: within one family the queries have wildly different
         # costs (grc5 `E[] x0 <= 15` against its `!T0.in` sibling), so a timeout on one says
         # nothing about the next and must not retire it.
-        d = outcomes.setdefault((fam, qidx), {})
+        d = outcomes.setdefault((fam, str(qidx)), {})
         if d.get(N) is False:
             return
         d[N] = timed_out
@@ -592,7 +596,7 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
             continue
         if (r.get("chunk") or "-") != ch or (r.get("queries") or "reach") != qk:
             continue
-        hist.setdefault((r["family"], r.get("qidx") or "0", r["model"]), []).append(r.get("status"))
+        hist.setdefault((r["family"], qidx_of(r), r["model"]), []).append(r.get("status"))
     for (fam, qidx, model), sts in hist.items():
         n = int(re.search(r"(\d+)$", model).group(1)) if re.search(r"(\d+)$", model) else 0
         record(fam, qidx, n, not any(s == "OK" for s in sts))

@@ -114,3 +114,4 @@ twolock,twolock10,tchecker,1,1,2504650,388.248,0.914,OK,-,-,8,alu,adaptive,live
 twolock,twolock10,tchecker,1,2,2504650,429.157,0.914,OK,-,-,8,alu,adaptive,live
 twolock,twolock11,tchecker,1,1,11108023,4703.293,4.153,OK,-,-,8,alu,adaptive,live
 twolock,twolock11,tchecker,1,2,11108023,4399.705,4.153,OK,-,-,8,alu,adaptive,live
+twolock,twolock12,tchecker,1,1,-,7200.006,5.517,TIMEOUT,-,-,8,alu,adaptive,live
