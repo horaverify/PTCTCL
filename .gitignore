@@ -71,3 +71,12 @@ venv/
 .AppleDouble
 .LSOverride
 Thumbs.db
+
+*_nottrack*
+doc_1/
+docs/
+.tmp/
+*_old
+*.log
+old/
+*_corrupted*
