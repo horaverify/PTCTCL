@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <atomic>
 #include <chrono>
@@ -364,10 +365,14 @@ static Dbm gfp_empty(int nclocks) {
 /// flags (another `O(nprocs)` scan), and the set of clocks dead at the node (an
 /// `O(nclocks * nprocs)` walk of `Network::active`). They are all functions of `locs` and
 /// `ints` alone, so they are computed once per node, lazily, and read thereafter.
+/// One record per node that `Pre` actually touches. Both variable-length fields are held
+/// indirectly: the invariants as a span into one shared arena, the dead-clock set as a bitmask.
+/// Two heap vectors per node cost more in headers and allocator metadata than the data, and the
+/// backward pass can touch most of the graph.
 struct PreNode {
-  std::vector<Constraint> inv;   ///< the conjoined location invariants
-  std::vector<unsigned char> dead;  ///< dead[c] = 1 iff clock c is read by no process here
-  bool any_dead = false;
+  std::uint32_t inv_off = 0;     ///< into the caller's shared Constraint arena
+  std::uint32_t inv_len = 0;
+  std::uint64_t dead = 0;        ///< bit c set iff clock c is read by no process here
   bool frozen = false;           ///< committed or urgent: no positive delay
   bool ready = false;
 };
@@ -404,18 +409,31 @@ struct PreNode {
 /// @note The two clock sets are quantified out with ::dbm_free_many rather than a `free` per
 ///       clock. Both are exact; the batch form relaxes every flagged clock at once.
 static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const PreNode& tn,
-                   const std::vector<unsigned char>& rmask, const Dbm& X) {
+                   const std::vector<Constraint>& invs,
+                   const std::vector<unsigned char>& rmask, unsigned char* dead_scratch,
+                   const Dbm& X) {
   Dbm Y = X;
   const int dim = net.nclocks + 1;
+  const Constraint* tinv = invs.data() + tn.inv_off;
+  const Constraint* sinv = invs.data() + sn.inv_off;
+  const auto apply = [](Dbm& z, const Constraint* c, std::uint32_t n) {
+    for (std::uint32_t k = 0; k < n; ++k)
+      if (!z.constrain(c[k].i, c[k].j, c[k].bound)) return false;
+    return true;
+  };
 
   // Undo the active-clock reduction at the target. Those clocks appear in no edge's reset set,
   // so without this Pre would silently demand that they also read 0 at the SOURCE -- an
   // over-constrained Pre that collapses the fixpoint and misses violations. Freeing them is the
   // exact inverse of the reduction, and it is sound because they are dead: nothing reads them.
-  if (tn.any_dead) dbm_free_many(Y.data().data(), dim, tn.dead.data());
+  if (tn.dead) {
+    std::memset(dead_scratch, 0, static_cast<std::size_t>(dim));
+    for (std::uint64_t m = tn.dead; m; m &= m - 1) dead_scratch[__builtin_ctzll(m)] = 1;
+    dbm_free_many(Y.data().data(), dim, dead_scratch);
+  }
 
-  if (!apply_all(Y, tn.inv)) return gfp_empty(net.nclocks);
-  if (!tn.frozen) { Y.down(); if (!apply_all(Y, tn.inv)) return gfp_empty(net.nclocks); }
+  if (!apply(Y, tinv, tn.inv_len)) return gfp_empty(net.nclocks);
+  if (!tn.frozen) { Y.down(); if (!apply(Y, tinv, tn.inv_len)) return gfp_empty(net.nclocks); }
 
   // Undo every participant's resets: a reset clock reads 0 after the step, and its value before
   // the step is unconstrained by the step itself.
@@ -437,7 +455,7 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const
   // Delay BEFORE the action. A stored zone is delay-closed as a SET, which is why the forward
   // operator may write `Z /\ g`; a single valuation may still have to let time pass first.
   if (!sn.frozen) Y.down();
-  if (!apply_all(Y, sn.inv)) return gfp_empty(net.nclocks);
+  if (!apply(Y, sinv, sn.inv_len)) return gfp_empty(net.nclocks);
   return Y;
 }
 
@@ -2213,19 +2231,24 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
         nosucc[v].clear();
       }
 
-  std::vector<std::vector<int>> sccs;
-  if (!scc_on) {
+  // Filter `comps` in place rather than moving the survivors into a second vector: on a graph
+  // whose components are mostly singletons the outer vector alone is 24 bytes per component,
+  // and holding two of them was a measurable share of the peak.
+  if (scc_on) {
+    comps.erase(std::remove_if(comps.begin(), comps.end(),
+                               [&](const std::vector<int>& c) {
+                                 return c.empty() || !live_node[c.front()];
+                               }),
+                comps.end());
+  } else {
     std::vector<int> flat;                 // one component: the undecomposed sweep, minus the
     flat.reserve(live_count);              // nodes just proved empty
     for (int v : S)
       if (live_node[v]) flat.push_back(v);
-    if (!flat.empty()) sccs.push_back(std::move(flat));
-  } else {
-    for (auto& comp : comps) {
-      if (comp.empty() || !live_node[comp.front()]) continue;
-      sccs.push_back(std::move(comp));
-    }
+    comps.clear();
+    if (!flat.empty()) comps.push_back(std::move(flat));
   }
+  const std::vector<std::vector<int>>& sccs = comps;
 
   // ::PreNode explains why these are cached rather than recomputed inside `Pre`. Only nodes that
   // are actually the source or target of a live edge get one, so the table is an index plus a
@@ -2235,6 +2258,37 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   const int dim = net.nclocks + 1;
   std::vector<std::int32_t> pindex;
   std::deque<PreNode> pnodes;
+  // One arena for every node's invariants, with the spans INTERNED. The invariant list is a
+  // function of the location vector, and across a zone graph the same list recurs constantly --
+  // on twolock9 the arena is ~120 bytes per node stored naively, which is more than the record it
+  // belongs to. Interning by content collapses that to one copy per distinct list.
+  std::vector<Constraint> pinvs;
+  std::vector<Constraint> iscratch;
+  std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint32_t, std::uint32_t>>> pinv_index;
+  std::vector<unsigned char> dead_scratch(dim, 0);
+  auto intern_inv = [&](const std::vector<Constraint>& cs) {
+    std::uint64_t h = 1469598103934665603ULL;
+    for (const Constraint& c : cs) {
+      h ^= std::uint64_t(std::uint32_t(c.i)) * 0x9e3779b97f4a7c15ULL; h = (h << 7) | (h >> 57);
+      h ^= std::uint64_t(std::uint32_t(c.j)) * 0xc2b2ae3d27d4eb4fULL; h = (h << 11) | (h >> 53);
+      h ^= std::uint64_t(std::uint32_t(c.bound)) * 0x165667b19e3779f9ULL;
+    }
+    auto& slots = pinv_index[h];
+    for (const auto& sl : slots) {
+      if (sl.second != cs.size()) continue;
+      bool same = true;
+      for (std::size_t k = 0; k < cs.size() && same; ++k) {
+        const Constraint& a = pinvs[sl.first + k];
+        same = a.i == cs[k].i && a.j == cs[k].j && a.bound == cs[k].bound;
+      }
+      if (same) return sl;
+    }
+    const std::pair<std::uint32_t, std::uint32_t> span{
+        static_cast<std::uint32_t>(pinvs.size()), static_cast<std::uint32_t>(cs.size())};
+    pinvs.insert(pinvs.end(), cs.begin(), cs.end());
+    slots.push_back(span);
+    return span;
+  };
   auto prep = [&](int v) -> const PreNode& {
     if (pindex.empty()) pindex.assign(N, -1);
     if (pindex[v] >= 0) return pnodes[static_cast<std::size_t>(pindex[v])];
@@ -2243,26 +2297,28 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     PreNode& pn = pnodes.back();
     pn.ready = true;
     const LocVec& locs = node[v].locs;
-    all_invariants(net, locs, pn.inv);
+    all_invariants(net, locs, iscratch);
+    const auto span = intern_inv(iscratch);
+    pn.inv_off = span.first;
+    pn.inv_len = span.second;
     bool c2, u2;
     frozen_flags(net, locs, node[v].ints, &c2, &u2);
     pn.frozen = c2 || u2;
-    if (net.active.empty() && net.active_mask.empty()) return pn;
-    pn.dead.assign(dim, 0);
+    // The mask needs one bit per clock. Wider networks keep no active_mask either (see
+    // Network::compute_active), and the reduction is then off, so there is nothing to record.
+    if (net.nclocks > 63) return pn;
     if (!net.active_mask.empty()) {                  // one OR per process, see reset_inactive
       std::uint64_t a = 0;
       for (int pr = 0; pr < net.nprocs(); ++pr) a |= net.active_mask[pr][locs[pr]];
-      for (int c = 1; c <= net.nclocks; ++c)
-        if (!((a >> c) & 1)) { pn.dead[c] = 1; pn.any_dead = true; }
-    } else {                                         // wide networks keep the byte scan
+      pn.dead = ~a & (((std::uint64_t(1) << net.nclocks) - 1) << 1);
+    } else if (!net.active.empty()) {
       for (int c = 1; c <= net.nclocks; ++c) {
         bool live = false;
         for (int pr = 0; pr < net.nprocs() && !live; ++pr)
           if (net.active[pr][locs[pr]][c]) live = true;
-        if (!live) { pn.dead[c] = 1; pn.any_dead = true; }
+        if (!live) pn.dead |= std::uint64_t(1) << c;
       }
     }
-    if (!pn.any_dead) pn.dead.clear();
     return pn;
   };
 
@@ -2301,7 +2357,8 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
         if (avoid_) {
           gfp_pre_avoid(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y, *avoid_, cand);
         } else {
-          Dbm pz = gfp_pre(net, tags_[e.tag], *pv, *pj, tag_resets(e.tag), Y);
+          Dbm pz = gfp_pre(net, tags_[e.tag], *pv, *pj, pinvs, tag_resets(e.tag),
+                           dead_scratch.data(), Y);
           if (!pz.empty()) cand.push_back(std::move(pz));
         }
       }
@@ -4078,12 +4135,18 @@ bool Otf::eg_from_initial_online_d(GfpStats* gs) {
                  static_cast<unsigned long long>(online_perf.deferred_replayed),
                  static_cast<unsigned long long>(online_perf.deferred_promoted));
   }
+  const std::size_t rss_fwd = rss_mb();
   if (eg_early_hit_) { fill_stats(gs); return true; }
   online_complete_eg_history();
   if (eg_early_hit_) { fill_stats(gs); return true; }
   if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
   if (online_failed_ || cancelled()) { capped = true; fill_stats(gs); return false; }
-  return eg_verdict(gs);
+  const std::size_t rss_fin = rss_mb();
+  const bool r = eg_verdict(gs);
+  if (std::getenv("PTCTLMC_RSS"))
+    std::fprintf(stderr, "RSS-MB eg_forward=%zu eg_finalize=%zu eg_backward=%zu nodes=%zu\n",
+                 rss_fwd, rss_fin, rss_mb(), node.size());
+  return r;
 }
 
 void Otf::fill_stats(GfpStats* gs) {
