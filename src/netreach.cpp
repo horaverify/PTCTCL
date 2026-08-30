@@ -2336,7 +2336,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   // soundness rests on two things and is checked rather than assumed:
   //
   //   * maximality is judged in the full network. `net_in` goes in as the unrestricted network
-  //     exactly as below, so ::Otf::stop_set takes its restricted branch and asks
+  //     exactly as below, so ::LivenessEngine::stop_set takes its restricted branch and asks
   //     hora::detail::state_has_deadlock about `net_in` -- a state that only looks stuck
   //     because its neighbours were suppressed is not read as the end of a maximal run.
   //   * nothing may force a suppressed process to move. Urgent and committed locations do, and

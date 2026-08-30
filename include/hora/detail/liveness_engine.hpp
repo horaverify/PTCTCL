@@ -16,7 +16,7 @@
 ///    by redirecting the raw edges already stored.  No successor relation is generated again.
 /// 4. The backward greatest fixpoint runs once on that stable quotient.
 ///
-/// The small fixed-map group near the end of @ref Otf is retained for internal diagnostics only.
+/// The small fixed-map group near the end of @ref LivenessEngine is retained for internal diagnostics only.
 /// No public liveness route uses it.
 #pragma once
 
@@ -104,22 +104,22 @@ struct OnlineKeyEdge {
 
 /// @brief One discrete key of the online quotient.
 ///
-/// The location and integer vectors are NOT here: they live in @ref Otf's `key_locs_` /
-/// `key_ints_` arenas at a fixed stride, reached through @ref Otf::key_locs. Two heap vectors per
+/// The location and integer vectors are NOT here: they live in @ref LivenessEngine's `key_locs_` /
+/// `key_ints_` arenas at a fixed stride, reached through @ref LivenessEngine::key_locs. Two heap vectors per
 /// key cost more in headers and allocator metadata than the locations themselves, and on the
 /// families where every reachable state has its own key that was the largest single block of
 /// memory after the zones.
 struct OnlineKeyInfo {
   int id = -1;
   std::uint64_t packed_key = 0;
-  // Intrusive lists into Otf::online_key_edges_.  This avoids three heap-allocated vectors per
+  // Intrusive lists into LivenessEngine::online_key_edges_.  This avoids three heap-allocated vectors per
   // discrete key while preserving exact incoming propagation and source-local deduplication.
   int incoming = -1;
   int outgoing = -1;
   // Packed `(raw-adjacency slot, edge ordinal)` handles for revocable cover edges at this key.
   // The edge itself is the replay recipe; no separate provisional-state object is allocated.
   std::vector<std::uint64_t> deferred;
-  // Materialised and active nodes use intrusive lists stored once per node in Otf.  Most keys
+  // Materialised and active nodes use intrusive lists stored once per node in LivenessEngine.  Most keys
   // own exactly one record, so a heap-allocated vector per key was mostly allocator metadata.
   int node_head = -1;
   std::size_t node_count = 0;
@@ -138,9 +138,9 @@ struct OnlineAtomWork {
 };
 
 /// @brief Private liveness engine instance: one graph construction and one backward solve.
-class Otf {
+class LivenessEngine {
  public:
-  Otf(const Network& n, const DiscPred& pp, const DiscPred& qq,
+  LivenessEngine(const Network& n, const DiscPred& pp, const DiscPred& qq,
       bool force_exact = false, const std::atomic<bool>* cancel = nullptr,
       const Network* dead = nullptr);
 
@@ -149,10 +149,10 @@ class Otf {
   /// A provisional D-covered successor is retained only as an edge replay handle.  If its key's
   /// D map changes, that local successor is regenerated and retested; the stable quotient then
   /// feeds one backward greatest fixpoint.
-  bool run_online_d(GfpStats* gs);
+  bool decide_leads_to(GfpStats* gs);
 
   /// @brief Decide `E[] psi` after the same single online-D forward construction.
-  bool eg_from_initial_online_d(GfpStats* gs);
+  bool decide_exists_invariant_run(GfpStats* gs);
 
   /// @brief Exact/inclusion route used for diagonal models or an explicit exact request.
   bool run(GfpStats* gs);
@@ -180,7 +180,7 @@ class Otf {
   void release();
   void build_forward(GfpStats* gs);
   bool finish_verdict(GfpStats* gs);
-  bool dtheta_empty();
+  bool deadlock_refinement_is_empty();
   bool build_atom_map(AtomMap& am);
   void set_atoms(const AtomMap* a);
 
@@ -207,7 +207,7 @@ class Otf {
   // Covering and backward-solver state.
   std::vector<std::int32_t> L, U, aL, aU, bL, bU, M;
   // The per-location a_LU fold, split into the part that varies with the location vector and the
-  // part that does not; see ::Otf::build_local_bound_tables.
+  // part that does not; see ::LivenessEngine::build_local_bound_tables.
   std::vector<std::int32_t> base_l_, base_u_;
   std::vector<std::vector<int>> vary_clocks_;
   int emode = 0;
@@ -216,7 +216,7 @@ class Otf {
   static constexpr std::size_t fedcap = 4096;
   bool capped = false;
   std::size_t passes = 0;
-  std::size_t gfp_iters = 0;
+  std::size_t fixpoint_iterations = 0;
   std::size_t expand_calls = 0;
   std::size_t pre_calls = 0;
   std::size_t fed_max = 0;
@@ -354,7 +354,7 @@ class Otf {
   bool time_diverges(const detail::SymState& s) const;
   Federation stop_set(int u);
   bool orig_time_open(const detail::SymState& s) const;
-  void gfp_on(const std::vector<int>& S, std::vector<Federation>& W);
+  void solve_greatest_fixpoint(const std::vector<int>& S, std::vector<Federation>& W);
   bool certificate_in(const std::vector<int>& S);
   std::vector<int> accepting_closure();
   void fill_stats(GfpStats* gs);

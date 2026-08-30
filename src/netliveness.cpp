@@ -185,7 +185,7 @@ class OnlinePerfTimer {
 ///
 /// Mirrors the forward engine's successor generation for local edges, binary synchronisation
 /// and broadcast, and additionally reports which edges produced each successor so that
-/// ::gfp_pre can invert the step exactly.
+/// ::exact_predecessor can invert the step exactly.
 ///
 /// @param net    the network under analysis
 /// @param s      the source symbolic state
@@ -198,7 +198,7 @@ class OnlinePerfTimer {
 /// @post `out.size()` and `tags.size()` grow by the same amount, and `tags[k]` describes
 ///       `out[k]`.
 /// @post No successor with an empty zone is emitted.
-static void gfp_succ_tagged(const Network& net, const SymState& s,
+static void tagged_successors(const Network& net, const SymState& s,
                             const std::vector<std::int32_t>& L,
                             const std::vector<std::int32_t>& U,
                             const std::vector<char>& qmask, int emode,
@@ -355,16 +355,16 @@ static void gfp_succ_tagged(const Network& net, const SymState& s,
 /// @warning Do not substitute a default-constructed @c Dbm here. That is a zero-clock
 ///          placeholder — a 1x1 matrix holding @c kZeroLe — and emptiness is decided by
 ///          scanning the diagonal for a negative entry, so `Dbm().empty()` is @b false. Such a
-///          value would pass the `!pz.empty()` filter in ::Otf::gfp_on and enter a federation
+///          value would pass the `!pz.empty()` filter in ::LivenessEngine::solve_greatest_fixpoint and enter a federation
 ///          of `nclocks + 1`-dimensional zones, where the next inclusion test reads
 ///          `dim * dim` entries out of a 4-byte allocation.
-static Dbm gfp_empty(int nclocks) {
+static Dbm empty_zone(int nclocks) {
   Dbm z(nclocks);
   z.set(0, 0, lt(0));      // 0 - 0 < 0 is unsatisfiable, so dbm_empty() is true
   return z;
 }
 
-/// @brief Everything ::gfp_pre needs about one node that depends only on its discrete state.
+/// @brief Everything ::exact_predecessor needs about one node that depends only on its discrete state.
 ///
 /// `Pre` is evaluated once per (edge, target zone) pair and the fixpoint sweeps the graph many
 /// times, so every quantity here used to be rebuilt millions of times from data that never
@@ -398,15 +398,15 @@ struct PreNode {
 ///               down (the delay before the action) ; /\ inv(src)
 ///
 /// @param net   the network under analysis
-/// @param t     the tag produced for this transition by ::gfp_succ_tagged
+/// @param t     the tag produced for this transition by ::tagged_successors
 /// @param sn    the source node's discrete data
 /// @param tn    the target node's discrete data
-/// @param rmask `rmask[c] = 1` for every clock reset by @p t; see ::gfp_tag_reset_mask
+/// @param rmask `rmask[c] = 1` for every clock reset by @p t; see ::tag_reset_mask
 /// @param X     a set of target valuations
 /// @return the exact set of source valuations that can reach @p X by this transition, or an
 ///         empty zone of dimension `net.nclocks + 1` if there are none
 ///
-/// @pre @p t, @p sn and @p tn come from the same call to ::gfp_succ_tagged.
+/// @pre @p t, @p sn and @p tn come from the same call to ::tagged_successors.
 /// @post No extrapolation and no active-clock reduction is applied in the forward direction:
 ///       the result is the exact concrete predecessor. Abstraction enters the fixpoint only
 ///       through the caller's confinement `W_v subseteq Z_v`.
@@ -415,7 +415,7 @@ struct PreNode {
 ///       one: doing so decompressed two full DBMs out of the ZoneStore per call, for nothing.
 /// @note The two clock sets are quantified out with ::dbm_free_many rather than a `free` per
 ///       clock. Both are exact; the batch form relaxes every flagged clock at once.
-static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const PreNode& tn,
+static Dbm exact_predecessor(const Network& net, const GfpTag& t, const PreNode& sn, const PreNode& tn,
                    const std::vector<Constraint>& invs,
                    const std::vector<unsigned char>& rmask, unsigned char* dead_scratch,
                    const Dbm& X) {
@@ -439,40 +439,40 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const
     dbm_free_many(Y.data().data(), dim, dead_scratch);
   }
 
-  if (!apply(Y, tinv, tn.inv_len)) return gfp_empty(net.nclocks);
-  if (!tn.frozen) { Y.down(); if (!apply(Y, tinv, tn.inv_len)) return gfp_empty(net.nclocks); }
+  if (!apply(Y, tinv, tn.inv_len)) return empty_zone(net.nclocks);
+  if (!tn.frozen) { Y.down(); if (!apply(Y, tinv, tn.inv_len)) return empty_zone(net.nclocks); }
 
   // Undo every participant's resets: a reset clock reads 0 after the step, and its value before
   // the step is unconstrained by the step itself.
   for (const auto& pe : t.parts)
     for (int r : net.procs[pe.first].edges[pe.second].clock_resets) {
-      if (!Y.constrain(r, 0, le(0))) return gfp_empty(net.nclocks);
-      if (!Y.constrain(0, r, le(0))) return gfp_empty(net.nclocks);
+      if (!Y.constrain(r, 0, le(0))) return empty_zone(net.nclocks);
+      if (!Y.constrain(0, r, le(0))) return empty_zone(net.nclocks);
     }
   dbm_free_many(Y.data().data(), dim, rmask.data());
 
   for (const auto& pe : t.parts)
     if (!apply_all(Y, net.procs[pe.first].edges[pe.second].clock_guard))
-      return gfp_empty(net.nclocks);
+      return empty_zone(net.nclocks);
   // The abstaining receivers' guard complements belong here and nowhere else: like a
   // participant's guard they constrain the source valuation, and unlike one they undo nothing,
   // so they apply after the resets have been freed and before the pre-action delay.
-  if (!t.abstain.empty() && !apply_all(Y, t.abstain)) return gfp_empty(net.nclocks);
+  if (!t.abstain.empty() && !apply_all(Y, t.abstain)) return empty_zone(net.nclocks);
 
   // Delay before the action. A stored zone is delay-closed as a set, which is why the forward
   // operator may write `Z /\ g`; a single valuation may still have to let time pass first.
   if (!sn.frozen) Y.down();
-  if (!apply(Y, sinv, sn.inv_len)) return gfp_empty(net.nclocks);
+  if (!apply(Y, sinv, sn.inv_len)) return empty_zone(net.nclocks);
   return Y;
 }
 
-/// @brief ::gfp_pre for a run confined to a non-convex predicate.
+/// @brief ::exact_predecessor for a run confined to a non-convex predicate.
 ///
 /// @param avoid the forbidden region; must be non-null
 /// @param[in,out] out  the pieces of the predecessor are appended
 ///
 /// @par Why this is federation-valued
-/// ::gfp_pre takes two time-predecessors, one at the target and one at the source. With a region
+/// ::exact_predecessor takes two time-predecessors, one at the target and one at the source. With a region
 /// to avoid, each of them routes around it and each can therefore split, so the predecessor of a
 /// single zone is in general several zones. Collapsing them to one -- by hull, or by keeping the
 /// largest -- under-approximates `Pre`, and `Pre` occurs positively in the fixpoint, so that
@@ -481,7 +481,7 @@ static Dbm gfp_pre(const Network& net, const GfpTag& t, const PreNode& sn, const
 ///
 /// @note Every step other than the two time-predecessors maps a zone to a zone, so the federation
 ///       is threaded through mechanically and only the two routed steps branch.
-static void gfp_pre_avoid(const Network& net, const GfpTag& t, const SymState& src,
+static void exact_predecessor_avoiding(const Network& net, const GfpTag& t, const SymState& src,
                           const SymState& tgt, const Dbm& X,
                           const detail::DelayAvoidSet& avoid, Federation& out) {
   Federation cur{X};
@@ -553,13 +553,13 @@ static void gfp_pre_avoid(const Network& net, const GfpTag& t, const SymState& s
 // ---- small federation helpers (Federation = std::vector<Dbm>, union semantics) ----
 
 /// @brief Does @p f denote the empty set?
-static bool gfp_fed_empty(const Federation& f) {
+static bool fed_is_empty(const Federation& f) {
   for (const auto& z : f) if (!z.empty()) return false;
   return true;
 }
 
 /// @brief Is every point of @p a inside the union @p b?
-static bool gfp_fed_subset(const Federation& a, const Federation& b) {
+static bool fed_contains(const Federation& a, const Federation& b) {
   for (const auto& z : a) {
     if (z.empty()) continue;
     if (!fed_subtract(z, b).empty()) return false;
@@ -583,10 +583,10 @@ static bool gfp_fed_subset(const Federation& a, const Federation& b) {
 ///       is exact in both directions — @c Dbm::try_union succeeds only when the union really is
 ///       a single zone — so it adds no point and removes none.
 /// @warning The caller must treat `*capped` as sticky and must not read @p f as a converged
-///          value once it is set; see ::Otf::certificate_in.
+///          value once it is set; see ::LivenessEngine::certificate_in.
 /// @note Without the convex-union merge the federations grow monotonically with every @c Pre
 ///       and the width cap becomes the binding constraint on the whole algorithm.
-static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
+static void fed_compact(Federation& f, std::size_t cap, bool* capped) {
   Federation out;
   bool merged = false;
   for (auto& z : f) {
@@ -630,21 +630,21 @@ static void gfp_fed_compact(Federation& f, std::size_t cap, bool* capped) {
 /// value at a `p /\ !q` node of @c S is therefore already a sound violated verdict, even though
 /// the graph outside @c S has never been looked at.
 ///
-/// @warning A node may enter @c S only if it is expanded. The stopping term ::Otf::stop_set
+/// @warning A node may enter @c S only if it is expanded. The stopping term ::LivenessEngine::stop_set
 ///          reads the *absence* of successors (`adj[v].empty()`), and an unexpanded node has an
 ///          empty adjacency for the wrong reason. Every other term reads only edges that exist,
 ///          so it survives a partial graph unchanged.
 ///
 /// @note Intermediate iterates of a descending greatest-fixpoint iteration are only
 ///       *pre*-fixpoints, hence over-approximations, hence conclusive in neither direction.
-///       Only the converged limit may be read; see ::Otf::certificate_in.
+///       Only the converged limit may be read; see ::LivenessEngine::certificate_in.
 ///
 /// @see @c docs/design.md, "On-the-fly liveness", for the full argument.
 /// @}
 
 
 /// @brief Value equality for ::GfpTag, so the tag pool can deduplicate.
-inline bool gfp_tag_eq(const GfpTag& a, const GfpTag& b) {
+inline bool tag_equal(const GfpTag& a, const GfpTag& b) {
   if (a.parts.size() != b.parts.size() || a.abstain.size() != b.abstain.size()) return false;
   for (std::size_t i = 0; i < a.parts.size(); ++i)
     if (a.parts[i] != b.parts[i]) return false;
@@ -656,8 +656,8 @@ inline bool gfp_tag_eq(const GfpTag& a, const GfpTag& b) {
   return true;
 }
 
-/// @brief Hash of a ::GfpTag's value, keyed on the same fields ::gfp_tag_eq compares.
-inline std::uint64_t gfp_tag_hash(const GfpTag& t) {
+/// @brief Hash of a ::GfpTag's value, keyed on the same fields ::tag_equal compares.
+inline std::uint64_t tag_hash(const GfpTag& t) {
   std::uint64_t h = 1469598103934665603ULL;
   const auto mix = [&h](std::uint64_t v) {
     h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
@@ -689,40 +689,40 @@ static std::uint64_t mix_packed_key(std::uint64_t x) {
   return x ^ (x >> 31);
 }
 
-// ---- Otf lifetime, cache, and stored-zone helpers --------------------------
+// ---- LivenessEngine lifetime, cache, and stored-zone helpers --------------------------
 
-Otf::Otf(const Network& n, const DiscPred& pp, const DiscPred& qq,
+LivenessEngine::LivenessEngine(const Network& n, const DiscPred& pp, const DiscPred& qq,
          bool force_exact, const std::atomic<bool>* cancel, const Network* dead)
     : net(n), p(pp), q(qq), dead_net(dead ? dead : &n), force_exact_(force_exact),
       cancel_(cancel) {}
 
-bool Otf::cancelled() {
+bool LivenessEngine::cancelled() {
   if (cancelled_) return true;
   if (cancel_ && cancel_->load(std::memory_order_relaxed)) cancelled_ = true;
   return cancelled_;
 }
 
-bool Otf::is_nq_fast(int i) {
+bool LivenessEngine::is_nq_fast(int i) {
   if (qc[i] == 2) { SymState sc; nstate(i, sc); qc[i] = holds(q, sc) ? 1 : 0; }
   return qc[i] == 0;
 }
 
-void Otf::set_eg_early(bool v) { eg_early_ = v; }
+void LivenessEngine::set_eg_early(bool v) { eg_early_ = v; }
 
-bool Otf::eg_early_hit() const { return eg_early_hit_; }
+bool LivenessEngine::eg_early_hit() const { return eg_early_hit_; }
 
-bool Otf::was_cancelled() const { return cancelled_; }
+bool LivenessEngine::was_cancelled() const { return cancelled_; }
 
-bool Otf::was_capped() const { return capped; }
+bool LivenessEngine::was_capped() const { return capped; }
 
-void Otf::set_avoid(const detail::DelayAvoidSet* a, bool forward) {
+void LivenessEngine::set_avoid(const detail::DelayAvoidSet* a, bool forward) {
   avoid_ = a;
   avoid_forward_ = forward;
 }
 
-void Otf::set_atoms(const AtomMap* a) { amap_ = a; }
+void LivenessEngine::set_atoms(const AtomMap* a) { amap_ = a; }
 
-void Otf::release() {
+void LivenessEngine::release() {
   std::vector<SymState>().swap(node);
   std::vector<std::vector<OtfEdge>>().swap(adj);
   std::unordered_map<std::uint64_t, std::vector<int>>().swap(bucket);
@@ -736,47 +736,47 @@ void Otf::release() {
   std::vector<std::uint64_t>().swap(ntag_out_);
 }
 
-void Otf::zstore(int i, Dbm&& z) {
+void LivenessEngine::zstore(int i, Dbm&& z) {
   zs_.store(i, z);
   if (!online_d_) node[i].zone = Dbm();   // online records have no SymState to scrub
 }
 
-const Dbm& Otf::zread(int i, Dbm& sc) const {
+const Dbm& LivenessEngine::zread(int i, Dbm& sc) const {
   zs_.load(i, sc);
   return sc;
 }
 
-const SymState& Otf::sread(int i, SymState& sc) const {
+const SymState& LivenessEngine::sread(int i, SymState& sc) const {
   nstate(i, sc);
   zread(i, sc.zone);
   return sc;
 }
 
-bool Otf::alu_le_stored(const Dbm& z, int j) const {
+bool LivenessEngine::alu_le_stored(const Dbm& z, int j) const {
   return zs_.with(j, [&](const auto* pz) {
     return dbm_is_alu_le(z.data().data(), pz, zdim_, bL.data(), bU.data());
   });
 }
 
-bool Otf::alu_le_new(int j, const Dbm& z) const {
+bool LivenessEngine::alu_le_new(int j, const Dbm& z) const {
   return zs_.with(j, [&](const auto* pz) {
     return dbm_is_alu_le(pz, z.data().data(), zdim_, bL.data(), bU.data());
   });
 }
 
-bool Otf::stored_includes(int j, const Dbm& z) const {
+bool LivenessEngine::stored_includes(int j, const Dbm& z) const {
   return zs_.with(j, [&](const auto* pz) {
     return dbm_includes(pz, z.data().data(), zdim_);
   });
 }
 
-bool Otf::includes_stored(const Dbm& z, int j) const {
+bool LivenessEngine::includes_stored(const Dbm& z, int j) const {
   return zs_.with(j, [&](const auto* pz) {
     return dbm_includes(z.data().data(), pz, zdim_);
   });
 }
 
-bool Otf::base_cover(const Dbm& a, const Dbm& b) const {
+bool LivenessEngine::base_cover(const Dbm& a, const Dbm& b) const {
   return use_alu ? a.alu_subsumed_by(b, bL, bU) : b.includes(a);
 }
 
@@ -791,14 +791,14 @@ bool Otf::base_cover(const Dbm& a, const Dbm& b) const {
 /// must move together: plain inclusion does not bound the zone graph, so with a_LU off the only
 /// thing that terminates the search is Extra_LU+, and with Extra_LU+ on every stored zone
 /// over-approximates the reachable set. See docs/design.md, "Stored zones must be exact", for the
-/// counterexample; in short, ::Otf::stop_set asks whether some valuation of the stored zone
+/// counterexample; in short, ::LivenessEngine::stop_set asks whether some valuation of the stored zone
 /// enables *nothing*, enabledness is monotone rather than invariant under extrapolation, and a
 /// spurious stop valuation occurs positively in the fixpoint operator, so it fabricates a
 /// counterexample rather than losing one.
 ///
 /// @note Diagonal models cannot use a_LU at all (Bouyer 2004), so they keep ExNoDiag with
 ///       inclusion covering and extrapolation stays load-bearing there.
-void Otf::setup() {
+void LivenessEngine::setup() {
   zdim_ = net.nclocks + 1;
   zs_.reset(zdim_, packed_zones_on());
   L = net.lbound;
@@ -810,7 +810,7 @@ void Otf::setup() {
   emode = network_has_diagonal(net) ? ExNoDiag : (use_alu ? ExNone : ExLuPlus);
   // Clocks the query forces to stay live. A leads-to predicate carries no clock constraints, so
   // this starts all-zero; reset_inactive reads it as "additionally keep alive", so all-zero is
-  // maximal reduction, not none. The reduction is safe for a backward analysis because gfp_pre
+  // maximal reduction, not none. The reduction is safe for a backward analysis because exact_predecessor
   // frees every clock dead at the target before undoing the step.
   qmask.assign(net.nclocks + 1, 0);
   aL = net.lbound;
@@ -821,7 +821,7 @@ void Otf::setup() {
   //
   // (1) A non-diagonal atom is discharged by raising its clock's L and U. Raising either only
   //     ever makes a_LU finer, so it is sound wherever applied; applying it to the global
-  //     arrays here and to the per-location arrays in Otf::intern keeps it consistent along
+  //     arrays here and to the per-location arrays in LivenessEngine::intern keeps it consistent along
   //     every path, which is what the simulation argument needs.
   // (2) reset_inactive pins clocks no guard will read again to 0, but the atoms DO read them --
   //     that is the point of Dead(q) -- so every clock the map mentions joins qmask. Without
@@ -849,7 +849,7 @@ void Otf::setup() {
 /// @brief Precompute what the per-location LU fold actually depends on.
 ///
 /// `L[c]` at a discrete state is `max_p lbound_loc[p][locs[p]][c]`, an `nprocs x nclocks` fold
-/// that ::online_configure_bounds and ::Otf::intern both need per key. Almost none of it varies:
+/// that ::online_configure_bounds and ::LivenessEngine::intern both need per key. Almost none of it varies:
 /// a clock is typically constrained by the one process that owns it, and every other process
 /// contributes the same value from every one of its locations.
 ///
@@ -857,7 +857,7 @@ void Otf::setup() {
 /// contributes a constant, folded once here into @ref base_l_ / @ref base_u_. Only the
 /// (process, clock) pairs that really vary stay in @ref vary_clocks_, and the per-key fold walks
 /// those alone --- 17 entries instead of 289 on arbiter16, for the identical result.
-void Otf::build_local_bound_tables() {
+void LivenessEngine::build_local_bound_tables() {
   const int dim = net.nclocks + 1;
   base_l_.assign(dim, kAluNegInf);
   base_u_.assign(dim, kAluNegInf);
@@ -888,7 +888,7 @@ void Otf::build_local_bound_tables() {
 }
 
 /// @brief The a_LU bounds at one discrete state, folded through ::build_local_bound_tables.
-void Otf::local_bounds(const int* locs, std::vector<std::int32_t>& outL,
+void LivenessEngine::local_bounds(const int* locs, std::vector<std::int32_t>& outL,
                        std::vector<std::int32_t>& outU) const {
   outL = base_l_;
   outU = base_u_;
@@ -906,7 +906,7 @@ void Otf::local_bounds(const int* locs, std::vector<std::int32_t>& outL,
   outL[0] = outU[0] = 0;
 }
 
-bool Otf::holds(const DiscPred& pr, const SymState& s) const {
+bool LivenessEngine::holds(const DiscPred& pr, const SymState& s) const {
   // A predicate carrying a DNF denotes the disjunction of its terms, not a conjunction. Only the
   // E[] entry point builds one, and only ever from discrete literals: it needs `!psi_discrete`,
   // which for an arbitrary boolean `psi` is a disjunction and has no conjunctive form.
@@ -930,7 +930,7 @@ bool Otf::holds(const DiscPred& pr, const SymState& s) const {
   return int_ok(pr.ints, s.ints);
 }
 
-void Otf::grow() {
+void LivenessEngine::grow() {
   const std::size_t n = nrec();
   if (expanded.size() < n) expanded.resize(n, 0);
   if (online_d_) {
@@ -950,8 +950,8 @@ void Otf::grow() {
   if (ntag_out_.size() < n) ntag_out_.resize(n, 0);
 }
 
-/// @brief The discrete over-approximation of `p` at one state; see ::Otf::is_p.
-bool Otf::p_discrete(const SymState& s) const {
+/// @brief The discrete over-approximation of `p` at one state; see ::LivenessEngine::is_p.
+bool LivenessEngine::p_discrete(const SymState& s) const {
   if (!p.is_dnf && p.forbid.empty()) return holds(p, s);
   for (const auto& t : p.forbid) {
     bool all = true;
@@ -963,8 +963,8 @@ bool Otf::p_discrete(const SymState& s) const {
   return false;
 }
 
-/// @brief The clock region of `p` inside @p s; see ::Otf::p_region.
-Federation Otf::p_region_of(const SymState& s) const {
+/// @brief The clock region of `p` inside @p s; see ::LivenessEngine::p_region.
+Federation LivenessEngine::p_region_of(const SymState& s) const {
   Federation out;
   if (p.forbid.empty()) { out.push_back(s.zone); return out; }
   for (const auto& t : p.forbid) {
@@ -980,14 +980,14 @@ Federation Otf::p_region_of(const SymState& s) const {
   return out;
 }
 
-bool Otf::is_p(int i) {
+bool LivenessEngine::is_p(int i) {
   grow();
   if (pc[i] != 2) return pc[i] != 0;
   // The over-approximation: does some term's discrete guard hold, so the node could contain a
   // p-valuation at all? Seeding the accepting closure wide is harmless, because the verdict is
-  // decided by the exact region test in ::Otf::certificate_in.
+  // decided by the exact region test in ::LivenessEngine::certificate_in.
   //
-  // ::Otf::holds is deliberately not reused. Its DNF branch skips a term that constrains a clock,
+  // ::LivenessEngine::holds is deliberately not reused. Its DNF branch skips a term that constrains a clock,
   // which is right for `q` -- there the clock part is carried by the forbidden region and a term
   // cannot exclude a whole vertex -- and exactly wrong for `p`, where such a term is the reason
   // the node is interesting. Reusing it made `x >= 0 --> P.wait` hold vacuously: no term counted,
@@ -1005,13 +1005,13 @@ bool Otf::is_p(int i) {
 /// of the terms that survive.
 ///
 /// @note Returns the whole zone when `p` constrains no clock, which is the pre-existing case and
-///       makes the intersection in ::Otf::certificate_in a no-op there.
-Federation Otf::p_region(int i) {
+///       makes the intersection in ::LivenessEngine::certificate_in a no-op there.
+Federation LivenessEngine::p_region(int i) {
   SymState cst;
   return p_region_of(sread(i, cst));
 }
 
-bool Otf::is_nq(int i) {
+bool LivenessEngine::is_nq(int i) {
   grow();
   if (qc[i] == 2) { SymState sc; nstate(i, sc); qc[i] = holds(q, sc) ? 1 : 0; }
   return qc[i] == 0;
@@ -1035,7 +1035,7 @@ bool Otf::is_nq(int i) {
 ///
 /// @pre @p z is canonical (closed).
 /// @post `(*in & *out) == 0`; a bit set in neither mask means @p z straddles that atom.
-void Otf::classify_atoms(const Dbm& z, const std::vector<AtomC>& as,
+void LivenessEngine::classify_atoms(const Dbm& z, const std::vector<AtomC>& as,
                          std::uint64_t* in, std::uint64_t* out) const {
   std::uint64_t i_ = 0, o_ = 0;
   const std::size_t n = std::min<std::size_t>(as.size(), 64);
@@ -1082,7 +1082,7 @@ void Otf::classify_atoms(const Dbm& z, const std::vector<AtomC>& as,
 ///       prefilter that rejects a hopeless probe before any zone is copied.
 /// @note At depth 0 the two masks come from the caller's cache, so an unblocked probe costs one
 ///       mask operation plus the base test.
-bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t bout,
+bool LivenessEngine::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t bout,
                     const std::vector<AtomC>& as, int depth) {
   const std::size_t n = std::min<std::size_t>(as.size(), 64);
   const std::uint64_t all = n >= 64 ? ~std::uint64_t(0) : ((std::uint64_t(1) << n) - 1);
@@ -1112,7 +1112,7 @@ bool Otf::cover_rec(const Dbm& a, std::uint64_t ain, const Dbm& b, std::uint64_t
 
 // ---- Online D: persistent, monotonically refined forward quotient -------------------------
 
-void Otf::online_reset() {
+void LivenessEngine::online_reset() {
   online_nrec_ = 0;
   node.clear();
   node.shrink_to_fit();
@@ -1200,7 +1200,7 @@ void Otf::online_reset() {
 /// `AtomMap::bump` is append-only in online mode.  It is intentionally applied here, at every
 /// cover check, rather than once in setup: a later non-diagonal deadlock atom must refine every
 /// existing certificate without changing any stored exact zone.
-void Otf::online_configure_bounds(int key) {
+void LivenessEngine::online_configure_bounds(int key) {
   if (!use_alu) return;
   if (online_bound_cached_epoch_ == online_bound_epoch_ && online_bound_key_ == key) return;
   online_bound_key_ = key;
@@ -1214,7 +1214,7 @@ void Otf::online_configure_bounds(int key) {
 }
 
 /// @brief Does the exact candidate @p a have a current D cover in stored node @p b?
-bool Otf::online_covers(const SymState& a, int b, int key) {
+bool LivenessEngine::online_covers(const SymState& a, int b, int key) {
   const bool profile = online_perf.enabled;
   if (profile) ++online_perf.cover_calls;
   std::unique_ptr<OnlinePerfTimer> timer;
@@ -1242,7 +1242,7 @@ bool Otf::online_covers(const SymState& a, int b, int key) {
 /// Both records are already known to share a discrete key.  Keeping this form avoids rebuilding
 /// a temporary SymState (and copying its location and integer vectors) during compaction and
 /// certificate rechecks.
-bool Otf::online_covers(int a, int b, int key) {
+bool LivenessEngine::online_covers(int a, int b, int key) {
   const bool profile = online_perf.enabled;
   if (profile) ++online_perf.cover_calls;
   std::unique_ptr<OnlinePerfTimer> timer;
@@ -1271,7 +1271,7 @@ bool Otf::online_covers(int a, int b, int key) {
 /// genuinely online construction cannot turn a newly found atom 65 into a restart, though, so
 /// this slow-path evaluates the same branch rule directly from canonical DBM entries.  It is
 /// reached only for unusually wide key-local atom sets; all atom positions remain append-only.
-bool Otf::online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>& as, int depth) {
+bool LivenessEngine::online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>& as, int depth) {
   if (!base_cover(a, b)) return false;
   for (const AtomC& at : as) {
     const bool ain = a.get(at.i, at.j) <= at.b;  // every valuation of a satisfies phi
@@ -1291,7 +1291,7 @@ bool Otf::online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>&
   return true;
 }
 
-int Otf::online_append(SymState&& s, int key) {
+int LivenessEngine::online_append(SymState&& s, int key) {
   // NO SymState IS pushed. During the online phase the discrete half lives once in the key
   // arenas and the zone lives in the ZoneStore, so `node`'s entry would be three empty vector
   // headers -- 80 bytes a record, and the search materialises far more records than it keeps
@@ -1317,7 +1317,7 @@ int Otf::online_append(SymState&& s, int key) {
 /// that replacement has already been expanded and covers it transitively.  Allowing this avoids
 /// activating a whole same-level antichain merely because its first representative has not yet
 /// reached the front of the FIFO queue.  Final edge redirection asks for an expanded coverer.
-int Otf::online_coverer(int v, bool require_expanded) {
+int LivenessEngine::online_coverer(int v, bool require_expanded) {
   if (v < 0 || v >= (int)nrec()) return -1;
   if (online_active_[v] && (!require_expanded || expanded[v])) return v;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
@@ -1341,7 +1341,7 @@ int Otf::online_coverer(int v, bool require_expanded) {
 /// Once quiescent, its cover points to an active representative or through another inactive
 /// record to one.  D-covering is transitive, so final edge redirection can chase that chain
 /// without repeating a DBM cover test for every raw edge.
-int Otf::online_resolve_cover(int v, bool require_expanded) {
+int LivenessEngine::online_resolve_cover(int v, bool require_expanded) {
   if (v < 0 || v >= (int)nrec()) return -1;
   int cur = v;
   std::size_t hops = 0;
@@ -1362,12 +1362,12 @@ int Otf::online_resolve_cover(int v, bool require_expanded) {
 }
 
 /// @brief Remember the current D certificate of an inactive materialised record.
-void Otf::online_set_cover(int v, int cover) {
+void LivenessEngine::online_set_cover(int v, int cover) {
   if (v < 0 || v >= (int)nrec()) return;
   online_cover_[v] = cover;
 }
 
-void Otf::online_activate(int v) {
+void LivenessEngine::online_activate(int v) {
   if (v < 0 || v >= (int)nrec()) return;
   if (!online_active_[v]) {
     online_active_[v] = 1;
@@ -1399,7 +1399,7 @@ void Otf::online_activate(int v) {
 /// one again, but no enlarged zone or stale adjacency ever has to be reconstructed.  The new
 /// representative is allowed to be queued rather than expanded: its eventual expansion is the
 /// simulation witness for the provisional cover, and a refinement can revoke it before then.
-void Otf::online_compact_key(int v) {
+void LivenessEngine::online_compact_key(int v) {
   if (!online_active_[v]) return;
   OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   if (online_perf.enabled) {
@@ -1450,7 +1450,7 @@ void Otf::online_compact_key(int v) {
 }
 
 /// @brief Intern an active candidate or defer a revocably covered successor by replay recipe.
-int Otf::online_intern(SymState&& s, int key, int source, int ordinal, int* deferred) {
+int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal, int* deferred) {
   if (deferred) *deferred = -1;
   // online_build_all registers the root, and online_expand registers its whole successor batch
   // and settles the atom worklist *before* it gets here.  Keeping that boundary batched matters:
@@ -1545,7 +1545,7 @@ int Otf::online_intern(SymState&& s, int key, int source, int ordinal, int* defe
 }
 
 /// @brief Regenerate exactly one provisionally covered successor from its immutable source.
-bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
+bool LivenessEngine::online_replay(int source, int ordinal, int key, SymState& out) const {
   if (source < 0 || source >= static_cast<int>(nrec()) || ordinal < 0 || key < 0 ||
       key >= static_cast<int>(online_key_by_id_.size()))
     return false;
@@ -1559,7 +1559,7 @@ bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
 
   std::vector<SymState> succ;
   std::vector<GfpTag> stags;
-  gfp_succ_tagged(net, src, L, U, qmask, emode, succ, stags,
+  tagged_successors(net, src, L, U, qmask, emode, succ, stags,
                   avoid_forward_ ? avoid_ : nullptr);
   if (ordinal >= static_cast<int>(succ.size())) return false;
 
@@ -1576,7 +1576,7 @@ bool Otf::online_replay(int source, int ordinal, int key, SymState& out) const {
 }
 
 /// @brief Test the discrete E[] restriction while online nodes still share key storage.
-bool Otf::online_is_nq(int v) {
+bool LivenessEngine::online_is_nq(int v) {
   if (v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
   grow();
   if (qc[v] == 2) {
@@ -1594,7 +1594,7 @@ bool Otf::online_is_nq(int v) {
 /// stayed inside psi.  A time-divergent valuation or a genuine deadlock of the unrestricted
 /// network is therefore already a concrete maximal psi-run.  This is stronger than a graph-cycle
 /// guess: no subsumption edge participates in the certificate.
-bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
+bool LivenessEngine::online_eg_terminal_witness(int v, bool no_restricted_successor) {
   if (!online_eg_prune_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   SymState s;
@@ -1630,11 +1630,11 @@ bool Otf::online_eg_terminal_witness(int v, bool no_restricted_successor) {
 /// spurious one would fabricate a violation.
 ///
 /// @param v             the node just expanded
-/// @param no_successor  whether ::gfp_succ_tagged produced nothing for it
+/// @param no_successor  whether ::tagged_successors produced nothing for it
 /// @return @c true iff a `p`-satisfying valuation of @p v ends a maximal `!q` run
-bool Otf::leadsto_witness(const SymState& s, bool no_successor, bool key_may_deadlock) {
+bool LivenessEngine::leadsto_witness(const SymState& s, bool no_successor, bool key_may_deadlock) {
   if (!leadsto_early_ || !use_alu) return false;
-  // With a forbidden region in force, `q` is only partly discrete: ::Otf::holds deliberately
+  // With a forbidden region in force, `q` is only partly discrete: ::LivenessEngine::holds deliberately
   // ignores a term that constrains a clock, because ::detail::DelayAvoidSet carries that part and
   // the backward pass cuts the zone with it. A stop valuation could then satisfy `q` through the
   // clock part while `holds` reports `!q`, and this witness would claim a violation that is not
@@ -1653,16 +1653,16 @@ bool Otf::leadsto_witness(const SymState& s, bool no_successor, bool key_may_dea
     if (!key_may_deadlock) return false;          // no zone at this key can deadlock
     if (!state_has_deadlock(*dead_net, s, &stop)) return false;
   }
-  if (gfp_fed_empty(stop)) return false;
+  if (fed_is_empty(stop)) return false;
 
   // The witness must satisfy `p` as well as stop. With a purely discrete `p` the region is the
   // whole zone and this is a no-op.
   if (p.forbid.empty()) return true;
-  return !gfp_fed_empty(fed_intersect(stop, p_region_of(s)));
+  return !fed_is_empty(fed_intersect(stop, p_region_of(s)));
 }
 
 /// @brief ::leadsto_witness at an online record, whose discrete half lives in its key.
-bool Otf::online_leadsto_witness(int v, bool no_successor) {
+bool LivenessEngine::online_leadsto_witness(int v, bool no_successor) {
   if (!leadsto_early_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
   SymState s;
@@ -1699,8 +1699,8 @@ static std::uint64_t disc_hash(const LocVec& locs, const IntVec& ints) {
 ///
 /// @post @ref intern_grew is @c true iff a stored zone was rewritten (enlarged or merged). The
 ///       caller must then invalidate that node's adjacency: it was computed from the smaller
-///       zone. ::Otf::expand does this.
-/// @post Every stored zone remains atom-homogeneous only in the sense ::Otf::cover_rec needs,
+///       zone. ::LivenessEngine::expand does this.
+/// @post Every stored zone remains atom-homogeneous only in the sense ::LivenessEngine::cover_rec needs,
 ///       i.e. not at all: straddling zones are stored whole and resolved at comparison time.
 ///
 /// @note The two rewriting outcomes are what a purely append-only passed set would forgo. An
@@ -1709,12 +1709,12 @@ static std::uint64_t disc_hash(const LocVec& locs, const IntVec& ints) {
 ///       an antichain of zones the rewriting version collapses. Rewriting is kept, and the
 ///       invalidation above is what makes it safe.
 
-int Otf::intern(SymState&& s) {
+int LivenessEngine::intern(SymState&& s) {
   intern_grew = false;
   std::string bkey = disc_key_bytes(s.locs, s.ints);
   // the cell tag. `tag` is the In-mask and `tag_out` the Out-mask of ::classify_atoms; a zone
   // set in neither straddles that atom, and every obligation a straddle leaves undecidable is
-  // deferred to Otf::cover_rec.
+  // deferred to LivenessEngine::cover_rec.
   //
   // The obligation the tag enforces is the implication `Z |= phi => Z' |= phi`, in that
   // direction only, where Z covers Z'. Dead(q) = Inv(q) /\ AND_e !Esc_e with each Esc_e a
@@ -1754,7 +1754,7 @@ int Otf::intern(SymState&& s) {
       local_bounds(s.locs.data(), bL, bU);
     }
     // The per-location bounds must carry the non-diagonal atoms' constants too, for the same
-    // reason the global arrays do in Otf::setup: raising L or U only makes a_LU finer, and the
+    // reason the global arrays do in LivenessEngine::setup: raising L or U only makes a_LU finer, and the
     // simulation argument needs the raise to hold along every path.
     //
     // Raising one clock to `max(L, U)` is a_M ON that clock: the three clauses of the LU
@@ -1853,7 +1853,7 @@ int Otf::intern(SymState&& s) {
 /// The production online path never calls this routine: it discharges atom obligations while
 /// testing a cover rather than splitting materialised records.  The reference path uses the same
 /// comparison-time strategy, so its output is the original zone as one piece.
-void Otf::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
+void LivenessEngine::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
   out.clear();
   out.push_back(std::move(s));
 }
@@ -1861,16 +1861,16 @@ void Otf::split_by_atoms(SymState&& s, std::vector<SymState>& out) {
 /// @brief Add @p t to the tag pool, reusing an equal tag if one is already there.
 ///
 /// @param t  the tag produced for one transition
-/// @return the index into ::Otf::tags_ that ::OtfEdge::tag must carry
+/// @return the index into ::LivenessEngine::tags_ that ::OtfEdge::tag must carry
 ///
-/// @note Tags are immutable once pooled, and ::gfp_pre only ever reads them, so sharing one
+/// @note Tags are immutable once pooled, and ::exact_predecessor only ever reads them, so sharing one
 ///       between edges is safe. Deduplication is by value, not by identity: two transitions
 ///       that fire the same participants with the same abstain constraints invert identically.
-int Otf::intern_tag(const GfpTag& t) {
-  const std::uint64_t h = gfp_tag_hash(t);
+int LivenessEngine::intern_tag(const GfpTag& t) {
+  const std::uint64_t h = tag_hash(t);
   auto& slots = tagidx_[h];
   for (int i : slots)
-    if (gfp_tag_eq(tags_[i], t)) return i;
+    if (tag_equal(tags_[i], t)) return i;
   const int id = static_cast<int>(tags_.size());
   tags_.push_back(t);
   slots.push_back(id);
@@ -1882,8 +1882,8 @@ int Otf::intern_tag(const GfpTag& t) {
 /// A rewritten representative has successors computed for an older, smaller zone.  Its cached
 /// adjacency is therefore cleared and the ordinary forward worklist expands it again.  This is
 /// the non-online exact/inclusion path only; online records are immutable and use
-/// ::Otf::online_expand instead.
-void Otf::expand(int u) {
+/// ::LivenessEngine::online_expand instead.
+void LivenessEngine::expand(int u) {
   grow();
   if (cancelled()) return;   // choke point: every forward step goes through here
   if (expanded[u]) return;
@@ -1894,7 +1894,7 @@ void Otf::expand(int u) {
   std::vector<GfpTag> tags;
   std::vector<SymState> pieces;
   SymState usc;
-  gfp_succ_tagged(net, sread(u, usc), L, U, qmask, emode, succ, tags,
+  tagged_successors(net, sread(u, usc), L, U, qmask, emode, succ, tags,
                   avoid_forward_ ? avoid_ : nullptr);
   // Same concrete counterexample as the online route takes; `usc` still holds this node's exact
   // state. `may_deadlock` is not tracked per key here, so the exact test is always allowed to run.
@@ -1938,7 +1938,7 @@ void Otf::expand(int u) {
 /// @note A committed or urgent location admits no positive delay at all, so it can never
 ///       diverge. Delaying unconditionally would report divergence there and fabricate a
 ///       maximal-run witness out of nothing.
-bool Otf::time_diverges(const SymState& s) const {
+bool LivenessEngine::time_diverges(const SymState& s) const {
   if (net.nclocks == 0) return false;
   { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
   std::vector<Constraint> inv;
@@ -1975,7 +1975,7 @@ bool Otf::time_diverges(const SymState& s) const {
 /// @return the federation of valuations of `node[u].zone` that either enable no transition ever
 ///         or admit a time-divergent run
 ///
-/// @pre Stored zones are exact (::Otf::setup's invariant). A stop valuation occurs *positively*
+/// @pre Stored zones are exact (::LivenessEngine::setup's invariant). A stop valuation occurs *positively*
 ///      in the fixpoint operator, so a spurious one fabricates a counterexample rather than
 ///      losing one.
 /// @note Two of the three cases are whole-zone and exact as such: an empty adjacency means every
@@ -1992,7 +1992,7 @@ bool Otf::time_diverges(const SymState& s) const {
 /// @note Only meaningful when a `psi`-restriction is in force. It is what separates a genuine
 ///       timelock -- a state that truly cannot be extended, and therefore ends a maximal run --
 ///       from a state that merely cannot be extended *inside psi*.
-bool Otf::orig_time_open(const SymState& s) const {
+bool LivenessEngine::orig_time_open(const SymState& s) const {
   if (net.nclocks == 0) return false;
   bool c, u;
   frozen_flags(*dead_net, s.locs, s.ints, &c, &u);
@@ -2007,7 +2007,7 @@ bool Otf::orig_time_open(const SymState& s) const {
   return true;
 }
 
-Federation Otf::stop_set(int u) {
+Federation LivenessEngine::stop_set(int u) {
   Federation f;
   SymState usc;
   const SymState& su = sread(u, usc);
@@ -2056,7 +2056,7 @@ Federation Otf::stop_set(int u) {
 /// @param S      the nodes to iterate over; every other node is pinned to the empty federation
 /// @param[out] W indexed by node; sized to `nrec()`, empty outside @p S
 ///
-/// @pre Every element of @p S is an expanded `!q` node (see ::Otf::stop_set).
+/// @pre Every element of @p S is an expanded `!q` node (see ::LivenessEngine::stop_set).
 /// @post On normal return @p W is the exact greatest fixpoint of the operator *restricted to*
 ///       @p S, hence a post-fixpoint of the operator on the finished graph, hence a sound
 ///       under-approximation of the true value.
@@ -2064,8 +2064,8 @@ Federation Otf::stop_set(int u) {
 ///       an arbitrary intermediate iterate. It proves nothing in either direction.
 ///
 /// @warning @ref capped is sticky. A capped pass must be reported as unusable, never laundered
-///          into a verdict; see ::Otf::certificate_in.
-void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
+///          into a verdict; see ::LivenessEngine::certificate_in.
+void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vector<Federation>& W) {
   ++passes;
   const std::size_t N = nrec();
   std::vector<char> inS(N, 0);
@@ -2080,7 +2080,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // in the same step, so at most one seed is ever live. On a satisfied query that refinement is
   // already draining towards empty, which is why the peak never re-forms.
   //
-  // A seed is never empty: ::Otf::intern stores no empty zone, so `seeded[v]` implies non-empty
+  // A seed is never empty: ::LivenessEngine::intern stores no empty zone, so `seeded[v]` implies non-empty
   // and every emptiness test below can short-circuit on it.
   std::vector<char> seeded(N, 0);
   for (int v : S) {
@@ -2354,12 +2354,12 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // one node'S refinement, `W[v] /\ (NoSucc(v) \/ Pre(W))`. Factored out so the lockstep sweep
   // and the worklist below drive exactly the same operator; only the order differs.
   auto relax = [&](int v) -> bool {
-    if (!seeded[v] && gfp_fed_empty(W[v])) return false;
+    if (!seeded[v] && fed_is_empty(W[v])) return false;
     Federation cand = nosucc[v];
     for (const auto& e : adj[v]) {
       const int j = e.tgt;
       if (!inS[j]) continue;
-      if (!seeded[j] && gfp_fed_empty(W[j])) continue;
+      if (!seeded[j] && fed_is_empty(W[j])) continue;
       // A seeded successor contributes exactly one zone, its own, without being written down.
       const Dbm* one = seeded[j] ? &zread(j, jsc) : nullptr;
       const std::size_t ny = one ? 1u : W[j].size();
@@ -2369,9 +2369,9 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
         const Dbm& Y = one ? *one : W[j][yi];
         ++pre_calls;
         if (avoid_) {
-          gfp_pre_avoid(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y, *avoid_, cand);
+          exact_predecessor_avoiding(net, tags_[e.tag], sread(v, vst), sread(j, jst), Y, *avoid_, cand);
         } else {
-          Dbm pz = gfp_pre(net, tags_[e.tag], *pv, *pj, pinvs, tag_resets(e.tag),
+          Dbm pz = exact_predecessor(net, tags_[e.tag], *pv, *pj, pinvs, tag_resets(e.tag),
                            dead_scratch.data(), Y);
           if (!pz.empty()) cand.push_back(std::move(pz));
         }
@@ -2380,7 +2380,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     // Materialise v's own seed now, for this one node only: the swap below overwrites it with
     // the refinement, so the copy does not outlive the iteration.
     if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
-    gfp_fed_compact(cand, fedcap, &capped);
+    fed_compact(cand, fedcap, &capped);
     // `W[v] /\ cand`, computed directly rather than as the double complement
     // `subtract(z, subtract(z, cand))` the textbook formulation uses. Both denote the same
     // set, but the inner subtraction peels z by every constraint of every member of cand, so
@@ -2395,7 +2395,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
     //
     // If that holds for every member, `nw` denotes W[v] member for member, so W[v] is unchanged
     // and there is nothing to propagate -- skip the compaction and, more to the point, skip
-    // ::gfp_fed_subset, which peels W[v] by every member of nw through fed_subtract.
+    // ::fed_contains, which peels W[v] by every member of nw through fed_subtract.
     bool unchanged = true;
     for (const auto& z : W[v]) {
       bool whole = false;
@@ -2410,8 +2410,8 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
       }
     }
     if (unchanged) return false;
-    gfp_fed_compact(nw, fedcap, &capped);
-    const bool shrank = !gfp_fed_subset(W[v], nw);
+    fed_compact(nw, fedcap, &capped);
+    const bool shrank = !fed_contains(W[v], nw);
     W[v].swap(nw);
     return shrank;
   };
@@ -2490,7 +2490,7 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
   // reading as empty at those nodes.
   for (int v : S)
     if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
-  gfp_iters += it;
+  fixpoint_iterations += it;
   if (std::getenv("HORA_GFP_PROFILE")) {
     std::size_t big = 0, nontrivial = 0;
     for (const auto& c : sccs) { big = std::max(big, c.size()); if (c.size() > 1) ++nontrivial; }
@@ -2519,13 +2519,13 @@ void Otf::gfp_on(const std::vector<int>& S, std::vector<Federation>& W) {
 ///          not converge and proves nothing in either direction; returning @c false for it
 ///          would launder "out of federation budget" into a silent satisfied. Callers must
 ///          check @ref capped and report unusable.
-bool Otf::certificate_in(const std::vector<int>& S) {
+bool LivenessEngine::certificate_in(const std::vector<int>& S) {
   if (S.empty()) return false;
   std::vector<Federation> W;
-  gfp_on(S, W);
+  solve_greatest_fixpoint(S, W);
   std::size_t tot = 0, ne = 0;
   for (int v : S) {
-    if (gfp_fed_empty(W[v])) continue;
+    if (fed_is_empty(W[v])) continue;
     ++ne;
     tot += W[v].size();
     if (W[v].size() > fed_max) fed_max = W[v].size();
@@ -2534,11 +2534,11 @@ bool Otf::certificate_in(const std::vector<int>& S) {
   fed_avg = ne ? double(tot) / double(ne) : 0.0;
   if (capped) return false;                      // caller checks `capped` before believing this
   for (int v : S) {
-    if (!is_p(v) || gfp_fed_empty(W[v])) continue;
+    if (!is_p(v) || fed_is_empty(W[v])) continue;
     // The exact test: a violation needs a valuation that satisfies `p` AND survives the fixpoint.
     // With a purely discrete `p` the region is the whole zone and this reduces to the old check.
     if (p.forbid.empty()) return true;
-    if (!gfp_fed_empty(fed_intersect(W[v], p_region(v)))) return true;
+    if (!fed_is_empty(fed_intersect(W[v], p_region(v)))) return true;
   }
   return false;
 }
@@ -2553,7 +2553,7 @@ bool Otf::certificate_in(const std::vector<int>& S) {
 ///       then invariants again, then the active-clock reduction, then extrapolation — must match
 ///       hora::detail::close_succ_zone, or the root would sit in a different abstraction from
 ///       every state reached from it.
-bool Otf::build_all() {
+bool LivenessEngine::build_all() {
   SymState s0;
   s0.locs.resize(net.nprocs());
   for (int pr = 0; pr < net.nprocs(); ++pr) s0.locs[pr] = net.procs[pr].initial;
@@ -2625,7 +2625,7 @@ bool Otf::build_all() {
 ///       defined per node from that node's own successors, so an accepting node's value depends
 ///       on exactly this closure; and `p --> q` is decided by the accepting nodes alone, so
 ///       nothing outside it is ever read.
-std::vector<int> Otf::accepting_closure() {
+std::vector<int> LivenessEngine::accepting_closure() {
   grow();
   const std::size_t N = nrec();
   std::vector<char> in(N, 0);
@@ -2648,8 +2648,8 @@ std::vector<int> Otf::accepting_closure() {
 ///
 /// @pre The forward construction has terminated, so the accepting closure is complete and the
 ///      confined operator coincides with the full one at every accepting node.
-/// @warning Check @ref capped before believing a @c false return; see ::Otf::certificate_in.
-bool Otf::final_verdict_violated() {
+/// @warning Check @ref capped before believing a @c false return; see ::LivenessEngine::certificate_in.
+bool LivenessEngine::final_verdict_violated() {
   return certificate_in(accepting_closure());
 }
 
@@ -2662,7 +2662,7 @@ bool Otf::final_verdict_violated() {
 /// A key contributes no atom when `Dead(q)` is empty, covers its whole invariant, or time can
 /// diverge from that non-frozen key.  The check is structural: it evaluates `Dead(q)` over the
 /// key invariant rather than over individual reached zones.
-bool Otf::dtheta_empty() {
+bool LivenessEngine::deadlock_refinement_is_empty() {
   std::unordered_set<std::string> seen;
   for (std::size_t i = 0; i < nrec(); ++i) {
     const std::string k = disc_key_bytes(node[i].locs, node[i].ints);
@@ -2724,12 +2724,12 @@ static bool key_invariant(const Network& net, const SymState& rep, int nc, Dbm& 
   return apply_all(out, ci);
 }
 
-bool Otf::build_atom_map(AtomMap& am) {
+bool LivenessEngine::build_atom_map(AtomMap& am) {
   // deadlock IS judged IN @ref dead_net, SO the completion must BE built there too.
   //
   // For `p --> q` the two are the same automaton and this is a no-op. For `E[] psi` they are not:
   // the search runs on the psi-restricted network, psi's clock conjunction having been adjoined
-  // to every location invariant, while ::Otf::stop_set asks hora::detail::state_has_deadlock
+  // to every location invariant, while ::LivenessEngine::stop_set asks hora::detail::state_has_deadlock
   // about the unrestricted one -- maximality is a property of the original system. Deriving
   // Dead(q) from `net` here would complete the covering for the restricted automaton's deadlocks
   // and leave the fixpoint reading the unrestricted automaton's, so the covering could merge two
@@ -2999,7 +2999,7 @@ bool Otf::build_atom_map(AtomMap& am) {
 /// dead weight.  The raw adjacency already contains the exact replay marker and target key.  At
 /// the first real atom/bound raise, index the explored prefix once; later edges are appended to
 /// their key directly.  This keeps the zero-atom case allocation-free without losing a recipe.
-void Otf::online_enable_deferred_index() {
+void LivenessEngine::online_enable_deferred_index() {
   if (online_deferred_index_enabled_) return;
   online_deferred_index_enabled_ = true;
   for (std::size_t raw_slot = 0; raw_slot < online_raw_adj_.size(); ++raw_slot) {
@@ -3022,7 +3022,7 @@ void Otf::online_enable_deferred_index() {
   }
 }
 
-bool Otf::online_add_diag(int key, const AtomC& atom, bool closure) {
+bool LivenessEngine::online_add_diag(int key, const AtomC& atom, bool closure) {
   if (key < 0 || key >= static_cast<int>(online_key_by_id_.size())) {
     online_failed_ = true;
     return false;
@@ -3045,7 +3045,7 @@ bool Otf::online_add_diag(int key, const AtomC& atom, bool closure) {
   return true;
 }
 
-bool Otf::online_raise_bump(int clock, std::int32_t bound, bool closure) {
+bool LivenessEngine::online_raise_bump(int clock, std::int32_t bound, bool closure) {
   if (clock <= 0 || clock >= (int)online_am_.bump.size()) return false;
   if (bound <= online_am_.bump[clock]) return false;
   online_enable_deferred_index();
@@ -3063,7 +3063,7 @@ bool Otf::online_raise_bump(int clock, std::int32_t bound, bool closure) {
 /// This deliberately uses the universe, not the zone that discovered the key: D is a property
 /// of the completed automaton at the discrete key, and a later reached zone must not make the
 /// local deadlock condition disappear.
-void Otf::online_seed_key(int key_id) {
+void LivenessEngine::online_seed_key(int key_id) {
   if (online_failed_) return;
   const int nc = net.nclocks;
   OnlineKeyInfo& ki = *online_key_by_id_.at(key_id);
@@ -3172,7 +3172,7 @@ void Otf::online_seed_key(int key_id) {
 }
 
 /// @brief Pull one target diagonal atom backwards through one reset-labelled key edge.
-void Otf::online_pullback(const OnlineKeyEdge& e, const AtomC& atom) {
+void LivenessEngine::online_pullback(const OnlineKeyEdge& e, const AtomC& atom) {
   const std::vector<int>& resets = online_reset_sets_[e.reset_class];
   const auto reset = [&](int c) {
     return c > 0 && std::binary_search(resets.begin(), resets.end(), c);
@@ -3206,7 +3206,7 @@ void Otf::online_pullback(const OnlineKeyEdge& e, const AtomC& atom) {
   online_add_diag(si.id, AtomC{i, j, atom.b}, /*closure=*/true);
 }
 
-void Otf::online_drain_atoms() {
+void LivenessEngine::online_drain_atoms() {
   while (!online_atom_work_.empty() && !online_failed_) {
     OnlineAtomWork w = std::move(online_atom_work_.front());
     online_atom_work_.pop_front();
@@ -3223,7 +3223,7 @@ void Otf::online_drain_atoms() {
   }
 }
 
-int Otf::online_register_key(const LocVec& locs, const IntVec& ints,
+int LivenessEngine::online_register_key(const LocVec& locs, const IntVec& ints,
                              std::uint64_t packed, bool packed_ready) {
   // Most generated successors revisit an existing discrete key.  The packed path is lossless;
   // wider keys use the exact vector bucket below.  D atoms are indexed by this numeric key, so
@@ -3296,7 +3296,7 @@ int Otf::online_register_key(const LocVec& locs, const IntVec& ints,
   return ki.id;
 }
 
-int Otf::online_reset_class(int tag) {
+int LivenessEngine::online_reset_class(int tag) {
   if (tag < 0 || tag >= static_cast<int>(tags_.size())) {
     online_failed_ = true;
     return -1;
@@ -3324,7 +3324,7 @@ int Otf::online_reset_class(int tag) {
 /// Before that point there is nothing to pull backward.  Raw graph edges already retain their
 /// transition tags and target representatives, so the exact key skeleton for the explored
 /// prefix can be indexed once, locally, without regenerating a successor or rebuilding a graph.
-void Otf::online_enable_key_graph() {
+void LivenessEngine::online_enable_key_graph() {
   if (online_key_graph_enabled_) return;
   online_key_graph_enabled_ = true;
   for (std::size_t raw_slot = 0; raw_slot < online_raw_adj_.size(); ++raw_slot) {
@@ -3346,7 +3346,7 @@ void Otf::online_enable_key_graph() {
   }
 }
 
-void Otf::online_register_edge(int src, int tgt, int reset_class) {
+void LivenessEngine::online_register_edge(int src, int tgt, int reset_class) {
   if (reset_class < 0 || reset_class >= static_cast<int>(online_reset_sets_.size())) {
     online_failed_ = true;
     return;
@@ -3371,7 +3371,7 @@ void Otf::online_register_edge(int src, int tgt, int reset_class) {
   }
 }
 
-void Otf::online_recheck_key(int key) {
+void LivenessEngine::online_recheck_key(int key) {
   if (key < 0 || key >= static_cast<int>(online_key_by_id_.size())) return;
   OnlineKeyInfo& ki = *online_key_by_id_[key];
   const std::size_t count = ki.node_count;
@@ -3458,7 +3458,7 @@ void Otf::online_recheck_key(int key) {
   }
 }
 
-void Otf::online_recheck_dirty() {
+void LivenessEngine::online_recheck_dirty() {
   if (online_global_dirty_) {
     online_global_dirty_ = false;
     online_dirty_keys_.clear();
@@ -3478,7 +3478,7 @@ void Otf::online_recheck_dirty() {
 }
 
 /// @brief Build the root through the common exact root pipeline, then retain it online.
-bool Otf::online_build_all() {
+bool LivenessEngine::online_build_all() {
   return build_all();
 }
 
@@ -3488,7 +3488,7 @@ bool Otf::online_build_all() {
 /// its reset-labelled key edge.  A new atom may then invalidate an earlier certificate.  Only
 /// after the atom worklist reaches its current fixed point are the successors covered or made
 /// active.
-void Otf::online_expand(int u) {
+void LivenessEngine::online_expand(int u) {
   grow();
   if (cancelled() || online_failed_ || u < 0 || u >= (int)nrec()) return;
   if (!online_active_[u] || expanded[u]) return;
@@ -3507,7 +3507,7 @@ void Otf::online_expand(int u) {
   zread(u, usc.zone);
   std::chrono::steady_clock::time_point successor_start;
   if (profile) successor_start = std::chrono::steady_clock::now();
-  gfp_succ_tagged(net, usc, L, U, qmask, emode, succ, stags,
+  tagged_successors(net, usc, L, U, qmask, emode, succ, stags,
                   avoid_forward_ ? avoid_ : nullptr);
   std::chrono::steady_clock::time_point successor_done;
   if (profile) successor_done = std::chrono::steady_clock::now();
@@ -3624,7 +3624,7 @@ void Otf::online_expand(int u) {
 }
 
 /// @brief Drain the coupled expansion / atom / cover-certificate worklists to quiescence.
-void Otf::online_drain_forward_work() {
+void LivenessEngine::online_drain_forward_work() {
   for (;;) {
     online_drain_atoms();
     online_recheck_dirty();
@@ -3658,7 +3658,7 @@ void Otf::online_drain_forward_work() {
 /// exact incoming image of every materialised record, so those parked records are activated and
 /// expanded here before the single gfp starts.  No state is rediscovered from the root and no
 /// graph is rebuilt: this drains retained records through the same online-D worklist.
-void Otf::online_complete_eg_history() {
+void LivenessEngine::online_complete_eg_history() {
   online_eg_repair_ = true;
   const std::size_t parked = nrec();
   std::size_t pending = 0;
@@ -3677,7 +3677,7 @@ void Otf::online_complete_eg_history() {
 }
 
 /// @brief Start the persistent D forward construction and settle all online refinement work.
-void Otf::online_base_forward() {
+void LivenessEngine::online_base_forward() {
   fwd_ok_ = online_build_all();
   if (!fwd_ok_) return;
   online_drain_forward_work();
@@ -3688,7 +3688,7 @@ void Otf::online_base_forward() {
 /// No successor is regenerated here.  The defensive wake-up loop only handles an edge whose
 /// target lost its last certificate after the main worklist checked it; it activates that retained
 /// raw record and lets the ordinary online worklist expand it for the first (and only) time.
-void Otf::online_finalize_graph() {
+void LivenessEngine::online_finalize_graph() {
   if (!fwd_ok_ || cancelled() || online_failed_) return;
 
   for (;;) {
@@ -3731,7 +3731,7 @@ void Otf::online_finalize_graph() {
 
   // Every materialised record remains a backward vertex, including an old representative that
   // later left the forward antichain.  Its incoming edge was generated for this exact zone; a
-  // forward-sound redirection to a simulator is not an exact inverse for gfp_pre.  Compaction
+  // forward-sound redirection to a simulator is not an exact inverse for exact_predecessor.  Compaction
   // therefore removes records only from future cover scans, never from the finished graph.
   // With that invariant the existing numbering, zones, and raw adjacency can all be moved.
   bool already_dense = online_active_.size() == nrec();
@@ -3859,16 +3859,16 @@ void Otf::online_finalize_graph() {
 
 /// @brief Build the whole reachable zone graph.
 ///
-/// @pre ::Otf::setup has run.
+/// @pre ::LivenessEngine::setup has run.
 /// @post @ref fwd_ok_ is @c false iff the initial state is vacuous; otherwise every reachable
 ///       node is stored and expanded, subject to cancellation.
 ///
 ///       frontier. A frontier that pushes a successor whenever `!expanded[v]` is harmless while
-///       ::Otf::intern only appends, since `expanded` then goes 0 -> 1 once per node; it becomes
+///       ::LivenessEngine::intern only appends, since `expanded` then goes 0 -> 1 once per node; it becomes
 ///       quadratic as soon as intern rewrites, because every rewrite resets `expanded[v]` and
 ///       re-queues `v` once per in-edge, every level. Deduplicating changes only how often a
 ///       node is queued, never which nodes are explored, so stored-state counts are unaffected.
-void Otf::base_forward() {
+void LivenessEngine::base_forward() {
       fwd_ok_ = build_all();
       if (!fwd_ok_) return;
       std::deque<int> work;
@@ -3881,10 +3881,10 @@ void Otf::base_forward() {
       // early witness probe. `E[] psi` is satisfied on 220 of the 254 decided rows of the
       // benchmark suite, and on those the whole forward graph is built to certify a witness that
       // a fraction of it already contains -- fischer8 `E[] x0 <= 40 && !P1.cs` needs 292 of its
-      // 129468 nodes. ::Otf::eg_probe is sound in the sat direction on a partial graph, so the
+      // 129468 nodes. ::LivenessEngine::eg_probe is sound in the sat direction on a partial graph, so the
       // search may stop the moment one fires; NOT is never concluded here.
       //
-      // Hoisted out of the per-edge test below: ::Otf::is_nq opens with a ::Otf::grow it does not
+      // Hoisted out of the per-edge test below: ::LivenessEngine::is_nq opens with a ::LivenessEngine::grow it does not
       // need here, the loop running right after one, and at one call per edge that is not free.
       const bool psi_prune = eg_early_;
       //
@@ -3919,11 +3919,11 @@ void Otf::base_forward() {
         //
         // AND, for `E[] psi`, only if it still satisfies psi. psi's clock part is folded into the
         // restricted network's invariants, so the forward search never leaves it; its discrete
-        // part is not, and was left to ::Otf::is_nq at closure time -- so the search explored the
+        // part is not, and was left to ::LivenessEngine::is_nq at closure time -- so the search explored the
         // whole reachable graph and then discarded 73% of it on fischer7. A maximal psi-run is in
         // psi at every step, so a run reaching a non-psi node has already left psi and neither
         // that node nor anything beyond it can lie on a witness. Not expanding it therefore
-        // removes nothing from ::Otf::eg_closure: a psi-node reachable only through a non-psi
+        // removes nothing from ::LivenessEngine::eg_closure: a psi-node reachable only through a non-psi
         // node was never admitted to it in the first place. It removes 3x the stored nodes and
         // almost no time, because those nodes were never in the closure the fixpoint iterates.
         for (const auto& e : adj[u])
@@ -3944,30 +3944,30 @@ void Otf::base_forward() {
       }
 }
 
-void Otf::build_forward(GfpStats* gs) {
+void LivenessEngine::build_forward(GfpStats* gs) {
   setup();
   base_forward();
   fill_stats(gs);
 }
 
-bool Otf::finish_verdict(GfpStats* gs) {
+bool LivenessEngine::finish_verdict(GfpStats* gs) {
   const bool violated = fwd_ok_ && final_verdict_violated();
   fill_stats(gs);
   return !violated;
 }
 
-bool Otf::eg_from_initial(GfpStats* gs) {
+bool LivenessEngine::eg_from_initial(GfpStats* gs) {
   setup();
   base_forward();
   if (eg_early_hit_) { fill_stats(gs); return true; }   // witness proven on the partial graph
   return eg_verdict(gs);
 }
 
-std::vector<int> Otf::eg_closure() {
+std::vector<int> LivenessEngine::eg_closure() {
   std::vector<int> S;
   if (nrec() == 0) return S;
   grow();
-  // The psi-closure reached from the initial vertex. ::Otf::accepting_closure seeds from every
+  // The psi-closure reached from the initial vertex. ::LivenessEngine::accepting_closure seeds from every
   // p-node because `p --> q` accepts a witness anywhere; here the run must start at the initial
   // state, so a node reachable only by leaving psi and coming back must not be admitted.
   if (!expanded[0] || !is_nq(0)) return S;
@@ -3984,7 +3984,7 @@ std::vector<int> Otf::eg_closure() {
   return S;
 }
 
-bool Otf::eg_probe() {
+bool LivenessEngine::eg_probe() {
   if (!fwd_ok_ || nrec() == 0) return false;
   const bool saved_capped = capped;         // sticky, and a probe must not condemn the real run
   const bool saved_scc = scc_iter_;
@@ -3993,34 +3993,34 @@ bool Otf::eg_probe() {
   const std::vector<int> S = eg_closure();
   if (!S.empty()) {
     std::vector<Federation> W;
-    gfp_on(S, W);
-    if (!capped) sat = !gfp_fed_empty(W[0]);
+    solve_greatest_fixpoint(S, W);
+    if (!capped) sat = !fed_is_empty(W[0]);
   }
   capped = saved_capped;
   scc_iter_ = saved_scc;
   return sat;
 }
 
-bool Otf::eg_verdict(GfpStats* gs) {
+bool LivenessEngine::eg_verdict(GfpStats* gs) {
   scc_iter_ = true;             // the verdict is one node's, so diameter is what costs here
   bool res = false;
   if (fwd_ok_ && nrec() != 0) {
     const std::vector<int> S = eg_closure();
     if (!S.empty()) {
       std::vector<Federation> W;
-      gfp_on(S, W);
-      if (!capped) res = !gfp_fed_empty(W[0]);
+      solve_greatest_fixpoint(S, W);
+      if (!capped) res = !fed_is_empty(W[0]);
     }
   }
   fill_stats(gs);
   return res;
 }
 
-bool Otf::run(GfpStats* gs) {
+bool LivenessEngine::run(GfpStats* gs) {
   setup();
   base_forward();
   // A concrete `p /\ EG !q` witness found during construction is already the verdict; see
-  // ::Otf::leadsto_witness. `run` also serves `E[] psi`, whose own early hit is handled by its
+  // ::LivenessEngine::leadsto_witness. `run` also serves `E[] psi`, whose own early hit is handled by its
   // caller, so this only fires when leads-to armed it.
   if (leadsto_early_ && eg_early_hit_) { fill_stats(gs); return false; }
   const bool violated = fwd_ok_ && final_verdict_violated();
@@ -4034,8 +4034,8 @@ bool Otf::run(GfpStats* gs) {
 /// semantic edges are built once; a provisionally covered successor is represented only by its
 /// source-edge replay handle.  Atom pullback and expansion share one worklist, and only the
 /// stable active quotient reaches the backward gfp.
-bool Otf::run_online_d(GfpStats* gs) {
-  // A violated `p --> q` needs no finished graph: see ::Otf::leadsto_witness. Armed before either
+bool LivenessEngine::decide_leads_to(GfpStats* gs) {
+  // A violated `p --> q` needs no finished graph: see ::LivenessEngine::leadsto_witness. Armed before either
   // delegation below, so the exact and structurally-empty-D routes get it too. Disabled with
   // HORA_LEADSTO_EARLY=0, for measuring what it saves.
   leadsto_early_ = [] {
@@ -4154,7 +4154,7 @@ bool Otf::run_online_d(GfpStats* gs) {
   return !violated;
 }
 
-bool Otf::eg_from_initial_online_d(GfpStats* gs) {
+bool LivenessEngine::decide_exists_invariant_run(GfpStats* gs) {
   if (network_has_diagonal(net) || force_exact_) return eg_from_initial(gs);
 
   online_d_ = true;
@@ -4190,13 +4190,13 @@ bool Otf::eg_from_initial_online_d(GfpStats* gs) {
   return r;
 }
 
-void Otf::fill_stats(GfpStats* gs) {
+void LivenessEngine::fill_stats(GfpStats* gs) {
   if (gs) {
     gs->fwd_nodes = nrec();
     gs->disc_keys = bucket.size();
     gs->fwd_edges = 0;
     for (const auto& a : adj) gs->fwd_edges += a.size();
-    gs->iters = gfp_iters;
+    gs->iters = fixpoint_iterations;
     gs->capped = capped;
     gs->fed_max = fed_max;
     gs->fed_avg = fed_avg;
@@ -4233,13 +4233,13 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
                               const detail::DelayAvoidSet* avoid, bool witness_only) {
   static const DiscPred kTrue{};
   auto make = [&](bool exact) {
-    auto e = std::make_unique<Otf>(net, kTrue, nq, exact, nullptr, unrestricted);
+    auto e = std::make_unique<LivenessEngine>(net, kTrue, nq, exact, nullptr, unrestricted);
     e->set_avoid(avoid);
     e->set_eg_early(true);                          // SAT may be concluded on a partial graph
     return e;
   };
   (void)witness_only;
-  return make(false)->eg_from_initial_online_d(gs);
+  return make(false)->decide_exists_invariant_run(gs);
 }
 
 /// @brief `p --> q` where either operand constrains clocks or carries boolean structure.
@@ -4310,14 +4310,14 @@ bool leads_to_clocks(const Network& net, const DiscPred& p, const DiscPred& nq, 
   }
 
   auto make = [&](bool exact) {
-    auto e = std::make_unique<Otf>(bounded, p, nq, exact);
+    auto e = std::make_unique<LivenessEngine>(bounded, p, nq, exact);
     e->set_avoid(av.parts.empty() ? nullptr : &av, /*forward=*/false);
     return e;
   };
   // The clock/boolean front-end uses the same persistent quotient.  Its forbidden region still
   // confines only the backward phase (`forward=false` above), while D atoms are discovered from
   // the ordinary reachable key skeleton as the online construction grows.
-  return make(false)->run_online_d(gs);
+  return make(false)->decide_leads_to(gs);
 }
 
 /// @brief Decide the discrete leads-to query `p --> q`.
@@ -4328,8 +4328,8 @@ bool leads_to_clocks(const Network& net, const DiscPred& p, const DiscPred& nq, 
 /// never rebuilt.  Once the coupled worklist stabilises, existing edges are redirected to the
 /// active D representatives and one backward gfp decides the verdict.
 bool leads_to_otf(const Network& net, const DiscPred& p, const DiscPred& q, GfpStats* gs) {
-  Otf e(net, p, q);
-  return e.run_online_d(gs);
+  LivenessEngine e(net, p, q);
+  return e.decide_leads_to(gs);
 }
 
 }  // namespace hora
