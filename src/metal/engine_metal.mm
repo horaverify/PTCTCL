@@ -8,8 +8,8 @@
 // GPU runs the same algebra; identical verdicts to seq/omp/cuda by construction.
 //
 // Buffers use shared storage (unified memory on Apple silicon): host<->device transfer is
-// a plain memcpy. Only compiled when PTCTLMC_HAVE_METAL is defined (see CMake).
-#ifdef PTCTLMC_HAVE_METAL
+// a plain memcpy. Only compiled when HORA_HAVE_METAL is defined (see CMake).
+#ifdef HORA_HAVE_METAL
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -18,16 +18,15 @@
 #include <string>
 #include <vector>
 
-#include "ptctlmc/dbm.hpp"
-#include "ptctlmc/dbm_ops.hpp"
-#include "ptctlmc/metal_reach.hpp"
+#include "hora/zone.hpp"
+#include "hora/gpu/metal.hpp"
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
 constexpr int kMaxDim = 24;  // up to 23 clocks (matches the CUDA backend)
 
-#define PTCTLMC_MTL_CHECK(cond, msg) \
+#define HORA_MTL_CHECK(cond, msg) \
   do { if (!(cond)) throw std::runtime_error(std::string("Metal: ") + (msg)); } while (0)
 
 struct ParamsGPU { std::int32_t dim; std::int32_t nwork; };
@@ -190,16 +189,16 @@ bool reachable_metal(const TimedAutomaton& ta, const std::vector<char>& accept,
 
   @autoreleasepool {
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-    PTCTLMC_MTL_CHECK(device != nil, "no system default Metal device");
+    HORA_MTL_CHECK(device != nil, "no system default Metal device");
     id<MTLCommandQueue> queue = [device newCommandQueue];
     NSError* err = nil;
     id<MTLLibrary> lib = [device newLibraryWithSource:kSource options:nil error:&err];
-    PTCTLMC_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
+    HORA_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
                                       (err ? err.localizedDescription.UTF8String : "?"));
     id<MTLFunction> fn = [lib newFunctionWithName:@"gen_kernel"];
-    PTCTLMC_MTL_CHECK(fn != nil, "kernel 'gen_kernel' not found");
+    HORA_MTL_CHECK(fn != nil, "kernel 'gen_kernel' not found");
     id<MTLComputePipelineState> pso = [device newComputePipelineStateWithFunction:fn error:&err];
-    PTCTLMC_MTL_CHECK(pso != nil, "pipeline creation failed");
+    HORA_MTL_CHECK(pso != nil, "pipeline creation failed");
 
     auto buf = [&](const void* p, std::size_t bytes) {
       if (bytes == 0) { std::int32_t z = 0; return [device newBufferWithBytes:&z length:sizeof(z)
@@ -266,7 +265,7 @@ bool reachable_metal(const TimedAutomaton& ta, const std::vector<char>& accept,
       [enc endEncoding];
       [cb commit];
       [cb waitUntilCompleted];
-      PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
+      HORA_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
 
       const int* ol = static_cast<const int*>(b_ol.contents);
       const int* ov = static_cast<const int*>(b_ov.contents);
@@ -293,6 +292,6 @@ bool reachable_metal(const TimedAutomaton& ta, const std::vector<char>& accept,
   }
 }
 
-}  // namespace ptctlmc
+}  // namespace hora
 
-#endif  // PTCTLMC_HAVE_METAL
+#endif  // HORA_HAVE_METAL

@@ -1,15 +1,15 @@
 // dbm_tests.cpp — unit tests for the DBM zone algebra.
 #include <cstdio>
 
-#include "ptctlmc/dbm.hpp"
-#include "ptctlmc/reach.hpp"
-#include "ptctlmc/ta.hpp"
-#include "ptctlmc/detail/net_semantics.hpp"
+#include "hora/zone.hpp"
+#include "hora/reach.hpp"
+#include "hora/automaton.hpp"
+#include "hora/detail/semantics.hpp"
 
 namespace {
 int g_fail = 0, g_checks = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
-using namespace ptctlmc;
+using namespace hora;
 
 // 1-clock zone [lo,hi]  (hi<0 => unbounded above).
 Dbm zone1(int lo, int hi) {
@@ -127,7 +127,7 @@ void test_reachability() {
 
 // ---- delay_avoiding: time may pass, but never through the convex region `forbid` ----
 //
-// The operator behind a liveness predicate that must be AVOIDED rather than maintained, i.e.
+// The operator behind a liveness predicate that must be avoided rather than maintained, i.e.
 // the complement of a conjunction, which is a disjunction and so is not an invariant.
 void test_delay_avoiding() {
   using detail::delay_avoiding;

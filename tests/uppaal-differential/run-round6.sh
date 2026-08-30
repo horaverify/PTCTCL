@@ -1,7 +1,7 @@
 #!/bin/zsh
-cd /Users/brdlcu/Documents/Github/PTCTLMC/PTCTLMC
+cd /Users/brdlcu/Documents/Github/HORA/HORA
 V=/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta
-S=/private/tmp/claude-501/-Users-brdlcu-Documents-Github-PTCTLMC/0206a6ad-f8e7-42c3-b6c1-73a249aed5e9/scratchpad
+S=/private/tmp/claude-501/-Users-brdlcu-Documents-Github-HORA/0206a6ad-f8e7-42c3-b6c1-73a249aed5e9/scratchpad
 OUT=$S/uppaal-diff6.txt; : > $OUT; TMP=$S/six.q
 norm() { local t="$(cat)"
   if   echo "$t" | grep -q -- "-- Formula is satisfied"     ; then echo SAT
@@ -9,7 +9,7 @@ norm() { local t="$(cat)"
   elif echo "$t" | grep -qi "UNSUPPORTED"                   ; then echo UNSUP
   else echo ERR; fi; }
 run_pair() { local m="$1" q="$2"; print -r -- "$q" > $TMP
-  local a=$(./build-freshmain/ptctlmc --backend seq "$m" "$TMP" 2>&1 | norm)
+  local a=$(./build-freshmain/hora --backend seq "$m" "$TMP" 2>&1 | norm)
   local b=$("$V" -q "$m" "$TMP" 2>&1 | norm)
   local mk="ok  "; [[ "$a" != "$b" ]] && mk="DIFF"
   printf "%s | %-6s %-6s | %-12s | %s\n" "$mk" "$a" "$b" "$(basename $m .xml)" "$q" >> $OUT; }

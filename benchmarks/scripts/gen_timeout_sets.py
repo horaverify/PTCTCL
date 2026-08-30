@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Derive the 2-hour re-run work lists from the 600 s sweep results.
 
-Reads every results/ptctlmc_t<T>_c<C>_v2.csv plus results/verifyta_only.csv and, per
+Reads every results/hora_t<T>_c<C>_v2.csv plus results/verifyta_only.csv and, per
 configuration, emits the models that DID NOT PRODUCE A NUMBER at the 600 s budget:
 
   * TIMEOUT / MEMOUT   -- ran out of wall clock or RAM
@@ -21,6 +21,8 @@ Output: results/timeout2h/worklist.tsv, one line per job, read by run_timeout2h.
 for the harness's dedicated flags ('-' when empty). Regenerating is safe and idempotent.
 """
 import csv, glob, os, re, sys
+
+from tool_names import canonical  # pre-rename CSVs say 'ptctlmc'
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # benchmarks/
 RES = os.path.join(HERE, "results")
@@ -83,21 +85,21 @@ def main():
 
     def tc(path):   # sort by (threads, chunk) NUMERICALLY -- a plain filename sort puts c16 first
         # Not anchored on `_v2.csv$`: the 600 s sweep files also carry the settings they were
-        # produced with (ptctlmc_t16_c8_ms32_hl64_600s_v2.csv), now that mergescan/hotlen are
+        # produced with (hora_t16_c8_ms32_hl64_600s_v2.csv), now that mergescan/hotlen are
         # sweepable and a bare name no longer says which values a file used.
-        m = re.search(r"ptctlmc_t(\d+)_c(\d+)", os.path.basename(path))
+        m = re.search(r"hora_t(\d+)_c(\d+)", os.path.basename(path))
         return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
-    for path in sorted(glob.glob(os.path.join(RES, "ptctlmc_t*_c*_v2.csv")), key=tc):
+    for path in sorted(glob.glob(os.path.join(RES, "hora_t*_c*_v2.csv")), key=tc):
         # Not anchored on `_v2.csv$`: the 600 s sweep files also carry the settings they were
-        # produced with (ptctlmc_t16_c8_ms32_hl64_600s_v2.csv), now that mergescan/hotlen are
+        # produced with (hora_t16_c8_ms32_hl64_600s_v2.csv), now that mergescan/hotlen are
         # sweepable and a bare name no longer says which values a file used.
-        m = re.search(r"ptctlmc_t(\d+)_c(\d+)", os.path.basename(path))
+        m = re.search(r"hora_t(\d+)_c(\d+)", os.path.basename(path))
         if not m:
             continue
         T, C = int(m.group(1)), int(m.group(2))
         bad = failed_models(path, REQ_C8 if C == 8 else REQ_V2)
-        jobs.append(as_job("ptctlmc-omp", T, C, bad))
+        jobs.append(as_job("hora-omp", T, C, bad))
         report.append((os.path.basename(path), bad))
 
     with open(os.path.join(OUT, "worklist.tsv"), "w") as fh:

@@ -1,84 +1,127 @@
-# PTCTLMC — Parallel Timed-CTL Model Checker (GPU + OpenMP)
+# HORA
 
-PTCTLMC checks **UPPAAL-style timed-CTL queries** (`E<>`, `A[]`) over **timed
-automata**, parallelizing the zone-graph exploration with **OpenMP** and **CUDA**.
-It's the timed sibling of [PCTLMC](../PCTLMC) (the CTL engine): same philosophy —
-own a GPU-portable core, validate against the reference tool (`verifyta`), ship
-three interchangeable backends.
-
-> Status: single-automaton clock fragment, validated against UPPAAL's `verifyta`.
-> See [`ROADMAP.md`](ROADMAP.md). Networks/liveness are the next milestone.
-
-## What it does
-
-Given a UPPAAL `.xml` model and a `.q` query file, PTCTLMC reports, for each query,
-`Formula is satisfied.` / `Formula is NOT satisfied.` — agreeing with `verifyta`.
+A model checker for **timed CTL** over **networks of timed automata**, in the UPPAAL style.
+HORA answers `E<>`, `A[]`, `E[]` and `p --> q` over a `.xml` model and a `.q` query file, and
+reports the same verdicts as UPPAAL's `verifyta`.
 
 ```
-.xml + .q ─▶ parser ─▶ TA IR ─▶ zone-graph exploration ─▶ verdict
-             (own       clocks,   (DBM zones: delay/reset/     E<> / A[]
-              minimal    locations, guard/invariant/extrapolate,
-              XML+expr)  edges      passed-list subsumption)
-                                    backend: seq | omp | cuda
+.xml + .q ─▶ parser ─▶ network IR ─▶ zone-graph search ─▶ verdict
+             (own       locations,   (DBM zones: delay, reset, guard,
+              XML +      clocks,      invariant, extrapolation, a_LU
+              expression int vars,    subsumption; backward greatest
+              front end) channels     fixpoint for liveness)
 ```
 
-## The core: DBMs and zones
+Zones are Difference Bound Matrices, provided by [HDBM](HDBM/) — a standalone header-only
+library in its own repository, with no dependency on this tool.
 
-A **zone** (set of clock valuations) is a **Difference Bound Matrix** — a dense
-`(n+1)×(n+1)` integer matrix of bounds on `x_i − x_j`. All operations (canonicalize
-via Floyd–Warshall, `delay`/up, `reset`, conjoin guards/invariants, emptiness,
-inclusion/subsumption, LU/max extrapolation) live in
-[`dbm_ops.hpp`](include/ptctlmc/dbm_ops.hpp) as **`__host__ __device__` functions**
-— so the CPU unit tests validate the *exact* code the GPU runs.
-
-Reachability is a zone-graph search with a **passed list using inclusion
-(subsumption)** and **extrapolation** for termination — the standard UPPAAL
-approach.
-
-## Backends
-
-| backend | what's parallel |
-|---|---|
-| `seq` | reference (sequential passed/waiting) |
-| `omp` | **shared‑passed hybrid**: one stripe‑locked passed table (no static partition, no serial barrier) with fused expand+insert, zone interning, and successor storage reuse — LTSmin's parallel shape with PTCTLMC's exact convex‑union merge (`--legacy-passed` for the old static‑shard design) |
-| `metal` / `cuda` | one GPU thread per (frontier-state, edge): full DBM pipeline on device; host does the subsumption merge. Auto-enabled when the toolkit/framework is present |
-
-All give identical verdicts (`seq`==`omp` is unit-tested; GPU mirrors them and
-shares the validated DBM ops).
-
-**Head‑to‑head vs the 2012 opaal+LTSmin multi‑core tool** (rebuilt from source; see
-`LTStest/`): the `omp` hybrid **wins every viking size** — LTSmin's own benchmark —
-and **crushes Fischer** (~1000× at N=6), because PTCTLMC's exact‑zone convex‑union
-merge keeps the symbolic/discrete ratio ≈1 where LTSmin's extrapolation explodes it
-to ~50.
-
-## Build & run
+## Building
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
-./build/ptctlmc --backend omp model.xml query.q
-# GPU build (H100):
-cmake -S . -B build-cuda -DCMAKE_CUDA_ARCHITECTURES=90 && cmake --build build-cuda -j
-./build/ptctlmc --backend cuda model.xml query.q
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/hora model.xml query.q
 ```
+
+CUDA and Metal back ends are detected automatically and are optional; without either, the
+OpenMP and sequential back ends are always available.
+
+```sh
+./build/hora --backend omp   model.xml query.q   # parallel CPU (default)
+./build/hora --backend seq   model.xml query.q   # sequential reference
+./build/hora --zones packed  model.xml query.q   # smaller zone storage, slower probes
+./build/hora                                     # full option list
+```
+
+## What it decides
+
+| query | meaning |
+|---|---|
+| `E<> φ` | some reachable state satisfies φ |
+| `A[] φ` | every reachable state satisfies φ, including `A[] not deadlock` |
+| `E[] φ` | some maximal run satisfies φ throughout |
+| `p --> q` | every `p`-state is eventually followed by `q` on every maximal run |
+
+`φ` may combine location predicates, integer-variable constraints and clock constraints, with
+conjunction, disjunction and negation. Networks may synchronise over binary and broadcast
+channels, and may use urgent and committed locations and urgent channels.
+
+## How liveness works
+
+`p --> q` fails exactly when some reachable state satisfies `p ∧ EG¬q`, and `EG` is a greatest
+fixpoint. HORA builds the zone graph **once**, then solves
+
+```
+W = W ∧ (NoSucc ∨ Pre(W))
+```
+
+backwards over it. The essential observation is that **zone subsumption is fatal forwards and
+harmless backwards**: a subsumption edge redirects to a zone larger than the true successor,
+which forwards manufactures cycles the system cannot run, but backwards only ever enters as an
+upper bound — the direction soundness needs. Liveness therefore runs on the fully subsumed
+graph, at the same state count as plain reachability.
+
+Two refinements matter:
+
+- **The `D` refinement.** Plain `a_LU` subsumption does not preserve deadlock, and the stopping
+  term `NoSucc` reads exactly that. HORA discovers a deadlock-preserving refinement of `a_LU`
+  *while* it explores, so there is one construction rather than a preliminary graph and a rebuild.
+- **The early witness.** A reached `p ∧ ¬q` valuation that can end a maximal run is already a
+  counterexample, so a violated query needs no finished graph. See
+  [the soundness argument](docs/specs/2026-08-30-early-leadsto-witness-soundness.md).
 
 ## Correctness
 
-Validated by **differential testing against `verifyta`** (UPPAAL 5.0.0):
-`tests/validate_ta.py model.xml query.q` compares verdicts per query. The curated
-suite in `tests/models/` (lamp, periodic-deadline, watchdog, two-clock-race,
-urgent/committed, stopwatch-cycle — 36 queries) all match `verifyta`; run
-`tests/run_all_ta.sh`.
+Verdicts are checked differentially against `verifyta` (UPPAAL 5.0.0) where it is available, and
+against the previous build otherwise:
 
-## Supported fragment (v1)
+```sh
+ctest --test-dir build                                  # unit, zone-algebra property, bisimulation
+tests/validate_ta.py model.xml query.q                  # one model against verifyta
+tests/run_all_ta.sh                                     # the curated suite
+benchmarks/scripts/live_diff.py OLD NEW out.csv \
+    --suites live,eg,violated,reach,deadlock            # old vs new, aborts on disagreement
+```
 
-Single `<template>`, clock variables, location invariants + urgent/committed,
-edge guards + clock resets, conjunctive clock constraints incl. diagonals
-(`x-y<=c`), queries `E<>`/`A[]` over a location and/or clock bounds.
-**Deferred:** networks + channel synchronisation, integer variables, liveness
-(`A<>`, `E[]`, `-->`), trace generation. See `ROADMAP.md`.
+The zone algebra carries property tests: the primitives that claim to need no canonicalisation
+are checked entrywise against the closing versions over randomly generated zones, and the exact
+convex-union merge is checked against an independent set-difference oracle.
+
+## Layout
+
+```
+include/hora/          public headers
+  zone.hpp               HDBM's zone algebra, imported into `hora`
+  automaton.hpp          a single timed automaton
+  network.hpp            a network of them
+  expression.hpp         the model's expression language
+  predicate.hpp          lowered query predicates
+  model_io.hpp           reading a model file
+  query.hpp              a parsed query, and answering one
+  reachability.hpp       E<> / A[] / deadlock
+  liveness.hpp           E[] / p --> q
+  config.hpp             every process-global engine switch
+  bisimulation.hpp       timed (bi)simulation between two automata
+  symmetry.hpp           process-symmetry reduction
+  gpu/                   CUDA and Metal drivers
+  detail/                private to the engine
+
+src/
+  model/                 the model in memory: automaton, network, expressions, integer ranges
+  frontend/              reading a model file and a query file
+  query/                 lowering a query and selecting an engine
+  reachability/          the forward zone-graph search, and deadlock
+  liveness/              the online quotient, the D refinement, the backward fixpoint
+  analysis/              bisimulation, symmetry
+  cuda/  metal/          GPU back ends
+
+tests/                 unit, property and differential tests, curated models
+benchmarks/            models, query suites, measurement drivers, recorded results
+docs/                  design.md, limitations.md, specs/
+HDBM/                  the zone library (separate repository)
+```
 
 ## License
 
-MIT for our code. Uses UPPAAL's `verifyta` only as an external test oracle; the
-shipped engine contains no UDBM (GPL) or UTAP (LGPL) code — the DBM is our own.
+MIT for HORA's own code. `verifyta` is used only as an external test oracle; the shipped engine
+contains no UDBM (GPL) or UTAP (LGPL) code — the zone algebra is HDBM's own.

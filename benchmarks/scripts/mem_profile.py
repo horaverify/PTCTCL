@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PTCTLMC peak-memory (RSS) sweep — the memory-footprint companion to bench_run.py.
+"""HORA peak-memory (RSS) sweep — the memory-footprint companion to bench_run.py.
 
 For every (model, N) that appears in benchmarks/results_stress.csv this measures the
 PEAK resident-set size (RSS, in GB, via /usr/bin/time -l) of ALL FOUR backends:
@@ -27,6 +27,8 @@ Output columns: bench,N,stored,rss_seq_gb,rss_omp_gb,rss_metal_gb,rss_verifyta_g
 Rows are flushed immediately so a long run survives interruption.
 """
 import argparse, csv, os, sys
+
+from tool_names import canonical  # pre-rename CSVs say 'ptctlmc'
 
 # Reuse bench_run's definitions verbatim (importing does not run its main()).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -59,7 +61,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "benchmarks", "mem_profile.csv"))
     args = ap.parse_args()
     if not os.path.exists(BIN):
-        sys.exit(f"binary not found: {BIN}  (build first, or set PTCTLMC_BIN)")
+        sys.exit(f"binary not found: {BIN}  (build first, or set HORA_BIN)")
 
     e_seq = dict(os.environ)
     e_omp = dict(os.environ); e_omp["OMP_NUM_THREADS"] = "12"

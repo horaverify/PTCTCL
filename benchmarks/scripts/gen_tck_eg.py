@@ -44,7 +44,7 @@ approximated: a TChecker invariant is a conjunction, and the encodings that
 route around that (a region observer, or per-process location copies) can only
 switch region on a step that all processes take at once, so with disjoint
 regions they can never switch at all. Those rows are reported unencodable and
-left to PTCTLMC and UPPAAL.
+left to HORA and UPPAAL.
 """
 import argparse
 import json

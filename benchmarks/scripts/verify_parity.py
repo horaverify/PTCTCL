@@ -8,8 +8,8 @@ rather than a column in a table.
 For every (model, query) pair it runs three things:
 
     verifyta -u                 the reference tool (UPPAAL 5.0.0), the oracle
-    ptctlmc                     the branch binary with every new flag OFF  -> the BASELINE
-    ptctlmc <flags>             the branch binary with the workstream flag ON
+    hora                     the branch binary with every new flag OFF  -> the BASELINE
+    hora <flags>             the branch binary with the workstream flag ON
 
 Running the baseline as "the same binary with the flag off" rather than as a separately built
 binary from `main` is deliberate: it makes "the flag is genuinely off by default" part of what
@@ -21,11 +21,11 @@ STATE COUNTS are the result. They are reported as deltas -- flag-on vs baseline,
 vs verifyta -- for explored states.
 
 The engine used to publish discrete-state, stored-zone, distinct-zone and generated counts
-under PTCTLMC_STATS. That switch and its counters were removed when the engine stopped reading
+under HORA_STATS. That switch and its counters were removed when the engine stopped reading
 the environment, so this gate compares the number the binary prints on every run: explored
 symbolic states. Verdict parity, which is what the gate exists for, is unaffected.
 
-Every ptctlmc run is SINGLE-THREADED. thm:determinism says the verdict is deterministic but the
+Every hora run is SINGLE-THREADED. thm:determinism says the verdict is deterministic but the
 state count is not: the convex-union merge is order-sensitive, so at >1 thread two runs of the
 same binary can report different counts. State counts are only comparable across commits at one
 thread, so the gate refuses to produce them any other way.
@@ -41,7 +41,7 @@ import argparse, csv, os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # PTCTCL/
 MODELS = os.path.join(ROOT, "benchmarks", "models")
 QUERIES = os.path.join(ROOT, "benchmarks", "queries")
-BIN = os.environ.get("PTCTLMC_BIN", os.path.join(ROOT, "build-mostopt", "ptctlmc"))
+BIN = os.environ.get("HORA_BIN", os.path.join(ROOT, "build-mostopt", "hora"))
 VERIFYTA = os.environ.get("VERIFYTA",
     "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta")
 
@@ -57,7 +57,7 @@ def run(cmd, env=None, timeout=None):
 
 
 def verdict_of(out):
-    """UPPAAL and PTCTLMC print the same two sentences; parse both with one function.
+    """UPPAAL and HORA print the same two sentences; parse both with one function.
 
     Order matters: "NOT satisfied" contains "satisfied", so the negative is tested first.
     """
@@ -68,7 +68,7 @@ def verdict_of(out):
     return "?"
 
 
-def probe_ptctlmc(binary, xml, qf, flags, timeout):
+def probe_hora(binary, xml, qf, flags, timeout):
     env = dict(os.environ)
     env["OMP_NUM_THREADS"] = "1"          # thm:determinism -- counts are only comparable at 1 thread
     rc, out = run([binary, "--backend", "omp", *flags, xml, qf], env, timeout)
@@ -157,7 +157,7 @@ def main():
     args.flags = args.flags.split()
 
     if not os.path.exists(args.bin):
-        sys.exit(f"binary not found: {args.bin}  (build it, or set PTCTLMC_BIN)")
+        sys.exit(f"binary not found: {args.bin}  (build it, or set HORA_BIN)")
     only = {x for x in args.only.split(",") if x}
     work = collect(only, args.max_n)
     if not work:
@@ -179,8 +179,8 @@ def main():
 
     for model, fam, n in work:
         xml = os.path.join(MODELS, model + ".xml")
-        base = probe_ptctlmc(args.bin, xml, query_for(fam, False), [], args.timeout)
-        flag = (probe_ptctlmc(args.bin, xml, query_for(fam, False), args.flags, args.timeout)
+        base = probe_hora(args.bin, xml, query_for(fam, False), [], args.timeout)
+        flag = (probe_hora(args.bin, xml, query_for(fam, False), args.flags, args.timeout)
                 if args.flags else base)
         vfy = probe_verifyta(xml, query_for(fam, True), args.timeout)
 

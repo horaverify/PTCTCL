@@ -36,12 +36,12 @@ the old drivers carried.
 
 Examples
 --------
-    # the standard sweep: ptctlmc, G-simulation, every family, 3 thread counts, detached
-    ./bench.py run --tool ptctlmc --sim g --threads 16 24 32 --families all \
-        --timeout 7200 --memgb 100 --outdir ../recheability_results/ptctlmc_gsim --detach
+    # the standard sweep: hora, G-simulation, every family, 3 thread counts, detached
+    ./bench.py run --tool hora --sim g --threads 16 24 32 --families all \
+        --timeout 7200 --memgb 100 --outdir ../reachability_results/hora_gsim --detach
 
     # one family, quick
-    ./bench.py run --tool ptctlmc --families phil:4-13 --threads 16 --timeout 100
+    ./bench.py run --tool hora --families phil:4-13 --threads 16 --timeout 100
 
     # the other tools
     ./bench.py run --tool ltsmin   --threads 24 --ltsmin-store table --ltsmin-size 25
@@ -50,8 +50,8 @@ Examples
     # the E[] suite, which is the same handle with a different query set. eg_queries/ carries
     # SEVERAL queries per family, so rows are keyed by qidx as well as model and each query is
     # timed out and strike-limited on its own. --cores keeps it off CPUs another sweep is using.
-    ./bench.py run --tool ptctlmc  --queries eg --families all --threads 1 \
-        --outdir ../results_eg/ptctlmc --cores 16-31 --detach
+    ./bench.py run --tool hora  --queries eg --families all --threads 1 \
+        --outdir ../results_eg/hora --cores 16-31 --detach
     ./bench.py run --tool verifyta --queries eg --families all --outdir ../results_eg/uppaal
     ./bench.py run --tool tchecker --queries eg --families all --outdir ../results_eg/tchecker
 
@@ -59,8 +59,8 @@ Examples
     cannot encode is SKIPped with the reason from tck_live_e/manifest.json, which is a refusal
     and not a gap.
 
-    ./bench.py status --outdir ../recheability_results/ptctlmc_gsim
-    ./bench.py stop   --outdir ../recheability_results/ptctlmc_gsim [--soft]
+    ./bench.py status --outdir ../reachability_results/hora_gsim
+    ./bench.py stop   --outdir ../reachability_results/hora_gsim [--soft]
 """
 import argparse, csv, json, os, re, shutil, signal, subprocess, sys, time
 
@@ -78,8 +78,8 @@ VIKDIR = os.path.join(LTS, "src/opaal-ltsmin-succgen/tests/vikingtests")
 LTSMOD = os.path.join(LTS, "models")
 OPAAL  = os.path.join(LTS, "deps/bin/opaal2lts-mc")
 
-DEFAULT_PTCTLMC = os.path.join(PROJ, "build-%s" % ("mac" if PLAT == "macos" else "omp"), "ptctlmc")
-PTCTLMC = os.environ.get("PTCTLMC_BIN") or DEFAULT_PTCTLMC
+DEFAULT_HORA = os.path.join(PROJ, "build-%s" % ("mac" if PLAT == "macos" else "omp"), "hora")
+HORA = os.environ.get("HORA_BIN") or DEFAULT_HORA
 VERIFYTA = ("/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta"
             if PLAT == "macos" else (shutil.which("verifyta") or "verifyta"))
 TCHECKER = os.environ.get("TCHECKER_BIN") or os.path.join(
@@ -119,9 +119,9 @@ UPPAAL_FAMILIES = ["phil", "single", "twolock", "fischer", "viking"]
 # at the first counterexample, so the wall time measures the path to that state and not the
 # state space. That is why grc is out rather than merely noted.
 UNMEASURABLE = {
-    "ptctlmc-omp": {
-        "hddi":  "query UNSUPPORTED by ptctlmc (location-equality disjunctions); exit 1",
-        "train": "ptctlmc exits 1 on train0/train1 (int-array model features)",
+    "hora-omp": {
+        "hddi":  "query UNSUPPORTED by hora (location-equality disjunctions); exit 1",
+        "train": "hora exits 1 on train0/train1 (int-array model features)",
         "grc":   "'A[] not deadlock' is NOT satisfied -- run stops at the first "
                  "counterexample, so the state count is not a state-space measure",
     },
@@ -313,27 +313,27 @@ class Tool:
         return status
 
 
-class PtctlmcTool(Tool):
+class HoraTool(Tool):
     def __init__(self):
-        super().__init__("ptctlmc-omp", True, r"explored ([0-9]+) symbolic")
+        super().__init__("hora-omp", True, r"explored ([0-9]+) symbolic")
 
     def argv(self, a, xml, q, th, so, qidx=0):
-        cmd = [a.ptctlmc_bin, "--backend", "omp"]
+        cmd = [a.hora_bin, "--backend", "omp"]
         if a.chunk is not None:
             cmd += ["--omp-chunk", str(a.chunk)]
         if a.sim != "alu":
             cmd += ["--sim", a.sim]
-        cmd += a.ptctlmc_extra
+        cmd += a.hora_extra
         return cmd + [xml, q]
 
     def env(self, a, th):
         e = {"OMP_NUM_THREADS": str(th)}
         if a.engine != "adaptive":
-            e["PTCTLMC_ENGINE"] = a.engine
+            e["HORA_ENGINE"] = a.engine
         if a.mergescan is not None:
-            e["PTCTLMC_MERGESCAN"] = str(a.mergescan)
+            e["HORA_MERGESCAN"] = str(a.mergescan)
         if a.hotlen is not None:
-            e["PTCTLMC_HOTLEN"] = str(a.hotlen)
+            e["HORA_HOTLEN"] = str(a.hotlen)
         return e
 
 
@@ -439,7 +439,7 @@ class TcheckerTool(Tool):
         return status
 
 
-TOOLS = {"ptctlmc": PtctlmcTool(), "verifyta": VerifytaTool(),
+TOOLS = {"hora": HoraTool(), "verifyta": VerifytaTool(),
          "ltsmin": LtsminTool(), "tchecker": TcheckerTool()}
 
 
@@ -752,7 +752,7 @@ def cmd_stop(a):
             print("SIGTERM -> process group %d" % pgid)
         except (ProcessLookupError, PermissionError) as e:
             print("process group %d not killed: %s" % (pgid, e))
-    for exe in ("ptctlmc", "opaal2lts-mc", "verifyta", "tck-reach", "tck-liveness"):
+    for exe in ("hora", "opaal2lts-mc", "verifyta", "tck-reach", "tck-liveness"):
         subprocess.run(["pkill", "-9", "-x", exe], stderr=subprocess.DEVNULL)
     print("killed leftover tool processes.")
     return 0
@@ -787,7 +787,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="measure a tool over families x sizes x threads")
-    r.add_argument("--tool", default="ptctlmc", choices=sorted(TOOLS))
+    r.add_argument("--tool", default="hora", choices=sorted(TOOLS))
     r.add_argument("--families", default="all",
                    help="'all' | 'uppaal' | 'phil:4-13;csma:4,6,8' (default all)")
     r.add_argument("--include-unmeasurable", action="store_true",
@@ -807,20 +807,20 @@ def main():
     r.add_argument("--memgb", type=float, default=100.0, help="RSS cap per run (default 100)")
     r.add_argument("--strike-limit", type=int, default=1,
                    help="skip larger sizes after this many consecutive timeouts (0 disables)")
-    r.add_argument("--outdir", default=os.path.join(BENCH, "recheability_results", "run"))
+    r.add_argument("--outdir", default=os.path.join(BENCH, "reachability_results", "run"))
     r.add_argument("--tag", default=None, help="CSV basename prefix (default: the tool name)")
     r.add_argument("--seed", nargs="*", default=[], help="extra CSVs to seed completed runs from")
     r.add_argument("--detach", action="store_true", help="run under setsid+nohup and return")
     r.add_argument("--pin", type=int, default=1, help="taskset-pin to as many cores as threads")
-    # ptctlmc knobs
+    # hora knobs
     r.add_argument("--sim", default="alu", choices=["alu", "g"],
                    help="zone subsumption: aLU (default) or the G-simulation")
     r.add_argument("--engine", default="adaptive", choices=["adaptive", "legacy"])
     r.add_argument("--chunk", type=int, default=8, help="--omp-chunk (default 8, the binary default)")
-    r.add_argument("--mergescan", type=int, default=None, help="PTCTLMC_MERGESCAN")
-    r.add_argument("--hotlen", type=int, default=None, help="PTCTLMC_HOTLEN")
-    r.add_argument("--ptctlmc-bin", default=PTCTLMC)
-    r.add_argument("--ptctlmc-extra", nargs="*", default=[], help="extra ptctlmc flags")
+    r.add_argument("--mergescan", type=int, default=None, help="HORA_MERGESCAN")
+    r.add_argument("--hotlen", type=int, default=None, help="HORA_HOTLEN")
+    r.add_argument("--hora-bin", default=HORA)
+    r.add_argument("--hora-extra", nargs="*", default=[], help="extra hora flags")
     r.add_argument("--cores", default=None,
                    help="taskset CPU list for every measured run (e.g. '16-31'). Overrides the "
                         "default '0-(threads-1)' pinning, which is the methodology the recorded "
