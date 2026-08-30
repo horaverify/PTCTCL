@@ -45,7 +45,10 @@
 
 namespace ptctlmc {
 namespace {
+/// @brief Resident set in MiB, for the PTCTLMC_RSS phase report; 0 when it is not asked for.
 std::size_t rss_mb() {
+  static const bool on = std::getenv("PTCTLMC_RSS") != nullptr;
+  if (!on) return 0;                       // do not pay a syscall for a diagnostic nobody reads
 #if defined(__APPLE__)
   ::mach_task_basic_info info;
   mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
