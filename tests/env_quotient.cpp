@@ -1,13 +1,13 @@
 // env_quotient.cpp — measurement, not a unit test.
 //
-// Question (docs/superpowers/specs/weaksim-quotient.md, Job B): does the ENVIRONMENT of a
+// Question (docs/superpowers/specs/weaksim-quotient.md, Job B): does the environment of a
 // Fischer-style network collapse under weak (bi)simulation once everything that is not an
 // interaction with the property's processes C is internal? If the number of classes stops
 // growing with the number of environment processes k, an `Ehat` can be built automatically and
 // the environment-abstraction lead is alive.
 //
-// Build: cmake --build build-mostopt --target ptctlmc_envquot -j8
-// Run:   ptctlmc_envquot sizes|quot|cmp ...   (see usage() at the bottom)
+// Build: cmake --build build-mostopt --target hora_envquot -j8
+// Run:   hora_envquot sizes|quot|cmp ...   (see usage() at the bottom)
 
 #include <algorithm>
 #include <chrono>
@@ -18,10 +18,10 @@
 #include <string>
 #include <vector>
 
-#include "ptctlmc/bisim.hpp"
-#include "ptctlmc/fed.hpp"
+#include "hora/zone.hpp"
+#include "hora/bisimulation.hpp"
 
-using namespace ptctlmc;
+using namespace hora;
 
 // ── the model ───────────────────────────────────────────────────────────────────────
 //
@@ -30,7 +30,7 @@ using namespace ptctlmc;
 //                               wait --[x>K && id!=pid]--> idle
 //
 // `id` is encoded as an explicit component of the location, with the value abstracted to
-//   d ∈ {FREE} ∪ {OWN_0..OWN_{k-1}} ∪ {C}          (k+2 values)
+//   d ∈ {free} ∪ {OWN_0..OWN_{k-1}} ∪ {C}          (k+2 values)
 // The environment's processes only ever test `id==0` / `id==own pid` and only ever write
 // `id := own pid` / `id := 0`, so the identity of the *C*-side writer is irrelevant to them:
 // every value a C process can write is "not 0 and not mine". Which E process owns the lock
@@ -38,7 +38,7 @@ using namespace ptctlmc;
 // else's} abstraction, refined by the owner's identity.
 //
 // C touches `id` with exactly five operations, and those are the interface:
-//   C_RD0  read id==0        enabled iff d==FREE      (C's idle->req guard)
+//   C_RD0  read id==0        enabled iff d==free      (C's idle->req guard)
 //   C_WR   write id:=cpid    always enabled           (C's req->wait assignment — unguarded)
 //   C_RDEQ read id==cpid     enabled iff d==C         (C's wait->cs guard)
 //   C_RDNE read id!=cpid     enabled iff d!=C         (C's wait->idle guard)
@@ -55,7 +55,7 @@ enum : int {
 // Observable alphabets, from most to least abstract.
 //  V1 "C-view"   : only C's own operations. E's accesses to `id` are internal, because C can
 //                  see them only by performing one of its own reads later.
-//  V2 "writes"   : plus E's writes (all E writes carry ONE label — C cannot tell which E
+//  V2 "writes"   : plus E's writes (all E writes carry one label — C cannot tell which E
 //                  process wrote). E's reads stay internal: they do not change shared state.
 //  V3 "literal"  : every read and write of `id` observable — the literal reading of the brief.
 //                  Every edge of the model is then observable, so weak == strong here.
@@ -66,9 +66,9 @@ static std::set<int> alphabet(int v) {
   return s;
 }
 
-// Labels for the CONTEXT-CONSTRAINED variant (mode `ctx`), where the C side is not an
+// Labels for the context-constrained variant (mode `ctx`), where the C side is not an
 // unconstrained input environment but genuine Fischer processes whose own edges carry the
-// observable labels. This is the difference between "minimise E for EVERY context" (modes
+// observable labels. This is the difference between "minimise E for every context" (modes
 // `quot`/`cmp`, which is what bisimulation-as-a-congruence buys you) and "minimise E for the
 // context it actually has".
 static int obs_label(int proc, int kind) { return 1000 + proc * 16 + kind; }
@@ -132,7 +132,7 @@ static Env make_env(int k, int K) {
 
 // ── context-constrained variant ─────────────────────────────────────────────────────
 //
-// `nobs` leading Fischer processes ARE the C side: their own edges carry the observable
+// `nobs` leading Fischer processes are the C side: their own edges carry the observable
 // labels, so the only things C can do to `id` are the things a Fischer process can do, at the
 // times a Fischer process can do them. The remaining `nenv` processes are the environment and
 // are entirely internal. `id`'s value is the owning process index (0 = free) — the C side's
@@ -168,7 +168,7 @@ static Sys make_sys(int nobs, int nenv, int K, bool strict = true) {
       if (qi == WAIT && d == own) A.edges.push_back({loc, setq(CS), {past}, {}, lab(3)});
       if (qi == WAIT && d != own) A.edges.push_back({loc, setq(IDLE), {past}, {}, lab(4)});
       if (qi == CS) A.edges.push_back({loc, mk(q + (IDLE - qi) * step, 0), {}, {}, lab(5)});
-      // The safety property is a predicate on C's LOCATIONS (`A[] not (P1.cs && P2.cs)`), and
+      // The safety property is a predicate on C's locations (`A[] not (P1.cs && P2.cs)`), and
       // a simulation preserves state predicates only when they are observable. Expose each C
       // process's local state as an observable self-loop, i.e. keep the C side fully concrete.
       if (i < nobs) A.edges.push_back({loc, loc, {}, {}, obs_label(i, 8 + qi)});
@@ -246,7 +246,7 @@ static ZoneGraph explore(const BAut& A) {
 
 // ── the class count ─────────────────────────────────────────────────────────────────
 //
-// The engine returns R[(l,l')] as a federation over the DOUBLED clock set (A's clocks are
+// The engine returns R[(l,l')] as a federation over the doubled clock set (A's clocks are
 // 1..k, B's are k+1..2k). Two locations of the same automaton denote the same behaviour when
 // some renaming of the clocks makes every valuation related to its own image, both ways:
 //
@@ -280,10 +280,10 @@ struct UF {
 int main(int argc, char** argv) {
   auto usage = [] {
     std::puts("usage:\n"
-              "  ptctlmc_envquot sizes  <kmax> [K]\n"
-              "  ptctlmc_envquot quot   <k> <alphabet 1|2|3> <weak|strong> [K]\n"
-              "  ptctlmc_envquot cmp    <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n"
-              "  ptctlmc_envquot ctx    <nobs> <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n");
+              "  hora_envquot sizes  <kmax> [K]\n"
+              "  hora_envquot quot   <k> <alphabet 1|2|3> <weak|strong> [K]\n"
+              "  hora_envquot cmp    <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n"
+              "  hora_envquot ctx    <nobs> <k1> <k2> <alphabet 1|2|3> <weak|strong> [K]\n");
     return 2;
   };
   if (argc < 3) return usage();

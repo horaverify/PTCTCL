@@ -1,4 +1,4 @@
-// netengine_metal.mm — Metal GPU successor generation for NETWORKS (stage 1).
+// netengine_metal.mm — Metal GPU successor generation for networks (stage 1).
 //
 // Peer of engine_metal.mm (single TA), but for a network of timed automata with shared int
 // variables. One GPU thread per (frontier-state, process, location-edge) runs the exact
@@ -6,8 +6,8 @@
 // subsumption merge. The MSL DBM ops are the same line-for-line port of dbm_ops.hpp used by
 // engine_metal.mm, so the GPU runs validated algebra.
 //
-// Only compiled when PTCTLMC_HAVE_METAL is defined (see CMake).
-#ifdef PTCTLMC_HAVE_METAL
+// Only compiled when HORA_HAVE_METAL is defined (see CMake).
+#ifdef HORA_HAVE_METAL
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -22,26 +22,25 @@
 #include <string>
 #include <vector>
 
-#include "ptctlmc/dbm_ops.hpp"
-#include "ptctlmc/net_gpu.hpp"
-#include "ptctlmc/net_gpu_encode.hpp"
-#include "ptctlmc/netreach.hpp"   // gen_ok / gen_apply — shared with the CPU path
-#include "ptctlmc/network.hpp"
+#include "hora/zone.hpp"
+#include "hora/gpu/network.hpp"
+#include "hora/gpu/encode.hpp"
+#include "hora/reachability.hpp"   // gen_ok / gen_apply — shared with the CPU path
+#include "hora/network.hpp"
 
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #include <omp.h>
 #endif
 
-namespace ptctlmc {
+namespace hora {
 namespace {
 
-// The kernels' private arrays are sized by PT_DIM -- the model's REAL dimension -- so this is
-// only an eligibility bound now, not a per-thread cost. It used to be 24, which turned the GPU
-// off for arbiter24 and up (24 clocks) and silently dropped them onto the CPU path. Matched to
-// HDBM's kDbmMaxDim, which bounds dbm_try_union's host scratch.
+// The kernels' private arrays are sized by PT_DIM -- the model's real dimension -- so this is only
+// an eligibility bound now, not a per-thread cost. Matched to HDBM's kDbmMaxDim, which bounds
+// dbm_try_union's host scratch.
 constexpr int kMaxDim = 64;
 
-#define PTCTLMC_MTL_CHECK(cond, msg) \
+#define HORA_MTL_CHECK(cond, msg) \
   do { if (!(cond)) throw std::runtime_error(std::string("Metal(net): ") + (msg)); } while (0)
 
 struct NetParams {
@@ -53,14 +52,12 @@ static NSString* const kNetSource = @R"MSL(
 #include <metal_stdlib>
 using namespace metal;
 
-// SPECIALIZED AT PIPELINE BUILD. The host compiles this source once per network with
+// specialized AT pipeline build. The host compiles this source once per network with
 // -DPT_DIM/-DPT_NP/-DPT_NI/-DPT_NC set to that network's real sizes, so every private array is
 // exactly as big as the model needs instead of the 24-clock worst case. It matters a lot: a
-// thread's zone was `int z[24*24]` = 2304 B whatever the model, and net_merge held FOUR such
-// arrays (zn, zw, plus try_union's H and R) = 9 KB of thread-local DEVICE memory per lane.
-// fischer11 (dim 12) needs 576 B, a 4x cut in the spill footprint, and every loop bound becomes
-// a compile-time constant so the index arithmetic strength-reduces and the small loops unroll.
-// The fallbacks keep the source standalone-compilable (e.g. for a Metal debugger session).
+// thread's zone was `int z[24*24]` = 2304 B whatever the model, and net_merge held four such arrays
+// (zn, zw, plus try_union's H and R) = 9 KB of thread-local device memory per lane. The fallbacks
+// keep the source standalone-compilable (e.g. for a Metal debugger session).
 #ifndef PT_DIM
 #define PT_DIM 24
 #endif
@@ -79,7 +76,7 @@ using namespace metal;
 constant int kInf = 1 << 30;
 constant int kZeroLe = 1;
 
-// NARROW ZONE STORAGE. The frontier buffer and the expand output pool are the two biggest
+// narrow zone storage. The frontier buffer and the expand output pool are the two biggest
 // device allocations, and every read of them already goes through a per-entry loop into a
 // private int array (and every write out of one) -- so storing them as 16-bit entries costs
 // nothing but halves both, and halves this kernel's store traffic. The private working matrix
@@ -111,11 +108,11 @@ inline void d_reset(thread int* d, int dim, int k) {
   d[k*dim+k] = kZeroLe;
 }
 inline bool d_constrain(thread int* d, int dim, int a, int b, int bound) {
-  // NO-OP FAST PATH. If the bound does not tighten anything the zone is bit-for-bit unchanged,
+  // NO-OP fast path. If the bound does not tighten anything the zone is bit-for-bit unchanged,
   // so it is still non-empty -- every caller in the successor pipeline holds a non-empty zone
   // (the frontier zone is non-empty, and every step that could empty it returns false and
   // aborts). Scanning the diagonal here cost O(dim) device-memory reads for nothing, on the
-  // MOST COMMON outcome: most guards and invariants are already implied by the incoming zone.
+  // most common outcome: most guards and invariants are already implied by the incoming zone.
   if (bound >= d[a*dim+b]) return true;
   d[a*dim+b] = bound;
   for (int i = 0; i < dim; ++i) { int via = r_add(d[i*dim+a], bound); if (via < d[i*dim+b]) d[i*dim+b] = via; }
@@ -139,14 +136,12 @@ inline bool apply_inv(thread int* z, int dim, int nprocs, thread const int* nloc
   return true;
 }
 
-// ---- threadgroup-resident variants of the expand ops ------------------------------
-// net_expand keeps its zone in `int z[MAXDIM*MAXDIM]` = 2304 B of PRIVATE array. A thread
-// has on the order of 128-256 registers, so that array cannot live in registers: it spills
-// to thread-local DEVICE memory, and every one of the ~2600 DBM ops per successor then runs
-// at device-memory latency. Measured consequence: 100% of lanes survive to do full work on
-// viking15 (so divergence is NOT the problem) yet the GPU still runs at ~0.5% of compute
-// peak. These variants take the zone in THREADGROUP memory (on-chip) instead, sized by the
-// real dim rather than MAXDIM. Bodies are identical to the d_* versions.
+// ---- threadgroup-resident variants of the expand ops ------------------------------ net_expand
+// keeps its zone in `int z[MAXDIM*MAXDIM]` = 2304 B of private array. A thread has on the order of
+// 128-256 registers, so that array cannot live in registers: it spills to thread-local device
+// memory, and every one of the ~2600 DBM ops per successor then runs at device-memory latency.
+// These variants take the zone in threadgroup memory (on-chip) instead, sized by the real dim
+// rather than MAXDIM. Bodies are identical to the d_* versions.
 inline bool g_empty(threadgroup const int* d, int dim) {
   for (int i = 0; i < dim; ++i) if (d[i*dim+i] < kZeroLe) return true;
   return false;
@@ -177,16 +172,16 @@ inline bool g_apply_inv(threadgroup int* z, int dim, int nprocs, thread const in
   return true;
 }
 
-// ---- ROW-DISTRIBUTED zone: one SIMD group per zone, lane i owns row i ---------------
+// ---- row-distributed zone: one SIMD group per zone, lane i owns row i ---------------
 // Third representation, added alongside the private-array and threadgroup ones. The dense
 // dim x dim matrix is the conventional shape and is what creates the working-set dilemma:
 // 576 ints per thread cannot live in registers, and moving them
-// on-chip collapses occupancy. Distributing ONE zone across the 32 lanes of a SIMD group
-// makes each lane hold a single ROW -- dim ints, not dim*dim -- a 24x cut in per-lane
+// on-chip collapses occupancy. Distributing one zone across the 32 lanes of a SIMD group
+// makes each lane hold a single row -- dim ints, not dim*dim -- a 24x cut in per-lane
 // footprint. Floyd-Warshall still needs d[k][*], which arrives by simd_shuffle
 // (register-to-register, no memory). Lanes of a SIMD group run in lockstep, so the k-loop
 // needs no barriers; every branch below is SIMD-uniform (emptiness folds through simd_any).
-// Lanes >= dim hold no row but MUST keep executing: simd_shuffle is a lockstep operation.
+// Lanes >= dim hold no row but must keep executing: simd_shuffle is a lockstep operation.
 inline bool rg_empty(thread const int* row, int dim, uint lane) {
   const bool e = (lane < uint(dim)) && (row[lane] < kZeroLe);   // d[i][i] is my row's slot i
   return simd_any(e);
@@ -256,7 +251,7 @@ inline bool d_alu_le(thread const int* Z, thread const int* Zp, int dim,
   return true;
 }
 // ---- minimal-graph analysis (device port of mindbm_analyze, dbm_ops.hpp) ----------------
-// Marks exactly the NON-REDUNDANT off-diagonal constraints of a closed, non-empty DBM. The
+// Marks exactly the non-redundant off-diagonal constraints of a closed, non-empty DBM. The
 // convex-union test only needs a crossing region per constraint of a generating set, and the
 // minimal graph is one: it defines the same zone, so the redundant entries add nothing. That
 // turns O(dim^2) facet tests into O(dim).
@@ -340,9 +335,9 @@ inline bool d_try_union(thread int* a, thread const int* b, int dim) {
 }
 
 // ---- gpusplit: cooperative merge primitives ---------------------------------------------
-// One SIMD-group (32 lanes) processes ONE bucket's antichain: the O(cur^2) subsumption /
+// One SIMD-group (32 lanes) processes one bucket's antichain: the O(cur^2) subsumption /
 // convex-union loop is split across the lanes, and the current new zone `zn` lives in
-// threadgroup memory shared by all lanes. These helpers are address-space-GENERIC (templated
+// threadgroup memory shared by all lanes. These helpers are address-space-generic (templated
 // on the pointer type) so a threadgroup `zn` can be compared against a per-lane private `zw`
 // without copying either into the other's space. Semantics are byte-identical to the
 // per-thread d_* ops above; only the address spaces differ.
@@ -450,8 +445,8 @@ inline bool g_facets_ok(PZ z, POTHER other, thread const int* H, int dim) {
     }
   return true;
 }
-// Cheap SOUND rejection before the O(dim^3) convex-union test: if the two zones' projections
-// onto ANY single clock axis have a strict gap (one's upper bound is below the other's lower
+// Cheap sound rejection before the O(dim^3) convex-union test: if the two zones' projections
+// onto any single clock axis have a strict gap (one's upper bound is below the other's lower
 // bound), their union has a hole on that axis and cannot be convex. Uses only the 2*dim border
 // entries (row 0 = lower bounds, col 0 = upper bounds) -- no dim^2 scratch, no close. A missed
 // non-convexity (diagonal, not axial) just falls through to the full test, so this is a pure
@@ -468,7 +463,7 @@ inline bool g_union_axisgap(PA a, PB b, int dim) {
   }
   return false;
 }
-// Is a ∪ b exactly convex?  PURE TEST (does not mutate a) so lanes can test different
+// Is a ∪ b exactly convex?  pure test (does not mutate a) so lanes can test different
 // candidates in parallel; the winning union is applied cooperatively afterwards.
 template <typename PA, typename PB>
 inline bool g_union_convex(PA a, PB b, int dim) {
@@ -488,7 +483,7 @@ struct MergeParams { int dim, nb, has_diag, union_on; };
 // steps: all guards, all resets, combined invariant, delay-if-not-frozen, invariant,
 // reset_inactive, emptiness) plus the discrete update (locs/ints).
 //
-// The INTEGER half of the discrete update is computed host-side and arrives already
+// The integer half of the discrete update is computed host-side and arrives already
 // applied, per work item, in `work_ints`. It used to be replayed here from a flattened
 // (var := const) table, which silently ignored NEdge::gen_update -- so a model whose
 // update is an expression (viking's `L = (1 - L) % 2`) lost the assignment entirely on
@@ -526,7 +521,7 @@ kernel void net_expand(
     uint w [[thread_position_in_grid]])
 {
   if (w >= uint(P.nwork)) return;
-  // Compile-time dim here ONLY: this kernel is a straight-line zone pipeline, so constant loop
+  // Compile-time dim here only: this kernel is a straight-line zone pipeline, so constant loop
   // bounds strength-reduce the index arithmetic with no compile-time blowup. The merge kernels
   // deliberately keep P.dim -- see the note on shader build time in the class comment.
   constexpr int dim = PT_DIM, d2 = dim * dim, nprocs = PT_NP, nintvars = PT_NI, nclocks = PT_NC;
@@ -561,9 +556,9 @@ kernel void net_expand(
     if (!apply_inv(z, dim, nprocs, nlocs, locbase, inv_off, inv_data)) return;
   }
 
-  // Reset clocks inactive at EVERY process's target location and not read by the query.
-  // One bitmask load per process, OR'd together — was nprocs*nclocks separate loads out of the
-  // [loc][clock] table (289 of them on arbiter17, on par with the whole rest of the pipeline).
+  // Reset clocks inactive at every process's target location and not read by the query. One bitmask
+  // load per process, OR'd together — was nprocs*nclocks separate loads out of the [loc][clock]
+  // table.
   {
     uint amask = qbits;
     for (int q = 0; q < nprocs; ++q) amask |= act_mask[locbase[q] + nlocs[q]];
@@ -574,11 +569,9 @@ kernel void net_expand(
 
   out_valid[w] = 1;
 
-  // PACK THE DISCRETE KEY HERE. The host's bucketing pass is the level's serial section, and it
+  // pack the discrete key here. The host's bucketing pass is the level's serial section, and it
   // used to read this successor's nprocs locations plus nintvars integers back out of unified
-  // memory (48 bytes on fischer12) purely to recompute this 8-byte key. Emitting the key means
-  // the host reads 8 bytes per successor and the per-successor location array is not written at
-  // all -- 41.6M x 13 words of kernel stores saved over a fischer12 run.
+  // memory purely to recompute this 8-byte key.
   ulong dk = 0;
   for (int q = 0; q < nprocs; ++q) dk |= ulong(uint(nlocs[q])) << dshift[q];
   for (int v = 0; v < nintvars; ++v)
@@ -593,7 +586,7 @@ kernel void net_expand(
 
 
 
-// gpusplit: cooperative merge — ONE SIMD-GROUP (32 lanes) per bucket. Byte-identical antichain
+// gpusplit: cooperative merge — one SIMD-group (32 lanes) per bucket. Byte-identical antichain
 // semantics to net_merge, but the per-bucket O(cur^2) subsumption/convex-union loop (the loop
 // that a single thread grinds serially, and whose per-bucket cost varies wildly -> SIMD
 // divergence in net_merge) is split across the 32 lanes, and the DBM close inside a convex
@@ -623,9 +616,9 @@ kernel void net_merge_sg(
   const int has_diag = P.has_diag;
   threadgroup int* zn = znbuf + int(sgid) * d2;   // this SIMD-group's zn scratch
 
-  // Persistent-thread WORK-STEALING: rather than a static tgpos->bucket map (which idles a
+  // Persistent-thread work-stealing: rather than a static tgpos->bucket map (which idles a
   // SIMD-group the moment its bucket finishes while its warp-mates grind a big one), each
-  // SIMD-group repeatedly grabs the NEXT unclaimed bucket from a global atomic counter. This is
+  // SIMD-group repeatedly grabs the next unclaimed bucket from a global atomic counter. This is
   // GPU-side dynamic scheduling — the same mechanism that lets 12 CPU cores beat the naive GPU
   // merge — so no lane idles on load imbalance. Lane 0 does the atomic; the index is broadcast.
   for (;;) {
@@ -646,7 +639,7 @@ kernel void net_merge_sg(
     simdgroup_barrier(mem_flags::mem_threadgroup);
 
     // Phase A: is zn subsumed by an existing zone? Lanes split the antichain; simd_any reduces.
-    // Read W[i] DIRECTLY from device (read-only test) — no private-memory spill of the operand.
+    // Read W[i] directly from device (read-only test) — no private-memory spill of the operand.
     bool sub = false;
     for (int i = int(lane); i < cur; i += 32) {
       SoaZone zw{W + (ulong)i * d2, 1};
@@ -733,16 +726,14 @@ class NetGpuMetal : public NetGpuExpander {
   // Needed because gen_guard/gen_update are evaluated host-side via gen_ok/gen_apply.
   NetGpuMetal(const Network& net, NetEncoding&& en) : net_(&net), en_(std::move(en)) {
     device_ = MTLCreateSystemDefaultDevice();
-    PTCTLMC_MTL_CHECK(device_ != nil, "no system default Metal device");
-    // BOUNDED command-buffer pool. Each compute encoder makes the driver allocate a scratch
-    // region sized by the kernel's per-thread stack times the threads it will keep in flight
-    // (measured: ~5.4 MB apiece, and ~1950 of them live = 10.3 GB on fischer12 -- the real
-    // occupant of the process's MALLOC_LARGE, dwarfing our own pools). The default queue keeps
-    // up to 64 of those alive; we submit strictly one command buffer at a time and wait on it,
-    // so a small pool is all we can ever use.
+    HORA_MTL_CHECK(device_ != nil, "no system default Metal device");
+    // bounded command-buffer pool. Each compute encoder makes the driver allocate a scratch region
+    // sized by the kernel's per-thread stack times the threads it will keep in flight. The default
+    // queue keeps up to 64 of those alive; we submit strictly one command buffer at a time and wait
+    // on it, so a small pool is all we can ever use.
     queue_ = [device_ newCommandQueueWithMaxCommandBufferCount:2];
     NSError* err = nil;
-    // Specialize the shader for THIS network: the kernels' private arrays and loop bounds are
+    // Specialize the shader for this network: the kernels' private arrays and loop bounds are
     // then the model's real sizes, not the 24-clock / 64-process worst case (see the PT_DIM
     // block at the top of kNetSource). One extra source compile per run, already paid.
     MTLCompileOptions* copts = [[MTLCompileOptions alloc] init];
@@ -753,21 +744,21 @@ class NetGpuMetal : public NetGpuExpander {
       @"PT_NC"  : @(en_.nclocks),
     };
     id<MTLLibrary> lib = [device_ newLibraryWithSource:kNetSource options:copts error:&err];
-    PTCTLMC_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
+    HORA_MTL_CHECK(lib != nil, std::string("shader compile failed: ") +
                                       (err ? err.localizedDescription.UTF8String : "?"));
     id<MTLFunction> fn = [lib newFunctionWithName:@"net_expand"];
-    PTCTLMC_MTL_CHECK(fn != nil, "kernel 'net_expand' not found");
+    HORA_MTL_CHECK(fn != nil, "kernel 'net_expand' not found");
     pso_ = [device_ newComputePipelineStateWithFunction:fn error:&err];
-    PTCTLMC_MTL_CHECK(pso_ != nil, "pipeline creation failed");
-#ifdef PTCTLMC_HAVE_OPENMP
+    HORA_MTL_CHECK(pso_ != nil, "pipeline creation failed");
+#ifdef HORA_HAVE_OPENMP
     eth_ = omp_get_max_threads();
 #endif
     scr_.resize(eth_);
     // gpusplit: SIMD-group-per-bucket cooperative work-stealing merge is the GPU merge.
     id<MTLFunction> fmsg = [lib newFunctionWithName:@"net_merge_sg"];
-    PTCTLMC_MTL_CHECK(fmsg != nil, "kernel 'net_merge_sg' not found");
+    HORA_MTL_CHECK(fmsg != nil, "kernel 'net_merge_sg' not found");
     pso_merge_sg_ = [device_ newComputePipelineStateWithFunction:fmsg error:&err];
-    PTCTLMC_MTL_CHECK(pso_merge_sg_ != nil, "merge_sg pipeline creation failed");
+    HORA_MTL_CHECK(pso_merge_sg_ != nil, "merge_sg pipeline creation failed");
     // static (per-run) buffers
     b_edge_tgt_ = ibuf(en_.edge_tgt); b_cg_off_ = ibuf(en_.cg_off); b_cg_data_ = ibuf(en_.cg_data);
     b_rs_off_ = ibuf(en_.rs_off); b_rs_clk_ = ibuf(en_.rs_clk);
@@ -811,9 +802,9 @@ class NetGpuMetal : public NetGpuExpander {
   };
 
   // Enumerate every successor recipe of frontier state `s`, calling `sink(parts, upd)` in
-  // EXACTLY the order successors_net produces them (location edges, then binary handshakes,
+  // exactly the order successors_net produces them (location edges, then binary handshakes,
   // then broadcasts). Order matters: it fixes the per-bucket arrival order the convex-union
-  // merge is sensitive to. ONE body, used by both the counting pass and the writing pass, so
+  // merge is sensitive to. one body, used by both the counting pass and the writing pass, so
   // the two cannot drift out of agreement about how many recipes a state has.
   template <class Sink>
   void enum_state(int s, const int* sl, const long* si, EnumScratch& sc, Sink&& sink) const {
@@ -830,7 +821,7 @@ class NetGpuMetal : public NetGpuExpander {
                       case 3: ok = x <= val; break; case 4: ok = x > val; break; default: ok = x >= val; }
         if (!ok) return false;
       }
-      // General guard (arithmetic / array / call), evaluated with the SAME function the
+      // General guard (arithmetic / array / call), evaluated with the same function the
       // CPU path uses so the two backends cannot drift.
       if (en_.has_general) {
         const NEdge* e = en_.edge_src[ge];
@@ -839,7 +830,7 @@ class NetGpuMetal : public NetGpuExpander {
       return true;
     };
     // Applies the discrete integer update exactly as successors_net does: every participant's
-    // int_updates in participant order (sender then receivers), THEN every participant's
+    // int_updates in participant order (sender then receivers), then every participant's
     // gen_update. A faulting or out-of-range gen_update discards the transition, so the recipe
     // is never emitted — which is why the counting pass has to run this too.
     auto emit = [&]() {
@@ -928,31 +919,28 @@ class NetGpuMetal : public NetGpuExpander {
     out_valid = out_locs = out_ints = nullptr;
     out_zones = nullptr; out_dk = nullptr;
 
-    // ---- recipe enumeration: PARALLEL, two-pass, straight into the GPU buffers ------------
-    // This used to be one serial loop that push_back'd into six host vectors and then uploaded
-    // them into six freshly-allocated MTLBuffers per level. Measured at 286 ms of a 1756 ms
-    // fischer11 run (and 719 ms of arbiter17's 3537 ms) it was the largest single serial
-    // section left — an Amdahl ceiling that no kernel work can get under.
+    // ---- recipe enumeration: parallel, two-pass, straight into the GPU buffers ------------ This
+    // used to be one serial loop that push_back'd into six host vectors and then uploaded them into
+    // six freshly-allocated MTLBuffers per level.
     //
     // Pass 1 counts each state's recipes and participants; a prefix sum turns those into exact
-    // per-state write offsets; pass 2 re-runs the identical enumeration and writes each recipe
-    // at its own slot. Because every state's slot range is disjoint and assigned by index, the
-    // result is BIT-IDENTICAL to the serial version's ordering — the convex-union merge's
-    // order sensitivity is preserved exactly. The double enumeration costs ~1.6x the scalar
-    // work but spreads it over 12 cores, and it removes the host vectors entirely: the writing
-    // pass targets unified memory the kernel reads, so there is no upload copy and no
-    // per-level allocation.
+    // per-state write offsets; pass 2 re-runs the identical enumeration and writes each recipe at
+    // its own slot. Because every state's slot range is disjoint and assigned by index, the result
+    // is bit-identical to the serial version's ordering — the convex-union merge's order
+    // sensitivity is preserved exactly. The double enumeration costs ~1.6x the scalar work but
+    // spreads it over 12 cores, and it removes the host vectors entirely: the writing pass targets
+    // unified memory the kernel reads, so there is no upload copy and no per-level allocation.
     const int NT = eth_;
     if (static_cast<int>(scr_.size()) < NT) scr_.resize(NT);
     cnt_rec_.resize(static_cast<std::size_t>(nstates) + 1);
     cnt_part_.resize(static_cast<std::size_t>(nstates) + 1);
     const long nst = nstates;
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 64) num_threads(NT)
 #endif
     for (long s = 0; s < nst; ++s) {
       int tid = 0;
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
       tid = omp_get_thread_num();
 #endif
       int nr = 0, npt = 0;
@@ -982,13 +970,13 @@ class NetGpuMetal : public NetGpuExpander {
     int* part_proc= iptr(pb_pp_, acc_p);
     int* part_edge= iptr(pb_pe_, acc_p);
     int* wints    = iptr(pb_wi_in_, acc_r * static_cast<std::size_t>(ni ? ni : 1));
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 64) num_threads(NT)
 #endif
     for (long s = 0; s < nst; ++s) {
       if (cnt_rec_[s] == cnt_rec_[s + 1]) continue;    // this state emitted nothing
       int tid = 0;
-#ifdef PTCTLMC_HAVE_OPENMP
+#ifdef HORA_HAVE_OPENMP
       tid = omp_get_thread_num();
 #endif
       int w = cnt_rec_[s], po = cnt_part_[s];
@@ -1047,7 +1035,7 @@ class NetGpuMetal : public NetGpuExpander {
       [enc endEncoding];
       [cb commit];
       [cb waitUntilCompleted];
-      PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
+      HORA_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "kernel failed");
 
       out_valid = static_cast<const int*>(b_ov.contents);   // read valid rows in place
       out_dk = static_cast<const std::uint64_t*>(b_ol.contents);
@@ -1094,14 +1082,10 @@ class NetGpuMetal : public NetGpuExpander {
                     b_ni = fill(pb_mni_, new_idx), b_noff = fill(pb_mnoff_, new_off),
                     b_nc = fill(pb_mnc_, new_cnt), b_L = fill32(pb_mL_, L), b_U = fill32(pb_mU_, U);
       id<MTLBuffer> b_oc = pb_moc_; { iptr(pb_moc_, nb); b_oc = pb_moc_; }
-      // Convex-union is ON by default on the GPU merge. It used to be off because the test was
-      // O(dim^5) per pair and cost 60%+ of the merge; with the minimal-graph facet set and the
-      // incremental close (dbm_try_union, dbm_ops.hpp) it is O(dim^3) and measures free or
-      // better -- while cutting stored states 37% on csma14 and peak RSS 24% on fischer12,
-      // because every zone it absorbs is a zone the next level does not expand.
-      // union_on doubles as the bounded-union CAP: K = merge against the last K only. The
-      // bound is effectively unreachable -- no antichain is a million zones long -- so the
-      // union is unconditional; the parameter stays because the kernel reads it.
+      // Convex-union is ON by default on the GPU merge. union_on doubles as the bounded-union cap:
+      // K = merge against the last K only. The bound is effectively unreachable -- no antichain is
+      // a million zones long -- so the union is unconditional; the parameter stays because the
+      // kernel reads it.
       constexpr int kUnionCap = 1 << 20;
       MergeParamsGPU MP{dim, nb, has_diag ? 1 : 0, kUnionCap};
       id<MTLCommandBuffer> cb = [queue_ commandBuffer];
@@ -1119,7 +1103,7 @@ class NetGpuMetal : public NetGpuExpander {
         [enc setBytes:&MP length:sizeof(MP) atIndex:11];
         [enc setBuffer:b_next offset:0 atIndex:12];
         [enc setThreadgroupMemoryLength:kSg * static_cast<NSUInteger>(dim) * dim * sizeof(int) atIndex:0];
-        // FIXED GPU-saturating grid: SIMD-groups steal buckets from the atomic counter, so the
+        // fixed GPU-saturating grid: SIMD-groups steal buckets from the atomic counter, so the
         // grid size decouples from nb. Cap so groups are long-lived (steal many) yet saturate.
         NSUInteger wantGroups = (static_cast<NSUInteger>(nb) + kSg - 1) / kSg;
         const NSUInteger groups = wantGroups < 128 ? wantGroups : 128;   // 128*8 = 1024 SIMD-groups
@@ -1128,7 +1112,7 @@ class NetGpuMetal : public NetGpuExpander {
       [enc endEncoding];
       [cb commit];
       [cb waitUntilCompleted];
-      PTCTLMC_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "merge kernel failed");
+      HORA_MTL_CHECK(cb.status == MTLCommandBufferStatusCompleted, "merge kernel failed");
       const int* oc = static_cast<const int*>(b_oc.contents);
       out_work_off = work_off;
       for (int b = 0; b < nb; ++b) out_count[b] = oc[b];
@@ -1182,21 +1166,14 @@ class NetGpuMetal : public NetGpuExpander {
   id<MTLBuffer> grow(__strong id<MTLBuffer>& b, std::size_t bytes) {
     if (bytes == 0) bytes = 16;
     if (b == nil || static_cast<std::size_t>(b.length) < bytes) {
-      // Release the OLD pool before allocating the new one. Otherwise both are live across the
-      // allocation and the driver reclaims the old pages lazily, so several generations of a
-      // growing pool stay resident — which measured as GBs of RSS above what the buffers report.
-      // Grow geometrically (>=1.5x) so a steadily-widening BFS re-allocates a handful of times
-      // instead of on nearly every level.
-      // Grow GEOMETRICALLY (>=1.5x). Measured: with exact sizing a steadily-widening BFS re-allocates
-      // the pool on nearly every level, and each dropped generation is reclaimed by the driver only
-      // lazily, so ~1 GB of stale pools stays resident. Over-allocating ~0.5 GB to make growth rare is
-      // a net ~0.5 GB win (5.00 -> 4.50 GB on Fischer N11) at no cost in run time.
+      // Release the old pool before allocating the new one. Grow geometrically so a
+      // steadily-widening BFS re-allocates a handful of times instead of on nearly every level.
+      // Grow geometrically. Over-allocating ~0.5 GB to make growth rare is a net ~0.5 GB win at no
+      // cost in run time.
       const std::size_t want = std::max(bytes, static_cast<std::size_t>(b ? b.length * 3 / 2 : 0));
-      // Releasing the old buffer is not enough: measured on fischer12, our live pools summed to
-      // 6.35 GB while Metal had 11.26 GB MAPPED — ~5 GB of pages belonging to dropped pool
-      // generations that the driver reclaims only lazily. Marking the buffer EMPTY declares its
-      // contents dead so the pages come back now. Safe here because grow() does not preserve
-      // contents (grow_keep copies first, then calls through to this).
+      // Marking the buffer empty declares its contents dead so the pages come back now. Safe here
+      // because grow() does not preserve contents (grow_keep copies first, then calls through to
+      // this).
       if (b != nil) { [b setPurgeableState:MTLPurgeableStateEmpty]; b = nil; }
       b = [device_ newBufferWithLength:want options:MTLResourceStorageModeShared];
     }
@@ -1217,11 +1194,9 @@ class NetGpuMetal : public NetGpuExpander {
       b_dshift_, b_intlo_;
   id<MTLBuffer> pb_fz_, pb_oz_, pb_ol_, pb_oi_, pb_ov_;   // persistent expand in/out zone+disc pools
   id<MTLBuffer> pb_work_, pb_wi_;                         // persistent merge work pool + isnew
-  // Persistent expand INPUT staging (recipes + frontier locs + post-update ints). These used to
-  // be freshly allocated MTLBuffers every level; on fischer11 the transient generations were
-  // ~1.6 GB of RSS the memory profiler could not account for.
+  // Persistent expand input staging (recipes + frontier locs + post-update ints).
   id<MTLBuffer> pb_ws_, pb_po_, pb_pc_, pb_pp_, pb_pe_, pb_wi_in_, pb_fl_;
-  // Persistent merge INPUT staging (the same problem on the merge side).
+  // Persistent merge input staging (the same problem on the merge side).
   id<MTLBuffer> pb_moff_, pb_mec_, pb_mni_, pb_mnoff_, pb_mnc_, pb_mL_, pb_mU_, pb_moc_;
   std::vector<EnumScratch> scr_;              // per-thread enumerator scratch, reused across levels
   std::vector<int> cnt_rec_, cnt_part_;       // per-state recipe/participant counts -> offsets
@@ -1248,6 +1223,6 @@ std::unique_ptr<NetGpuExpander> make_net_gpu_metal(const Network& net,
   }
 }
 
-}  // namespace ptctlmc
+}  // namespace hora
 
-#endif  // PTCTLMC_HAVE_METAL
+#endif  // HORA_HAVE_METAL

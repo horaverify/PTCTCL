@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Large-scale differential tester for PTCTLMC's backends + verifyta.
+"""Large-scale differential tester for HORA's backends + verifyta.
 
 Generates random small timed automata + queries and checks that every backend
 (seq, omp, and — when available — cuda) AND verifyta agree on the verdict. CUDA is
 included automatically if the given binary was built with it (else skipped).
 
-  difftest_ta.py --count 2000 --seed 1 --ptctlmc ./build/ptctlmc \
+  difftest_ta.py --count 2000 --seed 1 --hora ./build/hora \
                  --verifyta <path> [--backends seq,omp] [--keep-fail DIR]
 """
 import argparse, os, random, re, subprocess, sys, tempfile
@@ -80,7 +80,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=1)
-    ap.add_argument("--ptctlmc", required=True)
+    ap.add_argument("--hora", required=True)
     ap.add_argument("--verifyta", required=True)
     ap.add_argument("--backends", default="seq,omp")
     ap.add_argument("--keep-fail", default=None)
@@ -99,7 +99,7 @@ def main():
             open(xml, "w").write(model); open(q, "w").write(query + "\n")
             verds = {}
             for b in backends:
-                verds[b] = run([args.ptctlmc, "--backend", b, xml, q])
+                verds[b] = run([args.hora, "--backend", b, xml, q])
             verds["verifyta"] = run([args.verifyta, "-q", xml, q], env=env)
             vals = [v for v in verds.values() if v is not None]
             if len(vals) < len(verds):  # something failed/timeout/unsupported

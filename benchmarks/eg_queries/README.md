@@ -1,10 +1,10 @@
 # `E[]` benchmark queries
 
-Non-trivial `E[]` queries for comparing PTCTLMC against UPPAAL (and, with a generator, TChecker).
+Non-trivial `E[]` queries for comparing HORA against UPPAAL (and, with a generator, TChecker).
 
     python3 benchmarks/scripts/bench_eg.py --sizes 4,5,6 --repeat 3
 
-Reports per (model, query): both verdicts, PTCTLMC's stored-state count, and best-of-N wall time
+Reports per (model, query): both verdicts, HORA's stored-state count, and best-of-N wall time
 for each tool. A verdict mismatch is flagged loudly; `unsup` is a refusal, not a wrong answer.
 
 ## Why every query carries a clock bound

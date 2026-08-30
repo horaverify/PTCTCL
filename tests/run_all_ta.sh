@@ -3,11 +3,11 @@
 # CPU backend. Robust for nohup background runs.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PT="${PT:-$ROOT/build/ptctlmc}"
+PT="${PT:-$ROOT/build/hora}"
 VT="${VT:-/home/luca/Documents/TimedAutomata/uppaal/uppaal-5.0.0-linux64/bin/verifyta}"
 MODELS="$ROOT/tests/models"
 
-echo "=== PTCTLMC timed-automata validation vs verifyta ($(date)) ==="
+echo "=== HORA timed-automata validation vs verifyta ($(date)) ==="
 fail=0
 for be in seq omp; do
   echo "--- backend: $be ---"
@@ -22,7 +22,7 @@ for be in seq omp; do
     if [ "$ps" = "$vs" ] && [ "$pn" = "$vn" ]; then
       echo "  $name: MATCH (sat=$ps unsat=$pn)"
     else
-      echo "  $name: DIFF  ptctlmc(sat=$ps,unsat=$pn) verifyta(sat=$vs,unsat=$vn)"
+      echo "  $name: DIFF  hora(sat=$ps,unsat=$pn) verifyta(sat=$vs,unsat=$vn)"
       fail=$((fail+1))
     fi
   done

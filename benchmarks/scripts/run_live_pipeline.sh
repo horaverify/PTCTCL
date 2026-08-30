@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Liveness sweep: every tool, every family with a live query, strictly sequential:
-#   ptctlmc (t16 -> t24 -> t32) -> ltsmin (t16 -> t24 -> t32) -> verifyta -> tchecker
+#   hora (t16 -> t24 -> t32) -> ltsmin (t16 -> t24 -> t32) -> verifyta -> tchecker
 # Each bench.py invocation is itself sequential across threads and families (see bench.py).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,14 +14,14 @@ LIVE_DIR="$BENCH_DIR/live_results"
 export TMPDIR="$BENCH_DIR/.tmp"
 mkdir -p "$TMPDIR"
 
-PTCTLMC_LIVE_DIR="$LIVE_DIR/ptctlmc"
+HORA_LIVE_DIR="$LIVE_DIR/hora"
 LTSMIN_LIVE_DIR="$LIVE_DIR/ltsmin"
 UPPAAL_LIVE_DIR="$LIVE_DIR/uppaal"
 TCHECKER_LIVE_DIR="$LIVE_DIR/tchecker"
 
-mkdir -p "$PTCTLMC_LIVE_DIR" "$LTSMIN_LIVE_DIR" "$UPPAAL_LIVE_DIR" "$TCHECKER_LIVE_DIR"
+mkdir -p "$HORA_LIVE_DIR" "$LTSMIN_LIVE_DIR" "$UPPAAL_LIVE_DIR" "$TCHECKER_LIVE_DIR"
 
-PTCTLMC_BIN="${PTCTLMC_BIN:-$BENCH_DIR/../build_shipping/ptctlmc}"
+HORA_BIN="${HORA_BIN:-$BENCH_DIR/../build_shipping/hora}"
 
 # The tchecker liveness models carry a leads-to observer generated from live_queries/, so they
 # go stale the moment a query changes. Regenerate before measuring rather than trusting the
@@ -34,17 +34,17 @@ echo "=== Liveness pipeline started: $(date -Iseconds) ==="
 # ONE THREAD COUNT, not three. The liveness engine has no OpenMP in it at all (see
 # KNOWN_LIMITATION.md #6): wall time and peak RSS are identical at 1, 4, 16 and 32 threads, so a
 # t16/t24/t32 sweep measures the same sequential run three times and triples a multi-day job for
-# no information. t16 is kept rather than t1 because it is the column live_results/ptctlmc_old
+# no information. t16 is kept rather than t1 because it is the column live_results/hora_old
 # holds for the previous engine, so the two stay directly comparable.
-echo "[ptctlmc] live, threads 1 -- the liveness engine is sequential, all families"
-PTCTLMC_BIN="$PTCTLMC_BIN" python3 "$SCRIPT_DIR/bench.py" run \
-  --tool ptctlmc \
+echo "[hora] live, threads 1 -- the liveness engine is sequential, all families"
+HORA_BIN="$HORA_BIN" python3 "$SCRIPT_DIR/bench.py" run \
+  --tool hora \
   --queries live \
   --families all \
   --threads 1 \
-  --outdir "$PTCTLMC_LIVE_DIR" \
-  --tag ptctlmc_live \
-  --ptctlmc-bin "$PTCTLMC_BIN"
+  --outdir "$HORA_LIVE_DIR" \
+  --tag hora_live \
+  --hora-bin "$HORA_BIN"
 
 echo "[ltsmin] live, threads 16 -> 24 -> 32 (sequential), all families"
 python3 "$SCRIPT_DIR/bench.py" run \

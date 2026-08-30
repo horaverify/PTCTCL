@@ -5,8 +5,8 @@ One output csv per benchmark configuration, same schema as the input:
 
     results/verifyta_only.csv        + results/timeout2h/verifyta_2h.csv
         -> clean_results/verifyta.csv
-    results/ptctlmc_t32_c16_v2.csv   + results/timeout2h/ptctlmc_t32_c16_2h.csv
-        -> clean_results/ptctlmc_t32_c16.csv
+    results/hora_t32_c16_v2.csv   + results/timeout2h/hora_t32_c16_2h.csv
+        -> clean_results/hora_t32_c16.csv
 
 Substitution rule, applied per (family, model) cell:
 
@@ -20,7 +20,7 @@ Substitution rule, applied per (family, model) cell:
   * OK cells are always kept from the 600 s run.
 
 Every substitution is logged to clean_results/CLEANING_REPORT.txt, and the script
-finally prints the verifyta / ptctlmc speedups: best first, then the averages.
+finally prints the verifyta / hora speedups: best first, then the averages.
 
 Averages are geometric means -- the arithmetic mean of ratios is not a meaningful
 summary, since a 10x win and a 0.1x loss must cancel, not average to 5.05x. The
@@ -44,6 +44,8 @@ import statistics
 import sys
 from collections import OrderedDict
 from pathlib import Path
+
+from tool_names import canonical  # pre-rename CSVs say 'ptctlmc'
 
 HERE = Path(__file__).resolve().parent.parent  # benchmarks/
 
@@ -103,11 +105,11 @@ def config_key(stem: str) -> str:
     """results file stem -> canonical config name (also the output file name).
 
     The 600 s sweep files record the settings they were produced with
-    (ptctlmc_t16_c8_ms32_hl64_600s_v2), so the canonical name is taken from the leading
+    (hora_t16_c8_ms32_hl64_600s_v2), so the canonical name is taken from the leading
     t<threads>_c<chunk> alone -- otherwise the descriptive suffix would follow the config
-    into the output name and stop it pairing with timeout2h/ptctlmc_t16_c8_2h.csv.
+    into the output name and stop it pairing with timeout2h/hora_t16_c8_2h.csv.
     """
-    m = re.match(r"(ptctlmc_t\d+_c\d+)(?:_.*)?$", stem)
+    m = re.match(r"(hora_t\d+_c\d+)(?:_.*)?$", stem)
     if m:
         return m.group(1)
     return re.sub(r"_(v2|only)$", "", stem)
@@ -253,7 +255,7 @@ def speedup_report(
                     lower.append((bound / ours, cfg, key, bound, ours))
 
     label = "fastest rep" if agg == "min" else "mean over reps"
-    print(f"\n{'=' * 78}\nverifyta / ptctlmc-omp speedup  ({label}, cleaned data)\n{'=' * 78}")
+    print(f"\n{'=' * 78}\nverifyta / hora-omp speedup  ({label}, cleaned data)\n{'=' * 78}")
 
     if not exact:
         print("no (model, config) pair where both tools finished")
@@ -262,11 +264,11 @@ def speedup_report(
         best, cfg, key, theirs, ours = exact[0]
         print(
             f"\nHIGHEST SPEEDUP: {best:.2f}x  on {key[1]} with {cfg}"
-            f"  (verifyta {theirs:.3f} s vs ptctlmc {ours:.3f} s)"
+            f"  (verifyta {theirs:.3f} s vs hora {ours:.3f} s)"
         )
 
         print(f"\ntop {min(top, len(exact))} of {len(exact)} pairs where both finished:")
-        print(f"  {'speedup':>9}  {'model':<12} {'config':<16} {'verifyta':>10} {'ptctlmc':>10}")
+        print(f"  {'speedup':>9}  {'model':<12} {'config':<16} {'verifyta':>10} {'hora':>10}")
         for sp, cfg, key, theirs, ours in exact[:top]:
             print(f"  {sp:>8.2f}x  {key[1]:<12} {cfg:<16} {theirs:>10.3f} {ours:>10.3f}")
 
@@ -281,12 +283,12 @@ def speedup_report(
         faster = [(sp, m, cfg) for m, (sp, cfg, _, _) in per_model.items() if sp > 1.0]
         slower = [(sp, m, cfg) for m, (sp, cfg, _, _) in per_model.items() if sp <= 1.0]
         print(
-            f"\nptctlmc faster on {len(faster)}/{len(per_model)} models "
+            f"\nhora faster on {len(faster)}/{len(per_model)} models "
             f"(best config each); verifyta faster on {len(slower)}"
         )
         if slower:
             worst = min(slower)
-            print(f"  worst model for ptctlmc: {worst[1]} at {worst[0]:.2f}x ({worst[2]})")
+            print(f"  worst model for hora: {worst[1]} at {worst[0]:.2f}x ({worst[2]})")
 
         # ---- averages -------------------------------------------------------
         excl = ", ".join(sorted(exclude)) if exclude else "nothing"
@@ -353,7 +355,7 @@ def speedup_report(
         print(
             "\nlower bounds -- verifyta never finished these, so the real speedup is larger:"
         )
-        print(f"  {'speedup':>9}  {'model':<12} {'config':<16} {'budget':>10} {'ptctlmc':>10}")
+        print(f"  {'speedup':>9}  {'model':<12} {'config':<16} {'budget':>10} {'hora':>10}")
         for sp, cfg, key, bound, ours in lower[:top]:
             print(f"  >={sp:>7.2f}x  {key[1]:<12} {cfg:<16} {bound:>10.3f} {ours:>10.3f}")
 

@@ -8,6 +8,8 @@ with a hatch and annotated, so a censored run can never be mistaken for a fast o
 """
 import collections, csv, os, statistics, sys
 import matplotlib
+
+from tool_names import canonical  # pre-rename CSVs say 'ptctlmc'
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
@@ -21,14 +23,14 @@ os.makedirs(FIGS, exist_ok=True)
 TOOLS = [("verifyta",    "1",  "UPPAAL verifyta",   "0.55", ""),
          ("ltsmin",      "8",  "opaal+LTSmin (8)",  "0.80", "//"),
          ("ltsmin",      "12", "opaal+LTSmin (12)", "0.92", "\\\\"),
-         ("ptctlmc-omp", "8",  "PTCTLMC (8)",       "0.25", ""),
-         ("ptctlmc-omp", "12", "PTCTLMC (12)",      "0.05", "..")]
+         ("hora-omp", "8",  "HORA (8)",       "0.25", ""),
+         ("hora-omp", "12", "HORA (12)",      "0.05", "..")]
 
 def load():
     rows = list(csv.DictReader(open(os.path.join(HERE, "results", "full.csv"))))
     ok, cens = collections.defaultdict(list), {}
     for r in rows:
-        k = (r["model"], r["tool"], r["threads"])
+        k = (r["model"], canonical(r["tool"]), r["threads"])
         if r["status"] == "OK":
             ok[k].append((float(r["seconds"]), float(r["rss_gb"])))
         else:
@@ -128,7 +130,7 @@ def scaling():
     """Two standalone figures, sized to sit side by side under subcaption."""
     rows, ok, _ = load()
     models, _ = model_order(rows)
-    for tool, fname, title in (("ptctlmc-omp", "scaling_ptctlmc.pdf", "PTCTLMC (OpenMP)"),
+    for tool, fname, title in (("hora-omp", "scaling_hora.pdf", "HORA (OpenMP)"),
                                ("ltsmin", "scaling_ltsmin.pdf", "opaal+LTSmin")):
         fig, ax = plt.subplots(figsize=(4.4, 3.4))
         ths = _scaling_one(ax, ok, models, tool, title)
@@ -136,7 +138,7 @@ def scaling():
         print("wrote", fname, "threads:", ths)
     # keep the combined view too (used nowhere by default, handy for talks)
     fig, ax = plt.subplots(figsize=(7, 3.2))
-    _scaling_one(ax, ok, models, "ptctlmc-omp", "")
+    _scaling_one(ax, ok, models, "hora-omp", "")
     fig.tight_layout(); fig.savefig(os.path.join(FIGS, "scaling.pdf")); plt.close(fig)
 
 def _time_one(ax, ok, models, tool, title):
@@ -168,7 +170,7 @@ def timing():
     """Two standalone time-vs-threads figures, for side-by-side placement."""
     rows, ok, _ = load()
     models, _ = model_order(rows)
-    for tool, fname, title in (("ptctlmc-omp", "time_ptctlmc.pdf", "PTCTLMC (OpenMP)"),
+    for tool, fname, title in (("hora-omp", "time_hora.pdf", "HORA (OpenMP)"),
                                ("ltsmin", "time_ltsmin.pdf", "opaal+LTSmin")):
         fig, ax = plt.subplots(figsize=(4.4, 3.4))
         ths = _time_one(ax, ok, models, tool, title)
@@ -192,7 +194,7 @@ def table():
     states = {}
     for r in rows:
         if r["status"] == "OK" and r["states"] not in ("-", ""):
-            states.setdefault((r["model"], r["tool"]), r["states"])
+            states.setdefault((r["model"], canonical(r["tool"])), r["states"])
 
     def cell(v, c, prec=2):
         if v is not None: return ("%%.%df" % prec) % v
@@ -208,7 +210,7 @@ def table():
          r"\label{tab:parity}", r"\begin{tabular}{l r r r}", r"\toprule",
          r"model & \tool{} & \code{verifyta} & \ltsmin{} \\", r"\midrule"]
     for m in models:
-        pt = states.get((m, "ptctlmc-omp")); vf = states.get((m, "verifyta")); lt = states.get((m, "ltsmin"))
+        pt = states.get((m, "hora-omp")); vf = states.get((m, "verifyta")); lt = states.get((m, "ltsmin"))
         if pt is None and vf is None: continue
         lts = "--"
         if lt:
@@ -236,8 +238,8 @@ def table():
         vf, vfc = _med(ok, cens, m, "verifyta", "1", 0)
         l8, l8c = _med(ok, cens, m, "ltsmin", "8", 0)
         l12, l12c = _med(ok, cens, m, "ltsmin", "12", 0)
-        p8, p8c = _med(ok, cens, m, "ptctlmc-omp", "8", 0)
-        p12, p12c = _med(ok, cens, m, "ptctlmc-omp", "12", 0)
+        p8, p8c = _med(ok, cens, m, "hora-omp", "8", 0)
+        p12, p12c = _med(ok, cens, m, "hora-omp", "12", 0)
         best = min([x for x in (p8, p12) if x is not None], default=None)
         b8 = r"\textbf{%.2f}" % p8 if (p8 is not None and p8 == best) else cell(p8, p8c)
         b12 = r"\textbf{%.2f}" % p12 if (p12 is not None and p12 == best and p8 != best) else cell(p12, p12c)
@@ -266,7 +268,7 @@ def table():
     for m in models:
         vf, vfc = _med(ok, cens, m, "verifyta", "1", 1)
         lt, ltc = _med(ok, cens, m, "ltsmin", "8", 1)
-        pt, ptc = _med(ok, cens, m, "ptctlmc-omp", "8", 1)
+        pt, ptc = _med(ok, cens, m, "hora-omp", "8", 1)
         def fac(base):
             if pt is None or base is None or pt <= 0: return "--"
             return r"$%.1f\times$" % (base / pt)

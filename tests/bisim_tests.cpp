@@ -1,7 +1,7 @@
 // Validation of the timed-bisimulation engine against the 7 hand-verified examples.
-#include "ptctlmc/bisim.hpp"
+#include "hora/bisimulation.hpp"
 #include <cstdio>
-using namespace ptctlmc;
+using namespace hora;
 enum { a = 0, b = 1, c = 2, tau = 9 };
 static Constraint ge(int clk, int k) { return c_ge(clk, k); }  // x_clk >= k
 static Constraint leq(int clk, int k) { return c_le(clk, k); }  // x_clk <= k
@@ -61,7 +61,7 @@ int main() {
   { BAut A; A.nclocks=1; A.nlocs=2; A.edges={{0,1,{ge(1,2)},{},a}}; A.invariants=Inv{{},{leq(1,1)}};
     BAut B; B.nclocks=1; B.nlocs=2;
     cases.push_back({"10",A,B,{a}, true,true,true, true,true,true}); }
-  // #11 a responder τ-chain may not pass THROUGH a location whose invariant the valuation
+  // #11 a responder τ-chain may not pass through a location whose invariant the valuation
   //     violates: B reaches its `a` only via l1 (x<=1), so past x=1 B is stuck at l0.
   { BAut A; A.nclocks=1; A.nlocs=2; A.edges={{0,1,{},{},a}};
     BAut B; B.nclocks=1; B.nlocs=4;
