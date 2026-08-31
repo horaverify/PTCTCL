@@ -560,6 +560,13 @@ void LivenessEngine::online_expand(int u) {
   // A concrete terminal/divergent witness is conclusive immediately.  Unlike the old repeated
   // gfp probe this performs no backward pass on a changing graph; if it misses, construction
   // continues to D-quiescence and the one normal backward pass decides the query.
+  // `A[] not deadlock` is settled by one deadlocked valuation, so the search stops at the first
+  // record holding one rather than finishing the graph and reading it off afterwards.
+  if (deadlock_scan_ && online_deadlock_at(u, succ.empty())) {
+    deadlock_hit_ = true;
+    eg_early_hit_ = true;                  // the shared signal that halts the construction
+    return;
+  }
   if (eg_early_ && online_eg_terminal_witness(u, succ.empty())) {
     eg_early_hit_ = true;
     return;

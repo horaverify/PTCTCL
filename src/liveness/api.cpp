@@ -111,6 +111,22 @@ void LivenessEngine::build_forward(GfpStats* gs) {
   fill_stats(gs);
 }
 
+bool LivenessEngine::deadlock_reachable_refined(GfpStats* gs, bool* ok) {
+  deadlock_scan_ = true;
+  setup();
+  base_forward();
+  fill_stats(gs);
+  *ok = fwd_ok_;
+  if (!fwd_ok_) return false;
+  if (deadlock_hit_) return true;          // the search stopped at the witness
+  SymState sc;
+  for (std::size_t i = 0; i < nrec(); ++i) {
+    if (cancelled()) { *ok = false; return false; }
+    if (detail::state_has_deadlock(net, sread(static_cast<int>(i), sc))) return true;
+  }
+  return false;
+}
+
 bool LivenessEngine::finish_verdict(GfpStats* gs) {
   const bool violated = fwd_ok_ && final_verdict_violated();
   fill_stats(gs);

@@ -530,6 +530,21 @@ bool LivenessEngine::online_is_nq(int v) {
 /// stayed inside psi.  A time-divergent valuation or a genuine deadlock of the unrestricted
 /// network is therefore already a concrete maximal psi-run.  This is stronger than a graph-cycle
 /// guess: no subsumption edge participates in the certificate.
+/// @brief Does this record hold a deadlocked valuation?
+///
+/// The `A[] not deadlock` counterpart of ::LivenessEngine::online_eg_terminal_witness: the same
+/// exact stored zone and the same per-key `may_deadlock` filter, but time divergence is not a
+/// deadlock and takes no part in the test.
+bool LivenessEngine::online_deadlock_at(int v, bool no_successor) {
+  if (v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
+  const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
+  if (!ki.may_deadlock && !no_successor) return false;
+  SymState s;
+  key_state(ki.id, s);
+  zread(v, s.zone);
+  return state_has_deadlock(net, s);
+}
+
 bool LivenessEngine::online_eg_terminal_witness(int v, bool no_restricted_successor) {
   if (!online_eg_prune_ || v < 0 || v >= static_cast<int>(online_key_of_.size())) return false;
   const OnlineKeyInfo& ki = *online_key_by_id_[online_key_of_[v]];
@@ -829,6 +844,11 @@ void LivenessEngine::expand(int u) {
                   avoid_forward_ ? avoid_ : nullptr);
   // Same concrete counterexample as the online route takes; `usc` still holds this node's exact
   // state. `may_deadlock` is not tracked per key here, so the exact test is always allowed to run.
+  if (deadlock_scan_ && state_has_deadlock(net, usc)) {
+    deadlock_hit_ = true;
+    eg_early_hit_ = true;
+    return;
+  }
   if (leadsto_early_ && leadsto_witness(usc, succ.empty(), /*key_may_deadlock=*/true)) {
     eg_early_hit_ = true;
     return;

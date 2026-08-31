@@ -38,6 +38,7 @@
 #include <thread>
 #include <stdexcept>
 #include <string>
+#include "hora/detail/liveness_engine.hpp"
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -2238,8 +2239,27 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
   for (std::size_t pr = 0; pr < am.lbound_loc.size(); ++pr)
     for (std::size_t l = 0; l < am.lbound_loc[pr].size(); ++l)
       collapse(am.lbound_loc[pr][l], am.ubound_loc[pr][l]);
-  return reach_engine(am, NetTarget{}, is_dl, /*force_exact=*/false, b, stats, nullptr, nullptr,
-                      cancel);
+  const char* dm = std::getenv("HORA_DL_MODE");
+  const char mode = dm ? *dm : 'd';
+  if (mode == 'd') {
+    // The D-refined G-simulation preserves `Dead`, so it decides this query directly and is
+    // coarser than the a_M bisimulation the plain engine has to fall back to. `net` is passed,
+    // not the collapsed `am`: the refinement supplies deadlock-soundness itself, so collapsing
+    // the bounds on top of it would only throw the LU precision away again.
+    DiscPred none;
+    none.is_dnf = true;                    // an empty DNF reads as `false`, so every state is !q
+    LivenessEngine e(net, none, none, false, cancel);
+    GfpStats gs;
+    bool ok = false;
+    const bool hit = e.deadlock_reachable_refined(&gs, &ok);
+    if (ok) {
+      if (stats) stats->explored = gs.fwd_nodes;
+      return hit;
+    }
+    // The construction declined; fall through to the abstraction that needs no refinement.
+  }
+  return reach_engine(am, NetTarget{}, is_dl, /*force_exact=*/mode == 'e', b, stats, nullptr,
+                      nullptr, cancel);
 }
 
 }  // namespace hora

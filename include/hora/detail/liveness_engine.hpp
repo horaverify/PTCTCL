@@ -180,6 +180,18 @@ class LivenessEngine {
   void release();
   void build_forward(GfpStats* gs);
   bool finish_verdict(GfpStats* gs);
+  /// @brief Is a deadlocked valuation reachable, decided on the D-refined quotient?
+  ///
+  /// Builds the forward graph only, then reads the deadlock predicate off the stored zones.
+  /// The covering used during that construction is the G-simulation refined by the D atoms,
+  /// which preserves `Dead` (docs/design.md, "Theorem (completion sound)"), so a node covered
+  /// away cannot hide a deadlock its cover lacks; and stored zones are exact under that
+  /// covering, so a deadlock read off one is genuinely reachable. The relation is therefore
+  /// sound in both directions here, and it is strictly coarser than the `a_M` bisimulation the
+  /// plain reachability engine must fall back to.
+  /// @param[out] ok  cleared when the construction did not complete, in which case the return
+  ///                 value proves nothing and the caller must use another route
+  bool deadlock_reachable_refined(GfpStats* gs, bool* ok);
   bool deadlock_refinement_is_empty();
   bool build_atom_map(AtomMap& am);
   void set_atoms(const AtomMap* a);
@@ -199,6 +211,10 @@ class LivenessEngine {
   // counterexample, so the forward search may stop the moment one is found.
   bool leadsto_early_ = false;
   bool online_eg_prune_ = false;
+  /// @brief Stop the forward search at the first record holding a deadlocked valuation.
+  bool deadlock_scan_ = false;
+  bool deadlock_hit_ = false;   ///< set by the scan; meaningful only when @ref deadlock_scan_
+  bool online_deadlock_at(int v, bool no_successor);
   bool online_eg_repair_ = false;
   bool force_exact_ = false;
   const std::atomic<bool>* cancel_ = nullptr;
