@@ -5,5 +5,5 @@ arbiter,arbiter5,verifyta,1,1,2767,0.119,0.019,OK,-,-,8,alu,adaptive,deadlock,-,
 arbiter,arbiter5,verifyta,1,2,2767,0.070,0.019,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
 arbiter,arbiter6,verifyta,1,1,17136,2.433,0.021,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
 arbiter,arbiter6,verifyta,1,2,17136,2.418,0.021,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
-arbiter,arbiter7,verifyta,1,1,-,119.295,0.035,ERR,-,-,8,alu,adaptive,deadlock,-,-,A[] not deadlock
-arbiter,arbiter7,verifyta,1,2,-,0.120,0.019,ERR,-,-,8,alu,adaptive,deadlock,-,-,A[] not deadlock
+arbiter,arbiter7,verifyta,1,1,121137,124.527,0.035,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+arbiter,arbiter7,verifyta,1,2,121137,124.377,0.035,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock

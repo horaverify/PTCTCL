@@ -105,3 +105,7 @@ phil,phil11,hora-omp,1,1,247943,8.206,0.174,OK,-,-,8,alu,adaptive,live,-,SAT,P0.
 phil,phil11,hora-omp,1,2,247943,8.153,0.174,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
 phil,phil12,hora-omp,1,1,855942,44.863,0.613,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
 phil,phil12,hora-omp,1,2,855942,44.427,0.613,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil13,hora-omp,1,1,3094601,286.269,2.337,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil13,hora-omp,1,2,3094601,286.937,2.337,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil14,hora-omp,1,1,11861515,2414.291,9.478,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil14,hora-omp,1,2,11861515,2431.990,9.478,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
