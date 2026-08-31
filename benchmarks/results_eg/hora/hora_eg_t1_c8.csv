@@ -1,0 +1,455 @@
+family,model,tool,threads,rep,states,seconds,rss_gb,status,mergescan,hotlen,chunk,sim,engine,queries,qidx,verdict,query
+arbiter,arbiter4,hora-omp,1,1,3,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter4,hora-omp,1,2,3,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter4,hora-omp,1,1,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter4,hora-omp,1,2,12,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter4,hora-omp,1,1,48,0.070,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter4,hora-omp,1,2,48,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter4,hora-omp,1,1,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter4,hora-omp,1,2,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter4,hora-omp,1,1,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter4,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter5,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter5,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter5,hora-omp,1,1,12,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter5,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter5,hora-omp,1,1,112,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter5,hora-omp,1,2,112,0.070,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter5,hora-omp,1,1,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter5,hora-omp,1,2,33,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter5,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter5,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter6,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter6,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter6,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter6,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter6,hora-omp,1,1,256,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter6,hora-omp,1,2,256,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter6,hora-omp,1,1,33,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter6,hora-omp,1,2,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter6,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter6,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter7,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter7,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter7,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter7,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter7,hora-omp,1,1,576,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter7,hora-omp,1,2,576,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter7,hora-omp,1,1,33,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter7,hora-omp,1,2,33,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter7,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter7,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter8,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter8,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter8,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter8,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter8,hora-omp,1,1,1280,0.069,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter8,hora-omp,1,2,1280,0.068,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter8,hora-omp,1,1,33,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter8,hora-omp,1,2,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter8,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter8,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter9,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter9,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter9,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter9,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter9,hora-omp,1,1,2816,0.117,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter9,hora-omp,1,2,2816,0.118,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter9,hora-omp,1,1,33,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter9,hora-omp,1,2,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter9,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter9,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter10,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter10,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter10,hora-omp,1,1,12,0.066,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter10,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter10,hora-omp,1,1,6144,0.217,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter10,hora-omp,1,2,6144,0.220,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter10,hora-omp,1,1,33,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter10,hora-omp,1,2,33,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter10,hora-omp,1,1,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter10,hora-omp,1,2,12,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter11,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter11,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter11,hora-omp,1,1,12,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter11,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter11,hora-omp,1,1,13312,0.489,0.017,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter11,hora-omp,1,2,13312,0.490,0.017,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter11,hora-omp,1,1,33,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter11,hora-omp,1,2,33,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter11,hora-omp,1,1,12,0.070,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter11,hora-omp,1,2,12,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter12,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter12,hora-omp,1,2,3,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter12,hora-omp,1,1,12,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter12,hora-omp,1,2,12,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter12,hora-omp,1,1,28672,1.297,0.034,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter12,hora-omp,1,2,28672,1.247,0.035,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter12,hora-omp,1,1,33,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter12,hora-omp,1,2,33,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter12,hora-omp,1,1,12,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter12,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter13,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter13,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter13,hora-omp,1,1,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter13,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter13,hora-omp,1,1,61440,3.081,0.074,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter13,hora-omp,1,2,61440,3.122,0.074,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter13,hora-omp,1,1,33,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter13,hora-omp,1,2,33,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter13,hora-omp,1,1,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter13,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter14,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter14,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter14,hora-omp,1,1,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter14,hora-omp,1,2,12,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter14,hora-omp,1,1,131072,7.950,0.160,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter14,hora-omp,1,2,131072,7.698,0.160,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter14,hora-omp,1,1,33,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter14,hora-omp,1,2,33,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter14,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter14,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter15,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter15,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter15,hora-omp,1,1,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter15,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter15,hora-omp,1,1,-,3.924,0.104,ERR,-,-,8,alu,adaptive,eg,2,-,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter15,hora-omp,1,2,278528,19.586,0.359,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter15,hora-omp,1,1,33,0.074,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter15,hora-omp,1,2,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter15,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter15,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter16,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter16,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter16,hora-omp,1,1,12,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter16,hora-omp,1,2,12,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter16,hora-omp,1,1,589824,48.646,0.811,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter16,hora-omp,1,2,589824,48.293,0.811,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter16,hora-omp,1,1,33,0.070,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter16,hora-omp,1,2,33,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter16,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter16,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter17,hora-omp,1,1,3,0.066,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter17,hora-omp,1,2,3,0.066,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter17,hora-omp,1,1,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter17,hora-omp,1,2,12,0.066,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter17,hora-omp,1,1,1245184,118.657,1.839,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter17,hora-omp,1,2,1245184,121.580,1.839,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter17,hora-omp,1,1,33,0.070,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter17,hora-omp,1,2,33,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter17,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter17,hora-omp,1,2,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter18,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter18,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter18,hora-omp,1,1,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter18,hora-omp,1,2,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter18,hora-omp,1,1,2621440,303.029,4.155,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter18,hora-omp,1,2,2621440,300.479,4.155,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter18,hora-omp,1,1,33,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter18,hora-omp,1,2,33,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter18,hora-omp,1,1,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter18,hora-omp,1,2,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter19,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter19,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter19,hora-omp,1,1,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter19,hora-omp,1,2,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter19,hora-omp,1,1,5505024,701.906,9.359,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter19,hora-omp,1,2,5505024,709.043,9.359,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter19,hora-omp,1,1,33,0.069,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter19,hora-omp,1,2,33,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter19,hora-omp,1,1,12,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter19,hora-omp,1,2,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter20,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter20,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+arbiter,arbiter20,hora-omp,1,1,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter20,hora-omp,1,2,12,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
+arbiter,arbiter20,hora-omp,1,1,11534336,1667.709,20.958,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter20,hora-omp,1,2,11534336,1654.746,20.958,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
+arbiter,arbiter20,hora-omp,1,1,33,0.071,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter20,hora-omp,1,2,33,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
+arbiter,arbiter20,hora-omp,1,1,12,0.068,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+arbiter,arbiter20,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+csma,csma4,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma4,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma4,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma4,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma4,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma4,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma4,hora-omp,1,1,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma4,hora-omp,1,2,7,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma4,hora-omp,1,1,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma4,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma5,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma5,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma5,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma5,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma5,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma5,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma5,hora-omp,1,1,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma5,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma5,hora-omp,1,1,14,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma5,hora-omp,1,2,14,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma6,hora-omp,1,1,3,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma6,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma6,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma6,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma6,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma6,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma6,hora-omp,1,1,7,0.074,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma6,hora-omp,1,2,7,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma6,hora-omp,1,1,14,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma6,hora-omp,1,2,14,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma7,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma7,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma7,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma7,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma7,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma7,hora-omp,1,2,3,0.072,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma7,hora-omp,1,1,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma7,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma7,hora-omp,1,1,14,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma7,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma8,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma8,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma8,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma8,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma8,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma8,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma8,hora-omp,1,1,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma8,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma8,hora-omp,1,1,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma8,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma9,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma9,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma9,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma9,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma9,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma9,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma9,hora-omp,1,1,7,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma9,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma9,hora-omp,1,1,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma9,hora-omp,1,2,14,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma10,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma10,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma10,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma10,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma10,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma10,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma10,hora-omp,1,1,7,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma10,hora-omp,1,2,7,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma10,hora-omp,1,1,14,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma10,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma11,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma11,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma11,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma11,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma11,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma11,hora-omp,1,2,3,0.072,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma11,hora-omp,1,1,7,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma11,hora-omp,1,2,7,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma11,hora-omp,1,1,14,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma11,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma12,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma12,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma12,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma12,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma12,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma12,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma12,hora-omp,1,1,7,0.073,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma12,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma12,hora-omp,1,1,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma12,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma13,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma13,hora-omp,1,2,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma13,hora-omp,1,1,3,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma13,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma13,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma13,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma13,hora-omp,1,1,7,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma13,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma13,hora-omp,1,1,14,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma13,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma14,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma14,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma14,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma14,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma14,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma14,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma14,hora-omp,1,1,7,0.072,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma14,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma14,hora-omp,1,1,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma14,hora-omp,1,2,14,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma15,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma15,hora-omp,1,2,3,0.071,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma15,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma15,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma15,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma15,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma15,hora-omp,1,1,7,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma15,hora-omp,1,2,7,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma15,hora-omp,1,1,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma15,hora-omp,1,2,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma16,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma16,hora-omp,1,2,3,0.073,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma16,hora-omp,1,1,3,0.071,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma16,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma16,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma16,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma16,hora-omp,1,1,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma16,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma16,hora-omp,1,1,14,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma16,hora-omp,1,2,14,0.078,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma17,hora-omp,1,1,3,0.072,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma17,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma17,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma17,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma17,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma17,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma17,hora-omp,1,1,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma17,hora-omp,1,2,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma17,hora-omp,1,1,14,0.068,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma17,hora-omp,1,2,14,0.070,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma18,hora-omp,1,1,3,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma18,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma18,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma18,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma18,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma18,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma18,hora-omp,1,1,7,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma18,hora-omp,1,2,7,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma18,hora-omp,1,1,14,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma18,hora-omp,1,2,14,0.068,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma20,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma20,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma20,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma20,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma20,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma20,hora-omp,1,2,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma20,hora-omp,1,1,7,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma20,hora-omp,1,2,7,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma20,hora-omp,1,1,14,0.068,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma20,hora-omp,1,2,14,0.069,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma22,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma22,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y0 <= 40
+csma,csma22,hora-omp,1,1,3,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma22,hora-omp,1,2,3,0.069,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] y0 <= 40 && !Bus.Collided
+csma,csma22,hora-omp,1,1,3,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma22,hora-omp,1,2,3,0.067,0.006,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (S0.Wait || S0.Send) && y0 <= 40
+csma,csma22,hora-omp,1,1,7,0.070,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma22,hora-omp,1,2,7,0.070,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(S0.Send && S1.Send) && y0 <= 40
+csma,csma22,hora-omp,1,1,14,0.071,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+csma,csma22,hora-omp,1,2,14,0.069,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] y0 <= 20 && (y1 <= 15 || y1 >= 18)
+fischer,fischer4,hora-omp,1,1,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer4,hora-omp,1,2,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer4,hora-omp,1,1,17,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer4,hora-omp,1,2,17,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer4,hora-omp,1,1,97,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer4,hora-omp,1,2,97,0.069,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer4,hora-omp,1,1,79,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer4,hora-omp,1,2,79,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer4,hora-omp,1,1,19,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer4,hora-omp,1,2,19,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer5,hora-omp,1,1,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer5,hora-omp,1,2,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer5,hora-omp,1,1,17,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer5,hora-omp,1,2,17,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer5,hora-omp,1,1,362,0.069,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer5,hora-omp,1,2,362,0.068,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer5,hora-omp,1,1,79,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer5,hora-omp,1,2,79,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer5,hora-omp,1,1,19,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer5,hora-omp,1,2,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer6,hora-omp,1,1,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer6,hora-omp,1,2,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer6,hora-omp,1,1,17,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer6,hora-omp,1,2,17,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer6,hora-omp,1,1,1342,0.338,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer6,hora-omp,1,2,1342,0.337,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer6,hora-omp,1,1,79,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer6,hora-omp,1,2,79,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer6,hora-omp,1,1,19,0.070,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer6,hora-omp,1,2,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer7,hora-omp,1,1,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer7,hora-omp,1,2,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer7,hora-omp,1,1,17,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer7,hora-omp,1,2,17,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer7,hora-omp,1,1,4868,1.512,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer7,hora-omp,1,2,4868,1.516,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer7,hora-omp,1,1,79,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer7,hora-omp,1,2,79,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer7,hora-omp,1,1,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer7,hora-omp,1,2,19,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer8,hora-omp,1,1,4,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer8,hora-omp,1,2,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer8,hora-omp,1,1,17,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer8,hora-omp,1,2,17,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer8,hora-omp,1,1,17215,7.452,0.019,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer8,hora-omp,1,2,17215,7.457,0.019,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer8,hora-omp,1,1,79,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer8,hora-omp,1,2,79,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer8,hora-omp,1,1,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer8,hora-omp,1,2,19,0.072,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer9,hora-omp,1,1,4,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer9,hora-omp,1,2,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer9,hora-omp,1,1,17,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer9,hora-omp,1,2,17,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer9,hora-omp,1,1,59490,36.262,0.055,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer9,hora-omp,1,2,59490,36.098,0.055,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer9,hora-omp,1,1,79,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer9,hora-omp,1,2,79,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer9,hora-omp,1,1,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer9,hora-omp,1,2,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer10,hora-omp,1,1,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer10,hora-omp,1,2,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer10,hora-omp,1,1,17,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer10,hora-omp,1,2,17,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer10,hora-omp,1,1,201680,166.682,0.185,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer10,hora-omp,1,2,201680,166.615,0.185,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer10,hora-omp,1,1,79,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer10,hora-omp,1,2,79,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer10,hora-omp,1,1,19,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer10,hora-omp,1,2,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer11,hora-omp,1,1,4,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer11,hora-omp,1,2,4,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer11,hora-omp,1,1,17,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer11,hora-omp,1,2,17,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer11,hora-omp,1,1,673260,729.346,0.656,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer11,hora-omp,1,2,673260,729.171,0.656,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer11,hora-omp,1,1,79,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer11,hora-omp,1,2,79,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer11,hora-omp,1,1,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer11,hora-omp,1,2,19,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer12,hora-omp,1,1,4,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer12,hora-omp,1,2,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer12,hora-omp,1,1,17,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer12,hora-omp,1,2,17,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer12,hora-omp,1,1,2219945,3129.225,2.366,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer12,hora-omp,1,2,2219945,3127.585,2.366,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer12,hora-omp,1,1,79,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer12,hora-omp,1,2,79,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer12,hora-omp,1,1,19,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer12,hora-omp,1,2,19,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer13,hora-omp,1,1,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer13,hora-omp,1,2,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer13,hora-omp,1,1,17,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer13,hora-omp,1,2,17,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer13,hora-omp,1,1,7247610,7073.986,8.437,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer13,hora-omp,1,2,7247610,7127.054,8.438,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer13,hora-omp,1,1,79,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer13,hora-omp,1,2,79,0.070,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer13,hora-omp,1,1,19,0.068,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer13,hora-omp,1,2,19,0.068,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer14,hora-omp,1,1,4,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer14,hora-omp,1,2,4,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer14,hora-omp,1,1,17,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer14,hora-omp,1,2,17,0.069,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer14,hora-omp,1,1,23472386,6215.281,29.523,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer14,hora-omp,1,2,23472386,6200.636,29.523,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (P0.idle || P0.wait) && x0 <= 40
+fischer,fischer14,hora-omp,1,1,79,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer14,hora-omp,1,2,79,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer14,hora-omp,1,1,19,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer14,hora-omp,1,2,19,0.068,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+fischer,fischer15,hora-omp,1,1,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer15,hora-omp,1,2,4,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
+fischer,fischer15,hora-omp,1,1,17,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+fischer,fischer15,hora-omp,1,2,17,0.069,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
