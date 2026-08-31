@@ -135,14 +135,14 @@ def main():
         args.macos = sys.platform == "darwin"
 
     want = [f.strip() for f in args.only.split(",") if f.strip()] or sorted(FAMILIES)
-    mdir = os.path.join(args.outdir, "models"); os.makedirs(mdir, exist_ok=True)
+    mdir = os.path.join(args.outdir, "models", "xml"); os.makedirs(mdir, exist_ok=True)
     # Two query sets, one dir each, and ONE dir per platform (see FAMILIES): the query text is
     # model-level CTL with nothing platform-specific in it, and keeping per-platform copies is
     # exactly what let them drift. --linux/--macos still select the .so toolchain below, which
     # genuinely is platform-specific.
-    rqdir = os.path.join(args.outdir, "reach_queries"); os.makedirs(rqdir, exist_ok=True)
-    lqdir = os.path.join(args.outdir, "live_queries");  os.makedirs(lqdir, exist_ok=True)
-    sodir = os.path.join(args.outdir, "so_linux" if args.linux else "so_macos"); os.makedirs(sodir, exist_ok=True)
+    rqdir = os.path.join(args.outdir, "queries", "reach"); os.makedirs(rqdir, exist_ok=True)
+    lqdir = os.path.join(args.outdir, "queries", "live");  os.makedirs(lqdir, exist_ok=True)
+    sodir = os.path.join(args.outdir, "models", "so_linux" if args.linux else "so_macos"); os.makedirs(sodir, exist_ok=True)
     nolive = []
 
     made, failed = 0, []
@@ -179,10 +179,10 @@ def main():
             if args.so:
                 so = os.path.join(sodir, "%s%d.so" % (fam, n))
                 if args.linux:
-                    r = subprocess.run([os.path.join(SCRIPTS, "gen_so_linux.sh"), xml, so],
+                    r = subprocess.run([os.path.join(SCRIPTS, "generators", "gen_so_linux.sh"), xml, so],
                                        capture_output=True)
                 else:
-                    r = subprocess.run([os.path.join(HERE, "gen_so_macos.sh"), xml, so],
+                    r = subprocess.run([os.path.join(HERE, "generators", "gen_so_macos.sh"), xml, so],
                                        capture_output=True)
                 if r.returncode:
                     if os.path.exists(so):

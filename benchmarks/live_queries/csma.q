@@ -1,1 +1,0 @@
-Bus.Transmitting --> Bus.Idle

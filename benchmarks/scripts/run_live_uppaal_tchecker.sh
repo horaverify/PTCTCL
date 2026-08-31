@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-LIVE_DIR="$BENCH_DIR/live_results"
+LIVE_DIR="$BENCH_DIR/results/live"
 
 export TMPDIR="$BENCH_DIR/.tmp"
 mkdir -p "$TMPDIR"
@@ -24,7 +24,7 @@ mkdir -p "$UPPAAL_LIVE_DIR" "$TCHECKER_LIVE_DIR"
 # go stale the moment a query changes. Regenerate before measuring rather than trusting the
 # checked-in copies -- tck-liveness would happily answer the old property.
 echo "[tchecker] regenerating the leads-to observer models"
-python3 "$SCRIPT_DIR/gen_tck_live.py"
+python3 "$SCRIPT_DIR/generators/gen_tck_live.py"
 
 echo "=== Liveness pipeline (tchecker -> verifyta) started: $(date -Iseconds) ==="
 

@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-EG_DIR="$BENCH_DIR/results_eg"
+EG_DIR="$BENCH_DIR/results/eg"
 
 export TMPDIR="$BENCH_DIR/.tmp"
 mkdir -p "$TMPDIR" "$EG_DIR/uppaal" "$EG_DIR/tchecker"
@@ -21,7 +21,7 @@ mkdir -p "$TMPDIR" "$EG_DIR/uppaal" "$EG_DIR/tchecker"
 # The psi-restricted models encode eg_queries/ directly, so they go stale the moment a query
 # changes; regenerate rather than trust the checked-in copies.
 echo "[tchecker] regenerating the psi-restricted E[] models"
-python3 "$SCRIPT_DIR/gen_tck_eg.py"
+python3 "$SCRIPT_DIR/generators/gen_tck_eg.py"
 
 echo "=== E[] pipeline (tchecker -> verifyta) started: $(date -Iseconds) ==="
 

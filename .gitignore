@@ -82,3 +82,12 @@ old/
 *_corrupted*
 __pycache__/
 *.q
+*pid
+STOP
+*pgid
+# Benchmark runtime artefacts: driver logs and the pid/pgid/STOP markers of a live sweep.
+# A committed STOP silently kills the next run, so these must never be tracked.
+benchmarks/**/*.log
+benchmarks/**/bench.pid
+benchmarks/**/bench.pgid
+benchmarks/**/STOP

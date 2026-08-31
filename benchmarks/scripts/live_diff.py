@@ -31,17 +31,17 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MODELS = ROOT / "benchmarks" / "models"
+MODELS = ROOT / "benchmarks" / "models" / "xml"
 FAMILIES = ("arbiter", "csma", "fischer", "grc", "phil", "twolock", "single", "viking")
 
 # (suite name, query directory, or a literal query)
 SUITES = {
-    "live": ("live_queries", None),
+    "live": ("queries/live", None),
     # Violated leads-to. The `live` suite is satisfied on every row, so without this the early
     # witness in Otf::leadsto_witness -- which only ever fires on a violation -- is untested.
-    "violated": ("live_queries_violated", None),
-    "eg": ("eg_queries", None),
-    "reach": ("reach_queries", None),
+    "violated": ("queries/live_violated", None),
+    "eg": ("queries/eg", None),
+    "reach": ("queries/reach", None),
     "deadlock": (None, "A[] not deadlock"),
 }
 

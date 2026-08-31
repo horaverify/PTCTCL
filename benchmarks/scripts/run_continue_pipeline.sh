@@ -4,7 +4,7 @@ set -euo pipefail
 # Run from anywhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-RESULTS_DIR="$BENCH_DIR/reachability_results"
+RESULTS_DIR="$BENCH_DIR/results/reach"
 
 # Never trust an inherited TMPDIR: under nohup it can point at a since-removed
 # session tmp dir, and mktemp failing there kills the whole script under set -e.

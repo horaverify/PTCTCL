@@ -39,8 +39,8 @@ Usage:
 import argparse, csv, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # PTCTCL/
-MODELS = os.path.join(ROOT, "benchmarks", "models")
-QUERIES = os.path.join(ROOT, "benchmarks", "queries")
+MODELS = os.path.join(ROOT, "benchmarks", "models", "xml")
+QUERIES = os.path.join(ROOT, "benchmarks", "queries", "reach")
 BIN = os.environ.get("HORA_BIN", os.path.join(ROOT, "build-mostopt", "hora"))
 VERIFYTA = os.environ.get("VERIFYTA",
     "/Applications/UPPAAL-5.0.0.app/Contents/Resources/uppaal/bin/verifyta")

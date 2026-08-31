@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Liveness results sit BESIDE the reachability results, not inside them: they are a separate
 # measurement (different query set, different tools answering), not a subset of the reach sweep.
-LIVE_DIR="$BENCH_DIR/live_results"
+LIVE_DIR="$BENCH_DIR/results/live"
 
 export TMPDIR="$BENCH_DIR/.tmp"
 mkdir -p "$TMPDIR"
@@ -27,7 +27,7 @@ HORA_BIN="${HORA_BIN:-$BENCH_DIR/../build_shipping/hora}"
 # go stale the moment a query changes. Regenerate before measuring rather than trusting the
 # checked-in copies -- tck-liveness would happily answer the old property.
 echo "[tchecker] regenerating the leads-to observer models"
-python3 "$SCRIPT_DIR/gen_tck_live.py"
+python3 "$SCRIPT_DIR/generators/gen_tck_live.py"
 
 echo "=== Liveness pipeline started: $(date -Iseconds) ==="
 
