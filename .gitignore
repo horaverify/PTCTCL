@@ -91,3 +91,5 @@ benchmarks/**/*.log
 benchmarks/**/bench.pid
 benchmarks/**/bench.pgid
 benchmarks/**/STOP
+
+*backup*

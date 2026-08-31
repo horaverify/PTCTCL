@@ -87,25 +87,71 @@ fischer,fischer13,hora-omp,1,2,15358553,259.806,9.924,OK,-,-,8,alu,adaptive,live
 fischer,fischer14,hora-omp,1,1,49309338,959.490,34.376,OK,-,-,8,alu,adaptive,live,-,SAT,P0.req --> P0.wait
 fischer,fischer14,hora-omp,1,2,49309338,960.156,34.376,OK,-,-,8,alu,adaptive,live,-,SAT,P0.req --> P0.wait
 fischer,fischer15,hora-omp,1,1,-,3124.204,100.415,MEMOUT,-,-,8,alu,adaptive,live,-,-,P0.req --> P0.wait
-phil,phil4,hora-omp,1,1,80,0.070,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil4,hora-omp,1,2,80,0.071,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil4,hora-omp,1,1,80,0.068,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil4,hora-omp,1,2,80,0.070,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
 phil,phil5,hora-omp,1,1,242,0.069,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil5,hora-omp,1,2,242,0.069,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil5,hora-omp,1,2,242,0.068,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
 phil,phil6,hora-omp,1,1,732,0.068,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
 phil,phil6,hora-omp,1,2,732,0.068,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil7,hora-omp,1,1,2228,0.068,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil7,hora-omp,1,1,2228,0.067,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
 phil,phil7,hora-omp,1,2,2228,0.070,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil8,hora-omp,1,1,6972,0.118,0.009,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil8,hora-omp,1,1,6972,0.119,0.009,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
 phil,phil8,hora-omp,1,2,6972,0.120,0.009,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil9,hora-omp,1,1,22414,0.388,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil9,hora-omp,1,2,22414,0.388,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil10,hora-omp,1,1,73455,1.618,0.055,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil10,hora-omp,1,2,73455,1.686,0.055,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil11,hora-omp,1,1,247943,8.206,0.174,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil11,hora-omp,1,2,247943,8.153,0.174,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil12,hora-omp,1,1,855942,44.863,0.613,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil12,hora-omp,1,2,855942,44.427,0.613,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil13,hora-omp,1,1,3094601,286.269,2.337,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil13,hora-omp,1,2,3094601,286.937,2.337,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil14,hora-omp,1,1,11861515,2414.291,9.478,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
-phil,phil14,hora-omp,1,2,11861515,2431.990,9.478,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil9,hora-omp,1,1,22414,0.339,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil9,hora-omp,1,2,22414,0.338,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil10,hora-omp,1,1,73455,1.513,0.055,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil10,hora-omp,1,2,73455,1.514,0.055,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil11,hora-omp,1,1,247943,7.531,0.174,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil11,hora-omp,1,2,247943,7.533,0.174,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil12,hora-omp,1,1,855942,40.757,0.613,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil12,hora-omp,1,2,855942,41.114,0.613,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil13,hora-omp,1,1,3094601,263.868,2.337,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil13,hora-omp,1,2,3094601,265.075,2.337,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil14,hora-omp,1,1,11861515,2190.185,9.478,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil14,hora-omp,1,2,11861515,2207.541,9.478,OK,-,-,8,alu,adaptive,live,-,SAT,P0.Eat --> P0.Dropped
+phil,phil15,hora-omp,1,1,-,7200.021,32.536,TIMEOUT,-,-,8,alu,adaptive,live,-,-,P0.Eat --> P0.Dropped
+viking,viking4,hora-omp,1,1,206,0.070,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking4,hora-omp,1,2,206,0.068,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking6,hora-omp,1,1,1374,0.067,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking6,hora-omp,1,2,1374,0.071,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking10,hora-omp,1,1,45566,0.885,0.048,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking10,hora-omp,1,2,45566,0.880,0.048,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking12,hora-omp,1,1,241662,2.385,0.229,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking12,hora-omp,1,2,241662,2.354,0.229,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking15,hora-omp,1,1,2768894,33.449,2.540,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking15,hora-omp,1,2,2768894,33.450,2.540,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking17,hora-omp,1,1,13631486,176.018,12.419,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking17,hora-omp,1,2,13631486,176.406,12.419,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking20,hora-omp,1,1,-,1185.919,100.103,MEMOUT,-,-,8,alu,adaptive,live,-,-,Viking1.unsafe --> y1 >= 5
+twolock,twolock4,hora-omp,1,1,332,0.071,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock4,hora-omp,1,2,332,0.068,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock5,hora-omp,1,1,1137,0.068,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock5,hora-omp,1,2,1137,0.069,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock6,hora-omp,1,1,3842,0.068,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock6,hora-omp,1,2,3842,0.069,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock7,hora-omp,1,1,12847,0.218,0.011,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock7,hora-omp,1,2,12847,0.218,0.011,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock8,hora-omp,1,1,42584,0.655,0.026,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock8,hora-omp,1,2,42584,0.706,0.026,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock9,hora-omp,1,1,140093,2.486,0.077,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock9,hora-omp,1,2,140093,2.424,0.077,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock10,hora-omp,1,1,457838,9.379,0.251,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock10,hora-omp,1,2,457838,8.060,0.251,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock11,hora-omp,1,1,1487499,18.662,0.857,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock11,hora-omp,1,2,1487499,18.987,0.857,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock12,hora-omp,1,1,4807556,69.899,2.908,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock12,hora-omp,1,2,4807556,69.819,2.908,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock13,hora-omp,1,1,15465049,260.495,9.946,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock13,hora-omp,1,2,15465049,260.607,9.946,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock14,hora-omp,1,1,49538714,948.227,34.389,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock14,hora-omp,1,2,49538714,948.821,34.389,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
+twolock,twolock15,hora-omp,1,1,-,3088.144,100.327,MEMOUT,-,-,8,alu,adaptive,live,-,-,P0.reqB --> P0.waitB
+single,single4,hora-omp,1,1,38,0.067,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single4,hora-omp,1,2,38,0.069,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single5,hora-omp,1,1,166,0.067,0.006,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single5,hora-omp,1,2,166,0.068,0.006,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single6,hora-omp,1,1,1167,0.487,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single6,hora-omp,1,2,1167,0.485,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single7,hora-omp,1,1,9164,22.806,0.009,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single7,hora-omp,1,2,9164,12.152,0.009,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
+single,single8,hora-omp,1,1,-,7200.023,0.057,TIMEOUT,-,-,8,alu,adaptive,live,-,-,P.A --> P.A

@@ -372,3 +372,85 @@ fischer,fischer9,verifyta,1,2,141853,162.880,0.031,OK,-,-,8,alu,adaptive,eg,4,SA
 fischer,fischer10,verifyta,1,1,-,7200.026,0.064,TIMEOUT,-,-,8,alu,adaptive,eg,-,-,E[] x0 <= 40
 fischer,fischer10,verifyta,1,1,-,7200.014,0.064,TIMEOUT,-,-,8,alu,adaptive,eg,1,-,E[] x0 <= 40 && !P1.cs
 fischer,fischer10,verifyta,1,1,-,7200.020,0.064,TIMEOUT,-,-,8,alu,adaptive,eg,3,-,E[] !(P1.cs && P2.cs) && x0 <= 40
+fischer,fischer10,verifyta,1,1,-,7200.021,0.067,TIMEOUT,-,-,8,alu,adaptive,eg,4,-,E[] x0 <= 40 && (x1 <= 30 || x1 >= 35)
+grc,grc4,verifyta,1,1,18,0.071,0.014,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc4,verifyta,1,2,18,0.068,0.014,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc4,verifyta,1,1,4297,0.068,0.020,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 15 && !T0.in
+grc,grc4,verifyta,1,2,4297,0.067,0.019,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 15 && !T0.in
+grc,grc4,verifyta,1,1,4297,0.068,0.019,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (T0.far || T0.near) && x0 <= 15
+grc,grc4,verifyta,1,2,4297,0.068,0.020,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (T0.far || T0.near) && x0 <= 15
+grc,grc4,verifyta,1,1,18,0.069,0.014,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc4,verifyta,1,2,18,0.068,0.014,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc4,verifyta,1,1,781,0.068,0.020,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc4,verifyta,1,2,781,0.068,0.020,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc5,verifyta,1,1,22,0.071,0.014,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc5,verifyta,1,2,22,0.069,0.014,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc5,verifyta,1,1,103183,1.343,0.020,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 15 && !T0.in
+grc,grc5,verifyta,1,2,103183,1.345,0.020,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 15 && !T0.in
+grc,grc5,verifyta,1,1,103183,1.344,0.020,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (T0.far || T0.near) && x0 <= 15
+grc,grc5,verifyta,1,2,103183,1.343,0.020,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (T0.far || T0.near) && x0 <= 15
+grc,grc5,verifyta,1,1,34,0.070,0.018,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc5,verifyta,1,2,34,0.070,0.018,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc5,verifyta,1,1,6078,0.118,0.019,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc5,verifyta,1,2,6078,0.118,0.020,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc6,verifyta,1,1,26,0.068,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc6,verifyta,1,2,26,0.069,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc6,verifyta,1,1,2973058,252.768,0.027,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 15 && !T0.in
+grc,grc6,verifyta,1,2,2973058,253.596,0.027,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 15 && !T0.in
+grc,grc6,verifyta,1,1,2973058,255.032,0.027,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (T0.far || T0.near) && x0 <= 15
+grc,grc6,verifyta,1,2,2973058,255.220,0.027,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (T0.far || T0.near) && x0 <= 15
+grc,grc6,verifyta,1,1,119,0.073,0.018,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc6,verifyta,1,2,119,0.069,0.018,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc6,verifyta,1,1,51710,3.717,0.021,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc6,verifyta,1,2,51710,3.719,0.021,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc7,verifyta,1,1,30,0.068,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc7,verifyta,1,2,30,0.072,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc7,verifyta,1,1,-,7200.004,0.039,TIMEOUT,-,-,8,alu,adaptive,eg,1,-,E[] x0 <= 15 && !T0.in
+grc,grc7,verifyta,1,1,-,7200.002,0.039,TIMEOUT,-,-,8,alu,adaptive,eg,2,-,E[] (T0.far || T0.near) && x0 <= 15
+grc,grc7,verifyta,1,1,509,0.070,0.019,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc7,verifyta,1,2,509,0.069,0.018,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc7,verifyta,1,1,475454,306.082,0.030,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc7,verifyta,1,2,475454,302.336,0.030,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc8,verifyta,1,1,34,0.070,0.014,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc8,verifyta,1,2,34,0.068,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc8,verifyta,1,1,2096,0.067,0.019,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc8,verifyta,1,2,2096,0.068,0.019,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc8,verifyta,1,1,-,7200.019,0.056,TIMEOUT,-,-,8,alu,adaptive,eg,4,-,E[] x0 <= 15 && (y <= 10 || y >= 12)
+grc,grc9,verifyta,1,1,38,0.067,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc9,verifyta,1,2,38,0.067,0.014,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc9,verifyta,1,1,8080,0.067,0.019,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc9,verifyta,1,2,8080,0.067,0.019,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc10,verifyta,1,1,42,0.068,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc10,verifyta,1,2,42,0.067,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc10,verifyta,1,1,29565,0.167,0.019,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc10,verifyta,1,2,29565,0.169,0.020,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc11,verifyta,1,1,46,0.067,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc11,verifyta,1,2,46,0.066,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc11,verifyta,1,1,104215,0.483,0.021,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc11,verifyta,1,2,104215,0.484,0.021,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc12,verifyta,1,1,50,0.067,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc12,verifyta,1,2,50,0.067,0.015,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc12,verifyta,1,1,357710,1.719,0.025,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc12,verifyta,1,2,357710,1.668,0.025,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc13,verifyta,1,1,54,0.066,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc13,verifyta,1,2,54,0.066,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc13,verifyta,1,1,1204322,6.214,0.037,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc13,verifyta,1,2,1204322,6.206,0.037,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc14,verifyta,1,1,58,0.068,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc14,verifyta,1,2,58,0.066,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc14,verifyta,1,1,3996707,23.031,0.077,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc14,verifyta,1,2,3996707,23.043,0.077,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc15,verifyta,1,1,62,0.067,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc15,verifyta,1,2,62,0.067,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc15,verifyta,1,1,13118257,85.021,0.210,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc15,verifyta,1,2,13118257,85.862,0.210,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc16,verifyta,1,1,66,0.067,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc16,verifyta,1,2,66,0.066,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc16,verifyta,1,1,42686460,286.505,0.560,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc16,verifyta,1,2,42686460,287.220,0.560,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc17,verifyta,1,1,70,0.068,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc17,verifyta,1,2,70,0.066,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc17,verifyta,1,1,137936260,1034.644,1.727,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc17,verifyta,1,2,-,170.882,0.315,ERR,-,-,8,alu,adaptive,eg,3,-,E[] !(T0.in && T1.in) && x0 <= 15
+grc,grc18,verifyta,1,1,74,0.069,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc18,verifyta,1,2,74,0.068,0.016,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
