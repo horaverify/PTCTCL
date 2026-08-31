@@ -65,3 +65,16 @@ twolock,twolock6,verifyta,1,2,35408,0.702,0.022,OK,-,-,8,alu,adaptive,live,-,SAT
 twolock,twolock7,verifyta,1,1,282072,27.521,0.043,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
 twolock,twolock7,verifyta,1,2,282072,27.517,0.043,OK,-,-,8,alu,adaptive,live,-,SAT,P0.reqB --> P0.waitB
 twolock,twolock8,verifyta,1,1,-,7200.021,0.216,TIMEOUT,-,-,8,alu,adaptive,live,-,-,P0.reqB --> P0.waitB
+viking,viking4,verifyta,1,1,346,0.070,0.018,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking4,verifyta,1,2,346,0.070,0.018,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking6,verifyta,1,1,2436,0.069,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking6,verifyta,1,2,2436,0.068,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking10,verifyta,1,1,84808,0.440,0.037,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking10,verifyta,1,2,84808,0.439,0.037,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking12,verifyta,1,1,449646,2.591,0.131,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking12,verifyta,1,2,449646,2.590,0.131,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking15,verifyta,1,1,5046454,33.727,1.402,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking15,verifyta,1,2,5046454,33.730,1.402,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking17,verifyta,1,1,24379632,176.968,6.858,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking17,verifyta,1,2,24379632,176.745,6.858,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
+viking,viking20,verifyta,1,1,-,7200.034,52.805,TIMEOUT,-,-,8,alu,adaptive,live,-,-,Viking1.unsafe --> y1 >= 5
