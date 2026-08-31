@@ -380,7 +380,7 @@ bool fed_is_empty(const Federation& f) {
 bool fed_contains(const Federation& a, const Federation& b) {
   for (const auto& z : a) {
     if (z.empty()) continue;
-    if (!fed_subtract(z, b).empty()) return false;
+    if (!fed_covers(b, z)) return false;
   }
   return true;
 }

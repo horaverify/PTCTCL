@@ -53,17 +53,15 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
   // A seed is never empty: ::LivenessEngine::intern stores no empty zone, so `seeded[v]` implies non-empty
   // and every emptiness test below can short-circuit on it.
   std::vector<char> seeded(N, 0);
-  for (int v : S) {
-    seeded[v] = 1;
-    nosucc[v] = stop_set(v);
-  }
+  for (int v : S) seeded[v] = 1;
   // When the forward graph was NOT restricted, the stored zones still straddle `psi` and the
   // fixpoint has to do the confining itself: `W[v]` starts at `Z_v /\ psi(v)`, not at `Z_v`. The
   // seed is otherwise left unmaterialised (see `seeded`), so only the nodes that actually need
   // cutting are written down here.
   const bool confine = avoid_ && !avoid_forward_;
   std::vector<Federation> psi_seed;
-  if (confine) psi_seed.resize(N);          // only the region route ever writes one
+  std::vector<char> psi_cut;                // v's seed was restricted, so its stop set owes the cut
+  if (confine) { psi_seed.resize(N); psi_cut.assign(N, 0); }
   if (confine)
     for (int v : S) {
       SymState cst;
@@ -72,13 +70,37 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
       Federation cut;
       avoid_->restrict(sv.zone, sv.locs, sv.ints, cut);
       psi_seed[v] = std::move(cut);
+      psi_cut[v] = 1;
       seeded[v] = 0;                       // no longer "logically its own zone"
       W[v] = psi_seed[v];
-      if (W[v].empty()) { nosucc[v].clear(); continue; }
-      // The stop set was computed against the whole zone; cut it to psi as well, or a valuation
-      // outside psi could stop the run and count as a witness.
-      if (!nosucc[v].empty()) nosucc[v] = fed_intersect(nosucc[v], psi_seed[v]);
     }
+  // The stopping term is computed ON DEMAND, and every caller below is written to ask for it
+  // only when its answer can still matter.
+  //
+  // It occurs POSITIVELY in `W /\ (NoSucc \/ Pre(W))`, so wherever `Pre(W)` already covers
+  // `W[v]` the refinement is `W[v]` whatever NoSucc holds there --- the node's stop set is never
+  // read. ::LivenessEngine::stop_set is the expensive term of the whole operator (a delay, the
+  // invariants, a divergence test and a per-valuation deadlock test per node), and on a graph
+  // whose fixpoint drains through its cycles the nodes that ever need it are a small minority.
+  // Computing it for every node up front was pricing the operator's rarest case into every one.
+  std::vector<char> nosucc_done(N, 0);
+  std::size_t nosucc_calls = 0;
+  auto nosucc_of = [&](int v) -> const Federation& {
+    if (!nosucc_done[v]) {
+      nosucc_done[v] = 1;
+      ++nosucc_calls;
+      nosucc[v] = stop_set(v);
+      // A confined seed cuts the value down to psi, and the stop set is judged against the whole
+      // stored zone, so it owes the same cut: a valuation outside psi must not end the run. An
+      // empty restriction leaves nothing that could.
+      if (confine && psi_cut[v]) {
+        if (psi_seed[v].empty()) nosucc[v].clear();
+        else if (!nosucc[v].empty()) nosucc[v] = fed_intersect(nosucc[v], psi_seed[v]);
+      }
+    }
+    return nosucc[v];
+  };
+
   // Widening scratch, reused across the whole sweep so a narrow-stored zone costs a copy of
   // its entries and never an allocation.
   Dbm vsc, jsc;
@@ -177,9 +199,12 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
     bool live = comp.size() > 1;                       // a nontrivial component IS a cycle
     for (int v : comp) {
       if (live) break;
-      if (!nosucc[v].empty()) { live = true; break; }  // the run may legitimately stop here
+      // Successors first: this is a disjunction, and reaching a live node is decided by a
+      // pointer chase where the stop set costs a zone computation. Only a node with nothing
+      // live to reach has to ask whether the run may legitimately stop in it.
       for (const auto& e : adj[v])
         if (inS[e.tgt] && (e.tgt == v || live_node[e.tgt])) { live = true; break; }
+      if (!live && !nosucc_of(v).empty()) live = true;
     }
     if (!live) continue;
     for (int v : comp) { live_node[v] = 1; ++live_count; }
@@ -192,6 +217,7 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
         seeded[v] = 0;
         W[v].clear();
         nosucc[v].clear();
+        nosucc_done[v] = 1;                // pinned empty: never worth computing
       }
 
   // Filter `comps` in place rather than moving the survivors into a second vector: on a graph
@@ -320,9 +346,7 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
   };
   auto relax = [&](int v) -> bool {
     if (!seeded[v] && fed_is_empty(W[v])) return false;
-    Federation cand = nosucc[v];
-    for (const auto& c : cand)
-      if (covers_value(c, v)) return false;
+    Federation cand;                                 // the predecessor term alone, for now
     for (const auto& e : adj[v]) {
       const int j = e.tgt;
       if (!inS[j]) continue;
@@ -346,43 +370,56 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
         }
       }
     }
+    fed_compact(cand, fedcap, &capped);
     // Materialise v's own seed now, for this one node only: the swap below overwrites it with
     // the refinement, so the copy does not outlive the iteration.
     if (seeded[v]) { W[v].clear(); W[v].push_back(zread(v, vsc)); seeded[v] = 0; }
-    fed_compact(cand, fedcap, &capped);
+    // `W[v] /\ (NoSucc \/ Pre)` is `W[v]` as soon as `Pre` alone covers it, so the stopping term
+    // is asked for only when the predecessor term has already failed to reproduce the value.
+    auto escapes = [&] {
+      for (const auto& z : W[v]) {
+        if (z.empty()) continue;                     // denotes nothing: cannot witness a shrink
+        bool whole = false;
+        for (const auto& c : cand)
+          if (c.includes(z)) { whole = true; break; }
+        if (!whole && !fed_covers(cand, z)) return true;
+      }
+      return false;
+    };
+    if (!escapes()) return false;
+    if (const Federation& ns = nosucc_of(v); !ns.empty()) {
+      for (const auto& c : ns) cand.push_back(c);
+      fed_compact(cand, fedcap, &capped);
+      if (!escapes()) return false;
+    }
     // `W[v] /\ cand`, computed directly rather than as the double complement
     // `subtract(z, subtract(z, cand))` the textbook formulation uses. Both denote the same
     // set, but the inner subtraction peels z by every constraint of every member of cand, so
     // its output is an arrangement whose size is not bounded by |cand| at all, and the outer
     // subtraction then peels z by all of those. The intersection of two zones is a single
     // zone, so the direct form needs exactly |cand| pieces.
-    Federation nw;
-    // A converged sweep still visits every node, and near the fixpoint most visits change
-    // nothing. Detect that per member: if some `c` in cand already contains z, then
-    // `z /\ cand == z`, and every other product `z /\ c'` is a subset of that, so the inner
-    // loop below can only produce pieces the compaction would absorb again. Emit z and move on.
     //
-    // If that holds for every member, `nw` denotes W[v] member for member, so W[v] is unchanged
-    // and there is nothing to propagate -- skip the compaction and, more to the point, skip
-    // ::fed_contains, which peels W[v] by every member of nw through fed_subtract.
-    bool unchanged = true;
+    // Reached only when `escapes()` said the value really moves, so none of this is spent on a
+    // visit that changes nothing: such a visit leaves the stored representation alone, which
+    // denotes the same set -- every test the fixpoint makes of a value (::covers_value,
+    // ::fed_is_empty, `escapes` itself) reads the union and not the member list.
+    Federation nw;
     for (const auto& z : W[v]) {
       bool whole = false;
       for (const auto& c : cand)
         if (c.includes(z)) { whole = true; break; }
+      // `z /\ cand == z`, and every product `z /\ c'` is a subset of it, so the inner loop
+      // below could only produce pieces the compaction would absorb again. Emit z and move on.
       if (whole) { nw.push_back(z); continue; }
-      unchanged = false;
       for (const auto& c : cand) {
         Dbm t = z;
         t.intersect(c);
         if (!t.empty()) nw.push_back(std::move(t));
       }
     }
-    if (unchanged) return false;
     fed_compact(nw, fedcap, &capped);
-    const bool shrank = !fed_contains(W[v], nw);
     W[v].swap(nw);
-    return shrank;
+    return true;
   };
 
   // worklist inside A component, for `E[] psi` only. `relax` reads only v's successors, so v can
@@ -458,13 +495,13 @@ void LivenessEngine::solve_greatest_fixpoint(const std::vector<int>& S, std::vec
     for (const auto& c : sccs) { big = std::max(big, c.size()); if (c.size() > 1) ++nontrivial; }
     std::size_t stopn = 0, stopmembers = 0, wmembers = 0;
     for (int v : S) {
-      if (!nosucc[v].empty()) { ++stopn; stopmembers += nosucc[v].size(); }
+      if (nosucc_done[v] && !nosucc[v].empty()) { ++stopn; stopmembers += nosucc[v].size(); }
       wmembers += W[v].size();
     }
     std::fprintf(stderr, "GFP-PROFILE |S|=%zu N=%zu sccs=%zu nontrivial=%zu maxcomp=%zu "
-                 "visits=%zu pre=%zu stopnodes=%zu stopmembers=%zu wmembers=%zu "
+                 "visits=%zu pre=%zu stopcalls=%zu stopnodes=%zu stopmembers=%zu wmembers=%zu "
                  "fedmax=%zu live=%zu\n",
-                 S.size(), N, sccs.size(), nontrivial, big, it, pre_calls, stopn, stopmembers,
+                 S.size(), N, sccs.size(), nontrivial, big, it, pre_calls, nosucc_calls, stopn, stopmembers,
                  wmembers, fed_max, live_count);
   }
 }

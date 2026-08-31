@@ -647,7 +647,6 @@ std::uint64_t disc_hash(const LocVec& locs, const IntVec& ints) {
 
 int LivenessEngine::intern(SymState&& s) {
   intern_grew = false;
-  std::string bkey = disc_key_bytes(s.locs, s.ints);
   // the cell tag. `tag` is the In-mask and `tag_out` the Out-mask of ::classify_atoms; a zone
   // set in neither straddles that atom, and every obligation a straddle leaves undecidable is
   // deferred to LivenessEngine::cover_rec.
@@ -662,7 +661,7 @@ int LivenessEngine::intern(SymState&& s) {
   bool tagged = false;
   const std::vector<AtomC>* atoms = nullptr;
   if (amap_) {
-    auto it = amap_->diag.find(bkey);
+    auto it = amap_->diag.find(disc_key_bytes(s.locs, s.ints));
     if (it != amap_->diag.end() && !it->second.empty()) {
       const std::vector<AtomC>& as = it->second;
       tagged = true;
@@ -875,6 +874,18 @@ bool LivenessEngine::time_diverges(const SymState& s) const {
   { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
   std::vector<Constraint> inv;
   all_invariants(net, s.locs, inv);
+  // The unrouted answer, which is also a sound PRE-FILTER for the routed one below: every piece
+  // of a routed delay is a subset of this delay closure, and cutting a set down can only tighten
+  // its bounds, so a clock this zone already caps is capped in every piece. When it caps one,
+  // no piece can be unbounded and the federation subtraction inside ::DelayAvoidSet::delay is
+  // pure loss -- which is the common case, since an invariant that bounds a clock bounds it
+  // whichever way the trajectory is routed.
+  Dbm z = s.zone;
+  z.delay();
+  apply_all(z, inv);
+  if (z.empty()) return false;
+  for (int i = 1; i <= net.nclocks; ++i)
+    if (z.get(i, 0) != kInf) return false;
   // With a forbidden region the delay is routed, and divergence must be witnessed by a piece of
   // the routed delay: a trajectory that would run into the region stops there rather than
   // diverging, and one that already lies past it may still run away.
@@ -890,12 +901,6 @@ bool LivenessEngine::time_diverges(const SymState& s) const {
     }
     return false;
   }
-  Dbm z = s.zone;
-  z.delay();
-  apply_all(z, inv);
-  if (z.empty()) return false;
-  for (int i = 1; i <= net.nclocks; ++i)
-    if (z.get(i, 0) != kInf) return false;
   return true;
 }
 
