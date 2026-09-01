@@ -113,7 +113,6 @@ arbiter,arbiter15,hora-omp,1,1,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] 
 arbiter,arbiter15,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
 arbiter,arbiter15,hora-omp,1,1,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
 arbiter,arbiter15,hora-omp,1,2,12,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !C1.cs
-arbiter,arbiter15,hora-omp,1,1,-,3.924,0.104,ERR,-,-,8,alu,adaptive,eg,2,-,E[] (C0.idle || C0.want) && x0 <= 40
 arbiter,arbiter15,hora-omp,1,2,278528,19.586,0.359,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
 arbiter,arbiter15,hora-omp,1,1,33,0.074,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
 arbiter,arbiter15,hora-omp,1,2,33,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(C1.cs && C2.cs) && x0 <= 40
@@ -453,3 +452,4 @@ fischer,fischer15,hora-omp,1,1,4,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] 
 fischer,fischer15,hora-omp,1,2,4,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 40
 fischer,fischer15,hora-omp,1,1,17,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
 fischer,fischer15,hora-omp,1,2,17,0.069,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 40 && !P1.cs
+arbiter,arbiter15,hora-omp,1,1,278528,11.375,0.235,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (C0.idle || C0.want) && x0 <= 40
