@@ -355,3 +355,4 @@ grc,grc5,tchecker,1,1,48,0.067,0.008,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in 
 grc,grc5,tchecker,1,2,48,0.067,0.008,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(T0.in && T1.in) && x0 <= 15
 grc,grc6,tchecker,1,1,55,0.066,0.008,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
 grc,grc6,tchecker,1,2,55,0.067,0.008,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 15
+grc,grc6,tchecker,1,1,-,7200.006,9.265,TIMEOUT,-,-,8,alu,adaptive,eg,1,-,E[] x0 <= 15 && !T0.in

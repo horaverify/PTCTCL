@@ -657,3 +657,4 @@ twolock,twolock9,verifyta,1,1,125736,153.949,0.030,OK,-,-,8,alu,adaptive,eg,-,SA
 twolock,twolock9,verifyta,1,2,125736,153.411,0.030,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
 twolock,twolock9,verifyta,1,1,125736,153.579,0.030,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
 twolock,twolock9,verifyta,1,2,125736,153.021,0.030,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
+twolock,twolock9,verifyta,1,1,-,7200.013,0.075,TIMEOUT,-,-,8,alu,adaptive,eg,2,-,E[] (P0.idle || P0.waitA) && x0 <= 30

@@ -111,3 +111,12 @@ phil,phil13,hora-omp,1,1,3109263,162.096,1.932,OK,-,-,8,alu,adaptive,deadlock,-,
 phil,phil13,hora-omp,1,2,3109263,161.160,1.932,OK,-,-,8,alu,adaptive,deadlock,-,NOT,A[] not deadlock
 phil,phil14,hora-omp,1,1,12377073,1704.123,8.175,OK,-,-,8,alu,adaptive,deadlock,-,NOT,A[] not deadlock
 phil,phil14,hora-omp,1,2,12377073,1687.147,8.175,OK,-,-,8,alu,adaptive,deadlock,-,NOT,A[] not deadlock
+phil,phil15,hora-omp,1,1,-,7200.047,30.284,TIMEOUT,-,-,8,alu,adaptive,deadlock,-,-,A[] not deadlock
+single,single4,hora-omp,1,1,27,0.069,0.005,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+single,single4,hora-omp,1,2,27,0.068,0.006,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+single,single5,hora-omp,1,1,136,0.068,0.006,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+single,single5,hora-omp,1,2,136,0.070,0.006,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+single,single6,hora-omp,1,1,844,0.488,0.007,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+single,single6,hora-omp,1,2,844,0.490,0.007,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+single,single7,hora-omp,1,1,7274,15.030,0.009,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+single,single7,hora-omp,1,2,7274,12.046,0.009,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
