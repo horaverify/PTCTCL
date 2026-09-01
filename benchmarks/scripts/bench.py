@@ -122,8 +122,6 @@ UNMEASURABLE = {
     "hora-omp": {
         "hddi":  "query UNSUPPORTED by hora (location-equality disjunctions); exit 1",
         "train": "hora exits 1 on train0/train1 (int-array model features)",
-        "grc":   "'A[] not deadlock' is NOT satisfied -- run stops at the first "
-                 "counterexample, so the state count is not a state-space measure",
     },
     "verifyta": {},
     "ltsmin": {},
@@ -132,8 +130,6 @@ UNMEASURABLE = {
                   "location conjunction -- no mechanical utot label injection for it",
         "train":  "utot conversion fails on train0/train1 (int-array model features)",
         "grc":    "'A[] not deadlock' -- deadlock is not a tck-reach label query",
-        "single": "reach query is a clock-threshold invariant (x0<=6), not a location "
-                  "conjunction -- no mechanical utot label injection for it",
     },
 }
 
@@ -405,7 +401,15 @@ class TcheckerTool(Tool):
             return [a.tchecker_liveness_bin, "-a", "couvscc", "-l", "TC_LIVE_PENDING", tck]
         tck = os.path.join(BENCH, "models", "tck", name)
         labels = TCHECKER_LABELS[self._family(xml)]
-        return [a.tchecker_bin, "-a", "reach", "-l", labels, tck]
+        # An EMPTY label list means the family has no bad-state conjunction to inject (single's
+        # reach query is the invariant x0<=6, which every state satisfies by construction). Drop
+        # -l entirely: tck-reach then has nothing to stop at and exhausts the reachable set,
+        # which is the same full-state-space measurement hora makes with `A[] true`. A label that
+        # is merely never attached is NOT a substitute -- tck-reach rejects it as unknown.
+        argv = [a.tchecker_bin, "-a", "reach"]
+        if labels:
+            argv += ["-l", labels]
+        return argv + [tck]
 
     def available(self, a, xml, so, qidx=0):
         name = os.path.basename(xml).replace(".xml", ".tck")

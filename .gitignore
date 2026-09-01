@@ -94,3 +94,4 @@ benchmarks/**/bench.pgid
 benchmarks/**/STOP
 
 *backup*
+*_old.csv

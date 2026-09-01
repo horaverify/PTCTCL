@@ -4,5 +4,6 @@
   "fischer": "L_P1_cs,L_P2_cs",
   "twolock": "L_P1_cs,L_P2_cs",
   "phil": "L_P0_Eat,L_P1_Eat",
-  "viking": "L_Viking1_safe,L_Viking1_unsafe"
+  "viking": "L_Viking1_safe,L_Viking1_unsafe",
+  "single": ""
 }

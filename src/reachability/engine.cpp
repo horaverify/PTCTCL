@@ -1017,14 +1017,13 @@ struct StripeLayout {
   /// @param nthreads number of workers that will share the passed table
   /// @post Both counts are powers of two, so the index functions need only a shift.
   explicit StripeLayout(int nthreads) {
-    // Stripes exist to keep two workers off the same lock, so the count scales with the
-    // CONCURRENCY -- 64 stripes per worker, i.e. a ~1/64 chance that two workers collide. It used
-    // to be floored at 16384 regardless of thread count, which nothing scales with: at 8 threads
-    // that is 32x more stripes than contention needs, and every stripe pre-allocates a 64-slot
-    // table. For arbiter12 that floor alone was 1,048,576 slots (16 MB) behind 28,672 states --
-    // 36 slots per state, and 70% of the model's accounted memory.
-    int stripe_bits = 6;                                     // 64 stripes minimum
-    while ((1 << stripe_bits) < nthreads * 64) ++stripe_bits;
+    // The 16384 floor is a SPEED floor, not a contention one. Scaling the count to nthreads*64
+    // saves real memory (at 8 threads the floor is 32x more stripes than collisions need, and
+    // for arbiter12 it was 70% of accounted memory) but measured SLOWER, so the floor stays:
+    // more stripes also means shorter per-stripe chains to scan on every lookup, and that scan
+    // is on the hot path where the memory is not.
+    int stripe_bits = 10;                                    // floor; grown below past nthreads
+    while ((1 << stripe_bits) < std::max(16384, nthreads * 64)) ++stripe_bits;
     nstripes = static_cast<std::size_t>(1) << stripe_bits;
     stripe_shift = 64 - stripe_bits;
 
