@@ -141,3 +141,5 @@ twolock,twolock12,hora-omp,1,1,6563730,136.274,3.629,OK,-,-,8,alu,adaptive,deadl
 twolock,twolock12,hora-omp,1,2,6563730,136.487,3.629,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
 twolock,twolock13,hora-omp,1,1,23331350,541.876,13.701,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
 twolock,twolock13,hora-omp,1,2,23331350,545.619,13.701,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+twolock,twolock14,hora-omp,1,1,82088502,2117.944,51.338,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+twolock,twolock14,hora-omp,1,2,82088502,2114.220,51.338,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
