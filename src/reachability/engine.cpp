@@ -10,11 +10,9 @@
 #include "hora/reachability.hpp"
 #include "hora/symmetry.hpp"
 #include <cstdio>
-#include <sys/resource.h>
 #include <array>
 #include <chrono>
 #ifdef __APPLE__
-#include <malloc/malloc.h>
 #include <mach/mach.h>
 #include <sys/sysctl.h>
 #endif
@@ -1019,8 +1017,14 @@ struct StripeLayout {
   /// @param nthreads number of workers that will share the passed table
   /// @post Both counts are powers of two, so the index functions need only a shift.
   explicit StripeLayout(int nthreads) {
-    int stripe_bits = 10;                                    // floor; grown below past nthreads
-    while ((1 << stripe_bits) < std::max(16384, nthreads * 64)) ++stripe_bits;
+    // Stripes exist to keep two workers off the same lock, so the count scales with the
+    // CONCURRENCY -- 64 stripes per worker, i.e. a ~1/64 chance that two workers collide. It used
+    // to be floored at 16384 regardless of thread count, which nothing scales with: at 8 threads
+    // that is 32x more stripes than contention needs, and every stripe pre-allocates a 64-slot
+    // table. For arbiter12 that floor alone was 1,048,576 slots (16 MB) behind 28,672 states --
+    // 36 slots per state, and 70% of the model's accounted memory.
+    int stripe_bits = 6;                                     // 64 stripes minimum
+    while ((1 << stripe_bits) < nthreads * 64) ++stripe_bits;
     nstripes = static_cast<std::size_t>(1) << stripe_bits;
     stripe_shift = 64 - stripe_bits;
 
@@ -1325,6 +1329,42 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
 ///       load per level. Abandoning between levels leaves nothing half-built, since the caller
 ///       discards the whole engine.
 /// @see docs/design.md §4 for why stored zones must be exact and what that costs.
+/// @brief Would canonical-order insertion pay for itself on @p net at @p nthreads workers?
+///
+/// Striping the passed table only helps when there are more discrete keys to spread over than
+/// there are workers: below that, every worker contends for the same antichain, so parallel
+/// insertion wins no concurrency while still paying the convex-union merge's order-sensitivity.
+/// `single` is the extreme -- one location, no integer variables, so a single discrete key holds
+/// the entire state space -- and there the trade is not close: canonical insertion explores 3,494
+/// states in 1.7 s where the racing one explores 39,899 in 47 s.
+///
+/// The count is a STATIC property of the model, so the decision cannot vary between runs; that
+/// matters, because a switch driven by observed counts would be driven by the very nondeterminism
+/// it exists to remove. It saturates rather than overflowing -- any model past the threshold is
+/// equally "large enough".
+static bool auto_deterministic(const Network& net, int nthreads) {
+  unsigned long long keys = 1;
+  const unsigned long long cap = 1ull << 40;
+  for (const auto& p : net.procs) {
+    keys *= std::max<std::size_t>(1, p.locations.size());
+    if (keys >= cap) return false;
+  }
+  for (const auto& v : net.intvars) {
+    keys *= static_cast<unsigned long long>(std::max<long>(1, v.hi - v.lo + 1));
+    if (keys >= cap) return false;
+  }
+  return keys <= static_cast<unsigned long long>(std::max(1, nthreads));
+}
+
+/// @brief A successor held back for canonical-order insertion under --deterministic.
+/// @note `i`/`sk` are the frontier index and the successor index within that state -- together
+///       the position the sequential engine would have inserted this successor at.
+struct Pending {
+  std::uint32_t i, sk;
+  std::uint64_t dk;
+  SymState s;
+};
+
 template <class TargetFn>
 static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&& is_target,
                          bool force_exact, Backend backend, ReachStats* stats,
@@ -1562,6 +1602,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       const std::size_t n = src ? src->size() : 1;
       for (std::size_t i = 0; i < n; ++i) {
         const NetTarget& t = src ? (*src)[i] : target;
+        // `false` contributes no test at all. An empty `tgt_tests` is exactly "matches nothing",
+        // so the unsatisfiable target costs zero per state and the search runs to exhaustion --
+        // which is the point: `E<> false` / `A[] true` must explore the whole state space.
+        if (t.never) continue;
         OrbitTest ot{0, 0, &t};
         for (const auto& lr : t.loc_req) {
           ot.mask |= dkey.mask[lr.first] << dkey.shift[lr.first];
@@ -1930,6 +1974,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // A reader/writer lock per stripe: the read-only kill probe below runs concurrently within a
     // stripe, and only a genuine insert or merge needs exclusivity.
     std::vector<SpinRW> smtx(lay.nstripes);
+    // Explicit --deterministic always wins; otherwise the engine takes it when the model cannot
+    // use parallel insertion anyway (see ::auto_deterministic).
+    const bool det = detail::options().deterministic || auto_deterministic(net, nthreads);
     //
     // Per-thread local antichains were tried here and removed: they are correct but consistently
     // slower, because a private antichain cannot consult the shared read-only kill probe that
@@ -1974,6 +2021,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // sequential state counts.
       std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
       std::vector<std::size_t> tls_gen(nthreads, 0);
+      // --deterministic: successors are stashed with the (frontier index, successor index) that
+      // produced them instead of being inserted as they appear, then inserted in that order once
+      // the level has been expanded. That order is exactly the sequential one, so the convex-union
+      // merge sees the same sequence of operands at any thread count and the state count matches
+      // the one-thread run. Empty and untouched when the flag is off.
+      std::vector<std::vector<Pending>> tls_pending(det ? nthreads : 0);
 #ifdef HORA_HAVE_OPENMP
 #pragma omp parallel num_threads(nthreads)
       {
@@ -2005,11 +2058,16 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
             const std::uint64_t dk = dkey.encode(s.locs, s.ints);
+            if (det) {   // canonical order decided below, not by who got here first
+              tls_pending[tid].push_back(Pending{static_cast<std::uint32_t>(i),
+                                                 static_cast<std::uint32_t>(sk), dk, std::move(s)});
+              continue;
+            }
             const std::size_t si = lay.stripe_of(dk);
             if (single) {
               if (smap[si].add(std::move(s), dk, level, exact_sub, state_bounds, tid) >= 0) touched.insert(dk);
             } else {
-              {   // shared: concurrent readers, no serialization on the common "already covered" case
+              if (!detail::options().no_probe) {   // shared: concurrent readers, no serialization on the common "already covered" case
                 smtx[si].lock_shared();
                 const bool covered = smap[si].probe_kill(dk, s, exact_sub, state_bounds);
                 smtx[si].unlock_shared();
@@ -2046,12 +2104,27 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         }
       }
 #endif
+      if (det) {
+        std::vector<Pending> pend;
+        std::size_t tot = 0;
+        for (auto& v : tls_pending) tot += v.size();
+        pend.reserve(tot);
+        for (auto& v : tls_pending) for (auto& e : v) pend.push_back(std::move(e));
+        std::sort(pend.begin(), pend.end(), [](const Pending& a, const Pending& b) {
+          return a.i != b.i ? a.i < b.i : a.sk < b.sk;
+        });
+        auto& touched0 = tls_touched[0];
+        for (auto& e : pend)
+          if (smap[lay.stripe_of(e.dk)].add(std::move(e.s), e.dk, level, exact_sub,
+                                            state_bounds, 0) >= 0)
+            touched0.insert(e.dk);
+      }
       if (stats) for (std::size_t g : tls_gen) stats->generated += g;
       if (found.load()) return true;
 
       // The passed tables are read-only here (no writers), so for_level is a safe read.
       std::vector<std::pair<std::uint64_t, int>> next =
-          collect_next_frontier(smap, lay, tls_touched, nthreads, single, level);
+          collect_next_frontier(smap, lay, tls_touched, nthreads, single || det, level);
       // Reordering a level to expand its most general zones first was tried and removed: it is
       // sound but does not pay, because zone retirement is driven by zones arriving levels apart,
       // which no intra-level ordering can reach. See docs/design.md 8.14.
@@ -2082,7 +2155,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // stays parallel, which caps the achievable speedup.
       if (zi.allocated() >= sweep_at)
         sweep_at = sweep_dead_zones(zi, smap, frontier, nthreads, kSweepFloor);
-
     }
     return false;
 }
@@ -2118,6 +2190,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
       for (const auto& ic : target.int_cond)
         t.int_cond.push_back(IntAtom{ic.var, ic.op,
                                      g.map_val(ic.var, ic.val, net.intvars[ic.var].lo)});
+      t.never = target.never;   // an unsatisfiable target stays unsatisfiable in every image
       for (const auto& lr : target.loc_req) t.loc_req.push_back({g.proc[lr.first], lr.second});
       for (const auto& c : target.clock_cond)
         t.clock_cond.push_back(Constraint{g.clk[c.i], g.clk[c.j], c.bound});
@@ -2130,6 +2203,7 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     }
   }
   auto match = [](const NetTarget& t, const SymState& s) {
+    if (t.never) return false;   // the literal `false` matches no state
     for (auto& lr : t.loc_req)
       if (s.locs[lr.first] != lr.second) return false;
     if (!int_ok(t.int_cond, s.ints)) return false;

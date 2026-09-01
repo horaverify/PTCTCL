@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
+#include <memory>
 #include <vector>
 
 namespace hora {
@@ -77,7 +78,56 @@ struct NetPassed {
     int head;               ///< arena index of the antichain head, or -1 when the slot is free
     std::uint32_t visits;   ///< times add() has walked this chain; drives mirror promotion
   };
-  std::deque<Node> arena;
+  /// @brief Chain nodes: chunked, so the arena neither reallocates nor over-allocates.
+  ///
+  /// Neither standard container has the right block granularity for this object, and it exists
+  /// once per stripe -- StripeLayout allocates 64 stripes per worker:
+  ///
+  ///   * `std::deque` never reallocates, but libc++ takes a whole 4096-byte block on the first
+  ///     push_back for any element under 256 bytes -- so a stripe holding two nodes cost 4096.
+  ///     Measured at one thread, against the 16384-stripe floor this replaced: 52.8 MB of
+  ///     padding behind 0.4 MB of nodes on arbiter12.
+  ///   * `std::vector` right-sizes small stripes, but doubles. Growing to ~154 nodes/stripe
+  ///     (fischer11) allocates AND frees 8+16+32+64+128 nodes of intermediates -- ~4 KB per
+  ///     stripe, ~65 MB across the table, fragmented and never returned. That cost fischer11
+  ///     +37 MB even though its final capacity was BELOW the deque's.
+  ///
+  /// Fixed 16-node blocks give both: a sparse stripe wastes at most 256 bytes, and a dense one
+  /// never reallocates or copies. Indices are (block << kBlkBits) | offset, and nodes are
+  /// reached only by index -- never by an address held across an insertion, which is also why
+  /// growth is safe: `add` holds the stripe's mutex exclusively, `probe_kill` holds it shared,
+  /// and the sweep requires that no worker is mutating at all.
+  struct Arena {
+    static constexpr std::size_t kBlkBits = 4;               // 16 nodes = 256 bytes per block
+    static constexpr std::size_t kBlk = std::size_t(1) << kBlkBits;
+    static constexpr std::size_t kBlkMask = kBlk - 1;
+    std::vector<std::unique_ptr<Node[]>> blocks;
+    std::size_t n = 0;
+
+    std::size_t size() const { return n; }
+    bool empty() const { return n == 0; }
+    Node& operator[](std::size_t i) { return blocks[i >> kBlkBits][i & kBlkMask]; }
+    const Node& operator[](std::size_t i) const { return blocks[i >> kBlkBits][i & kBlkMask]; }
+    void push_back(const Node& v) {
+      if ((n & kBlkMask) == 0 && (n >> kBlkBits) == blocks.size())
+        blocks.emplace_back(new Node[kBlk]);
+      (*this)[n++] = v;
+    }
+    void reserve(std::size_t want) {
+      while (blocks.size() < (want + kBlk - 1) / kBlk) blocks.emplace_back(new Node[kBlk]);
+    }
+    void swap(Arena& o) { blocks.swap(o.blocks); std::swap(n, o.n); }
+    /// @brief Index iteration, so `for (const auto& nd : arena)` keeps working.
+    struct const_iterator {
+      const Arena* a; std::size_t i;
+      const Node& operator*() const { return (*a)[i]; }
+      const_iterator& operator++() { ++i; return *this; }
+      bool operator!=(const const_iterator& o) const { return i != o.i; }
+    };
+    const_iterator begin() const { return {this, 0}; }
+    const_iterator end() const { return {this, n}; }
+  };
+  Arena arena;
   std::vector<Slot> tab;
   std::uint64_t mask;
   std::size_t used = 0;         ///< distinct discrete states, i.e. occupied slots
@@ -440,7 +490,12 @@ struct NetPassed {
     // exists to remove.
     std::vector<int> remap;
     if (!hot.empty()) remap.assign(sz, -1);
-    std::deque<Node> na;
+    Arena na;
+    // Exactly the live count -- `deadCount` is maintained incrementally, so no scan is needed.
+    // Without this the rebuild doubles its way up while the OLD arena is still live, and the
+    // transient peak (old + new + the copy the doubling makes) is what RSS records. Reserving
+    // makes the rebuild's cost `live`, once.
+    na.reserve(sz - deadCount);
     for (auto& s : tab) {
       if (s.head == -1) continue;
       int newhead = -1, tail = -1;

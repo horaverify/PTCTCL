@@ -153,6 +153,14 @@ struct NetTarget {
   std::vector<std::pair<int, int>> loc_req;  // (proc, location)
   std::vector<IntAtom> int_cond;
   std::vector<Constraint> clock_cond;
+  /// @brief The literal `false`: a target no state can ever match.
+  ///
+  /// An empty target is the opposite -- it matches EVERY state -- so the unsatisfiable target
+  /// needs its own flag rather than an empty conjunction. It exists so `E<> false` (and its dual
+  /// `A[] true`) costs what it semantically should: the search cannot stop early, so it explores
+  /// the entire reachable state space and reports it. That makes `A[] true` the honest
+  /// "measure the whole state space" query for a family whose natural property is violated.
+  bool never = false;
 };
 
 /// @brief Does @p net compare two clocks anywhere, i.e. contain a constraint `x_i - x_j ~ c`?

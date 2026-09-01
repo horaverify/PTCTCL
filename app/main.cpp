@@ -276,6 +276,10 @@ int main(int argc, char** argv) {
       hora::set_narrow_ranges(true);
     } else if (a == "--slice") {        // canonicalise dead integer cells before the discrete key
       hora::set_slice(true);
+    } else if (a == "--no-probe") {   // ablation: drop the shared-lock pre-filter
+      hora::set_no_probe(true);
+    } else if (a == "--deterministic") {   // thread-invariant state counts (see config.hpp)
+      hora::set_deterministic(true);
     } else if (a == "--sim" && i + 1 < argc) {   // alu (default) | g
       hora::set_gsim(std::string(argv[++i]) == "g");
     } else if (a == "--omp-chunk") {  // OpenMP dynamic-schedule chunk size (default 8)
@@ -303,6 +307,10 @@ int main(int argc, char** argv) {
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
             << "usage: hora [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats]\n              [--zones dense|packed] <model.xml> <query.q>\n"
+            << "       --no-probe: skip the shared-lock subsumption pre-filter (ablation;\n"
+            << "                   slower on every model measured -- see config.hpp)\n"
+            << "       --deterministic: insert each level in canonical order, so the state\n"
+            << "                   count is identical at every thread count (slower)\n"
             << "       --stats: also report the number of successor zones generated\n"
             << "       --zones dense|packed: how liveness stores its zones (default dense).\n"
             << "                   `packed` keeps each zone as a minimal graph -- an order of\n"

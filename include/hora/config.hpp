@@ -134,6 +134,34 @@ void set_packed_zones(bool on);
 /// @return the value last passed to ::set_gsim (default @c false)
 bool gsim_on();
 
+/// @brief Insert each BFS level in a canonical order, making state counts thread-invariant.
+///
+/// The convex-union merge is order-sensitive, and by default successors are inserted as workers
+/// produce them, so the interleaving decides which merges happen. On most families that is
+/// invisible (arbiter, fischer, twolock and viking are bit-identical at any thread count), but
+/// where every state shares one discrete key it dominates: `single7` explores 3,494 states at one
+/// thread and ~39,800 at eight. With this on, successors are buffered with the
+/// (frontier index, successor index) that produced them and inserted in that order, which is
+/// exactly the sequential order -- so the count equals the one-thread count at any thread count.
+/// @note Costs a level's worth of buffered successors and serialises insertion, so it is off by
+///       default: it buys reproducibility, not speed.
+void set_deterministic(bool on);
+/// @brief Skip the shared-lock subsumption pre-filter before the exclusive insert.
+///
+/// The parallel insert probes a stripe under a SHARED lock first and only takes it exclusively
+/// when the successor survives; the probe is a hint, since ::NetPassed::add re-checks under the
+/// exclusive lock. This turns the probe off, which exists to make that design choice measurable
+/// rather than assumed. Measured at 8 threads: the probe's hit rate is bimodal (2.7% on fischer11
+/// and 3.4% on twolock11, against 77% on arbiter14 and 83% on phil12), and turning it off changes
+/// wall time by -1%/-2% on the first pair but +29%/+20% on the second. It costs almost nothing
+/// when it misses -- an uncontended shared lock over a chain that is short BECAUSE subsumption is
+/// not hitting -- so it is on by default and there is no adaptive version worth building.
+void set_no_probe(bool on);
+/// @return the value last passed to ::set_no_probe (default @c false)
+bool no_probe_on();
+/// @return the value last passed to ::set_deterministic (default @c false)
+bool deterministic_on();
+
 /// @brief Is minimal-graph zone storage in force? @see set_packed_zones
 bool packed_zones_on();
 

@@ -21,6 +21,10 @@ void set_slice(bool on) { detail::options().slice = on; }
 bool slice_on() { return detail::options().slice; }
 void set_gsim(bool on) { detail::options().gsim = on; }
 bool gsim_on() { return detail::options().gsim; }
+void set_deterministic(bool on) { detail::options().deterministic = on; }
+bool deterministic_on() { return detail::options().deterministic; }
+void set_no_probe(bool on) { detail::options().no_probe = on; }
+bool no_probe_on() { return detail::options().no_probe; }
 void set_packed_zones(bool on) { detail::options().packed_zones = on; }
 bool packed_zones_on() { return detail::options().packed_zones; }
 

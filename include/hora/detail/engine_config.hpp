@@ -66,6 +66,8 @@ struct EngineOptions {
   bool gsim = false;             ///< subsume with the G-simulation instead of a_LU
   bool packed_zones = false;     ///< store liveness zones as minimal graphs, not dense matrices
   bool memo = false;             ///< memoise the successor-zone pipeline (see gen_succ_reuse)
+  bool deterministic = false;    ///< insert each level in canonical order; see reach_engine
+  bool no_probe = false;         ///< skip the shared-lock subsumption pre-filter (ablation)
 };
 
 /// @brief The process-wide options block.

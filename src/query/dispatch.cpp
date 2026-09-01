@@ -29,6 +29,33 @@ using frontend::parse_net_atom;
 using frontend::split_conjuncts;
 using frontend::trim;
 
+/// @brief Constant-fold the boolean literals of a conjunction.
+/// @return ::kConstFalse when some conjunct is `false` (so the conjunction is constantly false),
+///         ::kConstTrue when every conjunct is `true` or empty, ::kNotConst otherwise.
+///
+/// `true` was already dropped as a no-op conjunct wherever a conjunction is walked, but `false`
+/// had no case at all: it fell through to the location lookup, matched nothing, and was reported
+/// UNSUPPORTED. That is a parse gap rather than a real limitation -- both literals are part of
+/// the query language -- so they are folded here, once, for every caller that walks conjuncts.
+///
+/// @note Folding picks the verdict, NOT the cost. Each literal still costs what its dual
+///       reachability query costs, so the two are not symmetric: `A[] false` (= `!E<> true`) is
+///       refuted by the initial state and stops there, while `A[] true` (= `!E<> false`) has a
+///       target no state matches and can only answer by exhausting the reachable set. That makes
+///       `A[] true` the honest "measure the whole state space" query -- the one to use for a
+///       family whose natural property is violated and would otherwise stop at a counterexample.
+enum : int { kConstFalse = 0, kConstTrue = 1, kNotConst = -1 };
+int const_fold_conj(const std::string& text) {
+  bool all_true = true;
+  for (auto atom : split_conjuncts(text)) {
+    atom = trim(atom);
+    if (atom.empty() || atom == "true") continue;
+    if (atom == "false") return kConstFalse;
+    all_true = false;
+  }
+  return all_true ? kConstTrue : kNotConst;
+}
+
 bool check_query(const TimedAutomaton& ta, const Query& q_in, bool* satisfied, Backend backend,
                  ReachStats* stats) {
   if (!q_in.supported) return false;
@@ -40,6 +67,14 @@ bool check_query(const TimedAutomaton& ta, const Query& q_in, bool* satisfied, B
   Query q = q_in;
   std::string cond = q.note;
   q.note.clear();
+  // Verdicts for the constant conditions. The single-automaton path answers them without
+  // exploring -- unlike the network path, which runs `A[] true` to exhaustion for its state
+  // count. The verdicts agree; only the reported cost differs, and every benchmark model is a
+  // network, so the measuring path is the one that explores.
+  if (q.kind == Query::EF || q.kind == Query::AG) {
+    const int cf = const_fold_conj(cond);
+    if (cf != kNotConst) { *satisfied = (cf == kConstTrue); return true; }
+  }
   std::string loc_name;
   std::vector<Constraint> clocks;
   for (auto atom : split_conjuncts(cond)) {
@@ -358,6 +393,18 @@ bool check_network_query(const Network& net, const Query& q, bool* satisfied, Ba
       *satisfied = deadlock_reachable(net, backend, stats);
       return true;
     }
+    {
+      const int cf = const_fold_conj(q.note);
+      // `E<> true` is met by the initial state, so it stops there. `E<> false` matches nothing,
+      // so it can only answer by exhausting the reachable set -- and that is what makes its dual
+      // `A[] true` the honest full-state-space probe.
+      if (cf == kConstTrue) { *satisfied = true; return true; }
+      if (cf == kConstFalse) {
+        NetTarget tgt; tgt.never = true;
+        *satisfied = reachable_net(net, tgt, backend, stats);   // false, after a full search
+        return true;
+      }
+    }
     NetTarget tgt;
     if (!build_target(q.note, tgt)) return false;
     *satisfied = reachable_net(net, tgt, backend, stats);
@@ -425,12 +472,30 @@ bool check_network_query(const Network& net, const Query& q, bool* satisfied, Ba
         *satisfied = !deadlock_reachable(net, backend, stats);
         return true;
       }
+      {
+        const int cf = const_fold_conj(inner);
+        if (cf == kConstTrue) { *satisfied = false; return true; }   // A[] not true: initial state
+        if (cf == kConstFalse) {                                     // A[] not false == A[] true
+          NetTarget tgt; tgt.never = true;
+          *satisfied = !reachable_net(net, tgt, backend, stats);
+          return true;
+        }
+      }
       NetTarget tgt;
       if (!build_target(inner, tgt)) return false;
       *satisfied = !reachable_net(net, tgt, backend, stats);
       return true;
     }
     // General:  A[] (a1 & a2 & ...) = AND_i !E<>(!ai)
+    {
+      const int cf = const_fold_conj(body);
+      if (cf == kConstFalse) { *satisfied = false; return true; }  // refuted by the initial state
+      if (cf == kConstTrue) {   // nothing can violate it, but the COST is the whole state space
+        NetTarget tgt; tgt.never = true;
+        *satisfied = !reachable_net(net, tgt, backend, stats);
+        return true;
+      }
+    }
     for (auto atom : split_conjuncts(body)) {
       atom = trim(atom);
       if (atom.empty() || atom == "true") continue;
