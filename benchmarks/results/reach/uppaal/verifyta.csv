@@ -24,7 +24,6 @@ phil,phil14,verifyta,1,2,14833412,533.163,1.869,OK
 phil,phil15,verifyta,1,1,55101842,3743.458,6.846,OK
 phil,phil15,verifyta,1,2,55101842,3707.244,6.846,OK
 phil,phil16,verifyta,1,1,-,7200.046,9.397,TIMEOUT
-phil,phil17,verifyta,1,1,-,600.042,3.277,TIMEOUT
 twolock,twolock4,verifyta,1,1,332,0.062,0.017,OK
 twolock,twolock4,verifyta,1,2,332,0.061,0.017,OK
 twolock,twolock5,verifyta,1,1,1137,0.061,0.018,OK
