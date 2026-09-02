@@ -78,6 +78,7 @@ doc_1/
 docs/
 .tmp/
 *_old
+*.log*
 *.log
 old/
 *_corrupted*
