@@ -125,3 +125,41 @@ phil,phil14,hora-omp,24,1,9370475,40.619,2.753,OK,-,-,8,g,adaptive,reach,-,SAT,A
 phil,phil14,hora-omp,24,2,9379653,40.774,2.758,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil15,hora-omp,24,1,35221694,365.653,13.660,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil15,hora-omp,24,2,35272920,369.736,13.740,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil16,hora-omp,24,1,138693164,5953.454,65.773,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil16,hora-omp,24,2,138583108,5918.348,65.775,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil17,hora-omp,24,1,-,7200.007,71.853,TIMEOUT,-,-,8,g,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat)
+single,single4,hora-omp,24,1,45,0.219,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single4,hora-omp,24,2,45,0.219,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single5,hora-omp,24,1,159,0.219,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single5,hora-omp,24,2,159,0.219,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single6,hora-omp,24,1,622,0.337,0.041,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single6,hora-omp,24,2,622,0.334,0.039,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single7,hora-omp,24,1,3494,4.092,0.049,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single7,hora-omp,24,2,3494,4.092,0.048,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single8,hora-omp,24,1,17425,112.629,0.073,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single8,hora-omp,24,2,17425,112.635,0.073,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single9,hora-omp,24,1,-,7200.033,0.377,TIMEOUT,-,-,8,g,adaptive,reach,-,-,A[] x0 <= 6
+twolock,twolock4,hora-omp,24,1,332,0.170,0.037,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock4,hora-omp,24,2,332,0.219,0.037,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,hora-omp,24,1,1137,0.068,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,hora-omp,24,2,1137,0.118,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,hora-omp,24,1,3842,0.168,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,hora-omp,24,2,3842,0.068,0.038,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock7,hora-omp,24,1,12847,0.118,0.039,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock7,hora-omp,24,2,12847,0.118,0.039,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock8,hora-omp,24,1,42584,0.169,0.045,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock8,hora-omp,24,2,42584,0.169,0.045,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock9,hora-omp,24,1,140093,0.337,0.058,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock9,hora-omp,24,2,140093,0.337,0.058,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock10,hora-omp,24,1,457838,1.191,0.103,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock10,hora-omp,24,2,457838,1.193,0.102,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock11,hora-omp,24,1,1487499,5.429,0.281,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock11,hora-omp,24,2,1487499,5.363,0.282,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock12,hora-omp,24,1,4807556,19.393,0.779,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock12,hora-omp,24,2,4807556,19.037,0.781,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock13,hora-omp,24,1,15465049,68.729,1.922,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock13,hora-omp,24,2,15465049,68.824,1.914,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock14,hora-omp,24,1,49538714,267.163,7.868,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock14,hora-omp,24,2,49538714,266.316,7.857,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock15,hora-omp,24,1,158083751,1050.158,20.194,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock15,hora-omp,24,2,158083751,1061.902,20.200,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
