@@ -126,3 +126,55 @@ phil,phil14,hora-omp,32,2,9384337,32.661,2.781,OK,-,-,8,g,adaptive,reach,-,SAT,A
 phil,phil15,hora-omp,32,1,35224741,307.035,13.769,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil15,hora-omp,32,2,35234870,305.322,13.782,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil16,hora-omp,32,1,139029331,5458.754,66.259,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil16,hora-omp,32,2,138951491,5482.802,66.190,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil17,hora-omp,32,1,-,7200.012,77.969,TIMEOUT,-,-,8,g,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat)
+single,single4,hora-omp,32,1,45,0.221,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single4,hora-omp,32,2,45,0.221,0.041,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single5,hora-omp,32,1,159,0.219,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single5,hora-omp,32,2,159,0.221,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single6,hora-omp,32,1,622,0.343,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single6,hora-omp,32,2,622,0.345,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single7,hora-omp,32,1,3494,4.104,0.053,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single7,hora-omp,32,2,3494,4.107,0.053,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single8,hora-omp,32,1,17425,113.684,0.079,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single8,hora-omp,32,2,17425,113.336,0.078,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single9,hora-omp,32,1,-,7200.036,0.362,TIMEOUT,-,-,8,g,adaptive,reach,-,-,A[] x0 <= 6
+twolock,twolock4,hora-omp,32,1,332,0.120,0.041,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock4,hora-omp,32,2,332,0.119,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,hora-omp,32,1,1137,0.069,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,hora-omp,32,2,1137,0.067,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,hora-omp,32,1,3842,0.069,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,hora-omp,32,2,3842,0.067,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock7,hora-omp,32,1,12847,0.119,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock7,hora-omp,32,2,12847,0.120,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock8,hora-omp,32,1,42584,0.222,0.048,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock8,hora-omp,32,2,42584,0.170,0.048,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock9,hora-omp,32,1,140093,0.270,0.057,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock9,hora-omp,32,2,140093,0.343,0.062,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock10,hora-omp,32,1,457838,1.045,0.107,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock10,hora-omp,32,2,457838,1.088,0.107,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock11,hora-omp,32,1,1487499,4.589,0.287,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock11,hora-omp,32,2,1487499,4.554,0.288,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock12,hora-omp,32,1,4807556,15.733,0.787,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock12,hora-omp,32,2,4807556,15.623,0.789,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock13,hora-omp,32,1,15465049,54.870,1.907,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock13,hora-omp,32,2,15465049,55.499,1.909,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock14,hora-omp,32,1,49538714,224.677,7.870,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock14,hora-omp,32,2,49538714,229.564,7.882,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock15,hora-omp,32,1,158083751,881.311,20.212,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock15,hora-omp,32,2,158083751,880.820,20.238,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock16,hora-omp,32,1,-,3673.841,100.021,MEMOUT,-,-,8,g,adaptive,reach,-,-,A[] not (P1.cs && P2.cs)
+viking,viking4,hora-omp,32,1,206,0.663,0.044,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking4,hora-omp,32,2,206,0.668,0.044,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking6,hora-omp,32,1,1374,0.989,0.044,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking6,hora-omp,32,2,1374,0.989,0.044,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking10,hora-omp,32,1,45566,1.704,0.049,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking10,hora-omp,32,2,45566,1.702,0.049,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking12,hora-omp,32,1,241662,2.080,0.052,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking12,hora-omp,32,2,241662,2.081,0.052,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking15,hora-omp,32,1,2768894,2.334,0.186,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking15,hora-omp,32,2,2768894,1.962,0.183,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking17,hora-omp,32,1,13631486,8.891,0.872,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking17,hora-omp,32,2,13631486,8.843,0.874,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking20,hora-omp,32,1,143654910,94.812,7.129,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking20,hora-omp,32,2,143654910,94.848,7.129,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)

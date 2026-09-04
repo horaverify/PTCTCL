@@ -123,3 +123,10 @@ viking,viking15,tchecker,1,2,2768894,163.516,1.021,OK,-,-,8,alu,adaptive,reach
 viking,viking17,tchecker,1,1,13631486,2909.108,5.036,OK,-,-,8,alu,adaptive,reach
 viking,viking17,tchecker,1,2,13631486,2909.553,5.036,OK,-,-,8,alu,adaptive,reach
 viking,viking20,tchecker,1,1,-,7200.004,8.423,TIMEOUT,-,-,8,alu,adaptive,reach
+single,single4,tchecker,1,1,7037,0.170,0.015,OK,-,-,8,alu,adaptive,reach
+single,single4,tchecker,1,2,7037,0.167,0.015,OK,-,-,8,alu,adaptive,reach
+single,single5,tchecker,1,1,209131,9.845,0.121,OK,-,-,8,alu,adaptive,reach
+single,single5,tchecker,1,2,209131,9.741,0.121,OK,-,-,8,alu,adaptive,reach
+single,single6,tchecker,1,1,7643147,3849.225,4.655,OK,-,-,8,alu,adaptive,reach
+single,single6,tchecker,1,2,7643147,3242.697,4.655,OK,-,-,8,alu,adaptive,reach
+single,single7,tchecker,1,1,-,7200.002,9.248,TIMEOUT,-,-,8,alu,adaptive,reach
