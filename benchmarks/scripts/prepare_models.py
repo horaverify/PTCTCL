@@ -79,7 +79,12 @@ FAMILIES = {
                 # The BUS is the component with forced progress, not a station: `S0.Send -->
                 # S0.Wait` is refuted in 8 states (a collision sends it to Retry instead).
                 "Bus.Transmitting --> Bus.Idle"),
-    "grc":     ((4, 20), "A[] not deadlock", None),
+    # `A[] not deadlock` is FALSIFIED on grc -- measured NOT satisfied in 883 states on grc4 --
+    # so the run stops at the first counterexample and the count measures the path to it, not the
+    # state space. `A[] true` has no bad state to stop at and is the honest full-exploration probe.
+    # The liveness query holds (grc4 788 states, grc5 12184, both tools agreeing SAT), so it
+    # exhausts the reachable set the way the other families' leads-to queries do.
+    "grc":     ((4, 20), "A[] true", "T0.in --> T0.far"),
     # singleN is ONE process with ONE location and N independent clocks (self-loop per clock).
     # It has no critical section, so the mutex query copied from the fischer/arbiter families
     # referenced a location that does not exist: verifyta rejected it with "has no member named
@@ -100,9 +105,20 @@ FAMILIES = {
     # force progress are anonymous in the source model and cannot be named in a query. Six
     # candidates were measured, all refuted in 0-21 states. A vacuous query here would measure
     # nothing, so the family simply has no liveness column.
-    "viking":  ((4, 26), "A[] not (Viking1.safe && Viking1.unsafe)", None),
+    # The "no liveness query" note above is out of date: every candidate it rejected was a
+    # location-to-location leads-to, and what works here puts a CLOCK in the response. It holds and
+    # scales -- viking4 206 states, viking15 2768894, viking17 13631486, viking20 MEMOUT -- so it
+    # measures the state space. Note gen_tck_live.py cannot encode it (that generator handles only
+    # `Process.location --> Process.location`), which is why viking has no tchecker liveness column.
+    "viking":  ((4, 26), "A[] not (Viking1.safe && Viking1.unsafe)", "Viking1.unsafe --> y1 >= 5"),
     "train":   ((0, 1),  "A[] not deadlock", None),
-    "hddi":    ((0, 20), "A[] !((ST1==station_y_sync || ST1==station_y_async || ST1==station_z_async || ST1==station_z_sync) && (ST2==station_y_sync || ST2==station_y_async || ST2==station_z_async || ST2==station_z_sync))", None),
+    # The old reach query compared a PROCESS to LOCATION names (`ST1==station_y_sync`). ST1 is a
+    # process and station_y_sync one of its locations, so verifyta rejected the whole query
+    # ("Unknown identifier: station_y_sync") and every hddi row was an ERR for all three tools.
+    # Spelled correctly as location predicates it still asks for a disjunction under `A[] !(...)`,
+    # which hora's safety path cannot lower, so hddi uses `A[] true` exactly as grc does: no bad
+    # state to stop at, hence the full state space. The leads-to holds on every size.
+    "hddi":    ((0, 20), "A[] true", "ST1.station_z_sync --> ST1.station_z_idle"),
 }
 
 # KNOWN LIMITATION (measured 2026-08-11, worth a look before relying on liveness numbers):

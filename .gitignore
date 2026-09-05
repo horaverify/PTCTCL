@@ -84,6 +84,12 @@ old/
 *_corrupted*
 __pycache__/
 *.q
+# ...but NOT the benchmark queries. They are the benchmark definition -- hand-curated per family,
+# with the reasoning in benchmarks/queries/*/README -- not a runtime artefact. The bare `*.q`
+# above predates them being added, so the 22 committed before it survived while every query
+# written since was silently untracked: benchmarks/queries/reach/hddi.q (the `A[] true` fix) and
+# benchmarks/queries/live/hddi.q both existed only on one machine.
+!benchmarks/queries/**/*.q
 *pid
 STOP
 *pgid

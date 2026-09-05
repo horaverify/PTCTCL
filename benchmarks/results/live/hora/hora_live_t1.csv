@@ -155,3 +155,11 @@ single,single6,hora-omp,1,2,1167,0.485,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,P.
 single,single7,hora-omp,1,1,9164,22.806,0.009,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
 single,single7,hora-omp,1,2,9164,12.152,0.009,OK,-,-,8,alu,adaptive,live,-,SAT,P.A --> P.A
 single,single8,hora-omp,1,1,-,7200.023,0.057,TIMEOUT,-,-,8,alu,adaptive,live,-,-,P.A --> P.A
+hddi,hddi2,hora-omp,1,1,8,0.069,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi2,hora-omp,1,2,8,0.067,0.005,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi10,hora-omp,1,1,40,0.067,0.006,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi15,hora-omp,1,1,60,0.069,0.008,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi15,hora-omp,1,2,60,0.068,0.008,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi20,hora-omp,1,1,80,0.068,0.010,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi20,hora-omp,1,2,80,0.068,0.010,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle

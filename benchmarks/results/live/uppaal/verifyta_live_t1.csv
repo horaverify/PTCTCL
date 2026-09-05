@@ -78,3 +78,7 @@ viking,viking15,verifyta,1,2,5046454,33.730,1.402,OK,-,-,8,alu,adaptive,live,-,S
 viking,viking17,verifyta,1,1,24379632,176.968,6.858,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
 viking,viking17,verifyta,1,2,24379632,176.745,6.858,OK,-,-,8,alu,adaptive,live,-,SAT,Viking1.unsafe --> y1 >= 5
 viking,viking20,verifyta,1,1,-,7200.034,52.805,TIMEOUT,-,-,8,alu,adaptive,live,-,-,Viking1.unsafe --> y1 >= 5
+hddi,hddi2,verifyta,1,1,64,0.069,0.018,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi2,verifyta,1,2,64,0.069,0.018,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi10,verifyta,1,1,10646,0.536,0.021,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi10,verifyta,1,2,10646,0.539,0.021,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle

@@ -158,3 +158,11 @@ viking,viking17,hora-omp,1,1,13631486,181.768,7.164,OK,-,-,8,alu,adaptive,deadlo
 viking,viking17,hora-omp,1,2,13631486,181.188,7.164,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
 viking,viking20,hora-omp,1,1,143654910,2171.744,82.249,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
 viking,viking20,hora-omp,1,2,143654910,2150.403,82.250,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi2,hora-omp,1,1,8,0.070,0.005,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi2,hora-omp,1,2,8,0.069,0.005,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi10,hora-omp,1,1,40,0.069,0.006,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi15,hora-omp,1,1,60,0.070,0.008,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi15,hora-omp,1,2,60,0.068,0.008,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi20,hora-omp,1,1,80,0.069,0.010,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
+hddi,hddi20,hora-omp,1,2,80,0.070,0.010,OK,-,-,8,alu,adaptive,deadlock,-,SAT,A[] not deadlock
