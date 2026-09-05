@@ -1,0 +1,207 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_LTStest_src_opaal_ltsmin_succgen_tests_vikingtests_viking12.xml
+# take:(channel)
+# global event: take
+# release:(channel)
+# global event: release
+# L:(range (int) "-32768" "32767")
+int:1:-32768:32767:0:L
+# time:(clock)
+clock:1:time
+# y1:(clock)
+clock:1:y1
+# y2:(clock)
+clock:1:y2
+# y3:(clock)
+clock:1:y3
+# y4:(clock)
+clock:1:y4
+# y5:(clock)
+clock:1:y5
+# y6:(clock)
+clock:1:y6
+# y7:(clock)
+clock:1:y7
+# y8:(clock)
+clock:1:y8
+# y9:(clock)
+clock:1:y9
+# y10:(clock)
+clock:1:y10
+# no iodecl
+# compilation of process Viking1
+process:Viking1
+location:Viking1:_id0{invariant:y1 <= 40:labels:TC_EG}
+location:Viking1:safe{labels:L_Viking1_safe,TC_EG:invariant:y1 <= 40}
+location:Viking1:_id2{invariant:y1 <= 40:labels:TC_EG}
+location:Viking1:unsafe{initial::labels:L_Viking1_unsafe,TC_EG:invariant:y1 <= 40}
+event:release_emit
+edge:Viking1:_id2:unsafe:release_emit{provided:(y1 >= 5)}
+event:take_emit
+edge:Viking1:safe:_id2:take_emit{do:y1=0:provided:(L == 1)}
+edge:Viking1:_id0:safe:release_emit{provided:(y1 >= 5)}
+edge:Viking1:unsafe:_id0:take_emit{do:y1=0:provided:(L == 0)}
+
+# compilation of process Viking2
+process:Viking2
+location:Viking2:_id4{}
+location:Viking2:safe{}
+location:Viking2:_id6{}
+location:Viking2:unsafe{initial:}
+edge:Viking2:_id6:unsafe:release_emit{provided:(y2 >= 10)}
+edge:Viking2:safe:_id6:take_emit{do:y2=0:provided:(L == 1)}
+edge:Viking2:_id4:safe:release_emit{provided:(y2 >= 10)}
+edge:Viking2:unsafe:_id4:take_emit{do:y2=0:provided:(L == 0)}
+
+# compilation of process Viking3
+process:Viking3
+location:Viking3:_id8{}
+location:Viking3:safe{}
+location:Viking3:_id10{}
+location:Viking3:unsafe{initial:}
+edge:Viking3:_id10:unsafe:release_emit{provided:(y3 >= 10)}
+edge:Viking3:safe:_id10:take_emit{do:y3=0:provided:(L == 1)}
+edge:Viking3:_id8:safe:release_emit{provided:(y3 >= 10)}
+edge:Viking3:unsafe:_id8:take_emit{do:y3=0:provided:(L == 0)}
+
+# compilation of process Viking4
+process:Viking4
+location:Viking4:_id12{}
+location:Viking4:unsafe{initial:}
+location:Viking4:_id14{}
+location:Viking4:safe{}
+edge:Viking4:_id12:unsafe:release_emit{provided:(y4 >= 10)}
+edge:Viking4:safe:_id12:take_emit{do:y4=0:provided:(L == 1)}
+edge:Viking4:_id14:safe:release_emit{provided:(y4 >= 10)}
+edge:Viking4:unsafe:_id14:take_emit{do:y4=0:provided:(L == 0)}
+
+# compilation of process Viking5
+process:Viking5
+location:Viking5:_id16{}
+location:Viking5:safe{}
+location:Viking5:_id18{}
+location:Viking5:unsafe{initial:}
+edge:Viking5:_id18:unsafe:release_emit{provided:(y5 >= 10)}
+edge:Viking5:safe:_id18:take_emit{do:y5=0:provided:(L == 1)}
+edge:Viking5:_id16:safe:release_emit{provided:(y5 >= 10)}
+edge:Viking5:unsafe:_id16:take_emit{do:y5=0:provided:(L == 0)}
+
+# compilation of process Viking6
+process:Viking6
+location:Viking6:_id20{}
+location:Viking6:safe{}
+location:Viking6:_id22{}
+location:Viking6:unsafe{initial:}
+edge:Viking6:_id22:unsafe:release_emit{provided:(y6 >= 10)}
+edge:Viking6:safe:_id22:take_emit{do:y6=0:provided:(L == 1)}
+edge:Viking6:_id20:safe:release_emit{provided:(y6 >= 10)}
+edge:Viking6:unsafe:_id20:take_emit{do:y6=0:provided:(L == 0)}
+
+# compilation of process Viking7
+process:Viking7
+location:Viking7:_id24{}
+location:Viking7:safe{}
+location:Viking7:_id26{}
+location:Viking7:unsafe{initial:}
+edge:Viking7:_id26:unsafe:release_emit{provided:(y7 >= 10)}
+edge:Viking7:safe:_id26:take_emit{do:y7=0:provided:(L == 1)}
+edge:Viking7:_id24:safe:release_emit{provided:(y7 >= 10)}
+edge:Viking7:unsafe:_id24:take_emit{do:y7=0:provided:(L == 0)}
+
+# compilation of process Viking8
+process:Viking8
+location:Viking8:_id28{}
+location:Viking8:safe{}
+location:Viking8:_id30{}
+location:Viking8:unsafe{initial:}
+edge:Viking8:_id30:unsafe:release_emit{provided:(y8 >= 10)}
+edge:Viking8:safe:_id30:take_emit{do:y8=0:provided:(L == 1)}
+edge:Viking8:_id28:safe:release_emit{provided:(y8 >= 10)}
+edge:Viking8:unsafe:_id28:take_emit{do:y8=0:provided:(L == 0)}
+
+# compilation of process Viking9
+process:Viking9
+location:Viking9:_id32{}
+location:Viking9:safe{}
+location:Viking9:_id34{}
+location:Viking9:unsafe{initial:}
+edge:Viking9:_id34:unsafe:release_emit{provided:(y9 >= 10)}
+edge:Viking9:safe:_id34:take_emit{do:y9=0:provided:(L == 1)}
+edge:Viking9:_id32:safe:release_emit{provided:(y9 >= 10)}
+edge:Viking9:unsafe:_id32:take_emit{do:y9=0:provided:(L == 0)}
+
+# compilation of process Viking10
+process:Viking10
+location:Viking10:_id36{}
+location:Viking10:safe{}
+location:Viking10:_id38{}
+location:Viking10:unsafe{initial:}
+edge:Viking10:_id38:unsafe:release_emit{provided:(y10 >= 10)}
+edge:Viking10:safe:_id38:take_emit{do:y10=0:provided:(L == 1)}
+edge:Viking10:_id36:safe:release_emit{provided:(y10 >= 10)}
+edge:Viking10:unsafe:_id36:take_emit{do:y10=0:provided:(L == 0)}
+
+# compilation of process Viking11
+process:Viking11
+location:Viking11:_id36{}
+location:Viking11:safe{}
+location:Viking11:_id38{}
+location:Viking11:unsafe{initial:}
+edge:Viking11:_id38:unsafe:release_emit{provided:(y10 >= 10)}
+edge:Viking11:safe:_id38:take_emit{do:y10=0:provided:(L == 1)}
+edge:Viking11:_id36:safe:release_emit{provided:(y10 >= 10)}
+edge:Viking11:unsafe:_id36:take_emit{do:y10=0:provided:(L == 0)}
+
+# compilation of process Viking12
+process:Viking12
+location:Viking12:_id36{}
+location:Viking12:safe{}
+location:Viking12:_id38{}
+location:Viking12:unsafe{initial:}
+edge:Viking12:_id38:unsafe:release_emit{provided:(y10 >= 10)}
+edge:Viking12:safe:_id38:take_emit{do:y10=0:provided:(L == 1)}
+edge:Viking12:_id36:safe:release_emit{provided:(y10 >= 10)}
+edge:Viking12:unsafe:_id36:take_emit{do:y10=0:provided:(L == 0)}
+
+# compilation of process Torch
+process:Torch
+location:Torch:one{}
+location:Torch:_id41{}
+location:Torch:free{initial:}
+location:Torch:two{}
+event:take_recv
+edge:Torch:free:_id41:take_recv{}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:Torch:_id41:one:tau{}
+edge:Torch:_id41:two:take_recv{}
+event:release_recv
+edge:Torch:one:free:release_recv{do:L=((1 - L) % 2)}
+edge:Torch:two:one:release_recv{}
+
+sync:Torch@release_recv:Viking1@release_emit
+sync:Torch@release_recv:Viking10@release_emit
+sync:Torch@release_recv:Viking11@release_emit
+sync:Torch@release_recv:Viking12@release_emit
+sync:Torch@release_recv:Viking2@release_emit
+sync:Torch@release_recv:Viking3@release_emit
+sync:Torch@release_recv:Viking4@release_emit
+sync:Torch@release_recv:Viking5@release_emit
+sync:Torch@release_recv:Viking6@release_emit
+sync:Torch@release_recv:Viking7@release_emit
+sync:Torch@release_recv:Viking8@release_emit
+sync:Torch@release_recv:Viking9@release_emit
+sync:Torch@take_recv:Viking1@take_emit
+sync:Torch@take_recv:Viking10@take_emit
+sync:Torch@take_recv:Viking11@take_emit
+sync:Torch@take_recv:Viking12@take_emit
+sync:Torch@take_recv:Viking2@take_emit
+sync:Torch@take_recv:Viking3@take_emit
+sync:Torch@take_recv:Viking4@take_emit
+sync:Torch@take_recv:Viking5@take_emit
+sync:Torch@take_recv:Viking6@take_emit
+sync:Torch@take_recv:Viking7@take_emit
+sync:Torch@take_recv:Viking8@take_emit
+sync:Torch@take_recv:Viking9@take_emit

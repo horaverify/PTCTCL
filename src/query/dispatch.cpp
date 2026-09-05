@@ -411,6 +411,27 @@ bool check_network_query(const Network& net, const Query& q, bool* satisfied, Ba
     return true;
   }
   if (q.kind == Query::EG) {  // E[] phi
+    // The boolean literals are decided here, before any lowering, because the general path gets
+    // one of them WRONG rather than merely slow. `E[] true` lowers `!true` to an EMPTY
+    // conjunction, and an empty conjunction is vacuously TRUE, so every state lands in the
+    // forbidden set and the answer comes back NOT -- where a maximal run always exists and the
+    // property holds. `E[] false` is refused instead: `false` matches no location, integer or
+    // clock atom, so ::split_psi declines it and the query reports UNSUPPORTED.
+    //
+    // @note Neither literal costs a search, and that is NOT the asymmetry `E<>`/`A[]` have. There
+    //       `A[] true` (= `!E<> false`) has a target no state matches and must exhaust the
+    //       reachable set to say so, which is what makes it the honest full-state-space probe.
+    //       Under `E[]` the polarity flips: `false` empties the psi-restricted network, so there
+    //       is nothing to explore, and `true` is witnessed by any maximal run. verifyta agrees on
+    //       both verdicts and reports 0 states explored for each.
+    // @note `E[] true` assumes the initial state exists. verifyta makes the same assumption --
+    //       it answers satisfied without exploring -- so a vacuous initial state is out of scope
+    //       for both tools rather than a disagreement between them.
+    {
+      const int cf = const_fold_conj(q.note);
+      if (cf == kConstFalse) { *satisfied = false; return true; }
+      if (cf == kConstTrue) { *satisfied = true; return true; }
+    }
     std::vector<Constraint> cc;
     DiscPred nq;
     nq.is_dnf = true;   // empty means psi's discrete part never fails, not that it always does
@@ -419,6 +440,15 @@ bool check_network_query(const Network& net, const Query& q, bool* satisfied, Ba
     return true;
   }
   if (q.kind == Query::AF) {  // A<> phi = !E[] !phi
+    // The literals, for the same reason ::Query::EG folds them: `!phi` for a literal `phi` lowers
+    // to a conjunction the general path cannot represent, and `A<> false` is reported UNSUPPORTED
+    // rather than answered. `A<> true` holds at the initial state; `A<> false` asks every run to
+    // reach a state satisfying `false`, which none can. verifyta agrees on both.
+    {
+      const int cf = const_fold_conj(q.note);
+      if (cf == kConstTrue) { *satisfied = true; return true; }
+      if (cf == kConstFalse) { *satisfied = false; return true; }
+    }
     // `!phi` is what the run must maintain. Its clock part is a conjunction only when `phi`'s is
     // a single atom, so the split below refuses the rest -- a regression in reach against the
     // forward path, taken deliberately: the forward path decided them by cycle detection on a

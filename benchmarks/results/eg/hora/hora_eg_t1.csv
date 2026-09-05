@@ -823,3 +823,27 @@ twolock,twolock10,hora-omp,1,1,6,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] 
 twolock,twolock10,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
 twolock,twolock10,hora-omp,1,1,19,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
 twolock,twolock10,hora-omp,1,2,20,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
+twolock,twolock10,hora-omp,1,1,206288,160.893,0.196,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock,twolock10,hora-omp,1,2,206288,221.279,0.202,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock,twolock10,hora-omp,1,1,23,0.071,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+twolock,twolock10,hora-omp,1,2,23,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+twolock,twolock11,hora-omp,1,1,6,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
+twolock,twolock11,hora-omp,1,2,6,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
+twolock,twolock11,hora-omp,1,1,20,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
+twolock,twolock11,hora-omp,1,2,20,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
+twolock,twolock11,hora-omp,1,1,683500,825.082,0.720,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock,twolock11,hora-omp,1,2,683500,894.010,0.714,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock,twolock11,hora-omp,1,1,20,0.067,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+twolock,twolock11,hora-omp,1,2,21,0.068,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+twolock,twolock12,hora-omp,1,1,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
+twolock,twolock12,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
+twolock,twolock12,hora-omp,1,1,20,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
+twolock,twolock12,hora-omp,1,2,20,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
+twolock,twolock12,hora-omp,1,1,2242473,2957.054,2.443,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock,twolock12,hora-omp,1,2,2242473,2941.718,2.445,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (P0.idle || P0.waitA) && x0 <= 30
+twolock,twolock12,hora-omp,1,1,22,0.071,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+twolock,twolock12,hora-omp,1,2,22,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
+twolock,twolock13,hora-omp,1,1,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
+twolock,twolock13,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 30
+twolock,twolock13,hora-omp,1,1,20,0.071,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
+twolock,twolock13,hora-omp,1,2,20,0.069,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs

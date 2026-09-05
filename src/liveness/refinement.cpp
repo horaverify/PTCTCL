@@ -754,39 +754,46 @@ bool LivenessEngine::online_eg_probe() {
 
 /// @brief Drain the coupled expansion / atom / cover-certificate worklists to quiescence.
 void LivenessEngine::online_drain_forward_work() {
-  // WHEN to probe: amortization, not tuning -- the rule ::base_forward already uses. Exploration
-  // since the last probe must have cost at least as much as all probing done so far, so total
-  // probe time can never exceed total exploration time and a query whose witness never appears
-  // pays at most a factor of two. The spacing calibrates itself: where a probe is cheap against
-  // the exploration it interrupts the probes come thick and a cyclic witness is caught early;
-  // where the fixpoint is expensive they thin out on their own.
-  const auto clk_now = [] { return std::chrono::steady_clock::now(); };
-  const auto ns_since = [&](std::chrono::steady_clock::time_point t0) {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(clk_now() - t0).count();
-  };
+  // WHEN to probe: amortization in NODES, not in wall-clock.
+  //
+  // The rule is the one ::base_forward argues for -- exploration since the last probe must have
+  // cost at least as much as all probing so far, so total probe work can never exceed total
+  // exploration work and a query whose witness never appears pays at most a factor of two -- but
+  // measured in records rather than nanoseconds. A probe walks the graph it is given, so the node
+  // count at the probe IS its cost, to within a constant.
+  //
+  // It must not be a clock. With a wall-clock schedule the number of records explored before a
+  // probe finally hits depends on machine timing, so the REPORTED STATE COUNT stops being
+  // reproducible: arbiter4 q3 measured 33 33 33 33 33 33 33 33 in nodes and 33 32 33 33 32 32 32
+  // 32 in nanoseconds. A benchmark row that changes between identical runs is worse than a slow
+  // one.
+  //
+  // This is what makes a CYCLIC witness stop the construction at all -- neither shape
+  // ::online_eg_terminal_witness recognises can fire on one. It pairs with `--exploration dfs`,
+  // which brings the cycle into the explored subgraph early; on single7 `E[] x0 <= 6` the two
+  // together are 102 records against 40197 for neither, and DFS WITHOUT this probe does not
+  // terminate in a minute, because nothing then looks for the cycle it exposed.
   static const bool probe_dbg = [] { return std::getenv("HORA_EG_PROBEDBG") != nullptr; }();
-  // Off only for A/B against the pre-probe behaviour; the probe is what makes a cyclic witness
-  // stop the construction at all.
   static const bool probe_enabled = [] {
     const char* e = std::getenv("HORA_EG_ONLINE_PROBE");
     return !(e && e[0] == '0');
   }();
   const bool probe_on = eg_early_ && probe_enabled;
-  long long probe_ns = 0;                  // cumulative cost of every probe so far
-  auto since_probe = clk_now();            // when exploration resumed after the last one
+  std::size_t probed_nodes = 0;                 // summed cost of every probe so far, in records
+  std::size_t nodes_at_last_probe = 0;          // graph size when exploration last resumed
   for (;;) {
     online_drain_atoms();
     online_recheck_dirty();
     if (cancelled() || online_failed_ || eg_early_hit_ || online_work_.empty()) break;
-    if (probe_on && ns_since(since_probe) >= probe_ns) {
-      const auto p0 = clk_now();
+    if (probe_on && nrec() - nodes_at_last_probe >= probed_nodes) {
+      const std::size_t cost = nrec();
       const bool hit = online_eg_probe();
-      probe_ns += ns_since(p0);
+      probed_nodes += cost;
       if (probe_dbg)
-        std::fprintf(stderr, "ONLINE-PROBE at_nodes=%zu hit=%d cumulative_probe_ms=%lld\n",
-                     nrec(), static_cast<int>(hit), probe_ns / 1000000);
+        std::fprintf(stderr, "ONLINE-PROBE at_nodes=%zu hit=%d cumulative_probed=%zu\n",
+                     nrec(), static_cast<int>(hit), probed_nodes);
       if (hit) { eg_early_hit_ = true; return; }
-      since_probe = clk_now();
+      nodes_at_last_probe = nrec();
     }
 
     const int u = online_work_.front();
