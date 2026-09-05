@@ -403,6 +403,10 @@ class LivenessEngine {
   bool online_replay(int source, int ordinal, int key, detail::SymState& out) const;
   bool online_is_nq(int v);
   bool online_eg_terminal_witness(int v, bool no_restricted_successor);
+  /// @brief Greatest-fixpoint witness probe over a read-only snapshot of the online graph.
+  /// @return @c true only when a real `E[] psi` witness exists; @c false says nothing.
+  /// @see LivenessEngine::online_eg_probe for why a miss is not a verdict.
+  bool online_eg_probe();
   int online_coverer(int v, bool require_expanded);
   int online_resolve_cover(int v, bool require_expanded);
   void online_set_cover(int v, int cover);

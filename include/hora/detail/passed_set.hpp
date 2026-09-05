@@ -3,6 +3,7 @@
 #pragma once
 
 #include "hora/zone.hpp"
+#include "hora/detail/disc_key.hpp"
 #include "hora/detail/engine_config.hpp"
 #include "hora/detail/sym_state.hpp"
 #include "hora/detail/zone_intern.hpp"
@@ -57,7 +58,13 @@ inline bool sim_le(const raw_t* Z, const raw_t* Zp, int dim,
 /// @invariant Every occupied slot has at least one live node, so a chain never becomes empty and
 ///            the open-addressing probe chain is never broken.
 /// @note The slot array holds only small (key, index) pairs, so growing it moves no zones.
-struct NetPassed {
+///
+/// @tparam Key the packed discrete key -- ::hora::detail::NarrowKey for a network that fits one
+///         word, ::hora::detail::WideKey for one that does not. Only the key type changes; the
+///         slot array, the arena, the mirror policy and the subsumption folds are identical
+///         either way, so the narrow instantiation is what it always was.
+template <class Key = NarrowKey>
+struct NetPassedT {
   /// @brief One stored zone in a discrete state's antichain.
   ///
   /// @note A node stores only the zone and its BFS level. The discrete part is not kept: it is
@@ -74,7 +81,7 @@ struct NetPassed {
 
   /// @brief One slot of the open-addressing table: a discrete key and its antichain head.
   struct Slot {
-    std::uint64_t dk;       ///< the packed discrete key
+    Key dk;                 ///< the packed discrete key
     int head;               ///< arena index of the antichain head, or -1 when the slot is free
     std::uint32_t visits;   ///< times add() has walked this chain; drives mirror promotion
   };
@@ -159,7 +166,7 @@ struct NetPassed {
     std::vector<int> node;  ///< parallel arena indices; -1 once the zone is retired
     std::size_t ndead = 0;  ///< retired slots, triggering compaction past half
   };
-  std::unordered_map<std::uint64_t, HotChain> hot;   ///< discrete key -> mirror, for mirrored chains only
+  std::unordered_map<Key, HotChain, typename KeyHashFor<Key>::type> hot;   ///< discrete key -> mirror
 
   // A chain is mirrored once the decompression it has already cost, visits * length, crosses
   // detail::kHotWork. Promoting on accumulated work rather than on length alone lets short but
@@ -171,16 +178,18 @@ struct NetPassed {
   // detail/engine_config.hpp, since they are process-wide policy rather than per-table state.
 
   /// @brief Construct an empty table; the slot array grows on demand.
-  NetPassed() : tab(64, Slot{0, -1, 0}), mask(63) {}
+  NetPassedT() : tab(64, Slot{0, -1, 0}), mask(63) {}
 
   /// @brief Fibonacci-hash a discrete key, to spread keys whose low bits are structured.
-  static std::uint64_t mix(std::uint64_t dk) { return dk * 0x9e3779b97f4a7c15ULL; }
+  /// @note Defined once in detail/disc_key.hpp so the wide key folds its halves the same way
+  ///       here, in ::StripeLayout and in ::DkIndex.
+  static std::uint64_t mix(Key dk) { return key_mix(dk); }
 
   /// @brief Find the slot owning @p dk, or the free slot where it would be inserted.
   /// @param dk the packed discrete key
   /// @return an index into @c tab; the slot is free iff its @c head is -1
   /// @pre The table has a free slot, which the load-factor check in ::add guarantees.
-  std::size_t slot_of(std::uint64_t dk) const {
+  std::size_t slot_of(Key dk) const {
     std::size_t i = static_cast<std::size_t>(mix(dk) & mask);
     while (tab[i].head != -1 && tab[i].dk != dk) i = (i + 1) & mask;
     return i;
@@ -228,7 +237,7 @@ struct NetPassed {
   ///       every successor is simulated but not plainly included, so the weak filter would pass
   ///       them all through to the exclusive lock and serialise the search.
   template <class BoundsFn>
-  bool probe_kill(std::uint64_t dk, const SymState& s, bool exact_sub, BoundsFn&& bounds) const {
+  bool probe_kill(Key dk, const SymState& s, bool exact_sub, BoundsFn&& bounds) const {
     const std::size_t si = slot_of(dk);
     if (tab[si].head == -1 || tab[si].dk != dk) return false;   // absent, or a probe-chain miss
     const raw_t* sz = s.zone.data().data();
@@ -276,7 +285,7 @@ struct NetPassed {
   /// @note @p bounds is invoked only when the discrete state already exists, so a brand-new key
   ///       pays nothing for it and allocates nothing.
   template <class BoundsFn>
-  int add(SymState&& s, std::uint64_t dk, int level, bool exact_sub, BoundsFn&& bounds, int tid) {
+  int add(SymState&& s, Key dk, int level, bool exact_sub, BoundsFn&& bounds, int tid) {
     if (used * 10 >= (mask + 1) * 7) grow();
     const std::size_t si = slot_of(dk);
     if (tab[si].head == -1) {                       // brand-new discrete state (fast path)
@@ -535,7 +544,7 @@ struct NetPassed {
   /// @note The callback receives only the zone index. The caller reconstructs the locations and
   ///       integer variables from @p dk, which is why nodes need not store them.
   template <class F>
-  void for_level(std::uint64_t dk, int level, F&& f) const {
+  void for_level(Key dk, int level, F&& f) const {
     std::size_t i = static_cast<std::size_t>(mix(dk) & mask);
     while (tab[i].head != -1 && tab[i].dk != dk) i = (i + 1) & mask;
     if (tab[i].head == -1) return;
@@ -558,6 +567,12 @@ struct NetPassed {
   }
 
 };
+
+/// @brief The passed table for a network whose discrete state fits one word.
+///
+/// @note This is the instantiation the whole benchmark suite uses; the wide one exists so that a
+///       network too big for it is measured rather than rejected.
+using NetPassed = NetPassedT<NarrowKey>;
 
 }  // namespace detail
 }  // namespace hora

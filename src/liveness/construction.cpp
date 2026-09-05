@@ -5,6 +5,7 @@
 /// preliminary pass. A provisionally covered successor is kept as a replay recipe rather than a
 /// materialised state until its cover is known to survive.
 
+#include "hora/config.hpp"
 #include "hora/zone.hpp"
 #include "hora/detail/liveness_engine.hpp"
 #ifdef HORA_HAVE_OPENMP
@@ -314,7 +315,12 @@ void LivenessEngine::online_activate(int v) {
     bool key_seen_semantically = false;
     for (int r = ki.node_head; r >= 0; r = online_next_in_key_[r])
       if (r != v && expanded[r]) { key_seen_semantically = true; break; }
-    if (key_seen_semantically || !online_deferred_index_enabled_) online_work_.push_back(v);
+    // `--exploration dfs`: depth-first for `E[] psi`. A cyclic witness closes after one path's
+    // worth of records depth-first, and only after the whole breadth under FIFO -- see
+    // hora::detail::EngineOptions::eg_dfs for the measurement. Guarded by `eg_early_` so it
+    // applies to the E[] construction alone and leaves leads-to on its FIFO order.
+    if (eg_dfs_on() && eg_early_) online_work_.push_front(v);
+    else if (key_seen_semantically || !online_deferred_index_enabled_) online_work_.push_back(v);
     else online_work_.push_front(v);
   }
 }

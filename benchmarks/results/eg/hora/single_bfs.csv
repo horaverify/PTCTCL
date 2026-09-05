@@ -1,0 +1,38 @@
+family,model,tool,threads,rep,states,seconds,rss_gb,status,mergescan,hotlen,chunk,sim,engine,queries,qidx,verdict,query
+single,single4,hora-omp,1,1,53,0.071,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single4,hora-omp,1,2,53,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single4,hora-omp,1,1,59,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single4,hora-omp,1,2,59,0.070,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single4,hora-omp,1,1,56,0.070,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single4,hora-omp,1,2,56,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single4,hora-omp,1,1,56,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] P.A && x0 <= 4
+single,single4,hora-omp,1,2,56,0.070,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] P.A && x0 <= 4
+single,single4,hora-omp,1,1,90,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 4 && (x1 <= 2 || x1 >= 4)
+single,single4,hora-omp,1,2,90,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 4 && (x1 <= 2 || x1 >= 4)
+single,single5,hora-omp,1,1,236,0.067,0.006,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single5,hora-omp,1,2,236,0.067,0.006,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single5,hora-omp,1,1,289,0.077,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single5,hora-omp,1,2,289,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single5,hora-omp,1,1,258,0.078,0.006,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single5,hora-omp,1,2,258,0.079,0.006,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single5,hora-omp,1,1,257,0.082,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] P.A && x0 <= 4
+single,single5,hora-omp,1,2,257,0.073,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] P.A && x0 <= 4
+single,single5,hora-omp,1,1,538,0.118,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 4 && (x1 <= 2 || x1 >= 4)
+single,single5,hora-omp,1,2,538,0.117,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 4 && (x1 <= 2 || x1 >= 4)
+single,single6,hora-omp,1,1,1477,0.386,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single6,hora-omp,1,2,1477,0.386,0.007,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single6,hora-omp,1,1,1467,0.386,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single6,hora-omp,1,2,1467,0.385,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single6,hora-omp,1,1,1477,0.435,0.007,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single6,hora-omp,1,2,1477,0.437,0.007,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single6,hora-omp,1,1,1467,0.436,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] P.A && x0 <= 4
+single,single6,hora-omp,1,2,1467,0.435,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] P.A && x0 <= 4
+single,single6,hora-omp,1,1,5636,3.594,0.010,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 4 && (x1 <= 2 || x1 >= 4)
+single,single6,hora-omp,1,2,5636,3.591,0.010,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] x0 <= 4 && (x1 <= 2 || x1 >= 4)
+single,single7,hora-omp,1,1,40197,173.077,0.041,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single7,hora-omp,1,2,40197,172.212,0.041,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] x0 <= 6
+single,single7,hora-omp,1,1,50695,281.778,0.047,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single7,hora-omp,1,2,50695,281.237,0.047,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 3
+single,single7,hora-omp,1,1,41632,187.061,0.039,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single7,hora-omp,1,2,41632,189.576,0.038,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] x0 <= 3 && x1 <= 3
+single,single7,hora-omp,1,1,49566,268.748,0.047,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] P.A && x0 <= 4

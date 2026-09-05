@@ -25,6 +25,8 @@ void set_deterministic(bool on) { detail::options().deterministic = on; }
 bool deterministic_on() { return detail::options().deterministic; }
 void set_no_probe(bool on) { detail::options().no_probe = on; }
 bool no_probe_on() { return detail::options().no_probe; }
+void set_eg_dfs(bool on) { detail::options().eg_dfs = on; }
+bool eg_dfs_on() { return detail::options().eg_dfs; }
 void set_packed_zones(bool on) { detail::options().packed_zones = on; }
 bool packed_zones_on() { return detail::options().packed_zones; }
 

@@ -675,12 +675,119 @@ void LivenessEngine::online_expand(int u) {
   online_compact_key(u);
 }
 
+/// @brief Greatest-fixpoint witness probe over a read-only snapshot of the online graph.
+///
+/// @return @c true iff a real `E[] psi` witness exists; a @c false says nothing at all
+///
+/// ::LivenessEngine::online_eg_terminal_witness recognises only the two witness shapes that can be
+/// decided at one record: a state time can diverge from, and a state that ends a maximal run. A
+/// witness that is a CYCLE is neither, so nothing stopped the construction for it and the graph
+/// was built to D-quiescence before the one backward pass read the answer off. On `single` that is
+/// the whole cost: its only location caps every clock, so ::LivenessEngine::time_diverges is false
+/// everywhere by construction, and its guards are re-enabled by resets, so no state is terminal --
+/// 40197 records to reach a verdict UPPAAL reaches in 12.
+///
+/// The cycle case cannot be decided locally. A cycle in the D-quotient need not be a cycle of the
+/// concrete zone graph, and even a concrete one does not by itself give an infinite run: `Z1 =
+/// post(Z)` gives every valuation of `Z1` a predecessor in `Z`, not every valuation of `Z` a
+/// successor in `Z1`. That direction is what a greatest fixpoint computes, which is why this
+/// probes with the real ::LivenessEngine::solve_greatest_fixpoint rather than a cycle test.
+///
+/// SOUNDNESS. An edge whose target does not resolve to an expanded record is DROPPED, so the graph
+/// the fixpoint sees is a SUBGRAPH of the one the construction is still building. A subgraph
+/// admits no run the full graph does not, so a witness found here is a witness of the real graph
+/// and `SAT` may be concluded on the spot. Nothing is concluded from a miss: the construction
+/// simply carries on, exactly as ::base_forward's probe does on its own partial graph.
+///
+/// @note The snapshot is read-only in both directions -- `online_raw_adj_` is copied, never moved,
+///       and no edge is rewritten -- so a probe cannot perturb the construction it interrupts.
+bool LivenessEngine::online_eg_probe() {
+  if (!fwd_ok_ || online_failed_ || cancelled()) return false;
+  const std::size_t n = nrec();
+  if (n == 0 || online_raw_slot_.size() < n || online_key_of_.size() < n) return false;
+
+  std::vector<std::vector<OtfEdge>> snap(n);
+  for (std::size_t v = 0; v < n; ++v) {
+    if (!expanded[v] || online_raw_slot_[v] < 0) continue;
+    const std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
+    std::vector<OtfEdge>& out = snap[v];
+    out.reserve(raw.size());
+    for (const OtfEdge& e : raw) {
+      int t = e.tgt;
+      if (t < 0 || t >= static_cast<int>(n) || !expanded[t] || online_raw_slot_[t] < 0)
+        t = online_resolve_cover(e.tgt, /*require_expanded=*/true);
+      if (t < 0 || t >= static_cast<int>(n)) continue;   // unresolved: drop, keeping a subgraph
+      out.push_back(OtfEdge{t, e.tag, -1});
+    }
+  }
+
+  // ::LivenessEngine::nlocs and ::LivenessEngine::nints read the key arenas only when `node_key_`
+  // is set, and the online records live there, so the probe installs it exactly as
+  // ::LivenessEngine::online_finalize_graph does. `nrec()` is `online_nrec_` while `online_d_`
+  // holds, so installing it cannot change the node count underneath the probe.
+  std::vector<std::vector<OtfEdge>> saved_adj;
+  saved_adj.swap(adj);
+  adj.swap(snap);
+  std::vector<int> saved_key;
+  saved_key.swap(node_key_);
+  node_key_.assign(online_key_of_.begin(), online_key_of_.begin() + n);
+
+  const bool saved_capped = capped;      // sticky, and a probe must not condemn the real run
+  const bool saved_scc = scc_iter_;
+  scc_iter_ = true;
+  bool sat = false;
+  {
+    const std::vector<int> S = eg_closure();
+    if (!S.empty()) {
+      std::vector<Federation> W;
+      solve_greatest_fixpoint(S, W);
+      if (!capped) sat = !fed_is_empty(W[0]);
+    }
+  }
+  capped = saved_capped;
+  scc_iter_ = saved_scc;
+
+  node_key_.swap(saved_key);
+  adj.swap(saved_adj);
+  return sat;
+}
+
 /// @brief Drain the coupled expansion / atom / cover-certificate worklists to quiescence.
 void LivenessEngine::online_drain_forward_work() {
+  // WHEN to probe: amortization, not tuning -- the rule ::base_forward already uses. Exploration
+  // since the last probe must have cost at least as much as all probing done so far, so total
+  // probe time can never exceed total exploration time and a query whose witness never appears
+  // pays at most a factor of two. The spacing calibrates itself: where a probe is cheap against
+  // the exploration it interrupts the probes come thick and a cyclic witness is caught early;
+  // where the fixpoint is expensive they thin out on their own.
+  const auto clk_now = [] { return std::chrono::steady_clock::now(); };
+  const auto ns_since = [&](std::chrono::steady_clock::time_point t0) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(clk_now() - t0).count();
+  };
+  static const bool probe_dbg = [] { return std::getenv("HORA_EG_PROBEDBG") != nullptr; }();
+  // Off only for A/B against the pre-probe behaviour; the probe is what makes a cyclic witness
+  // stop the construction at all.
+  static const bool probe_enabled = [] {
+    const char* e = std::getenv("HORA_EG_ONLINE_PROBE");
+    return !(e && e[0] == '0');
+  }();
+  const bool probe_on = eg_early_ && probe_enabled;
+  long long probe_ns = 0;                  // cumulative cost of every probe so far
+  auto since_probe = clk_now();            // when exploration resumed after the last one
   for (;;) {
     online_drain_atoms();
     online_recheck_dirty();
     if (cancelled() || online_failed_ || eg_early_hit_ || online_work_.empty()) break;
+    if (probe_on && ns_since(since_probe) >= probe_ns) {
+      const auto p0 = clk_now();
+      const bool hit = online_eg_probe();
+      probe_ns += ns_since(p0);
+      if (probe_dbg)
+        std::fprintf(stderr, "ONLINE-PROBE at_nodes=%zu hit=%d cumulative_probe_ms=%lld\n",
+                     nrec(), static_cast<int>(hit), probe_ns / 1000000);
+      if (hit) { eg_early_hit_ = true; return; }
+      since_probe = clk_now();
+    }
 
     const int u = online_work_.front();
     online_work_.pop_front();

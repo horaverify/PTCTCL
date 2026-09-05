@@ -118,18 +118,31 @@ UPPAAL_FAMILIES = ["phil", "single", "twolock", "fischer", "viking"]
 # A falsified property is not a slow benchmark, it is a different benchmark: both tools stop
 # at the first counterexample, so the wall time measures the path to that state and not the
 # state space. That is why grc is out rather than merely noted.
+#
+# hddi WAS listed here for hora and tchecker. It is measurable now because the query changed, not
+# because a tool did: its reach property was written `ST1==station_y_sync || ...`, comparing a
+# PROCESS to a LOCATION name, which verifyta rejects outright ("Unknown identifier") and which the
+# other two could only decline. Spelled correctly as location predicates it still asks for a
+# disjunction under `A[] !(...)`, and hora's safety path lowers only a conjunction to a NetTarget.
+# So hddi now uses `A[] true`, exactly as grc does: no bad state to stop at, hence the honest
+# full-state-space measurement in all three tools -- and for tchecker that is the empty label list
+# in models/tck/labels.json, whose `single` entry documents the same trick.
 UNMEASURABLE = {
     "hora-omp": {
-        "hddi":  "query UNSUPPORTED by hora (location-equality disjunctions); exit 1",
         "train": "hora exits 1 on train0/train1 (int-array model features)",
     },
-    "verifyta": {},
+    # verifyta can run train, but a row no other tool can produce is not a comparison: hora and
+    # tchecker both fail on the int-array features, so train is dropped from the reach table
+    # rather than kept as a verifyta-only entry.
+    "verifyta": {
+        "train": "excluded from the comparison: hora and tchecker cannot run train0/train1",
+    },
     "ltsmin": {},
     "tchecker": {
-        "hddi":   "reach query is a disjunction-of-equalities over integer variables, not a "
-                  "location conjunction -- no mechanical utot label injection for it",
         "train":  "utot conversion fails on train0/train1 (int-array model features)",
-        "grc":    "'A[] not deadlock' -- deadlock is not a tck-reach label query",
+        # grc WAS listed here for `A[] not deadlock`, which tck-reach cannot express as a label.
+        # The query is `A[] true` now, so there is no bad state to label and the empty label list
+        # in models/tck/labels.json gives the same full-state-space measurement hora makes.
     },
 }
 

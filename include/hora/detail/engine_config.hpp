@@ -68,6 +68,16 @@ struct EngineOptions {
   bool memo = false;             ///< memoise the successor-zone pipeline (see gen_succ_reuse)
   bool deterministic = false;    ///< insert each level in canonical order; see reach_engine
   bool no_probe = false;         ///< skip the shared-lock subsumption pre-filter (ablation)
+  /// @brief Expand the `E[] psi` online construction depth-first rather than breadth-first.
+  ///
+  /// Only the order the worklist is popped in; the graph, the abstraction and the verdict are
+  /// unchanged. It matters because the two constant-time witness tests in
+  /// ::hora::LivenessEngine::online_eg_terminal_witness recognise a DIVERGENT or a TERMINAL state
+  /// and nothing else, so a witness that is a CYCLE stops the construction only once the cycle is
+  /// closed among expanded records. Breadth-first closes it last, after the whole breadth;
+  /// depth-first closes it after one path. On `single7` `E[] x0 <= 6` that is 40197 records and
+  /// 172 s against 122 records and 0.008 s, for the same SAT.
+  bool eg_dfs = false;
 };
 
 /// @brief The process-wide options block.

@@ -130,3 +130,13 @@ single,single5,tchecker,1,2,209131,9.741,0.121,OK,-,-,8,alu,adaptive,reach
 single,single6,tchecker,1,1,7643147,3849.225,4.655,OK,-,-,8,alu,adaptive,reach
 single,single6,tchecker,1,2,7643147,3242.697,4.655,OK,-,-,8,alu,adaptive,reach
 single,single7,tchecker,1,1,-,7200.002,9.248,TIMEOUT,-,-,8,alu,adaptive,reach
+grc,grc4,tchecker,1,1,451446,18.308,0.220,OK,-,-,8,alu,adaptive,reach
+grc,grc4,tchecker,1,2,451446,17.720,0.220,OK,-,-,8,alu,adaptive,reach
+grc,grc5,tchecker,1,1,-,7200.012,9.261,TIMEOUT,-,-,8,alu,adaptive,reach
+hddi,hddi2,tchecker,1,1,72,0.069,0.009,OK,-,-,8,alu,adaptive,reach
+hddi,hddi2,tchecker,1,2,72,0.070,0.008,OK,-,-,8,alu,adaptive,reach
+hddi,hddi10,tchecker,1,1,90654,11.652,0.385,OK,-,-,8,alu,adaptive,reach
+hddi,hddi10,tchecker,1,2,90654,10.701,0.385,OK,-,-,8,alu,adaptive,reach
+hddi,hddi15,tchecker,1,1,4292728,1378.930,36.295,OK,-,-,8,alu,adaptive,reach
+hddi,hddi15,tchecker,1,2,4292728,1383.414,36.295,OK,-,-,8,alu,adaptive,reach
+hddi,hddi20,tchecker,1,1,-,4022.264,100.001,MEMOUT,-,-,8,alu,adaptive,reach

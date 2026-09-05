@@ -282,6 +282,13 @@ int main(int argc, char** argv) {
       hora::set_deterministic(true);
     } else if (a == "--sim" && i + 1 < argc) {   // alu (default) | g
       hora::set_gsim(std::string(argv[++i]) == "g");
+    } else if (a == "--exploration" && i + 1 < argc) {   // bfs (default) | dfs
+      const std::string v = argv[++i];
+      if (v != "bfs" && v != "dfs") {
+        std::cerr << "--exploration takes 'bfs' or 'dfs', got '" << v << "'\n";
+        return 2;
+      }
+      hora::set_eg_dfs(v == "dfs");
     } else if (a == "--omp-chunk") {  // OpenMP dynamic-schedule chunk size (default 8)
       if (i + 1 < argc) {
         const int v = std::atoi(argv[++i]);
@@ -306,7 +313,7 @@ int main(int argc, char** argv) {
   if (nf == 2) return run(files[0], files[1], backend);
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
-            << "usage: hora [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats]\n              [--zones dense|packed] <model.xml> <query.q>\n"
+            << "usage: hora [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats]\n              [--zones dense|packed] [--exploration bfs|dfs] <model.xml> <query.q>\n"
             << "       --no-probe: skip the shared-lock subsumption pre-filter (ablation;\n"
             << "                   slower on every model measured -- see config.hpp)\n"
             << "       --deterministic: insert each level in canonical order, so the state\n"

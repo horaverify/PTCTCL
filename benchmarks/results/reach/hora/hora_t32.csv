@@ -178,3 +178,11 @@ viking,viking17,hora-omp,32,1,13631486,8.891,0.872,OK,-,-,8,g,adaptive,reach,-,S
 viking,viking17,hora-omp,32,2,13631486,8.843,0.874,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
 viking,viking20,hora-omp,32,1,143654910,94.812,7.129,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
 viking,viking20,hora-omp,32,2,143654910,94.848,7.129,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+hddi,hddi2,hora-omp,32,1,8,0.071,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi2,hora-omp,32,2,8,0.070,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi10,hora-omp,32,1,40,0.070,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi10,hora-omp,32,2,40,0.068,0.041,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi15,hora-omp,32,1,60,0.070,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi15,hora-omp,32,2,60,0.221,0.042,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi20,hora-omp,32,1,80,0.120,0.058,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi20,hora-omp,32,2,80,0.121,0.058,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true

@@ -65,6 +65,15 @@ using detail::IntVec;
 using detail::ZoneIntern;
 using detail::GpuZoneIntern;
 using detail::NetPassed;
+using detail::NetPassedT;
+// The packed discrete key: NarrowKey for a network that fits one word, WideKey for one that does
+// not. See detail/disc_key.hpp.
+using detail::NarrowKey;
+using detail::WideKey;
+using detail::KeyHash;
+using detail::KeyHashFor;
+using detail::key_mix;
+using detail::key_budget;
 // The transition semantics both engines are built out of (net_semantics.hpp): guards, the
 // combined invariant, the frozen test, the active-clock reduction, extrapolation, and the
 // broadcast receiver/abstain enumeration.
@@ -892,7 +901,29 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
 ///       integer variables declared over the language's default range, and narrowing those is
 ///       the only part of this the user can act on.
 /// @see hora::set_narrow_ranges, which derives tighter ranges and often avoids this.
-[[noreturn]] static void throw_disc_key_too_wide(const Network& net, int bits_needed,
+/// @brief Bits needed to distinguish @p nvalues values.
+/// @param nvalues number of distinct values the field must hold
+/// @return the smallest @c b with `2^b >= nvalues`; @c 0 for a single-valued field
+static int disc_field_bits(long nvalues) { int b = 0; while ((1LL << b) < nvalues) ++b; return b; }
+
+/// @brief Total width the packed discrete key needs for @p n, in bits.
+///
+/// @param n the network under analysis
+/// @return the summed field widths, one field per process and per integer variable
+///
+/// @note Computed without building a codec, because ::reachable_net must consult it to CHOOSE the
+///       key type before any codec exists. It must agree with ::DiscKeyCodecT's own layout, which
+///       is why both go through ::disc_field_bits.
+static int disc_key_bits(const Network& n) {
+  int off = 0;
+  for (int p = 0; p < n.nprocs(); ++p)
+    off += disc_field_bits(static_cast<long>(n.procs[p].locations.size()));
+  for (std::size_t v = 0; v < n.intvars.size(); ++v)
+    off += disc_field_bits(n.intvars[v].hi - n.intvars[v].lo + 1);
+  return off;
+}
+
+[[noreturn]] static void throw_disc_key_too_wide(const Network& net, int bits_needed, int budget,
                                                  int (*field_bits)(long)) {
   std::vector<std::pair<int, std::string>> widest;
   for (int p = 0; p < net.nprocs(); ++p)
@@ -906,7 +937,8 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
   std::stable_sort(widest.begin(), widest.end(),
                    [](const auto& a, const auto& b) { return a.first > b.first; });
   std::string msg = "reachable_net: discrete state needs " + std::to_string(bits_needed) +
-                    " bits but the packed key holds 63 (network too wide).\n"
+                    " bits but the packed key holds " + std::to_string(budget) +
+                    " (network too wide).\n"
                     "  " + std::to_string(net.nprocs()) + " processes + " +
                     std::to_string(net.intvars.size()) + " int vars. Widest fields:";
   for (std::size_t i = 0; i < widest.size() && i < 8; ++i)
@@ -914,7 +946,7 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
   throw std::runtime_error(msg);
 }
 
-/// @brief Lossless packing of a symbolic state's discrete half into a single @c uint64_t.
+/// @brief Lossless packing of a symbolic state's discrete half into a single integer key.
 ///
 /// The location vector and the integer variables occupy one fixed-width bit-field each, sized
 /// from the number of locations of each process and from each variable's declared range. Keys
@@ -922,44 +954,46 @@ static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
 ///
 /// @invariant The encoding is injective: two discrete states share a key only if they are equal.
 ///            This is what lets the passed set be keyed on the packed value alone.
-/// @invariant Total width is at most 63 bits, so every field offset is strictly below 64 and a
-///            zero-width trailing field cannot produce an undefined shift.
+/// @invariant Total width is at most `key_budget<Key>()` bits, so every field offset is strictly
+///            below the key's width and a zero-width trailing field cannot produce an undefined
+///            shift.
 ///
 /// @note Built once per search and thereafter read-only, so it is safe to share across the
 ///       parallel level expansion without synchronisation.
 /// @warning A network whose fields do not fit is rejected outright by ::throw_disc_key_too_wide
 ///          rather than being packed lossily; an aliased key would silently merge distinct
 ///          states.
-struct DiscKeyCodec {
+/// @tparam Key the integer type the packing lands in; see detail/disc_key.hpp.
+template <class Key>
+struct DiscKeyCodecT {
   const Network& net;
-  std::vector<int> shift;           ///< bit offset of each field: procs first, then int vars
-  std::vector<std::uint64_t> mask;  ///< per-field value mask, for decoding a key back apart
+  std::vector<int> shift;  ///< bit offset of each field: procs first, then int vars
+  std::vector<Key> mask;   ///< per-field value mask, for decoding a key back apart
 
-  /// @brief Bits needed to distinguish @p nvalues values.
-  /// @param nvalues number of distinct values the field must hold
-  /// @return the smallest @c b with `2^b >= nvalues`; @c 0 for a single-valued field
-  static int field_bits(long nvalues) { int b = 0; while ((1LL << b) < nvalues) ++b; return b; }
+  static int field_bits(long nvalues) { return disc_field_bits(nvalues); }
 
   /// @brief Lay out one bit-field per process and per integer variable.
   /// @param n the network whose discrete states are to be packed
   /// @throws std::runtime_error if the fields need 64 bits or more
-  explicit DiscKeyCodec(const Network& n) : net(n) {
+  explicit DiscKeyCodecT(const Network& n) : net(n) {
     const int nfields = n.nprocs() + static_cast<int>(n.intvars.size());
     shift.resize(nfields);
     mask.resize(nfields);
     int off = 0;
     auto set = [&](int f, int w) {
       shift[f] = off;
-      mask[f] = (w >= 64) ? ~0ULL : ((1ULL << w) - 1);
+      mask[f] = (w >= static_cast<int>(sizeof(Key) * 8))
+                    ? ~static_cast<Key>(0) : ((static_cast<Key>(1) << w) - 1);
       off += w;
     };
     for (int p = 0; p < n.nprocs(); ++p)
       set(p, field_bits(static_cast<long>(n.procs[p].locations.size())));
     for (std::size_t v = 0; v < n.intvars.size(); ++v)
       set(n.nprocs() + static_cast<int>(v), field_bits(n.intvars[v].hi - n.intvars[v].lo + 1));
-    // The test is >= 64 rather than > 64 so that every field offset stays strictly below 64;
-    // a trailing zero-width field would otherwise be shifted by exactly 64, which is undefined.
-    if (off >= 64) throw_disc_key_too_wide(n, off, &field_bits);
+    // The budget is one bit short of the key's width so that every field offset stays strictly
+    // below it; a trailing zero-width field would otherwise be shifted by exactly the width,
+    // which is undefined.
+    if (off > key_budget<Key>()) throw_disc_key_too_wide(n, off, key_budget<Key>(), &field_bits);
   }
 
   /// @brief Pack a discrete state into its key.
@@ -967,12 +1001,12 @@ struct DiscKeyCodec {
   /// @param ints the integer variables, one entry per declared variable
   /// @return the packed key
   /// @pre Every value lies in its field's declared range; ::gen_apply enforces this for updates.
-  std::uint64_t encode(const LocVec& locs, const IntVec& ints) const {
-    std::uint64_t k = 0;
+  Key encode(const LocVec& locs, const IntVec& ints) const {
+    Key k = 0;
     for (int p = 0; p < static_cast<int>(locs.size()); ++p)
-      k |= static_cast<std::uint64_t>(static_cast<unsigned>(locs[p])) << shift[p];
+      k |= static_cast<Key>(static_cast<unsigned>(locs[p])) << shift[p];
     for (std::size_t v = 0; v < ints.size(); ++v)
-      k |= static_cast<std::uint64_t>(ints[v] - net.intvars[v].lo) << shift[net.nprocs() + v];
+      k |= static_cast<Key>(ints[v] - net.intvars[v].lo) << shift[net.nprocs() + v];
     return k;
   }
 
@@ -982,7 +1016,7 @@ struct DiscKeyCodec {
   /// @param[out] ints receives one value per integer variable
   /// @pre @p locs and @p ints have room for @c nprocs and @c intvars.size() entries.
   /// @post `decode(encode(l, i))` reproduces @p l and @p i exactly.
-  void decode(std::uint64_t dk, int* locs, long* ints) const {
+  void decode(Key dk, int* locs, long* ints) const {
     for (int p = 0; p < net.nprocs(); ++p)
       locs[p] = static_cast<int>((dk >> shift[p]) & mask[p]);
     for (std::size_t v = 0; v < net.intvars.size(); ++v)
@@ -990,6 +1024,9 @@ struct DiscKeyCodec {
                 net.intvars[v].lo;
   }
 };
+
+/// @brief The codec for a network whose discrete state fits one word.
+using DiscKeyCodec = DiscKeyCodecT<NarrowKey>;
 
 /// @brief Maps a packed discrete key to a lock stripe and to a work bucket.
 ///
@@ -1036,16 +1073,18 @@ struct StripeLayout {
   /// @brief Lock stripe owning a discrete key.
   /// @param dk the packed discrete key
   /// @return an index in `[0, nstripes)`
-  std::size_t stripe_of(std::uint64_t dk) const {
-    return static_cast<std::size_t>((dk * kMix) >> stripe_shift);
+  template <class Key>
+  std::size_t stripe_of(Key dk) const {
+    return static_cast<std::size_t>(key_mix(dk) >> stripe_shift);
   }
   /// @brief Work bucket owning a discrete key.
   /// @param dk the packed discrete key
   /// @return an index in `[0, nbuckets)`
   /// @pre `nbuckets > 1`. With a single bucket @c bucket_shift is 64 and the shift is undefined;
   ///      callers take a separate single-bucket path instead.
-  std::size_t bucket_of(std::uint64_t dk) const {
-    return static_cast<std::size_t>((dk * kMix) >> bucket_shift);
+  template <class Key>
+  std::size_t bucket_of(Key dk) const {
+    return static_cast<std::size_t>(key_mix(dk) >> bucket_shift);
   }
 };
 
@@ -1063,8 +1102,9 @@ struct StripeLayout {
 /// @invariant Capacity is always a power of two, so probing masks rather than divides.
 /// @invariant An entry is live exactly when its stamp equals the current generation; entries
 ///            from earlier levels are therefore invisible without being erased.
-struct DkIndex {
-  std::vector<std::uint64_t> key;    ///< probe slots; meaningful only where stamp == gen
+template <class Key>
+struct DkIndexT {
+  std::vector<Key> key;              ///< probe slots; meaningful only where stamp == gen
   std::vector<int> val;              ///< bucket id assigned to the corresponding key
   std::vector<std::uint32_t> stamp;  ///< generation that last wrote the slot
   std::uint32_t gen = 0;             ///< current generation; bumped once per level
@@ -1101,7 +1141,7 @@ struct DkIndex {
   /// @brief Double the capacity, reinserting the current generation's live entries.
   /// @post Existing key-to-id assignments are preserved.
   void grow() {
-    const std::vector<std::uint64_t> ok = key;
+    const std::vector<Key> ok = key;
     const std::vector<int> ov = val;
     const std::vector<std::uint32_t> os = stamp;
     const std::uint32_t og = gen;
@@ -1114,9 +1154,9 @@ struct DkIndex {
   /// @param next id to assign if @p k is not present
   /// @return the id of @p k, which equals @p next exactly when the key was newly inserted — the
   ///         caller detects insertion by that comparison
-  int find_or_add(std::uint64_t k, int next) {
+  int find_or_add(Key k, int next) {
     if (fill >= limit) grow();
-    std::size_t i = mix(k) & mask;
+    std::size_t i = mix(static_cast<std::uint64_t>(key_mix(k))) & mask;
     for (;;) {
       if (stamp[i] != gen) { stamp[i] = gen; key[i] = k; val[i] = next; ++fill; return next; }
       if (key[i] == k) return val[i];
@@ -1170,8 +1210,9 @@ static void drop_batch(std::vector<int>& l, std::vector<long>& iv, std::vector<i
 ///       reading the marks until the sweep, so racing writers cannot disagree. The store is a
 ///       relaxed atomic to keep that formally race-free; on the supported architectures it
 ///       compiles to a plain byte store.
-static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassed>& smap,
-                                    const std::vector<std::pair<std::uint64_t, int>>& frontier,
+template <class Key>
+static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassedT<Key>>& smap,
+                                    const std::vector<std::pair<Key, int>>& frontier,
                                     int nthreads, std::size_t floor_) {
   std::vector<std::uint8_t> alive(zi.index_bound(), 0);
 #ifdef HORA_HAVE_OPENMP
@@ -1210,13 +1251,14 @@ static std::size_t sweep_dead_zones(ZoneIntern& zi, std::vector<NetPassed>& smap
 ///       equals the serial union. Only the order differs, and no caller depends on it.
 /// @note Deduplication and the survivor scan share one parallel loop, so the merged key set is
 ///       never materialised.
-static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
-    std::vector<NetPassed>& smap, const StripeLayout& lay,
-    std::vector<std::unordered_set<std::uint64_t>>& tls_touched,
+template <class Key>
+static std::vector<std::pair<Key, int>> collect_next_frontier(
+    std::vector<NetPassedT<Key>>& smap, const StripeLayout& lay,
+    std::vector<std::unordered_set<Key, typename KeyHashFor<Key>::type>>& tls_touched,
     int nthreads, bool single, int level) {
   const int nbuk = single ? 1 : lay.nbuckets;
   // part[t * nbuk + b]: thread t's touched keys destined for bucket b.
-  std::vector<std::vector<std::uint64_t>> part(static_cast<std::size_t>(nthreads) * nbuk);
+  std::vector<std::vector<Key>> part(static_cast<std::size_t>(nthreads) * nbuk);
   if (single) {
     part[0].assign(tls_touched[0].begin(), tls_touched[0].end());
   } else {
@@ -1225,10 +1267,10 @@ static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
 #endif
     for (long t = 0; t < static_cast<long>(nthreads); ++t) {
       const std::size_t base = static_cast<std::size_t>(t) * nbuk;
-      for (const std::uint64_t dk : tls_touched[t]) part[base + lay.bucket_of(dk)].push_back(dk);
+      for (const Key dk : tls_touched[t]) part[base + lay.bucket_of(dk)].push_back(dk);
     }
   }
-  std::vector<std::vector<std::pair<std::uint64_t, int>>> nf(nbuk);
+  std::vector<std::vector<std::pair<Key, int>>> nf(nbuk);
 #ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(dynamic, 1) num_threads(nthreads)
 #endif
@@ -1237,19 +1279,19 @@ static std::vector<std::pair<std::uint64_t, int>> collect_next_frontier(
     // `single` already deduplicated inside the one touched set, so no second pass is
     // needed there; the parallel path can see the same dk from several threads.
     if (single) {
-      for (const std::uint64_t dk : part[b])
+      for (const Key dk : part[b])
         smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
       continue;
     }
-    std::unordered_set<std::uint64_t> seen;
+    std::unordered_set<Key, typename KeyHashFor<Key>::type> seen;
     for (int t = 0; t < nthreads; ++t) {
-      for (const std::uint64_t dk : part[static_cast<std::size_t>(t) * nbuk + b]) {
+      for (const Key dk : part[static_cast<std::size_t>(t) * nbuk + b]) {
         if (!seen.insert(dk).second) continue;
         smap[lay.stripe_of(dk)].for_level(dk, level, [&](int zidx) { buf.push_back({dk, zidx}); });
       }
     }
   }
-  std::vector<std::pair<std::uint64_t, int>> next;
+  std::vector<std::pair<Key, int>> next;
   std::size_t ntot = 0;
   for (auto& v : nf) ntot += v.size();
   next.reserve(ntot);                    // one allocation instead of a realloc chain
@@ -1358,13 +1400,14 @@ static bool auto_deterministic(const Network& net, int nthreads) {
 /// @brief A successor held back for canonical-order insertion under --deterministic.
 /// @note `i`/`sk` are the frontier index and the successor index within that state -- together
 ///       the position the sequential engine would have inserted this successor at.
-struct Pending {
+template <class Key>
+struct PendingT {
   std::uint32_t i, sk;
-  std::uint64_t dk;
+  Key dk;
   SymState s;
 };
 
-template <class TargetFn>
+template <class Key, class TargetFn>
 static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&& is_target,
                          bool force_exact, Backend backend, ReachStats* stats,
                          const std::vector<Automorphism>* sym = nullptr,
@@ -1521,7 +1564,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   // The passed list is sharded by discrete-state hash, so a given discrete state always lands in
   // the same shard and each shard is a self-contained antichain owned by exactly one worker
   // during the merge. That is what lets the O(bucket^2 * dim^3) convex merge run without locks.
-  const DiscKeyCodec dkey(net);
+  const DiscKeyCodecT<Key> dkey(net);
 
   SymState s0;
   if (!initial_symbolic_state(net, qmask, L, U, emode, &s0)) return false;
@@ -1567,7 +1610,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     const bool narrow_zones = (maxc < kNarrowZoneMaxConst);
     GpuZoneIntern zi(d2, narrow_zones);
     zi.set_mode(detail::options().gpu_intern ? GpuZoneIntern::Mode::Dedup : GpuZoneIntern::Mode::Append);
-    std::unordered_map<std::uint64_t, std::vector<int>> passed;   // dk -> antichain zone indices
+    std::unordered_map<Key, std::vector<int>, typename KeyHashFor<Key>::type> passed;  // dk -> zones
     std::vector<int> fl(s0.locs.begin(), s0.locs.end());
     std::vector<long> fi(s0.ints.begin(), s0.ints.end());
     std::vector<int> fz(1, zi.intern(s0.zone.data().data()));
@@ -1577,7 +1620,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
       return std::chrono::duration<double, std::milli>(b - a).count();
     };
-    DkIndex bidx;
+    DkIndexT<Key> bidx;
     // Seeds only: both are replaced by measurement after the first level. prev_nb sizes the
     // next level's key index, fanout the next batch.
     constexpr std::size_t kInitialBucketEstimate = 1024;
@@ -1594,7 +1637,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // target that is not itself symmetric has to be tested against every image of the property.
     // Each image's required locations are a fixed bit pattern in the packed key, so the test stays
     // |G| integer compares against the key (and only a key that matches pays for decoding ints).
-    struct OrbitTest { std::uint64_t mask, val; const NetTarget* t; };
+    struct OrbitTest { Key mask, val; const NetTarget* t; };
     std::vector<OrbitTest> tgt_tests;
     {
       const std::vector<NetTarget>* src = orbit && !orbit->empty() ? orbit : nullptr;
@@ -1608,7 +1651,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
         OrbitTest ot{0, 0, &t};
         for (const auto& lr : t.loc_req) {
           ot.mask |= dkey.mask[lr.first] << dkey.shift[lr.first];
-          ot.val  |= static_cast<std::uint64_t>(static_cast<unsigned>(lr.second)) << dkey.shift[lr.first];
+          ot.val  |= static_cast<Key>(static_cast<unsigned>(lr.second)) << dkey.shift[lr.first];
         }
         tgt_tests.push_back(ot);
       }
@@ -1628,12 +1671,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // during the level currently being expanded". That flag is what the next frontier is read off
     // at level end, and packing it into the index costs no extra memory.
     static constexpr int kNewBit = 1 << 30;
-    std::vector<std::uint64_t> touched;   // buckets changed during the current level
+    std::vector<Key> touched;   // buckets changed during the current level
     // Per-batch scratch, hoisted out of the loop. Each of these is sized by the batch, and with
     // --chunking a level is many batches, so allocating them per batch churns the allocator badly
     // enough to cancel the peak-memory saving chunking exists to deliver. Reused buffers keep
     // their capacity instead.
-    std::vector<std::uint64_t> bdk;
+    std::vector<Key> bdk;
     std::vector<int> bcnt, w_bucket, work_off, exist_cnt, new_off, new_cnt, new_idx, cursor;
     std::vector<int> fr_off, fr_cnt, host_isnew_v, host_count, out_work_off, out_count;
     std::vector<std::int32_t> Lm, Um;
@@ -1746,15 +1789,15 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       for (std::size_t w = 0; w < nwork; ++w) {
         if (!ev[w]) continue;
         if (stats) ++stats->generated;
-        std::uint64_t dk;
+        Key dk;
         if (odk) {
-          dk = odk[w];
+          dk = static_cast<Key>(odk[w]);
         } else {                                          // backend without device-side packing
           const int* wl = ol + w * np;
           const int* wi = oi + w * ni;
           dk = 0;
-          for (int p = 0; p < np; ++p) dk |= static_cast<std::uint64_t>(static_cast<unsigned>(wl[p])) << dkey.shift[p];
-          for (int v = 0; v < ni; ++v) dk |= static_cast<std::uint64_t>(wi[v] - net.intvars[v].lo) << dkey.shift[np + v];
+          for (int p = 0; p < np; ++p) dk |= static_cast<Key>(static_cast<unsigned>(wl[p])) << dkey.shift[p];
+          for (int v = 0; v < ni; ++v) dk |= static_cast<Key>(wi[v] - net.intvars[v].lo) << dkey.shift[np + v];
         }
         // Target test straight off the key: the required locations are a fixed bit pattern in it,
         // so the common (non-target) case is two integer ops instead of a walk over nprocs
@@ -1964,7 +2007,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     const StripeLayout lay(nthreads);
     const int dim2 = (net.nclocks + 1) * (net.nclocks + 1);
     ZoneIntern zi(dim2, nthreads);                     // ONE shared distinct-zone table
-    std::vector<NetPassed> smap(lay.nstripes);         // flat per-stripe passed tables
+    std::vector<NetPassedT<Key>> smap(lay.nstripes);   // flat per-stripe passed tables
     for (auto& mp : smap) mp.zi = &zi;
     // The mirror budget is process-wide while these tables are per query, so it must be reset
     // here; otherwise a second query in the same process inherits the first one's charge and
@@ -1991,9 +2034,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     // DBM into every frontier state and keeps the resident frontier small enough to stay
     // cache-resident during expansion.
     const int np_ = net.nprocs(), ni_ = static_cast<int>(net.intvars.size());
-    std::vector<std::pair<std::uint64_t, int>> frontier;
+    std::vector<std::pair<Key, int>> frontier;
     {
-      const std::uint64_t dk = dkey.encode(s0.locs, s0.ints);
+      const Key dk = dkey.encode(s0.locs, s0.ints);
       const int z0 = zi.intern(s0.zone, 0);
       smap[lay.stripe_of(dk)].add(std::move(s0), dk, 0, exact_sub, state_bounds, 0);
       frontier.push_back({dk, z0});
@@ -2018,14 +2061,14 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       // locking only the touched stripe, so there is no serial routing barrier. Inserting during
       // expansion is also what keeps the convex-union merge order stable enough to reproduce the
       // sequential state counts.
-      std::vector<std::unordered_set<std::uint64_t>> tls_touched(nthreads);
+      std::vector<std::unordered_set<Key, typename KeyHashFor<Key>::type>> tls_touched(nthreads);
       std::vector<std::size_t> tls_gen(nthreads, 0);
       // --deterministic: successors are stashed with the (frontier index, successor index) that
       // produced them instead of being inserted as they appear, then inserted in that order once
       // the level has been expanded. That order is exactly the sequential one, so the convex-union
       // merge sees the same sequence of operands at any thread count and the state count matches
       // the one-thread run. Empty and untouched when the flag is off.
-      std::vector<std::vector<Pending>> tls_pending(det ? nthreads : 0);
+      std::vector<std::vector<PendingT<Key>>> tls_pending(det ? nthreads : 0);
 #ifdef HORA_HAVE_OPENMP
 #pragma omp parallel num_threads(nthreads)
       {
@@ -2056,9 +2099,9 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             }
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
-            const std::uint64_t dk = dkey.encode(s.locs, s.ints);
+            const Key dk = dkey.encode(s.locs, s.ints);
             if (det) {   // canonical order decided below, not by who got here first
-              tls_pending[tid].push_back(Pending{static_cast<std::uint32_t>(i),
+              tls_pending[tid].push_back(PendingT<Key>{static_cast<std::uint32_t>(i),
                                                  static_cast<std::uint32_t>(sk), dk, std::move(s)});
               continue;
             }
@@ -2096,7 +2139,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
             if (is_target(s)) return true;
             if (use_sym) canonicalize(*sym, net, s);
             canon_ints(s.locs, s.ints);
-            const std::uint64_t dk = dkey.encode(s.locs, s.ints);
+            const Key dk = dkey.encode(s.locs, s.ints);
             if (smap[lay.stripe_of(dk)].add(std::move(s), dk, level, exact_sub, state_bounds, 0) >= 0)
               touched.insert(dk);
           }
@@ -2104,12 +2147,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
 #endif
       if (det) {
-        std::vector<Pending> pend;
+        std::vector<PendingT<Key>> pend;
         std::size_t tot = 0;
         for (auto& v : tls_pending) tot += v.size();
         pend.reserve(tot);
         for (auto& v : tls_pending) for (auto& e : v) pend.push_back(std::move(e));
-        std::sort(pend.begin(), pend.end(), [](const Pending& a, const Pending& b) {
+        std::sort(pend.begin(), pend.end(), [](const PendingT<Key>& a, const PendingT<Key>& b) {
           return a.i != b.i ? a.i < b.i : a.sk < b.sk;
         });
         auto& touched0 = tls_touched[0];
@@ -2122,7 +2165,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       if (found.load()) return true;
 
       // The passed tables are read-only here (no writers), so for_level is a safe read.
-      std::vector<std::pair<std::uint64_t, int>> next =
+      std::vector<std::pair<Key, int>> next =
           collect_next_frontier(smap, lay, tls_touched, nthreads, single || det, level);
       // Reordering a level to expand its most general zones first was tried and removed: it is
       // sound but does not pay, because zone retirement is driven by zones arriving levels apart,
@@ -2170,6 +2213,34 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 /// @note a_LU subsumption is sound here because the property is evaluated per symbolic state
 ///       rather than per valuation, so covering preserves it. Contrast
 ///       hora::deadlock_reachable, which is not.
+/// @brief Run the forward engine under the narrowest packed key @p net actually fits.
+///
+/// @param net the network under analysis; its field widths choose the key
+/// @return whatever ::reach_engine returns for the selected key
+///
+/// A network whose discrete state fits one word runs on ::NarrowKey -- the key every existing
+/// measurement was produced with, down to the stripe and bucket indices, since ::key_mix reduces
+/// to the same multiply. A wider network used to be rejected by ::throw_disc_key_too_wide; it now
+/// runs on ::WideKey instead, which costs a two-word key in the passed set, the frontier and the
+/// touched sets, and changes nothing else about the search.
+///
+/// @note The wide instantiation stays on the CPU. The GPU drivers pack a 64-bit key of their own
+///       in device code, so widening them is a separate exercise; a wide network is measured with
+///       the OMP backend even where a GPU is present.
+template <class TargetFn>
+static bool reach_engine_auto(const Network& net, const NetTarget& target, TargetFn&& is_target,
+                              bool force_exact, Backend backend, ReachStats* stats,
+                              const std::vector<Automorphism>* sym = nullptr,
+                              const std::vector<NetTarget>* orbit = nullptr,
+                              const std::atomic<bool>* cancel = nullptr) {
+  if (disc_key_bits(net) <= key_budget<NarrowKey>())
+    return reach_engine<NarrowKey>(net, target, std::forward<TargetFn>(is_target), force_exact,
+                                   backend, stats, sym, orbit, cancel);
+  const Backend cpu = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
+  return reach_engine<WideKey>(net, target, std::forward<TargetFn>(is_target), force_exact, cpu,
+                               stats, sym, orbit, cancel);
+}
+
 bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
                    ReachStats* stats) {
   // Symmetry reduction explores one representative per orbit, so a target that is not itself
@@ -2214,8 +2285,8 @@ bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
     for (const auto& t : orbit) if (match(t, s)) return true;
     return false;
   };
-  return reach_engine(net, bounds_target, is_target, /*force_exact=*/false, backend, stats,
-                      use_sym ? &G : nullptr, use_sym ? &orbit : nullptr);
+  return reach_engine_auto(net, bounds_target, is_target, /*force_exact=*/false, backend, stats,
+                           use_sym ? &G : nullptr, use_sym ? &orbit : nullptr);
 }
 
 /// @brief Decide whether some infinite run exists along which @p phi holds at every state.
@@ -2300,8 +2371,8 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
   // bounds with their own sentinel, so collapsing those correctly is a separate exercise. Both
   // cases fall back to exact zones, which is sound but stores more states.
   if (network_has_diagonal(net) || gsim_on())
-    return reach_engine(net, NetTarget{}, is_dl, /*force_exact=*/true, b, stats, nullptr, nullptr,
-                        cancel);
+    return reach_engine_auto(net, NetTarget{}, is_dl, /*force_exact=*/true, b, stats, nullptr,
+                             nullptr, cancel);
 
   Network am = net;
   auto collapse = [](std::vector<std::int32_t>& lo, std::vector<std::int32_t>& hi) {
@@ -2331,8 +2402,8 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
     }
     // The construction declined; fall through to the abstraction that needs no refinement.
   }
-  return reach_engine(am, NetTarget{}, is_dl, /*force_exact=*/mode == 'e', b, stats, nullptr,
-                      nullptr, cancel);
+  return reach_engine_auto(am, NetTarget{}, is_dl, /*force_exact=*/mode == 'e', b, stats, nullptr,
+                           nullptr, cancel);
 }
 
 }  // namespace hora

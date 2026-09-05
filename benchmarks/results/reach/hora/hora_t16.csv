@@ -126,7 +126,6 @@ phil,phil14,hora-omp,16,2,9354142,55.374,2.709,OK,-,-,8,g,adaptive,reach,-,SAT,A
 phil,phil15,hora-omp,16,1,35204125,469.899,13.516,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil15,hora-omp,16,2,35197928,466.720,13.535,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil16,hora-omp,16,1,138599605,6668.324,65.294,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
-
 phil,phil17,ptctlmc-omp,16,1,-,7200.028,69.851,TIMEOUT,-,-,8,g,adaptivephil,phil16,hora-omp,16,2,138508881,6628.990,65.421,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil17,hora-omp,16,1,-,7200.014,70.003,TIMEOUT,-,-,8,g,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat)
 single,single4,hora-omp,16,1,45,0.223,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
@@ -179,3 +178,13 @@ viking,viking17,hora-omp,16,1,13631486,13.756,0.861,OK,-,-,8,g,adaptive,reach,-,
 viking,viking17,hora-omp,16,2,13631486,13.706,0.861,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
 viking,viking20,hora-omp,16,1,143654910,169.382,7.107,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
 viking,viking20,hora-omp,16,2,143654910,171.817,7.112,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+hddi,hddi2,hora-omp,16,1,8,0.069,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi2,hora-omp,16,2,8,0.071,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi10,hora-omp,16,1,40,0.070,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi10,hora-omp,16,2,40,0.070,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi15,hora-omp,16,1,60,0.070,0.034,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi15,hora-omp,16,2,60,0.070,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi20,hora-omp,16,1,-,0.070,0.006,ERR,-,-,8,g,adaptive,reach,-,-,A[] true
+hddi,hddi20,hora-omp,16,2,-,0.070,0.006,ERR,-,-,8,g,adaptive,reach,-,-,A[] true
+hddi,hddi20,hora-omp,16,1,80,0.120,0.050,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
+hddi,hddi20,hora-omp,16,2,80,0.119,0.050,OK,-,-,8,g,adaptive,reach,-,SAT,A[] true
