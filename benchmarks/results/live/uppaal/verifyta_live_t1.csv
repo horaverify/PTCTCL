@@ -82,3 +82,11 @@ hddi,hddi2,verifyta,1,1,64,0.069,0.018,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.stat
 hddi,hddi2,verifyta,1,2,64,0.069,0.018,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
 hddi,hddi10,verifyta,1,1,10646,0.536,0.021,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
 hddi,hddi10,verifyta,1,2,10646,0.539,0.021,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+grc,grc4,verifyta,1,1,43909,0.601,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc4,verifyta,1,2,43909,0.535,0.020,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc5,verifyta,1,1,1662608,162.063,0.029,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc5,verifyta,1,2,1662608,161.490,0.029,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc6,verifyta,1,1,-,7200.043,0.025,TIMEOUT,-,-,8,alu,adaptive,live,-,-,T0.in --> T0.far
+hddi,hddi15,verifyta,1,1,140349,126.504,0.029,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi15,verifyta,1,2,140349,126.890,0.029,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+hddi,hddi20,verifyta,1,1,-,7200.023,0.042,TIMEOUT,-,-,8,alu,adaptive,live,-,-,ST1.station_z_sync --> ST1.station_z_idle

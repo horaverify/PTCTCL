@@ -163,3 +163,10 @@ hddi,hddi15,hora-omp,1,1,60,0.069,0.008,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.sta
 hddi,hddi15,hora-omp,1,2,60,0.068,0.008,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
 hddi,hddi20,hora-omp,1,1,80,0.068,0.010,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
 hddi,hddi20,hora-omp,1,2,80,0.068,0.010,OK,-,-,8,alu,adaptive,live,-,SAT,ST1.station_z_sync --> ST1.station_z_idle
+grc,grc4,hora-omp,1,1,788,0.070,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc4,hora-omp,1,2,788,0.068,0.007,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc5,hora-omp,1,1,12184,3.914,0.013,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc5,hora-omp,1,2,12184,3.909,0.013,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc6,hora-omp,1,1,290342,1484.287,0.294,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc6,hora-omp,1,2,290342,1485.750,0.294,OK,-,-,8,alu,adaptive,live,-,SAT,T0.in --> T0.far
+grc,grc7,hora-omp,1,1,-,7200.047,0.801,TIMEOUT,-,-,8,alu,adaptive,live,-,-,T0.in --> T0.far

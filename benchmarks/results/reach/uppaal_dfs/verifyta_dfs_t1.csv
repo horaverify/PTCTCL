@@ -63,3 +63,90 @@ csma,csma17,verifyta,1,1,11272192,298.618,1.204,OK,-,-,8,alu,adaptive,reach,-,SA
 csma,csma17,verifyta,1,2,11272192,300.454,1.204,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
 csma,csma18,verifyta,1,1,25034752,751.086,2.626,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
 csma,csma18,verifyta,1,2,25034752,756.859,2.625,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma20,verifyta,1,1,-,7200.062,6.116,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+fischer,fischer4,verifyta,1,1,229,0.069,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer4,verifyta,1,2,229,0.068,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer5,verifyta,1,1,867,0.069,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer5,verifyta,1,2,867,0.068,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer6,verifyta,1,1,3568,0.119,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer6,verifyta,1,2,3568,0.118,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer7,verifyta,1,1,16371,0.338,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer7,verifyta,1,2,16371,0.268,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer8,verifyta,1,1,75184,0.706,0.024,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer8,verifyta,1,2,75184,0.657,0.024,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer9,verifyta,1,1,350619,3.753,0.041,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer9,verifyta,1,2,350619,3.755,0.041,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer10,verifyta,1,1,1549224,20.046,0.117,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer10,verifyta,1,2,1549224,20.082,0.117,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer11,verifyta,1,1,6852838,110.924,0.450,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer11,verifyta,1,2,6852838,111.140,0.450,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer12,verifyta,1,1,29785700,588.441,1.856,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer12,verifyta,1,2,29785700,591.257,1.856,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer13,verifyta,1,1,-,7200.043,3.081,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs)
+grc,grc4,verifyta,1,1,4258,0.220,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+grc,grc4,verifyta,1,2,4258,0.219,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+grc,grc5,verifyta,1,1,81458,9.317,0.028,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+grc,grc5,verifyta,1,2,81458,9.273,0.028,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+grc,grc6,verifyta,1,1,-,7200.021,0.159,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] true
+hddi,hddi2,verifyta,1,1,43,0.070,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+hddi,hddi2,verifyta,1,2,43,0.068,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+hddi,hddi10,verifyta,1,1,19975,2.105,0.023,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+hddi,hddi10,verifyta,1,2,19975,2.088,0.022,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] true
+hddi,hddi15,verifyta,1,1,-,7200.004,0.069,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] true
+phil,phil4,verifyta,1,1,82,0.067,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil4,verifyta,1,2,82,0.067,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil5,verifyta,1,1,258,0.067,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil5,verifyta,1,2,258,0.066,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil6,verifyta,1,1,894,0.066,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil6,verifyta,1,2,894,0.068,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil7,verifyta,1,1,3353,0.067,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil7,verifyta,1,2,3353,0.066,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil8,verifyta,1,1,11934,0.116,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil8,verifyta,1,2,11934,0.117,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil9,verifyta,1,1,47452,0.435,0.023,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil9,verifyta,1,2,47452,0.434,0.023,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil10,verifyta,1,1,202573,2.521,0.037,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil10,verifyta,1,2,202573,2.522,0.037,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil11,verifyta,1,1,907289,19.319,0.104,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil11,verifyta,1,2,907289,19.134,0.104,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil12,verifyta,1,1,4127985,169.936,0.409,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil12,verifyta,1,2,4127985,170.540,0.409,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil13,verifyta,1,1,-,7200.067,1.571,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat)
+single,single4,verifyta,1,1,104,0.118,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single4,verifyta,1,2,104,0.067,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single5,verifyta,1,1,2804,0.756,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single5,verifyta,1,2,2804,0.702,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single6,verifyta,1,1,34589,163.020,0.022,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single6,verifyta,1,2,34589,164.053,0.022,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] x0 <= 6
+single,single7,verifyta,1,1,-,7200.029,0.029,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6
+twolock,twolock4,verifyta,1,1,293,0.068,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock4,verifyta,1,2,293,0.067,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,verifyta,1,1,1027,0.067,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,verifyta,1,2,1027,0.068,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,verifyta,1,1,3952,0.067,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,verifyta,1,2,3952,0.067,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock7,verifyta,1,1,17267,0.167,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock7,verifyta,1,2,17267,0.167,0.019,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock8,verifyta,1,1,77447,0.703,0.024,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock8,verifyta,1,2,77447,0.703,0.024,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock9,verifyta,1,1,355562,3.870,0.043,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock9,verifyta,1,2,355562,3.870,0.043,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock10,verifyta,1,1,1560174,19.979,0.118,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock10,verifyta,1,2,1560174,20.005,0.119,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock11,verifyta,1,1,6939628,109.900,0.455,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock11,verifyta,1,2,6939628,109.978,0.455,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock12,verifyta,1,1,29709140,588.615,1.857,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock12,verifyta,1,2,29709140,583.321,1.857,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock13,verifyta,1,1,-,7200.011,3.177,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs)
+viking,viking4,verifyta,1,1,206,0.068,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking4,verifyta,1,2,206,0.069,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking6,verifyta,1,1,1374,0.067,0.017,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking6,verifyta,1,2,1374,0.068,0.018,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking10,verifyta,1,1,45566,0.385,0.022,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking10,verifyta,1,2,45566,0.269,0.022,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking12,verifyta,1,1,241662,1.412,0.045,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking12,verifyta,1,2,241662,1.350,0.046,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking15,verifyta,1,1,2768894,19.437,0.378,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking15,verifyta,1,2,2768894,19.534,0.378,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking17,verifyta,1,1,13631486,105.717,1.766,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking17,verifyta,1,2,13631486,106.090,1.766,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
