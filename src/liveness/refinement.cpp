@@ -563,6 +563,9 @@ void LivenessEngine::online_expand(int u) {
   // `A[] not deadlock` is settled by one deadlocked valuation, so the search stops at the first
   // record holding one rather than finishing the graph and reading it off afterwards.
   if (deadlock_scan_ && online_deadlock_at(u, succ.empty())) {
+    if (std::getenv("HORA_DL_DBG"))
+      std::fprintf(stderr, "DL-HIT online route: rec=%d nrec=%zu no_succ=%d\n",
+                   u, nrec(), (int)succ.empty());
     deadlock_hit_ = true;
     eg_early_hit_ = true;                  // the shared signal that halts the construction
     return;
@@ -701,7 +704,8 @@ void LivenessEngine::online_expand(int u) {
 ///
 /// @note The snapshot is read-only in both directions -- `online_raw_adj_` is copied, never moved,
 ///       and no edge is rewritten -- so a probe cannot perturb the construction it interrupts.
-bool LivenessEngine::online_eg_probe() {
+bool LivenessEngine::online_eg_probe(std::size_t* work) {
+  if (work) *work = 0;
   if (!fwd_ok_ || online_failed_ || cancelled()) return false;
   const std::size_t n = nrec();
   if (n == 0 || online_raw_slot_.size() < n || online_key_of_.size() < n) return false;
@@ -740,7 +744,9 @@ bool LivenessEngine::online_eg_probe() {
     const std::vector<int> S = eg_closure();
     if (!S.empty()) {
       std::vector<Federation> W;
+      const std::size_t pre_before = pre_calls;
       solve_greatest_fixpoint(S, W);
+      if (work) *work = pre_calls - pre_before;
       if (!capped) sat = !fed_is_empty(W[0]);
     }
   }
@@ -754,13 +760,26 @@ bool LivenessEngine::online_eg_probe() {
 
 /// @brief Drain the coupled expansion / atom / cover-certificate worklists to quiescence.
 void LivenessEngine::online_drain_forward_work() {
-  // WHEN to probe: amortization in NODES, not in wall-clock.
+  // WHEN to probe: amortization in ZONE OPERATIONS, not in wall-clock.
   //
   // The rule is the one ::base_forward argues for -- exploration since the last probe must have
   // cost at least as much as all probing so far, so total probe work can never exceed total
-  // exploration work and a query whose witness never appears pays at most a factor of two -- but
-  // measured in records rather than nanoseconds. A probe walks the graph it is given, so the node
-  // count at the probe IS its cost, to within a constant.
+  // exploration work and a query whose witness never appears pays at most a factor of two.
+  //
+  // What a probe is CHARGED matters as much as when it fires, and "the node count at the probe IS
+  // its cost, to within a constant" -- what this comment claimed until 2026-09-06 -- is false by a
+  // wide margin. A probe pays O(records) to snapshot the adjacency and then runs a COMPLETE
+  // greatest-fixpoint sweep over that graph, which iterates to convergence and computes an exact
+  // predecessor per edge per federation member: on a refuted query that sweep dwarfs the snapshot,
+  // so a budget counted in records buys far more probing than the amortization argument intends.
+  // Measured on refuted cells with the probe on against off: fischer8 q2 11.74s/5.61s,
+  // twolock8 q2 8.09s/3.75s, viking20 q1 BFS 4.84s/2.13s -- 2.35x geomean over viking's costly
+  // cells, on queries where E[] is decided by exhausting the psi-restricted graph and no witness
+  // can ever be found early. So a probe is charged its snapshot PLUS the predecessor computations
+  // its sweep actually spent, which ::online_eg_probe reports.
+  //
+  // pre_calls is a deterministic function of the graph, exactly as the record count is, so this
+  // keeps the property the next paragraph demands.
   //
   // It must not be a clock. With a wall-clock schedule the number of records explored before a
   // probe finally hits depends on machine timing, so the REPORTED STATE COUNT stops being
@@ -779,19 +798,22 @@ void LivenessEngine::online_drain_forward_work() {
     return !(e && e[0] == '0');
   }();
   const bool probe_on = eg_early_ && probe_enabled;
-  std::size_t probed_nodes = 0;                 // summed cost of every probe so far, in records
-  std::size_t nodes_at_last_probe = 0;          // graph size when exploration last resumed
+  // Both counters are members: see hora::detail::LivenessEngine::online_probed_nodes_ for why
+  // this budget must span every drain of one construction and not restart per call.
+  std::size_t& probed_nodes = online_probed_nodes_;
+  std::size_t& nodes_at_last_probe = online_nodes_at_last_probe_;
   for (;;) {
     online_drain_atoms();
     online_recheck_dirty();
     if (cancelled() || online_failed_ || eg_early_hit_ || online_work_.empty()) break;
     if (probe_on && nrec() - nodes_at_last_probe >= probed_nodes) {
-      const std::size_t cost = nrec();
-      const bool hit = online_eg_probe();
-      probed_nodes += cost;
+      const std::size_t snapshot = nrec();
+      std::size_t sweep = 0;
+      const bool hit = online_eg_probe(&sweep);
+      probed_nodes += snapshot + sweep;
       if (probe_dbg)
-        std::fprintf(stderr, "ONLINE-PROBE at_nodes=%zu hit=%d cumulative_probed=%zu\n",
-                     nrec(), static_cast<int>(hit), probed_nodes);
+        std::fprintf(stderr, "ONLINE-PROBE at_nodes=%zu hit=%d sweep_pre=%zu cumulative_probed=%zu\n",
+                     nrec(), static_cast<int>(hit), sweep, probed_nodes);
       if (hit) { eg_early_hit_ = true; return; }
       nodes_at_last_probe = nrec();
     }

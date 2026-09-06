@@ -216,6 +216,16 @@ class LivenessEngine {
   bool deadlock_hit_ = false;   ///< set by the scan; meaningful only when @ref deadlock_scan_
   bool online_deadlock_at(int v, bool no_successor);
   bool online_eg_repair_ = false;
+  // The E[] probe budget, amortized over the WHOLE online construction rather than over one
+  // drain.  ::LivenessEngine::online_drain_forward_work is entered three times -- the base
+  // forward pass, the ::LivenessEngine::online_complete_eg_history repair, and each wake-up of
+  // ::LivenessEngine::online_finalize_graph -- and the second and third are entered with the
+  // graph already at very nearly its final size.  Held as locals, the budget restarted at zero
+  // there and the first expansion bought a probe over the entire graph, which is the sweep the
+  // decision then runs again.  Members keep the amortization argument the schedule is built on:
+  // total probe work never exceeds total exploration work, counted over the whole run.
+  std::size_t online_probed_nodes_ = 0;       ///< summed cost of every probe so far, in records
+  std::size_t online_nodes_at_last_probe_ = 0;  ///< graph size when exploration last resumed
   bool force_exact_ = false;
   const std::atomic<bool>* cancel_ = nullptr;
   bool cancelled_ = false;
@@ -406,7 +416,10 @@ class LivenessEngine {
   /// @brief Greatest-fixpoint witness probe over a read-only snapshot of the online graph.
   /// @return @c true only when a real `E[] psi` witness exists; @c false says nothing.
   /// @see LivenessEngine::online_eg_probe for why a miss is not a verdict.
-  bool online_eg_probe();
+  /// @param work  if non-null, receives the exact-predecessor computations this probe's
+  ///              greatest-fixpoint sweep actually spent -- the probe's real cost, which the
+  ///              record count it was handed does not predict.  Zero on every early return.
+  bool online_eg_probe(std::size_t* work = nullptr);
   int online_coverer(int v, bool require_expanded);
   int online_resolve_cover(int v, bool require_expanded);
   void online_set_cover(int v, int cover);

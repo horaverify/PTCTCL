@@ -851,6 +851,9 @@ void LivenessEngine::expand(int u) {
   // Same concrete counterexample as the online route takes; `usc` still holds this node's exact
   // state. `may_deadlock` is not tracked per key here, so the exact test is always allowed to run.
   if (deadlock_scan_ && state_has_deadlock(net, usc)) {
+    if (std::getenv("HORA_DL_DBG"))
+      std::fprintf(stderr, "DL-HIT base route: rec=%d nrec=%zu no_succ=%d\n",
+                   u, nrec(), (int)succ.empty());
     deadlock_hit_ = true;
     eg_early_hit_ = true;
     return;

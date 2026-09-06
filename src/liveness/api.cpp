@@ -77,6 +77,15 @@ void LivenessEngine::base_forward() {
         if (inq.size() < nrec()) inq.resize(nrec(), 0);
         inq[u] = 0;
         expand(u);                                  // no-op if still expanded
+        // A witness found inside expand() settles the query, so the search must stop here.
+        // ::LivenessEngine::expand sets this for all three early-exit shapes -- a deadlocked
+        // valuation under `A[] not deadlock`, a leads-to counterexample, an E[] terminal witness
+        // -- and returns, but returning only ends THAT record: without this the loop drained the
+        // rest of the worklist and explored the whole graph for an answer already decided.
+        // ::LivenessEngine::online_drain_forward_work has always broken on the same flag; the
+        // base route did not. Measured on phil10 `A[] not deadlock`: the hit fires at 35668
+        // records and the search ran on to 71451.
+        if (eg_early_hit_) return;
         grow();
         // A successor needs work exactly when it has no adjacency of its own: brand new, or reset
         // because a merge enlarged it.
@@ -119,11 +128,18 @@ bool LivenessEngine::deadlock_reachable_refined(GfpStats* gs, bool* ok) {
   *ok = fwd_ok_;
   if (!fwd_ok_) return false;
   if (deadlock_hit_) return true;          // the search stopped at the witness
+  static const bool dl_dbg = std::getenv("HORA_DL_DBG") != nullptr;
   SymState sc;
   for (std::size_t i = 0; i < nrec(); ++i) {
     if (cancelled()) { *ok = false; return false; }
-    if (detail::state_has_deadlock(net, sread(static_cast<int>(i), sc))) return true;
+    if (detail::state_has_deadlock(net, sread(static_cast<int>(i), sc))) {
+      if (dl_dbg)
+        std::fprintf(stderr, "DL-POSTHOC found at rec=%zu of %zu  expanded=%d active=%d\n",
+                     i, nrec(), (int)expanded[i], (int)online_active_[i]);
+      return true;
+    }
   }
+  if (dl_dbg) std::fprintf(stderr, "DL-POSTHOC no record deadlocks (nrec=%zu)\n", nrec());
   return false;
 }
 

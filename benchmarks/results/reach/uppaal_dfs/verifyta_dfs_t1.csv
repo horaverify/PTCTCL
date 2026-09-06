@@ -150,3 +150,4 @@ viking,viking15,verifyta,1,1,2768894,19.437,0.378,OK,-,-,8,alu,adaptive,reach,-,
 viking,viking15,verifyta,1,2,2768894,19.534,0.378,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
 viking,viking17,verifyta,1,1,13631486,105.717,1.766,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
 viking,viking17,verifyta,1,2,13631486,106.090,1.766,OK,-,-,8,alu,adaptive,reach,-,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking20,verifyta,1,1,-,7200.030,19.156,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe)
