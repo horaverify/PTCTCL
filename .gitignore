@@ -105,3 +105,4 @@ benchmarks/**/STOP
 
 shard*
 *shard*
+hddi/
