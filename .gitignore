@@ -102,3 +102,6 @@ benchmarks/**/STOP
 
 *backup*
 *_old.csv
+
+shard*
+*shard*

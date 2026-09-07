@@ -59,6 +59,11 @@ Examples
     cannot encode is SKIPped with the reason from tck_live_e/manifest.json, which is a refusal
     and not a gap.
 
+    # tck-reach's subsuming algorithms. Their state counts are NOT comparable with -a reach,
+    # so they get their own outdir and are keyed apart by the tck_alg column.
+    ./bench.py run --tool tchecker --families all --outdir ../results/reach/tchecker_cov \
+        --tchecker-alg covreach --tag tchecker_cov
+
     ./bench.py status --outdir ../reachability_results/hora_gsim
     ./bench.py stop   --outdir ../reachability_results/hora_gsim [--soft]
 """
@@ -89,7 +94,7 @@ TCHECKER_LIVENESS = os.environ.get("TCHECKER_LIVENESS_BIN") or os.path.join(
 
 CSV_COLS = ["family", "model", "tool", "threads", "rep", "states", "seconds", "rss_gb",
             "status", "mergescan", "hotlen", "chunk", "sim", "engine", "queries",
-            "qidx", "verdict", "query"]
+            "qidx", "verdict", "query", "tck_alg"]
 # The first eleven columns and their order are load-bearing: make_clean_results.py and the
 # plot_*.py readers index them by name out of files written before chunk/sim/engine existed.
 # New columns go on the END.
@@ -383,6 +388,24 @@ def _tchecker_labels():
 
 TCHECKER_LABELS = _tchecker_labels()
 
+# tck-reach -a. `reach` is the plain zone graph; the three others subsume, so they explore
+# FEWER states and their `states` column is not comparable with `reach`'s -- which is why the
+# algorithm is a keyed column and not a free-floating flag.
+TCHECKER_ALGS = ["reach", "covreach", "aLU-covreach", "concur19"]
+
+
+def tck_alg_of(row):
+    """The tck-reach algorithm a row was measured with, for the resume key.
+
+    Rows written before this column existed were measured with tck-reach's `-a reach`, and no
+    other tool ever has one (so "-"). These two defaults must be exactly what cmd_run puts in
+    the key, or a resume matches nothing and silently re-measures the whole table.
+    """
+    v = row.get("tck_alg")
+    if v and v != "-":
+        return v
+    return "reach" if row.get("tool") == "tchecker" else "-"
+
 
 class TcheckerTool(Tool):
     """TChecker reachability or liveness over converted, labelled .tck models."""
@@ -419,7 +442,7 @@ class TcheckerTool(Tool):
         # -l entirely: tck-reach then has nothing to stop at and exhausts the reachable set,
         # which is the same full-state-space measurement hora makes with `A[] true`. A label that
         # is merely never attached is NOT a substitute -- tck-reach rejects it as unknown.
-        argv = [a.tchecker_bin, "-a", "reach"]
+        argv = [a.tchecker_bin, "-a", a.tchecker_alg]
         if labels:
             argv += ["-l", labels]
         return argv + [tck]
@@ -535,7 +558,9 @@ def cmd_run(a):
     def log(msg):
         print("[%s] %s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg), flush=True)
 
-    log("bench.py run  tool=%s sim=%s engine=%s chunk=%s" % (a.tool, a.sim, a.engine, a.chunk))
+    log("bench.py run  tool=%s sim=%s engine=%s chunk=%s%s"
+        % (a.tool, a.sim, a.engine, a.chunk,
+           (" tck_alg=%s" % a.tchecker_alg) if a.tool == "tchecker" else ""))
     log("threads=%s reps=%d timeout=%ds memgb=%g strike=%d pin=%d"
         % (threads, a.reps, a.timeout, a.memgb, a.strike_limit, a.pin))
     log("families: %s" % "; ".join("%s:%s" % (f, ",".join(map(str, n))) for f, n in sorted(fams.items())))
@@ -550,7 +575,8 @@ def cmd_run(a):
     knobs = (("-" if a.mergescan is None else str(a.mergescan)),
              ("-" if a.hotlen is None else str(a.hotlen)),
              ("-" if a.chunk is None else str(a.chunk)),
-             a.sim, a.engine, a.queries)
+             a.sim, a.engine, a.queries,
+             (a.tchecker_alg if a.tool == "tchecker" else "-"))
 
     for th in threads:
         if os.path.exists(stop_file):
@@ -568,7 +594,7 @@ def cmd_run(a):
 
 def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
     """One (tool, threads, knobs) pass over every family, resumable and strike-limited."""
-    ms, hl, ch, sim, engine, qk = knobs
+    ms, hl, ch, sim, engine, qk, alg = knobs
 
     # Seed from this file plus any --seed files: a run that DEFINITIVELY finished (OK, or a
     # real TIMEOUT/MEMOUT) is never repeated. ERR is left to re-run -- it is cheap and may
@@ -589,7 +615,7 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
                           r.get("mergescan") or "-", r.get("hotlen") or "-",
                           r.get("chunk") or "-", r.get("sim") or "-",
                           r.get("engine") or "-", r.get("queries") or "reach",
-                          qidx_of(r))] = r
+                          qidx_of(r), tck_alg_of(r))] = r
 
     # Per-(family, tool, knobs) timeout streaks, seeded from disk so the rule survives a
     # restart. A size counts as timed out iff it has runs and NONE finished OK.
@@ -611,6 +637,8 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
         if (r.get("sim") or "-") != sim or (r.get("engine") or "-") != engine:
             continue
         if (r.get("chunk") or "-") != ch or (r.get("queries") or "reach") != qk:
+            continue
+        if tck_alg_of(r) != alg:
             continue
         hist.setdefault((r["family"], qidx_of(r), r["model"]), []).append(r.get("status"))
     for (fam, qidx, model), sts in hist.items():
@@ -694,7 +722,7 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
             sts, timed_out = [], False
             for rep in range(1, a.reps + 1):
                 key = (model, tool.name, str(th), str(rep), ms, hl, ch, sim, engine, qk,
-                       str(qidx))
+                       str(qidx), alg)
                 if key in done:
                     sts.append(done[key]["status"])
                     timed_out = timed_out or done[key]["status"] in ("TIMEOUT", "MEMOUT")
@@ -724,7 +752,8 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
                       "rep": rep, "states": states, "seconds": "%.3f" % secs,
                       "rss_gb": "%.3f" % rss, "status": st, "mergescan": ms, "hotlen": hl,
                       "chunk": ch, "sim": sim, "engine": engine, "queries": qk,
-                      "qidx": qidx, "verdict": tool.verdict(a, out), "query": qtext})
+                      "qidx": qidx, "verdict": tool.verdict(a, out), "query": qtext,
+                      "tck_alg": alg})
                 fh.flush()
                 print("  %-14s %-13s t=%-3s r=%s %6s %10s %9.2fs %6.2fGB  %s"
                       % (label, tool.name, th, rep, tool.verdict(a, out), states, secs, rss, st),
@@ -761,6 +790,7 @@ def cmd_stop(a):
     if a.soft:
         return 0
     pgid_f = os.path.join(a.outdir, "bench.pgid")
+    pgid = None
     if os.path.exists(pgid_f):
         pgid = int(open(pgid_f).read().strip())
         try:
@@ -768,9 +798,18 @@ def cmd_stop(a):
             print("SIGTERM -> process group %d" % pgid)
         except (ProcessLookupError, PermissionError) as e:
             print("process group %d not killed: %s" % (pgid, e))
-    for exe in ("hora", "opaal2lts-mc", "verifyta", "tck-reach", "tck-liveness"):
-        subprocess.run(["pkill", "-9", "-x", exe], stderr=subprocess.DEVNULL)
-    print("killed leftover tool processes.")
+    # Mop up tool processes that outlived the group signal -- but ONLY this sweep's, matched by
+    # process group. This used to be a bare `pkill -9 -x tck-reach`, which was harmless while
+    # bench.py was one-sweep-at-a-time but kills EVERY concurrent sweep on the machine: stopping
+    # one shard of a sharded run SIGKILLed the other shards' in-flight models and recorded them
+    # as ERR. Without a pgid there is nothing safe to scope to, so mop up nothing.
+    exes = ("hora", "opaal2lts-mc", "verifyta", "tck-reach", "tck-liveness")
+    if pgid is not None:
+        for exe in exes:
+            subprocess.run(["pkill", "-9", "-g", str(pgid), "-x", exe], stderr=subprocess.DEVNULL)
+        print("killed leftover tool processes in group %d." % pgid)
+    else:
+        print("no bench.pgid -- left any leftover tool processes alone (cannot scope the kill).")
     return 0
 
 
@@ -848,6 +887,10 @@ def main():
     r.add_argument("--opaal-bin", default=OPAAL)
     r.add_argument("--tchecker-bin", default=TCHECKER)
     r.add_argument("--tchecker-liveness-bin", default=TCHECKER_LIVENESS)
+    r.add_argument("--tchecker-alg", default="reach", choices=TCHECKER_ALGS,
+                   help="tck-reach -a (default reach, what the recorded tchecker table was "
+                        "measured with). Subsuming algorithms visit fewer states, so keep "
+                        "each one in its own outdir; the tck_alg column keys them apart.")
     r.add_argument("--ltsmin-size", type=int, default=26, help="LTSmin -s (log2 store size)")
     r.add_argument("--ltsmin-store", default="tree", choices=["tree", "table", "cleary-tree"])
     r.set_defaults(fn=cmd_run)
