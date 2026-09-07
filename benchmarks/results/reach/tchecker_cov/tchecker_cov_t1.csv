@@ -30,6 +30,8 @@ arbiter,arbiter17,tchecker,1,2,1245184,357.046,0.931,OK,-,-,8,alu,adaptive,reach
 arbiter,arbiter18,tchecker,1,1,2621440,1283.189,2.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (C1.cs && C2.cs),covreach
 arbiter,arbiter18,tchecker,1,2,2621440,1381.559,2.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (C1.cs && C2.cs),covreach
 arbiter,arbiter19,tchecker,1,1,5505024,5150.208,4.351,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (C1.cs && C2.cs),covreach
+arbiter,arbiter19,tchecker,1,2,5505024,5230.701,4.351,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (C1.cs && C2.cs),covreach
+arbiter,arbiter20,tchecker,1,1,-,7200.019,5.178,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (C1.cs && C2.cs),covreach
 csma,csma4,tchecker,1,1,128,0.069,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting),covreach
 csma,csma4,tchecker,1,2,128,0.071,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting),covreach
 csma,csma5,tchecker,1,1,352,0.068,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting),covreach
@@ -56,6 +58,7 @@ csma,csma15,tchecker,1,1,2244608,752.552,1.378,OK,-,-,8,alu,adaptive,reach,-,-,A
 csma,csma15,tchecker,1,2,2244608,768.785,1.378,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting),covreach
 csma,csma16,tchecker,1,1,5046272,3135.157,3.206,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting),covreach
 csma,csma16,tchecker,1,2,5046272,3168.620,3.206,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting),covreach
+csma,csma17,tchecker,1,1,-,7200.013,5.235,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (S0.Send and S1.Send and Bus.Transmitting),covreach
 fischer,fischer4,tchecker,1,1,268,0.070,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 fischer,fischer4,tchecker,1,2,268,0.069,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 fischer,fischer5,tchecker,1,1,977,0.072,0.013,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
@@ -75,6 +78,11 @@ fischer,fischer11,tchecker,1,2,1464971,263.302,0.529,OK,-,-,8,alu,adaptive,reach
 fischer,fischer12,tchecker,1,1,4758404,1840.812,1.740,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 fischer,fischer12,tchecker,1,2,4758404,1781.826,1.740,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 fischer,fischer13,tchecker,1,1,-,7200.039,4.204,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
+grc,grc4,tchecker,1,1,3273,0.270,0.016,OK,-,-,8,alu,adaptive,reach,-,-,A[] true,covreach
+grc,grc4,tchecker,1,2,3273,0.268,0.016,OK,-,-,8,alu,adaptive,reach,-,-,A[] true,covreach
+grc,grc5,tchecker,1,1,45363,4.134,0.034,OK,-,-,8,alu,adaptive,reach,-,-,A[] true,covreach
+grc,grc5,tchecker,1,2,45363,3.819,0.034,OK,-,-,8,alu,adaptive,reach,-,-,A[] true,covreach
+grc,grc6,tchecker,1,1,729934,499.164,0.239,OK,-,-,8,alu,adaptive,reach,-,-,A[] true,covreach
 phil,phil4,tchecker,1,1,82,0.068,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat),covreach
 phil,phil4,tchecker,1,2,82,0.067,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat),covreach
 phil,phil5,tchecker,1,1,257,0.067,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat),covreach
@@ -96,6 +104,14 @@ phil,phil12,tchecker,1,2,1140361,229.123,0.652,OK,-,-,8,alu,adaptive,reach,-,-,A
 phil,phil13,tchecker,1,1,4072538,1739.428,2.371,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat),covreach
 phil,phil13,tchecker,1,2,4072538,1739.428,2.371,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat),covreach
 phil,phil14,tchecker,1,1,-,7200.026,5.448,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat),covreach
+single,single4,tchecker,1,1,72,0.070,0.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
+single,single4,tchecker,1,2,72,0.071,0.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
+single,single5,tchecker,1,1,367,0.118,0.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
+single,single5,tchecker,1,2,367,0.119,0.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
+single,single6,tchecker,1,1,2208,1.197,0.018,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
+single,single6,tchecker,1,2,2208,0.880,0.018,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
+single,single7,tchecker,1,1,15465,53.661,0.029,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
+single,single7,tchecker,1,2,15465,53.818,0.029,OK,-,-,8,alu,adaptive,reach,-,-,A[] x0 <= 6,covreach
 twolock,twolock4,tchecker,1,1,332,0.069,0.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 twolock,twolock4,tchecker,1,2,332,0.068,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 twolock,twolock5,tchecker,1,1,1137,0.118,0.012,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
@@ -113,6 +129,8 @@ twolock,twolock10,tchecker,1,2,457838,54.403,0.181,OK,-,-,8,alu,adaptive,reach,-
 twolock,twolock11,tchecker,1,1,1487499,294.737,0.558,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 twolock,twolock11,tchecker,1,2,1487499,293.247,0.558,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 twolock,twolock12,tchecker,1,1,4807556,1795.202,1.826,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
+twolock,twolock12,tchecker,1,2,4807556,1811.645,1.826,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
+twolock,twolock13,tchecker,1,1,-,7200.014,4.386,TIMEOUT,-,-,8,alu,adaptive,reach,-,-,A[] not (P1.cs && P2.cs),covreach
 viking,viking4,tchecker,1,1,206,0.069,0.009,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe),covreach
 viking,viking4,tchecker,1,2,206,0.071,0.010,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe),covreach
 viking,viking6,tchecker,1,1,1374,0.120,0.012,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe),covreach
@@ -123,3 +141,4 @@ viking,viking12,tchecker,1,1,241662,5.043,0.100,OK,-,-,8,alu,adaptive,reach,-,-,
 viking,viking12,tchecker,1,2,241662,4.961,0.101,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe),covreach
 viking,viking15,tchecker,1,1,2768894,258.941,1.021,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe),covreach
 viking,viking15,tchecker,1,2,2768894,258.110,1.021,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe),covreach
+viking,viking17,tchecker,1,1,13631486,5232.796,5.033,OK,-,-,8,alu,adaptive,reach,-,-,A[] not (Viking1.safe && Viking1.unsafe),covreach
