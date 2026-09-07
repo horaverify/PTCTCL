@@ -178,3 +178,4 @@ phil,phil15,hora-omp,1,1,13289807,413.792,9.033,OK,-,-,8,alu,adaptive,deadlock,-
 phil,phil15,hora-omp,1,2,13289807,378.798,9.033,OK,-,-,8,alu,adaptive,deadlock,-,NOT,A[] not deadlock
 phil,phil16,hora-omp,1,1,47460433,1899.271,34.179,OK,-,-,8,alu,adaptive,deadlock,-,NOT,A[] not deadlock
 phil,phil16,hora-omp,1,2,47460433,1896.363,34.179,OK,-,-,8,alu,adaptive,deadlock,-,NOT,A[] not deadlock
+phil,phil17,hora-omp,1,1,-,7167.931,100.180,MEMOUT,-,-,8,alu,adaptive,deadlock,-,-,A[] not deadlock
