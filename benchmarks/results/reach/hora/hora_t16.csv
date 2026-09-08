@@ -66,7 +66,8 @@ csma,csma18,hora-omp,16,2,15007744,156.383,3.183,OK,-,-,8,g,adaptive,reach,-,SAT
 csma,csma20,hora-omp,16,1,71827456,908.370,15.520,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
 csma,csma20,hora-omp,16,2,71827456,902.473,15.523,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
 csma,csma22,hora-omp,16,1,338690048,5578.684,74.365,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
-csma,csma22,hora-omp,16,2,338690048,5571.520,74.381,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)fischer,fischer4,hora-omp,16,1,268,0.070,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
+csma,csma22,hora-omp,16,2,338690048,5571.520,74.381,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+fischer,fischer4,hora-omp,16,1,268,0.070,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
 fischer,fischer4,hora-omp,16,1,268,0.120,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
 fischer,fischer4,hora-omp,16,2,268,0.071,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
 fischer,fischer5,hora-omp,16,1,977,0.070,0.034,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P1.cs && P2.cs)
@@ -126,7 +127,8 @@ phil,phil14,hora-omp,16,2,9354142,55.374,2.709,OK,-,-,8,g,adaptive,reach,-,SAT,A
 phil,phil15,hora-omp,16,1,35204125,469.899,13.516,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil15,hora-omp,16,2,35197928,466.720,13.535,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil16,hora-omp,16,1,138599605,6668.324,65.294,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
-phil,phil17,ptctlmc-omp,16,1,-,7200.028,69.851,TIMEOUT,-,-,8,g,adaptivephil,phil16,hora-omp,16,2,138508881,6628.990,65.421,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil17,ptctlmc-omp,16,1,-,7200.028,69.851,TIMEOUT,-,-,8,g,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat)
+phil,phil16,hora-omp,16,2,138508881,6628.990,65.421,OK,-,-,8,g,adaptive,reach,-,SAT,A[] not (P0.Eat && P1.Eat)
 phil,phil17,hora-omp,16,1,-,7200.014,70.003,TIMEOUT,-,-,8,g,adaptive,reach,-,-,A[] not (P0.Eat && P1.Eat)
 single,single4,hora-omp,16,1,45,0.223,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
 single,single4,hora-omp,16,2,45,0.221,0.033,OK,-,-,8,g,adaptive,reach,-,SAT,A[] x0 <= 6
