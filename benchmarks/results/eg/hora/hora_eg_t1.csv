@@ -960,3 +960,43 @@ viking,viking20,hora-omp,1,1,16,0.075,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !
 viking,viking20,hora-omp,1,2,16,0.069,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
 viking,viking20,hora-omp,1,1,96223,4.126,0.066,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
 viking,viking20,hora-omp,1,2,96223,4.116,0.066,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+hddi,hddi2,hora-omp,1,1,8,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi2,hora-omp,1,2,8,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi2,hora-omp,1,1,8,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi2,hora-omp,1,2,8,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi2,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,1,8,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,2,8,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,1,8,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi2,hora-omp,1,2,8,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi10,hora-omp,1,1,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi10,hora-omp,1,1,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi10,hora-omp,1,1,3,0.068,0.006,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,2,3,0.068,0.006,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,1,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,1,40,0.068,0.007,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi10,hora-omp,1,2,40,0.070,0.007,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi15,hora-omp,1,1,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi15,hora-omp,1,2,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi15,hora-omp,1,1,60,0.070,0.008,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi15,hora-omp,1,2,60,0.069,0.008,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi15,hora-omp,1,1,3,0.069,0.008,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,2,3,0.069,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,1,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,2,60,0.069,0.008,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,1,60,0.069,0.008,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi15,hora-omp,1,2,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi20,hora-omp,1,1,80,0.068,0.011,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi20,hora-omp,1,2,80,0.071,0.010,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi20,hora-omp,1,1,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi20,hora-omp,1,2,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi20,hora-omp,1,1,3,0.070,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,2,3,0.069,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,1,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,2,80,0.068,0.011,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,1,80,0.071,0.011,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi20,hora-omp,1,2,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)

@@ -1,0 +1,93 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_hddi2.xml
+# tt1:(channel)
+# global event: tt1
+# tt2:(channel)
+# global event: tt2
+# rt1:(channel)
+# global event: rt1
+# rt2:(channel)
+# global event: rt2
+# SA:(const (int))
+int:1:20:20:20:SA
+# td:(const (int))
+int:1:0:0:0:td
+# TRTT:(const (int))
+int:1:120:120:120:TRTT
+# no iodecl
+# compilation of process RING
+process:RING
+# x:(clock)
+clock:1:RING_x
+location:RING:ring_to_1{initial::invariant:1 && RING_x <= td && ST1_z <= 40 && __loc_ST2 != 2:labels:TC_EG}
+location:RING:ring_1{invariant:ST1_z <= 40 && __loc_ST2 != 2:labels:TC_EG}
+location:RING:ring_to_2{invariant:1 && RING_x <= td && ST1_z <= 40 && __loc_ST2 != 2:labels:TC_EG}
+location:RING:ring_2{invariant:ST1_z <= 40 && __loc_ST2 != 2:labels:TC_EG}
+event:tt1_emit
+edge:RING:ring_to_1:ring_1:tt1_emit{provided:(RING_x <= td)}
+event:rt1_recv
+edge:RING:ring_1:ring_to_2:rt1_recv{do:RING_x=0}
+event:tt2_emit
+edge:RING:ring_to_2:ring_2:tt2_emit{provided:(RING_x <= td)}
+event:rt2_recv
+edge:RING:ring_2:ring_to_1:rt2_recv{do:RING_x=0}
+
+# compilation of process ST1
+process:ST1
+# x:(clock)
+clock:1:ST1_x
+# y:(clock)
+clock:1:ST1_y
+# z:(clock)
+clock:1:ST1_z
+location:ST1:station_z_idle{initial:}
+location:ST1:station_z_sync{invariant:1 && ST1_x <= SA}
+location:ST1:station_z_async{invariant:1 && ST1_z <= TRTT}
+location:ST1:station_y_idle{}
+location:ST1:station_y_sync{invariant:1 && ST1_x <= SA}
+location:ST1:station_y_async{invariant:1 && ST1_y <= TRTT}
+event:tt1_recv
+edge:ST1:station_z_idle:station_z_sync:tt1_recv{do:ST1_y=0;ST1_x=0}
+event:rt1_emit
+edge:ST1:station_z_sync:station_y_idle:rt1_emit{provided:ST1_x >= SA && ST1_z >= TRTT}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:ST1:station_z_sync:station_z_async:tau{provided:ST1_x >= SA && ST1_z < TRTT}
+edge:ST1:station_z_async:station_y_idle:rt1_emit{}
+edge:ST1:station_y_idle:station_y_sync:tt1_recv{do:ST1_z=0;ST1_x=0}
+edge:ST1:station_y_sync:station_z_idle:rt1_emit{provided:ST1_x >= SA && ST1_y >= TRTT}
+edge:ST1:station_y_sync:station_y_async:tau{provided:ST1_x >= SA && ST1_y < TRTT}
+edge:ST1:station_y_async:station_z_idle:rt1_emit{}
+
+# compilation of process ST2
+process:ST2
+# x:(clock)
+clock:1:ST2_x
+# y:(clock)
+clock:1:ST2_y
+# z:(clock)
+clock:1:ST2_z
+int:1:0:5:0:__loc_ST2
+location:ST2:station_z_idle{initial:}
+location:ST2:station_z_sync{invariant:1 && ST2_x <= SA}
+location:ST2:station_z_async{invariant:1 && ST2_z <= TRTT}
+location:ST2:station_y_idle{}
+location:ST2:station_y_sync{invariant:1 && ST2_x <= SA}
+location:ST2:station_y_async{invariant:1 && ST2_y <= TRTT}
+event:tt2_recv
+edge:ST2:station_z_idle:station_z_sync:tt2_recv{do:ST2_y=0;ST2_x=0;__loc_ST2=1}
+event:rt2_emit
+edge:ST2:station_z_sync:station_y_idle:rt2_emit{provided:ST2_x >= SA && ST2_z >= TRTT:do:__loc_ST2=3}
+edge:ST2:station_z_sync:station_z_async:tau{provided:ST2_x >= SA && ST2_z < TRTT:do:__loc_ST2=2}
+edge:ST2:station_z_async:station_y_idle:rt2_emit{do:__loc_ST2=3}
+edge:ST2:station_y_idle:station_y_sync:tt2_recv{do:ST2_z=0;ST2_x=0;__loc_ST2=4}
+edge:ST2:station_y_sync:station_z_idle:rt2_emit{provided:ST2_x >= SA && ST2_y >= TRTT:do:__loc_ST2=0}
+edge:ST2:station_y_sync:station_y_async:tau{provided:ST2_x >= SA && ST2_y < TRTT:do:__loc_ST2=5}
+edge:ST2:station_y_async:station_z_idle:rt2_emit{do:__loc_ST2=0}
+
+sync:RING@rt1_recv:ST1@rt1_emit
+sync:RING@rt2_recv:ST2@rt2_emit
+sync:RING@tt1_emit:ST1@tt1_recv
+sync:RING@tt2_emit:ST2@tt2_recv

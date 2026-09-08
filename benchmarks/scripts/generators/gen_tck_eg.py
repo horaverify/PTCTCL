@@ -66,6 +66,21 @@ LOC_VAR = "__loc_%s"
 LOCATION_RE = re.compile(r"^location:([^:]+):([^\{]+)(\{.*\})$")
 EDGE_RE = re.compile(r"^edge:([^:]+):([^:]+):([^:]+):([^\{]+)(\{.*\})$")
 CLOCK_RE = re.compile(r"^clock:(\d+):(\w+)$")
+DOTTED_RE = re.compile(r"\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\b")
+
+
+def flatten_clocks(text, clocks):
+    """`ST1.z` -> `ST1_z` where that is a clock of the model.
+
+    UPPAAL names a clock LOCAL to a template `P.c`; utot flattens it to `P_c`, and the clock
+    part of psi is copied into the invariant VERBATIM, so it has to be spelled the way the
+    .tck model spells it. Families whose clocks are global (`x0`, `y1`, `c0`) never hit this;
+    hddi's `ST1.z` does. A dotted name that is not a clock is a `Process.location` atom and is
+    left exactly as it was.
+    """
+    return DOTTED_RE.sub(
+        lambda m: "%s_%s" % (m.group(1), m.group(2))
+        if "%s_%s" % (m.group(1), m.group(2)) in clocks else m.group(0), text)
 
 
 # --------------------------------------------------------------------- query AST
@@ -168,7 +183,7 @@ class Parser:
         if self.peek() in ("<=", ">=", "==", "!=", "<", ">", "-"):
             while self.peek() not in (None, "&&", "||", ")"):
                 self.take()
-            text = " ".join(self.t[start:self.i])
+            text = flatten_clocks(" ".join(self.t[start:self.i]), self.clocks)
             if not any(c in self.clocks for c in re.findall(r"[A-Za-z_]\w*", text)):
                 raise ValueError("comparison over no clock is not supported: %r" % text)
             return Atom("clock", text)
@@ -350,6 +365,8 @@ def main():
                         raise ValueError("no process %r in the model" % p)
                 for g in disc_conj:
                     for atom in re.findall(r"([A-Za-z_]\w*)\.([A-Za-z_]\w*)", str(q)):
+                        if "%s_%s" % atom in clocks:
+                            continue          # a local clock `P.c`, not a location atom
                         if atom[0] in locs and atom[1] not in locs[atom[0]]:
                             raise ValueError("no location %s.%s in the model" % atom)
             except ValueError as e:

@@ -1,0 +1,390 @@
+# 
+# This file has been generated automatically with uppaal-to-tchecker
+# 
+system:_home_luca_Documents_ParallelCTLModelChecker_PTCTCL_benchmarks_models_hddi10.xml
+# tt1:(channel)
+# global event: tt1
+# tt2:(channel)
+# global event: tt2
+# tt3:(channel)
+# global event: tt3
+# tt4:(channel)
+# global event: tt4
+# tt5:(channel)
+# global event: tt5
+# tt6:(channel)
+# global event: tt6
+# tt7:(channel)
+# global event: tt7
+# tt8:(channel)
+# global event: tt8
+# tt9:(channel)
+# global event: tt9
+# tt10:(channel)
+# global event: tt10
+# rt1:(channel)
+# global event: rt1
+# rt2:(channel)
+# global event: rt2
+# rt3:(channel)
+# global event: rt3
+# rt4:(channel)
+# global event: rt4
+# rt5:(channel)
+# global event: rt5
+# rt6:(channel)
+# global event: rt6
+# rt7:(channel)
+# global event: rt7
+# rt8:(channel)
+# global event: rt8
+# rt9:(channel)
+# global event: rt9
+# rt10:(channel)
+# global event: rt10
+# SA:(const (int))
+int:1:20:20:20:SA
+# td:(const (int))
+int:1:0:0:0:td
+# TRTT:(const (int))
+int:1:520:520:520:TRTT
+# no iodecl
+# compilation of process RING
+process:RING
+# x:(clock)
+clock:1:RING_x
+location:RING:ring_to_1{initial::invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_1{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_2{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_2{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_3{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_3{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_4{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_4{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_5{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_5{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_6{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_6{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_7{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_7{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_8{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_8{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_9{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_9{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_to_10{invariant:1 && RING_x <= td && ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+location:RING:ring_10{invariant:ST1_z <= 40 && (if (if (if __loc_ST1 == 1 then 1 else 0) == 1 && (if __loc_ST2 == 1 then 1 else 0) == 1 then 1 else 0) == 0 then 1 else 0) == 1:labels:TC_EG}
+event:tt1_emit
+edge:RING:ring_to_1:ring_1:tt1_emit{provided:(RING_x <= td)}
+event:rt1_recv
+edge:RING:ring_1:ring_to_2:rt1_recv{do:RING_x=0}
+event:tt2_emit
+edge:RING:ring_to_2:ring_2:tt2_emit{provided:(RING_x <= td)}
+event:rt2_recv
+edge:RING:ring_2:ring_to_3:rt2_recv{do:RING_x=0}
+event:tt3_emit
+edge:RING:ring_to_3:ring_3:tt3_emit{provided:(RING_x <= td)}
+event:rt3_recv
+edge:RING:ring_3:ring_to_4:rt3_recv{do:RING_x=0}
+event:tt4_emit
+edge:RING:ring_to_4:ring_4:tt4_emit{provided:(RING_x <= td)}
+event:rt4_recv
+edge:RING:ring_4:ring_to_5:rt4_recv{do:RING_x=0}
+event:tt5_emit
+edge:RING:ring_to_5:ring_5:tt5_emit{provided:(RING_x <= td)}
+event:rt5_recv
+edge:RING:ring_5:ring_to_6:rt5_recv{do:RING_x=0}
+event:tt6_emit
+edge:RING:ring_to_6:ring_6:tt6_emit{provided:(RING_x <= td)}
+event:rt6_recv
+edge:RING:ring_6:ring_to_7:rt6_recv{do:RING_x=0}
+event:tt7_emit
+edge:RING:ring_to_7:ring_7:tt7_emit{provided:(RING_x <= td)}
+event:rt7_recv
+edge:RING:ring_7:ring_to_8:rt7_recv{do:RING_x=0}
+event:tt8_emit
+edge:RING:ring_to_8:ring_8:tt8_emit{provided:(RING_x <= td)}
+event:rt8_recv
+edge:RING:ring_8:ring_to_9:rt8_recv{do:RING_x=0}
+event:tt9_emit
+edge:RING:ring_to_9:ring_9:tt9_emit{provided:(RING_x <= td)}
+event:rt9_recv
+edge:RING:ring_9:ring_to_10:rt9_recv{do:RING_x=0}
+event:tt10_emit
+edge:RING:ring_to_10:ring_10:tt10_emit{provided:(RING_x <= td)}
+event:rt10_recv
+edge:RING:ring_10:ring_to_1:rt10_recv{do:RING_x=0}
+
+# compilation of process ST1
+process:ST1
+# x:(clock)
+clock:1:ST1_x
+# y:(clock)
+clock:1:ST1_y
+# z:(clock)
+clock:1:ST1_z
+location:ST1:station_z_idle{initial:}
+location:ST1:station_z_sync{invariant:1 && ST1_x <= SA}
+location:ST1:station_z_async{invariant:1 && ST1_z <= TRTT}
+location:ST1:station_y_idle{}
+location:ST1:station_y_sync{invariant:1 && ST1_x <= SA}
+location:ST1:station_y_async{invariant:1 && ST1_y <= TRTT}
+event:tt1_recv
+edge:ST1:station_z_idle:station_z_sync:tt1_recv{do:ST1_y=0;ST1_x=0;__loc_ST1=1}
+event:rt1_emit
+edge:ST1:station_z_sync:station_y_idle:rt1_emit{provided:ST1_x >= SA && ST1_z >= TRTT:do:__loc_ST1=3}
+# global event for Uppaal unlabelled edges
+event:tau
+edge:ST1:station_z_sync:station_z_async:tau{provided:ST1_x >= SA && ST1_z < TRTT:do:__loc_ST1=2}
+edge:ST1:station_z_async:station_y_idle:rt1_emit{do:__loc_ST1=3}
+edge:ST1:station_y_idle:station_y_sync:tt1_recv{do:ST1_z=0;ST1_x=0;__loc_ST1=4}
+edge:ST1:station_y_sync:station_z_idle:rt1_emit{provided:ST1_x >= SA && ST1_y >= TRTT:do:__loc_ST1=0}
+edge:ST1:station_y_sync:station_y_async:tau{provided:ST1_x >= SA && ST1_y < TRTT:do:__loc_ST1=5}
+edge:ST1:station_y_async:station_z_idle:rt1_emit{do:__loc_ST1=0}
+
+# compilation of process ST2
+process:ST2
+# x:(clock)
+clock:1:ST2_x
+# y:(clock)
+clock:1:ST2_y
+# z:(clock)
+clock:1:ST2_z
+location:ST2:station_z_idle{initial:}
+location:ST2:station_z_sync{invariant:1 && ST2_x <= SA}
+location:ST2:station_z_async{invariant:1 && ST2_z <= TRTT}
+location:ST2:station_y_idle{}
+location:ST2:station_y_sync{invariant:1 && ST2_x <= SA}
+location:ST2:station_y_async{invariant:1 && ST2_y <= TRTT}
+event:tt2_recv
+edge:ST2:station_z_idle:station_z_sync:tt2_recv{do:ST2_y=0;ST2_x=0;__loc_ST2=1}
+event:rt2_emit
+edge:ST2:station_z_sync:station_y_idle:rt2_emit{provided:ST2_x >= SA && ST2_z >= TRTT:do:__loc_ST2=3}
+edge:ST2:station_z_sync:station_z_async:tau{provided:ST2_x >= SA && ST2_z < TRTT:do:__loc_ST2=2}
+edge:ST2:station_z_async:station_y_idle:rt2_emit{do:__loc_ST2=3}
+edge:ST2:station_y_idle:station_y_sync:tt2_recv{do:ST2_z=0;ST2_x=0;__loc_ST2=4}
+edge:ST2:station_y_sync:station_z_idle:rt2_emit{provided:ST2_x >= SA && ST2_y >= TRTT:do:__loc_ST2=0}
+edge:ST2:station_y_sync:station_y_async:tau{provided:ST2_x >= SA && ST2_y < TRTT:do:__loc_ST2=5}
+edge:ST2:station_y_async:station_z_idle:rt2_emit{do:__loc_ST2=0}
+
+# compilation of process ST3
+process:ST3
+# x:(clock)
+clock:1:ST3_x
+# y:(clock)
+clock:1:ST3_y
+# z:(clock)
+clock:1:ST3_z
+location:ST3:station_z_idle{initial:}
+location:ST3:station_z_sync{invariant:1 && ST3_x <= SA}
+location:ST3:station_z_async{invariant:1 && ST3_z <= TRTT}
+location:ST3:station_y_idle{}
+location:ST3:station_y_sync{invariant:1 && ST3_x <= SA}
+location:ST3:station_y_async{invariant:1 && ST3_y <= TRTT}
+event:tt3_recv
+edge:ST3:station_z_idle:station_z_sync:tt3_recv{do:ST3_y=0;ST3_x=0}
+event:rt3_emit
+edge:ST3:station_z_sync:station_y_idle:rt3_emit{provided:ST3_x >= SA && ST3_z >= TRTT}
+edge:ST3:station_z_sync:station_z_async:tau{provided:ST3_x >= SA && ST3_z < TRTT}
+edge:ST3:station_z_async:station_y_idle:rt3_emit{}
+edge:ST3:station_y_idle:station_y_sync:tt3_recv{do:ST3_z=0;ST3_x=0}
+edge:ST3:station_y_sync:station_z_idle:rt3_emit{provided:ST3_x >= SA && ST3_y >= TRTT}
+edge:ST3:station_y_sync:station_y_async:tau{provided:ST3_x >= SA && ST3_y < TRTT}
+edge:ST3:station_y_async:station_z_idle:rt3_emit{}
+
+# compilation of process ST4
+process:ST4
+# x:(clock)
+clock:1:ST4_x
+# y:(clock)
+clock:1:ST4_y
+# z:(clock)
+clock:1:ST4_z
+location:ST4:station_z_idle{initial:}
+location:ST4:station_z_sync{invariant:1 && ST4_x <= SA}
+location:ST4:station_z_async{invariant:1 && ST4_z <= TRTT}
+location:ST4:station_y_idle{}
+location:ST4:station_y_sync{invariant:1 && ST4_x <= SA}
+location:ST4:station_y_async{invariant:1 && ST4_y <= TRTT}
+event:tt4_recv
+edge:ST4:station_z_idle:station_z_sync:tt4_recv{do:ST4_y=0;ST4_x=0}
+event:rt4_emit
+edge:ST4:station_z_sync:station_y_idle:rt4_emit{provided:ST4_x >= SA && ST4_z >= TRTT}
+edge:ST4:station_z_sync:station_z_async:tau{provided:ST4_x >= SA && ST4_z < TRTT}
+edge:ST4:station_z_async:station_y_idle:rt4_emit{}
+edge:ST4:station_y_idle:station_y_sync:tt4_recv{do:ST4_z=0;ST4_x=0}
+edge:ST4:station_y_sync:station_z_idle:rt4_emit{provided:ST4_x >= SA && ST4_y >= TRTT}
+edge:ST4:station_y_sync:station_y_async:tau{provided:ST4_x >= SA && ST4_y < TRTT}
+edge:ST4:station_y_async:station_z_idle:rt4_emit{}
+
+# compilation of process ST5
+process:ST5
+# x:(clock)
+clock:1:ST5_x
+# y:(clock)
+clock:1:ST5_y
+# z:(clock)
+clock:1:ST5_z
+location:ST5:station_z_idle{initial:}
+location:ST5:station_z_sync{invariant:1 && ST5_x <= SA}
+location:ST5:station_z_async{invariant:1 && ST5_z <= TRTT}
+location:ST5:station_y_idle{}
+location:ST5:station_y_sync{invariant:1 && ST5_x <= SA}
+location:ST5:station_y_async{invariant:1 && ST5_y <= TRTT}
+event:tt5_recv
+edge:ST5:station_z_idle:station_z_sync:tt5_recv{do:ST5_y=0;ST5_x=0}
+event:rt5_emit
+edge:ST5:station_z_sync:station_y_idle:rt5_emit{provided:ST5_x >= SA && ST5_z >= TRTT}
+edge:ST5:station_z_sync:station_z_async:tau{provided:ST5_x >= SA && ST5_z < TRTT}
+edge:ST5:station_z_async:station_y_idle:rt5_emit{}
+edge:ST5:station_y_idle:station_y_sync:tt5_recv{do:ST5_z=0;ST5_x=0}
+edge:ST5:station_y_sync:station_z_idle:rt5_emit{provided:ST5_x >= SA && ST5_y >= TRTT}
+edge:ST5:station_y_sync:station_y_async:tau{provided:ST5_x >= SA && ST5_y < TRTT}
+edge:ST5:station_y_async:station_z_idle:rt5_emit{}
+
+# compilation of process ST6
+process:ST6
+# x:(clock)
+clock:1:ST6_x
+# y:(clock)
+clock:1:ST6_y
+# z:(clock)
+clock:1:ST6_z
+location:ST6:station_z_idle{initial:}
+location:ST6:station_z_sync{invariant:1 && ST6_x <= SA}
+location:ST6:station_z_async{invariant:1 && ST6_z <= TRTT}
+location:ST6:station_y_idle{}
+location:ST6:station_y_sync{invariant:1 && ST6_x <= SA}
+location:ST6:station_y_async{invariant:1 && ST6_y <= TRTT}
+event:tt6_recv
+edge:ST6:station_z_idle:station_z_sync:tt6_recv{do:ST6_y=0;ST6_x=0}
+event:rt6_emit
+edge:ST6:station_z_sync:station_y_idle:rt6_emit{provided:ST6_x >= SA && ST6_z >= TRTT}
+edge:ST6:station_z_sync:station_z_async:tau{provided:ST6_x >= SA && ST6_z < TRTT}
+edge:ST6:station_z_async:station_y_idle:rt6_emit{}
+edge:ST6:station_y_idle:station_y_sync:tt6_recv{do:ST6_z=0;ST6_x=0}
+edge:ST6:station_y_sync:station_z_idle:rt6_emit{provided:ST6_x >= SA && ST6_y >= TRTT}
+edge:ST6:station_y_sync:station_y_async:tau{provided:ST6_x >= SA && ST6_y < TRTT}
+edge:ST6:station_y_async:station_z_idle:rt6_emit{}
+
+# compilation of process ST7
+process:ST7
+# x:(clock)
+clock:1:ST7_x
+# y:(clock)
+clock:1:ST7_y
+# z:(clock)
+clock:1:ST7_z
+location:ST7:station_z_idle{initial:}
+location:ST7:station_z_sync{invariant:1 && ST7_x <= SA}
+location:ST7:station_z_async{invariant:1 && ST7_z <= TRTT}
+location:ST7:station_y_idle{}
+location:ST7:station_y_sync{invariant:1 && ST7_x <= SA}
+location:ST7:station_y_async{invariant:1 && ST7_y <= TRTT}
+event:tt7_recv
+edge:ST7:station_z_idle:station_z_sync:tt7_recv{do:ST7_y=0;ST7_x=0}
+event:rt7_emit
+edge:ST7:station_z_sync:station_y_idle:rt7_emit{provided:ST7_x >= SA && ST7_z >= TRTT}
+edge:ST7:station_z_sync:station_z_async:tau{provided:ST7_x >= SA && ST7_z < TRTT}
+edge:ST7:station_z_async:station_y_idle:rt7_emit{}
+edge:ST7:station_y_idle:station_y_sync:tt7_recv{do:ST7_z=0;ST7_x=0}
+edge:ST7:station_y_sync:station_z_idle:rt7_emit{provided:ST7_x >= SA && ST7_y >= TRTT}
+edge:ST7:station_y_sync:station_y_async:tau{provided:ST7_x >= SA && ST7_y < TRTT}
+edge:ST7:station_y_async:station_z_idle:rt7_emit{}
+
+# compilation of process ST8
+process:ST8
+# x:(clock)
+clock:1:ST8_x
+# y:(clock)
+clock:1:ST8_y
+# z:(clock)
+clock:1:ST8_z
+location:ST8:station_z_idle{initial:}
+location:ST8:station_z_sync{invariant:1 && ST8_x <= SA}
+location:ST8:station_z_async{invariant:1 && ST8_z <= TRTT}
+location:ST8:station_y_idle{}
+location:ST8:station_y_sync{invariant:1 && ST8_x <= SA}
+location:ST8:station_y_async{invariant:1 && ST8_y <= TRTT}
+event:tt8_recv
+edge:ST8:station_z_idle:station_z_sync:tt8_recv{do:ST8_y=0;ST8_x=0}
+event:rt8_emit
+edge:ST8:station_z_sync:station_y_idle:rt8_emit{provided:ST8_x >= SA && ST8_z >= TRTT}
+edge:ST8:station_z_sync:station_z_async:tau{provided:ST8_x >= SA && ST8_z < TRTT}
+edge:ST8:station_z_async:station_y_idle:rt8_emit{}
+edge:ST8:station_y_idle:station_y_sync:tt8_recv{do:ST8_z=0;ST8_x=0}
+edge:ST8:station_y_sync:station_z_idle:rt8_emit{provided:ST8_x >= SA && ST8_y >= TRTT}
+edge:ST8:station_y_sync:station_y_async:tau{provided:ST8_x >= SA && ST8_y < TRTT}
+edge:ST8:station_y_async:station_z_idle:rt8_emit{}
+
+# compilation of process ST9
+process:ST9
+# x:(clock)
+clock:1:ST9_x
+# y:(clock)
+clock:1:ST9_y
+# z:(clock)
+clock:1:ST9_z
+location:ST9:station_z_idle{initial:}
+location:ST9:station_z_sync{invariant:1 && ST9_x <= SA}
+location:ST9:station_z_async{invariant:1 && ST9_z <= TRTT}
+location:ST9:station_y_idle{}
+location:ST9:station_y_sync{invariant:1 && ST9_x <= SA}
+location:ST9:station_y_async{invariant:1 && ST9_y <= TRTT}
+event:tt9_recv
+edge:ST9:station_z_idle:station_z_sync:tt9_recv{do:ST9_y=0;ST9_x=0}
+event:rt9_emit
+edge:ST9:station_z_sync:station_y_idle:rt9_emit{provided:ST9_x >= SA && ST9_z >= TRTT}
+edge:ST9:station_z_sync:station_z_async:tau{provided:ST9_x >= SA && ST9_z < TRTT}
+edge:ST9:station_z_async:station_y_idle:rt9_emit{}
+edge:ST9:station_y_idle:station_y_sync:tt9_recv{do:ST9_z=0;ST9_x=0}
+edge:ST9:station_y_sync:station_z_idle:rt9_emit{provided:ST9_x >= SA && ST9_y >= TRTT}
+edge:ST9:station_y_sync:station_y_async:tau{provided:ST9_x >= SA && ST9_y < TRTT}
+edge:ST9:station_y_async:station_z_idle:rt9_emit{}
+
+# compilation of process ST10
+process:ST10
+# x:(clock)
+clock:1:ST10_x
+# y:(clock)
+clock:1:ST10_y
+# z:(clock)
+clock:1:ST10_z
+int:1:0:5:0:__loc_ST1
+int:1:0:5:0:__loc_ST2
+location:ST10:station_z_idle{initial:}
+location:ST10:station_z_sync{invariant:1 && ST10_x <= SA}
+location:ST10:station_z_async{invariant:1 && ST10_z <= TRTT}
+location:ST10:station_y_idle{}
+location:ST10:station_y_sync{invariant:1 && ST10_x <= SA}
+location:ST10:station_y_async{invariant:1 && ST10_y <= TRTT}
+event:tt10_recv
+edge:ST10:station_z_idle:station_z_sync:tt10_recv{do:ST10_y=0;ST10_x=0}
+event:rt10_emit
+edge:ST10:station_z_sync:station_y_idle:rt10_emit{provided:ST10_x >= SA && ST10_z >= TRTT}
+edge:ST10:station_z_sync:station_z_async:tau{provided:ST10_x >= SA && ST10_z < TRTT}
+edge:ST10:station_z_async:station_y_idle:rt10_emit{}
+edge:ST10:station_y_idle:station_y_sync:tt10_recv{do:ST10_z=0;ST10_x=0}
+edge:ST10:station_y_sync:station_z_idle:rt10_emit{provided:ST10_x >= SA && ST10_y >= TRTT}
+edge:ST10:station_y_sync:station_y_async:tau{provided:ST10_x >= SA && ST10_y < TRTT}
+edge:ST10:station_y_async:station_z_idle:rt10_emit{}
+
+sync:RING@rt1_recv:ST1@rt1_emit
+sync:RING@rt10_recv:ST10@rt10_emit
+sync:RING@rt2_recv:ST2@rt2_emit
+sync:RING@rt3_recv:ST3@rt3_emit
+sync:RING@rt4_recv:ST4@rt4_emit
+sync:RING@rt5_recv:ST5@rt5_emit
+sync:RING@rt6_recv:ST6@rt6_emit
+sync:RING@rt7_recv:ST7@rt7_emit
+sync:RING@rt8_recv:ST8@rt8_emit
+sync:RING@rt9_recv:ST9@rt9_emit
+sync:RING@tt1_emit:ST1@tt1_recv
+sync:RING@tt10_emit:ST10@tt10_recv
+sync:RING@tt2_emit:ST2@tt2_recv
+sync:RING@tt3_emit:ST3@tt3_recv
+sync:RING@tt4_emit:ST4@tt4_recv
+sync:RING@tt5_emit:ST5@tt5_recv
+sync:RING@tt6_emit:ST6@tt6_recv
+sync:RING@tt7_emit:ST7@tt7_recv
+sync:RING@tt8_emit:ST8@tt8_recv
+sync:RING@tt9_emit:ST9@tt9_recv

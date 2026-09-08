@@ -1,6 +1,38 @@
 {
   "label": "TC_EG",
   "models": {
+    "hddi2__q0": {
+      "family": "hddi",
+      "size": 2,
+      "query_index": 0,
+      "query": "E[] ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi2__q0.tck"
+    },
+    "hddi2__q1": {
+      "family": "hddi",
+      "size": 2,
+      "query_index": 1,
+      "query": "E[] ST1.z <= 40 && !ST2.station_z_async",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi2__q1.tck"
+    },
+    "hddi2__q2": {
+      "family": "hddi",
+      "size": 2,
+      "query_index": 2,
+      "query": "E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi2__q2.tck"
+    },
+    "hddi2__q3": {
+      "family": "hddi",
+      "size": 2,
+      "query_index": 3,
+      "query": "E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi2__q3.tck"
+    },
     "arbiter4__q0": {
       "family": "arbiter",
       "size": 4,
@@ -153,6 +185,38 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG phil4__q2.tck"
     },
+    "single4__q0": {
+      "family": "single",
+      "size": 4,
+      "query_index": 0,
+      "query": "E[] x0 <= 6",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single4__q0.tck"
+    },
+    "single4__q1": {
+      "family": "single",
+      "size": 4,
+      "query_index": 1,
+      "query": "E[] x0 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single4__q1.tck"
+    },
+    "single4__q2": {
+      "family": "single",
+      "size": 4,
+      "query_index": 2,
+      "query": "E[] x0 <= 3 && x1 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single4__q2.tck"
+    },
+    "single4__q3": {
+      "family": "single",
+      "size": 4,
+      "query_index": 3,
+      "query": "E[] P.A && x0 <= 4",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single4__q3.tck"
+    },
     "twolock4__q0": {
       "family": "twolock",
       "size": 4,
@@ -176,6 +240,46 @@
       "query": "E[] (P0.idle || P0.waitA) && x0 <= 30",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG twolock4__q2.tck"
+    },
+    "viking4__q0": {
+      "family": "viking",
+      "size": 4,
+      "query_index": 0,
+      "query": "E[] y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking4__q0.tck"
+    },
+    "viking4__q1": {
+      "family": "viking",
+      "size": 4,
+      "query_index": 1,
+      "query": "E[] time <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking4__q1.tck"
+    },
+    "viking4__q2": {
+      "family": "viking",
+      "size": 4,
+      "query_index": 2,
+      "query": "E[] y1 <= 40 && !Viking1.safe",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking4__q2.tck"
+    },
+    "viking4__q3": {
+      "family": "viking",
+      "size": 4,
+      "query_index": 3,
+      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking4__q3.tck"
+    },
+    "viking4__q4": {
+      "family": "viking",
+      "size": 4,
+      "query_index": 4,
+      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking4__q4.tck"
     },
     "arbiter5__q0": {
       "family": "arbiter",
@@ -328,6 +432,38 @@
       "query": "E[] !(P0.Eat && P1.Eat) && c0 <= 40",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG phil5__q2.tck"
+    },
+    "single5__q0": {
+      "family": "single",
+      "size": 5,
+      "query_index": 0,
+      "query": "E[] x0 <= 6",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single5__q0.tck"
+    },
+    "single5__q1": {
+      "family": "single",
+      "size": 5,
+      "query_index": 1,
+      "query": "E[] x0 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single5__q1.tck"
+    },
+    "single5__q2": {
+      "family": "single",
+      "size": 5,
+      "query_index": 2,
+      "query": "E[] x0 <= 3 && x1 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single5__q2.tck"
+    },
+    "single5__q3": {
+      "family": "single",
+      "size": 5,
+      "query_index": 3,
+      "query": "E[] P.A && x0 <= 4",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single5__q3.tck"
     },
     "twolock5__q0": {
       "family": "twolock",
@@ -505,6 +641,38 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG phil6__q2.tck"
     },
+    "single6__q0": {
+      "family": "single",
+      "size": 6,
+      "query_index": 0,
+      "query": "E[] x0 <= 6",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single6__q0.tck"
+    },
+    "single6__q1": {
+      "family": "single",
+      "size": 6,
+      "query_index": 1,
+      "query": "E[] x0 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single6__q1.tck"
+    },
+    "single6__q2": {
+      "family": "single",
+      "size": 6,
+      "query_index": 2,
+      "query": "E[] x0 <= 3 && x1 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single6__q2.tck"
+    },
+    "single6__q3": {
+      "family": "single",
+      "size": 6,
+      "query_index": 3,
+      "query": "E[] P.A && x0 <= 4",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single6__q3.tck"
+    },
     "twolock6__q0": {
       "family": "twolock",
       "size": 6,
@@ -528,6 +696,46 @@
       "query": "E[] (P0.idle || P0.waitA) && x0 <= 30",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG twolock6__q2.tck"
+    },
+    "viking6__q0": {
+      "family": "viking",
+      "size": 6,
+      "query_index": 0,
+      "query": "E[] y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking6__q0.tck"
+    },
+    "viking6__q1": {
+      "family": "viking",
+      "size": 6,
+      "query_index": 1,
+      "query": "E[] time <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking6__q1.tck"
+    },
+    "viking6__q2": {
+      "family": "viking",
+      "size": 6,
+      "query_index": 2,
+      "query": "E[] y1 <= 40 && !Viking1.safe",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking6__q2.tck"
+    },
+    "viking6__q3": {
+      "family": "viking",
+      "size": 6,
+      "query_index": 3,
+      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking6__q3.tck"
+    },
+    "viking6__q4": {
+      "family": "viking",
+      "size": 6,
+      "query_index": 4,
+      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking6__q4.tck"
     },
     "arbiter7__q0": {
       "family": "arbiter",
@@ -680,6 +888,38 @@
       "query": "E[] !(P0.Eat && P1.Eat) && c0 <= 40",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG phil7__q2.tck"
+    },
+    "single7__q0": {
+      "family": "single",
+      "size": 7,
+      "query_index": 0,
+      "query": "E[] x0 <= 6",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single7__q0.tck"
+    },
+    "single7__q1": {
+      "family": "single",
+      "size": 7,
+      "query_index": 1,
+      "query": "E[] x0 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single7__q1.tck"
+    },
+    "single7__q2": {
+      "family": "single",
+      "size": 7,
+      "query_index": 2,
+      "query": "E[] x0 <= 3 && x1 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single7__q2.tck"
+    },
+    "single7__q3": {
+      "family": "single",
+      "size": 7,
+      "query_index": 3,
+      "query": "E[] P.A && x0 <= 4",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single7__q3.tck"
     },
     "twolock7__q0": {
       "family": "twolock",
@@ -857,6 +1097,38 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG phil8__q2.tck"
     },
+    "single8__q0": {
+      "family": "single",
+      "size": 8,
+      "query_index": 0,
+      "query": "E[] x0 <= 6",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single8__q0.tck"
+    },
+    "single8__q1": {
+      "family": "single",
+      "size": 8,
+      "query_index": 1,
+      "query": "E[] x0 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single8__q1.tck"
+    },
+    "single8__q2": {
+      "family": "single",
+      "size": 8,
+      "query_index": 2,
+      "query": "E[] x0 <= 3 && x1 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single8__q2.tck"
+    },
+    "single8__q3": {
+      "family": "single",
+      "size": 8,
+      "query_index": 3,
+      "query": "E[] P.A && x0 <= 4",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single8__q3.tck"
+    },
     "twolock8__q0": {
       "family": "twolock",
       "size": 8,
@@ -1033,6 +1305,38 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG phil9__q2.tck"
     },
+    "single9__q0": {
+      "family": "single",
+      "size": 9,
+      "query_index": 0,
+      "query": "E[] x0 <= 6",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single9__q0.tck"
+    },
+    "single9__q1": {
+      "family": "single",
+      "size": 9,
+      "query_index": 1,
+      "query": "E[] x0 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single9__q1.tck"
+    },
+    "single9__q2": {
+      "family": "single",
+      "size": 9,
+      "query_index": 2,
+      "query": "E[] x0 <= 3 && x1 <= 3",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single9__q2.tck"
+    },
+    "single9__q3": {
+      "family": "single",
+      "size": 9,
+      "query_index": 3,
+      "query": "E[] P.A && x0 <= 4",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG single9__q3.tck"
+    },
     "twolock9__q0": {
       "family": "twolock",
       "size": 9,
@@ -1185,6 +1489,38 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG grc10__q3.tck"
     },
+    "hddi10__q0": {
+      "family": "hddi",
+      "size": 10,
+      "query_index": 0,
+      "query": "E[] ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi10__q0.tck"
+    },
+    "hddi10__q1": {
+      "family": "hddi",
+      "size": 10,
+      "query_index": 1,
+      "query": "E[] ST1.z <= 40 && !ST2.station_z_async",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi10__q1.tck"
+    },
+    "hddi10__q2": {
+      "family": "hddi",
+      "size": 10,
+      "query_index": 2,
+      "query": "E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi10__q2.tck"
+    },
+    "hddi10__q3": {
+      "family": "hddi",
+      "size": 10,
+      "query_index": 3,
+      "query": "E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi10__q3.tck"
+    },
     "phil10__q0": {
       "family": "phil",
       "size": 10,
@@ -1232,6 +1568,46 @@
       "query": "E[] (P0.idle || P0.waitA) && x0 <= 30",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG twolock10__q2.tck"
+    },
+    "viking10__q0": {
+      "family": "viking",
+      "size": 10,
+      "query_index": 0,
+      "query": "E[] y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking10__q0.tck"
+    },
+    "viking10__q1": {
+      "family": "viking",
+      "size": 10,
+      "query_index": 1,
+      "query": "E[] time <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking10__q1.tck"
+    },
+    "viking10__q2": {
+      "family": "viking",
+      "size": 10,
+      "query_index": 2,
+      "query": "E[] y1 <= 40 && !Viking1.safe",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking10__q2.tck"
+    },
+    "viking10__q3": {
+      "family": "viking",
+      "size": 10,
+      "query_index": 3,
+      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking10__q3.tck"
+    },
+    "viking10__q4": {
+      "family": "viking",
+      "size": 10,
+      "query_index": 4,
+      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking10__q4.tck"
     },
     "arbiter11__q0": {
       "family": "arbiter",
@@ -1584,6 +1960,46 @@
       "query": "E[] (P0.idle || P0.waitA) && x0 <= 30",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG twolock12__q2.tck"
+    },
+    "viking12__q0": {
+      "family": "viking",
+      "size": 12,
+      "query_index": 0,
+      "query": "E[] y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking12__q0.tck"
+    },
+    "viking12__q1": {
+      "family": "viking",
+      "size": 12,
+      "query_index": 1,
+      "query": "E[] time <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking12__q1.tck"
+    },
+    "viking12__q2": {
+      "family": "viking",
+      "size": 12,
+      "query_index": 2,
+      "query": "E[] y1 <= 40 && !Viking1.safe",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking12__q2.tck"
+    },
+    "viking12__q3": {
+      "family": "viking",
+      "size": 12,
+      "query_index": 3,
+      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking12__q3.tck"
+    },
+    "viking12__q4": {
+      "family": "viking",
+      "size": 12,
+      "query_index": 4,
+      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking12__q4.tck"
     },
     "arbiter13__q0": {
       "family": "arbiter",
@@ -2065,6 +2481,38 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG grc15__q3.tck"
     },
+    "hddi15__q0": {
+      "family": "hddi",
+      "size": 15,
+      "query_index": 0,
+      "query": "E[] ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi15__q0.tck"
+    },
+    "hddi15__q1": {
+      "family": "hddi",
+      "size": 15,
+      "query_index": 1,
+      "query": "E[] ST1.z <= 40 && !ST2.station_z_async",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi15__q1.tck"
+    },
+    "hddi15__q2": {
+      "family": "hddi",
+      "size": 15,
+      "query_index": 2,
+      "query": "E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi15__q2.tck"
+    },
+    "hddi15__q3": {
+      "family": "hddi",
+      "size": 15,
+      "query_index": 3,
+      "query": "E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG hddi15__q3.tck"
+    },
     "phil15__q0": {
       "family": "phil",
       "size": 15,
@@ -2112,6 +2560,46 @@
       "query": "E[] (P0.idle || P0.waitA) && x0 <= 30",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG twolock15__q2.tck"
+    },
+    "viking15__q0": {
+      "family": "viking",
+      "size": 15,
+      "query_index": 0,
+      "query": "E[] y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking15__q0.tck"
+    },
+    "viking15__q1": {
+      "family": "viking",
+      "size": 15,
+      "query_index": 1,
+      "query": "E[] time <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking15__q1.tck"
+    },
+    "viking15__q2": {
+      "family": "viking",
+      "size": 15,
+      "query_index": 2,
+      "query": "E[] y1 <= 40 && !Viking1.safe",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking15__q2.tck"
+    },
+    "viking15__q3": {
+      "family": "viking",
+      "size": 15,
+      "query_index": 3,
+      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking15__q3.tck"
+    },
+    "viking15__q4": {
+      "family": "viking",
+      "size": 15,
+      "query_index": 4,
+      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking15__q4.tck"
     },
     "arbiter16__q0": {
       "family": "arbiter",
@@ -2465,6 +2953,46 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG twolock17__q2.tck"
     },
+    "viking17__q0": {
+      "family": "viking",
+      "size": 17,
+      "query_index": 0,
+      "query": "E[] y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking17__q0.tck"
+    },
+    "viking17__q1": {
+      "family": "viking",
+      "size": 17,
+      "query_index": 1,
+      "query": "E[] time <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking17__q1.tck"
+    },
+    "viking17__q2": {
+      "family": "viking",
+      "size": 17,
+      "query_index": 2,
+      "query": "E[] y1 <= 40 && !Viking1.safe",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking17__q2.tck"
+    },
+    "viking17__q3": {
+      "family": "viking",
+      "size": 17,
+      "query_index": 3,
+      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking17__q3.tck"
+    },
+    "viking17__q4": {
+      "family": "viking",
+      "size": 17,
+      "query_index": 4,
+      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG viking17__q4.tck"
+    },
     "arbiter18__q0": {
       "family": "arbiter",
       "size": 18,
@@ -2721,469 +3249,37 @@
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG grc20__q3.tck"
     },
-    "csma22__q0": {
-      "family": "csma",
-      "size": 22,
+    "hddi20__q0": {
+      "family": "hddi",
+      "size": 20,
       "query_index": 0,
-      "query": "E[] y0 <= 40",
+      "query": "E[] ST1.z <= 40",
       "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG csma22__q0.tck"
+      "command": "tck-liveness -a couvscc -l TC_EG hddi20__q0.tck"
     },
-    "csma22__q1": {
-      "family": "csma",
-      "size": 22,
+    "hddi20__q1": {
+      "family": "hddi",
+      "size": 20,
       "query_index": 1,
-      "query": "E[] y0 <= 40 && !Bus.Collided",
+      "query": "E[] ST1.z <= 40 && !ST2.station_z_async",
       "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG csma22__q1.tck"
+      "command": "tck-liveness -a couvscc -l TC_EG hddi20__q1.tck"
     },
-    "csma22__q2": {
-      "family": "csma",
-      "size": 22,
+    "hddi20__q2": {
+      "family": "hddi",
+      "size": 20,
       "query_index": 2,
-      "query": "E[] (S0.Wait || S0.Send) && y0 <= 40",
+      "query": "E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40",
       "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG csma22__q2.tck"
+      "command": "tck-liveness -a couvscc -l TC_EG hddi20__q2.tck"
     },
-    "csma22__q3": {
-      "family": "csma",
-      "size": 22,
+    "hddi20__q3": {
+      "family": "hddi",
+      "size": 20,
       "query_index": 3,
-      "query": "E[] !(S0.Send && S1.Send) && y0 <= 40",
+      "query": "E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40",
       "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG csma22__q3.tck"
-    },
-    "single4__q0": {
-      "family": "single",
-      "size": 4,
-      "query_index": 0,
-      "query": "E[] x0 <= 6",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single4__q0.tck"
-    },
-    "single4__q1": {
-      "family": "single",
-      "size": 4,
-      "query_index": 1,
-      "query": "E[] x0 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single4__q1.tck"
-    },
-    "single4__q2": {
-      "family": "single",
-      "size": 4,
-      "query_index": 2,
-      "query": "E[] x0 <= 3 && x1 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single4__q2.tck"
-    },
-    "single4__q3": {
-      "family": "single",
-      "size": 4,
-      "query_index": 3,
-      "query": "E[] P.A && x0 <= 4",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single4__q3.tck"
-    },
-    "single5__q0": {
-      "family": "single",
-      "size": 5,
-      "query_index": 0,
-      "query": "E[] x0 <= 6",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single5__q0.tck"
-    },
-    "single5__q1": {
-      "family": "single",
-      "size": 5,
-      "query_index": 1,
-      "query": "E[] x0 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single5__q1.tck"
-    },
-    "single5__q2": {
-      "family": "single",
-      "size": 5,
-      "query_index": 2,
-      "query": "E[] x0 <= 3 && x1 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single5__q2.tck"
-    },
-    "single5__q3": {
-      "family": "single",
-      "size": 5,
-      "query_index": 3,
-      "query": "E[] P.A && x0 <= 4",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single5__q3.tck"
-    },
-    "single6__q0": {
-      "family": "single",
-      "size": 6,
-      "query_index": 0,
-      "query": "E[] x0 <= 6",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single6__q0.tck"
-    },
-    "single6__q1": {
-      "family": "single",
-      "size": 6,
-      "query_index": 1,
-      "query": "E[] x0 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single6__q1.tck"
-    },
-    "single6__q2": {
-      "family": "single",
-      "size": 6,
-      "query_index": 2,
-      "query": "E[] x0 <= 3 && x1 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single6__q2.tck"
-    },
-    "single6__q3": {
-      "family": "single",
-      "size": 6,
-      "query_index": 3,
-      "query": "E[] P.A && x0 <= 4",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single6__q3.tck"
-    },
-    "single7__q0": {
-      "family": "single",
-      "size": 7,
-      "query_index": 0,
-      "query": "E[] x0 <= 6",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single7__q0.tck"
-    },
-    "single7__q1": {
-      "family": "single",
-      "size": 7,
-      "query_index": 1,
-      "query": "E[] x0 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single7__q1.tck"
-    },
-    "single7__q2": {
-      "family": "single",
-      "size": 7,
-      "query_index": 2,
-      "query": "E[] x0 <= 3 && x1 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single7__q2.tck"
-    },
-    "single7__q3": {
-      "family": "single",
-      "size": 7,
-      "query_index": 3,
-      "query": "E[] P.A && x0 <= 4",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single7__q3.tck"
-    },
-    "single8__q0": {
-      "family": "single",
-      "size": 8,
-      "query_index": 0,
-      "query": "E[] x0 <= 6",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single8__q0.tck"
-    },
-    "single8__q1": {
-      "family": "single",
-      "size": 8,
-      "query_index": 1,
-      "query": "E[] x0 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single8__q1.tck"
-    },
-    "single8__q2": {
-      "family": "single",
-      "size": 8,
-      "query_index": 2,
-      "query": "E[] x0 <= 3 && x1 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single8__q2.tck"
-    },
-    "single8__q3": {
-      "family": "single",
-      "size": 8,
-      "query_index": 3,
-      "query": "E[] P.A && x0 <= 4",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single8__q3.tck"
-    },
-    "single9__q0": {
-      "family": "single",
-      "size": 9,
-      "query_index": 0,
-      "query": "E[] x0 <= 6",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single9__q0.tck"
-    },
-    "single9__q1": {
-      "family": "single",
-      "size": 9,
-      "query_index": 1,
-      "query": "E[] x0 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single9__q1.tck"
-    },
-    "single9__q2": {
-      "family": "single",
-      "size": 9,
-      "query_index": 2,
-      "query": "E[] x0 <= 3 && x1 <= 3",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single9__q2.tck"
-    },
-    "single9__q3": {
-      "family": "single",
-      "size": 9,
-      "query_index": 3,
-      "query": "E[] P.A && x0 <= 4",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG single9__q3.tck"
-    },
-    "viking4__q0": {
-      "family": "viking",
-      "size": 4,
-      "query_index": 0,
-      "query": "E[] y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking4__q0.tck"
-    },
-    "viking4__q1": {
-      "family": "viking",
-      "size": 4,
-      "query_index": 1,
-      "query": "E[] time <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking4__q1.tck"
-    },
-    "viking4__q2": {
-      "family": "viking",
-      "size": 4,
-      "query_index": 2,
-      "query": "E[] y1 <= 40 && !Viking1.safe",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking4__q2.tck"
-    },
-    "viking4__q3": {
-      "family": "viking",
-      "size": 4,
-      "query_index": 3,
-      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking4__q3.tck"
-    },
-    "viking4__q4": {
-      "family": "viking",
-      "size": 4,
-      "query_index": 4,
-      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking4__q4.tck"
-    },
-    "viking6__q0": {
-      "family": "viking",
-      "size": 6,
-      "query_index": 0,
-      "query": "E[] y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking6__q0.tck"
-    },
-    "viking6__q1": {
-      "family": "viking",
-      "size": 6,
-      "query_index": 1,
-      "query": "E[] time <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking6__q1.tck"
-    },
-    "viking6__q2": {
-      "family": "viking",
-      "size": 6,
-      "query_index": 2,
-      "query": "E[] y1 <= 40 && !Viking1.safe",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking6__q2.tck"
-    },
-    "viking6__q3": {
-      "family": "viking",
-      "size": 6,
-      "query_index": 3,
-      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking6__q3.tck"
-    },
-    "viking6__q4": {
-      "family": "viking",
-      "size": 6,
-      "query_index": 4,
-      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking6__q4.tck"
-    },
-    "viking10__q0": {
-      "family": "viking",
-      "size": 10,
-      "query_index": 0,
-      "query": "E[] y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking10__q0.tck"
-    },
-    "viking10__q1": {
-      "family": "viking",
-      "size": 10,
-      "query_index": 1,
-      "query": "E[] time <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking10__q1.tck"
-    },
-    "viking10__q2": {
-      "family": "viking",
-      "size": 10,
-      "query_index": 2,
-      "query": "E[] y1 <= 40 && !Viking1.safe",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking10__q2.tck"
-    },
-    "viking10__q3": {
-      "family": "viking",
-      "size": 10,
-      "query_index": 3,
-      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking10__q3.tck"
-    },
-    "viking10__q4": {
-      "family": "viking",
-      "size": 10,
-      "query_index": 4,
-      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking10__q4.tck"
-    },
-    "viking12__q0": {
-      "family": "viking",
-      "size": 12,
-      "query_index": 0,
-      "query": "E[] y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking12__q0.tck"
-    },
-    "viking12__q1": {
-      "family": "viking",
-      "size": 12,
-      "query_index": 1,
-      "query": "E[] time <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking12__q1.tck"
-    },
-    "viking12__q2": {
-      "family": "viking",
-      "size": 12,
-      "query_index": 2,
-      "query": "E[] y1 <= 40 && !Viking1.safe",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking12__q2.tck"
-    },
-    "viking12__q3": {
-      "family": "viking",
-      "size": 12,
-      "query_index": 3,
-      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking12__q3.tck"
-    },
-    "viking12__q4": {
-      "family": "viking",
-      "size": 12,
-      "query_index": 4,
-      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking12__q4.tck"
-    },
-    "viking15__q0": {
-      "family": "viking",
-      "size": 15,
-      "query_index": 0,
-      "query": "E[] y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking15__q0.tck"
-    },
-    "viking15__q1": {
-      "family": "viking",
-      "size": 15,
-      "query_index": 1,
-      "query": "E[] time <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking15__q1.tck"
-    },
-    "viking15__q2": {
-      "family": "viking",
-      "size": 15,
-      "query_index": 2,
-      "query": "E[] y1 <= 40 && !Viking1.safe",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking15__q2.tck"
-    },
-    "viking15__q3": {
-      "family": "viking",
-      "size": 15,
-      "query_index": 3,
-      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking15__q3.tck"
-    },
-    "viking15__q4": {
-      "family": "viking",
-      "size": 15,
-      "query_index": 4,
-      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking15__q4.tck"
-    },
-    "viking17__q0": {
-      "family": "viking",
-      "size": 17,
-      "query_index": 0,
-      "query": "E[] y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking17__q0.tck"
-    },
-    "viking17__q1": {
-      "family": "viking",
-      "size": 17,
-      "query_index": 1,
-      "query": "E[] time <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking17__q1.tck"
-    },
-    "viking17__q2": {
-      "family": "viking",
-      "size": 17,
-      "query_index": 2,
-      "query": "E[] y1 <= 40 && !Viking1.safe",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking17__q2.tck"
-    },
-    "viking17__q3": {
-      "family": "viking",
-      "size": 17,
-      "query_index": 3,
-      "query": "E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking17__q3.tck"
-    },
-    "viking17__q4": {
-      "family": "viking",
-      "size": 17,
-      "query_index": 4,
-      "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
-      "accepting_label": "TC_EG",
-      "command": "tck-liveness -a couvscc -l TC_EG viking17__q4.tck"
+      "command": "tck-liveness -a couvscc -l TC_EG hddi20__q3.tck"
     },
     "viking20__q0": {
       "family": "viking",
@@ -3224,9 +3320,45 @@
       "query": "E[] !(Viking1.safe && Viking2.safe) && y1 <= 40",
       "accepting_label": "TC_EG",
       "command": "tck-liveness -a couvscc -l TC_EG viking20__q4.tck"
+    },
+    "csma22__q0": {
+      "family": "csma",
+      "size": 22,
+      "query_index": 0,
+      "query": "E[] y0 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG csma22__q0.tck"
+    },
+    "csma22__q1": {
+      "family": "csma",
+      "size": 22,
+      "query_index": 1,
+      "query": "E[] y0 <= 40 && !Bus.Collided",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG csma22__q1.tck"
+    },
+    "csma22__q2": {
+      "family": "csma",
+      "size": 22,
+      "query_index": 2,
+      "query": "E[] (S0.Wait || S0.Send) && y0 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG csma22__q2.tck"
+    },
+    "csma22__q3": {
+      "family": "csma",
+      "size": 22,
+      "query_index": 3,
+      "query": "E[] !(S0.Send && S1.Send) && y0 <= 40",
+      "accepting_label": "TC_EG",
+      "command": "tck-liveness -a couvscc -l TC_EG csma22__q3.tck"
     }
   },
   "refused": {
+    "hddi q4": {
+      "query": "E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)",
+      "reason": "clock constraint under '||' or '!' is not a TChecker invariant (expressions are conjunctions)"
+    },
     "arbiter q4": {
       "query": "E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)",
       "reason": "clock constraint under '||' or '!' is not a TChecker invariant (expressions are conjunctions)"
@@ -3247,12 +3379,12 @@
       "query": "E[] c0 <= 40 && (c1 <= 30 || c1 >= 35)",
       "reason": "clock constraint under '||' or '!' is not a TChecker invariant (expressions are conjunctions)"
     },
-    "twolock q3": {
-      "query": "E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)",
-      "reason": "clock constraint under '||' or '!' is not a TChecker invariant (expressions are conjunctions)"
-    },
     "single q4": {
       "query": "E[] x0 <= 4 && (x1 <= 2 || x1 >= 4)",
+      "reason": "clock constraint under '||' or '!' is not a TChecker invariant (expressions are conjunctions)"
+    },
+    "twolock q3": {
+      "query": "E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)",
       "reason": "clock constraint under '||' or '!' is not a TChecker invariant (expressions are conjunctions)"
     },
     "viking q5": {
