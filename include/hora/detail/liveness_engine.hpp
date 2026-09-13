@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -49,13 +50,45 @@ struct GfpTag {
   std::vector<Constraint> abstain;
 };
 
+/// @brief Liveness classification of a graph edge, carried in @ref OtfEdge::deferred.
+///
+/// The exact backward operator may take a predecessor through an edge only when its exact
+/// successor is genuinely represented at the target.  A cover accepted by simulation rather than
+/// by inclusion does not satisfy that: `X = post_e(Z_src)` can be disjoint from the stored
+/// `Z_tgt`, so `Z_src /\ Pre_e(W_tgt)` is empty even when a real run goes through `X`.  Such an
+/// edge is a lazy promise, not a transition, and owes a refinement obligation to any witness that
+/// needs it.
+///
+/// These live in the `deferred` field rather than a new one because that field is dead once
+/// ::LivenessEngine::online_finalize_graph runs, and every existing `deferred = -1` write already
+/// means "no promise outstanding".  Negative values keep that meaning; the non-negative values
+/// remain the online construction's own replay marker.
+/// The BACKWARD operator and FORWARD cycle detection disagree about what counts as safe, and the
+/// difference is the whole reason ::LivenessEngine::forward_buchi_eg needs its own marker.
+///
+///   * `X subseteq Z_tgt` (inclusion cover) is SAFE BACKWARD -- `Pre` against a superset of the
+///     exact successor loses no predecessor -- but it is a SUBSUMPTION EDGE FORWARD: it jumps to
+///     a strictly larger zone, and a cycle closed through it need not be realised by any run.
+///   * only an edge that CREATED its target, so `Z_tgt` is exactly `post_e(Z_src)`, is an
+///     ordinary edge in the sense of Herbreteau et al.'s Theorem 6.
+enum : int {
+  kEdgeExact = -1,             ///< created its target: `Z_tgt == post_e(Z_src)`
+  kEdgeMaterialized = -2,      ///< an unresolved cover the refinement loop has since made exact
+  kEdgeSubsumed = -3,          ///< cover by inclusion: safe backward, a subsumption edge forward
+};
+
 /// @brief One graph edge: its target record and the transition recipe that produced it.
 struct OtfEdge {
   int tgt;
   int tag;
   // Online construction only: a provisional target may be represented by a replay recipe
-  // instead of a materialised state.  Final graph edges always carry -1 here.
-  int deferred = -1;
+  // instead of a materialised state.  Non-negative marks that promise outstanding; the negative
+  // values are the liveness classification above.  Final graph edges never stay non-negative.
+  int deferred = kEdgeExact;
+  // Which successor of the source this edge is, in ::tagged_successors order.  The refinement
+  // loop replays `(src, ordinal)` to regenerate the exact successor a cover discarded, so it must
+  // survive independently of the edge's position in its adjacency vector.
+  int ordinal = -1;
 };
 
 /// @brief One half-space used by the deadlock-preserving D refinement.
@@ -137,6 +170,35 @@ struct OnlineAtomWork {
   AtomC atom;
 };
 
+/// @brief Instrumentation for the lazy liveness refinement loop.
+///
+/// Counters and timings only.  Nothing here decides a verdict; @ref exhausted qualifies one, in
+/// the same sense as hora::GfpStats::capped -- when it is set the loop gave up and the answer
+/// came from the exact-route fallback instead.
+struct LazyStats {
+  bool ran = false;                  ///< the loop was entered at all
+  bool exhausted = false;            ///< budget spent; verdict delegated to the exact route
+  bool skipped_gfp = false;          ///< verdict reached without any backward pass at all
+  std::size_t nodes_before = 0;      ///< graph size when the loop was entered
+  std::size_t edges_exact = 0;       ///< edges whose exact successor is represented exactly
+  std::size_t edges_covered = 0;     ///< edges accepted by simulation rather than inclusion
+  std::size_t covered_in_scc = 0;    ///< of those, edges whose target key can recur
+  std::size_t obligations = 0;       ///< unresolved obligations at the first backward failure
+  std::size_t materialised = 0;      ///< covers turned into real transitions
+  std::size_t new_nodes = 0;         ///< records created by refinement and its descendants
+  std::size_t replays = 0;           ///< forward successor recomputations for replay
+  std::size_t backward_visits = 0;   ///< backward relaxations across every pass
+  std::size_t scc_builds = 0;        ///< key-graph SCC computations
+  std::size_t cone_nodes = 0;        ///< nodes re-solved after a refinement wave
+  std::size_t cone_of = 0;           ///< ... out of this many in the psi-closure
+  std::size_t rounds = 0;            ///< refinement iterations completed
+  std::size_t waves = 0;             ///< backward passes that produced an obligation set
+  double ms_base_gfp = 0;            ///< first backward pass, before any refinement
+  double ms_backward = 0;            ///< every later backward pass
+  double ms_forward = 0;             ///< replay plus incremental forward expansion
+  double ms_scc = 0;                 ///< key-graph construction and SCC maintenance
+};
+
 /// @brief Private liveness engine instance: one graph construction and one backward solve.
 class LivenessEngine {
  public:
@@ -170,6 +232,12 @@ class LivenessEngine {
 
   void set_eg_early(bool v);
   bool eg_early_hit() const;
+  /// @brief Did the lazy refinement loop spend its budget without reaching a verdict?
+  ///
+  /// When set, ::LivenessEngine::decide_exists_invariant_run returned nothing usable and the
+  /// caller owes the query a run on the exact route, which covers by inclusion and is therefore
+  /// complete without any refinement at all.
+  bool lazy_exhausted() const { return lazy_.exhausted; }
   bool was_cancelled() const;
   bool was_capped() const;
   void set_avoid(const detail::DelayAvoidSet* a, bool forward = true);
@@ -252,6 +320,44 @@ class LivenessEngine {
   std::size_t outer_expands = 0;
   std::size_t outer_nodes = 0;
   bool fwd_ok_ = false;
+  // --- HORA_FC prototype: SCC-local infinite-witness operator ---------------------------
+  // The finite half of the verdict (deadlock, divergence) is already complete: `stop` survives
+  // the operator and nonemptiness climbs the exact creating-edge spine. The infinite half is
+  // where a simulation-only cover can lose a witness, because `pre` runs against a target zone
+  // that need not contain the exact successor. Fix: drop `stop` (an infinite witness never uses
+  // it) and widen each node's carrier from Z_v to a set that DOES contain every covered
+  // successor. Extra_LU+(Z_v) is such a set and is still one DBM, unlike the exact downward
+  // closure, which is non-convex. With no stop term only cyclic support survives, so the pass
+  // confines itself to the SCCs without needing a separate driver.
+  bool fc_mode_ = false;
+  // HORA_MERGED: one operator instead of two passes. `stop` stays computed on the EXACT zone
+  // (a widened zone fabricates stuck valuations), while the recursive predecessor term is
+  // carried by Extra_LU+(Z_v). Sound because every surviving valuation still needs a real
+  // `pre` step or a real stop; complete because tight covering puts every discarded exact
+  // successor inside the target's carrier. The readout intersects the exact zone: the carrier
+  // holds valuations below it that no run reaches.
+  bool carrier_mode_ = false;
+  // Extra_LU+(Z_v) is read once per probe by both the tight cover test and the carrier
+  // operator, so recomputing it there costs a ZoneStore::load plus an O(dim^2) extrapolation
+  // on the hottest path in the engine. Cached per node, and -- the case that actually pays --
+  // nodes whose zone is ALREADY its own extrapolation are flagged instead of copied, so they
+  // keep the baseline's no-copy `zs_.with` comparison.
+  enum : char { kCarUnknown = 0, kCarSame = 1, kCarWide = 2 };
+  std::vector<char> carrier_state_;
+  std::vector<Dbm> carrier_;
+  /// @return Extra_LU+(Z_v), or nullptr when it equals Z_v and the stored zone should be used.
+  const Dbm* carrier_of(int v);
+  void raise_by_psi(std::vector<std::int32_t>& l, std::vector<std::int32_t>& u) const;
+  void carrier_invalidate(int v) {
+    if (v >= 0 && v < (int)carrier_state_.size()) carrier_state_[v] = kCarUnknown;
+  }
+  // HORA_TIGHT=1: replace the a_LU covering test by containment in the Extra_LU+ carrier,
+  // i.e. cover Z by Z' only when Z is a SUBSET of Extra_LU+(Z'). That makes Lemma A true by
+  // construction -- the exact successor a cover discards is always inside the target's carrier --
+  // so the convex (federation-free) completeness argument for the infinite case goes through.
+  // Strictly finer than a_LU, so it stores more nodes; this flag exists to price that.
+  bool tight_ = false;
+  bool eg_verdict_fc();
 
   // Final graph storage. The ZoneStore owns dense zone matrices; node[i].zone is scratch-only once
   // a record is interned. The final graph's discrete half. The exact/inclusion route keeps it in
@@ -328,6 +434,85 @@ class LivenessEngine {
   std::vector<int> online_raw_slot_;
   bool online_deferred_index_enabled_ = false;
   std::deque<int> online_work_;
+
+  // ---- lazy liveness refinement (HORA_LAZY) --------------------------------------------------
+  // A record materialised to discharge a liveness obligation must not be collapsed by the very
+  // antichain it was created to escape, or the loop makes no progress.  Pinning is checked in
+  // ::LivenessEngine::online_compact_key next to its existing root guard, and is strictly
+  // stronger than the forbidden-cover relation below: the record can never be covered at all.
+  // Set before ::LivenessEngine::setup on the `E[] psi` online route when HORA_LAZY is on.
+  // It turns Extra_LU+ extrapolation ON for a route that normally runs without any, because
+  // suspending covers is exactly what the refinement loop does and a_LU/D subsumption is
+  // otherwise the ONLY thing making the forward search finite.  Extrapolation restores a bound
+  // that does not depend on covering: finitely many extrapolated zones exist per discrete key,
+  // so the refinement can at worst walk to the fully inclusion-covered Extra_LU+ graph.
+  // Measured to cost nothing in state count on top of a_LU/D (arbiter8 1280/1280,
+  // fischer8 17215/17215, fischer6 1342/1342, viking10 3892/3892).
+  bool lazy_mode_ = false;
+  // The root zone BEFORE extrapolation.  Every valuation the fixpoint certifies is joined to the
+  // seed by a chain of genuine ::exact_predecessor steps, so an intermediate value need not lie
+  // in its own node's stored zone -- the run reaches it.  The one place extrapolation can invent
+  // a witness is the READOUT, where `W[0]` may hold valuations outside the true initial zone.
+  // Retained so the verdict can be cut back to it; ::LivenessEngine::build_all extrapolates the
+  // root in place, so it cannot be recovered afterwards.
+  Dbm lazy_root_exact_;
+  // Exact zones of the MATERIALISED records, keyed by record id.
+  //
+  // Those are the only stored zones on this route that over-approximate: ::lazy_materialise
+  // extrapolates them so refinement terminates.  The closure readout needs every point it
+  // certifies to be genuinely reachable, so it cuts them back here.  Storing this for every node
+  // would be prohibitive -- twolock10 q3 is 206k records at 61x61 entries, ~3 GB -- but the
+  // materialised ones are a small minority (900 of 4792 on viking10 q3, and none at all on any
+  // benchmark row, where the recurrence criterion leaves the obligation set empty).
+  std::unordered_map<int, Dbm> lazy_exact_;
+  std::vector<char> online_pinned_;
+  // `forbidden_cover(src, ordinal, cover_target)`.  Pinning protects the record; this protects
+  // the *decision*, so a later D recheck replaying the same recipe cannot re-establish the cover
+  // that was refined away.  Keyed by the recipe, since that is what replay reconstructs.
+  std::unordered_set<std::uint64_t> online_forbidden_cover_;
+  static std::uint64_t forbid_key(int src, int ordinal) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(src)) << 32) |
+           static_cast<std::uint32_t>(ordinal);
+  }
+  // Set while ::LivenessEngine::lazy_materialise interns a replayed successor, naming the cover
+  // it must refuse.  -1 outside that window.
+  int online_refuse_cover_ = -1;
+  /// @brief Records that must not be used as cover targets while an unsafe SCC is re-explored.
+  ///
+  /// Herbreteau et al., ACM TOCL 2021, section 5: when the subsumptions inside an unsafe SCC are
+  /// removed and its nodes re-explored, new subsumption must be restricted to SAFE or FRESH
+  /// nodes.  Otherwise "the grey nodes were subsumed by nodes in their inhabiting black SCCs, and
+  /// hence the successors of grey nodes will also be subsumed by the corresponding successors in
+  /// the black SCCs" -- the exploration is stopped in one step and falls straight back into the
+  /// same bad cycle.  Empty whenever no re-exploration is in progress.
+  std::vector<char> online_unsafe_target_;
+  /// @brief Set once the forward route starts refining: stop merging zones by convex union.
+  ///
+  /// A merged node is the union of several post images, so an edge into it is an inclusion cover
+  /// and cannot carry a witness cycle.  That is harmless while the graph is only being explored --
+  /// and merging is what keeps grc6 q2 at 1.4s instead of 38s -- but once refinement is trying to
+  /// make cycles close exactly, re-merging the successors of a freshly materialised node mints a
+  /// new subsumption edge for every one that was just discharged, and single4 q1 never finishes.
+  bool fwd_refining_ = false;
+  /// @brief The forward Buchi route is in use, so node identity is a_LU-equivalence.
+  static constexpr bool fwd_route_ = true;
+  /// @brief Records whose stored zone is a convex UNION of several post images.
+  ///
+  /// Stopping new merges when refinement begins is not enough: the ones made during the first
+  /// exploration remain, and the re-exploration routes straight back into them, so the witness
+  /// cycle still cannot close through a node that is not a single post image.  They are therefore
+  /// barred as cover targets while refining, exactly like the nodes of an unsafe SCC.
+  std::vector<char> online_merged_;
+  /// @brief The exact post images a merged record absorbed, by record id.
+  ///
+  /// The convex union is set-theoretically exact, so a merged node really does contain each
+  /// piece -- merging never invents a run.  What it breaks is the ORDINARY-EDGE TEST, which asks
+  /// whether the target's stored zone is a_LU-equivalent to the exact successor: against the
+  /// union that fails, the edge is misclassified as a cover, and the cycle search loses it.
+  /// Keeping the pieces lets the test ask "equivalent to the node, OR to any piece it absorbed",
+  /// which is the same question the unmerged graph would have answered.  Only merged records
+  /// appear here, and only on the forward route.
+  std::unordered_map<int, std::vector<Dbm>> online_merge_pieces_;
   std::vector<char> online_inq_;
 
   // General graph mechanics.
@@ -405,6 +590,14 @@ class LivenessEngine {
   void online_reset();
   void online_configure_bounds(int key);
   bool online_covers(const detail::SymState& a, int b, int key);
+  /// @brief Are candidate @p a and stored record @p b equivalent under the D-refined relation?
+  ///
+  /// Mutual covering, both directions in the SAME relation the construction uses.  The forward
+  /// route's node identity must match the abstraction its graph was built with: covering applies
+  /// the D atoms, so the graph is ZG^{a_D}, and testing one direction with D and the other with
+  /// plain a_LU mixes a fine relation with a coarse one -- too many edges come out ordinary and
+  /// the cycle search invents witnesses.
+  bool online_equiv(const detail::SymState& a, int b, int key);
   bool online_covers(int a, int b, int key);
   bool online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>& as, int depth);
   int online_append(detail::SymState&& s, int key);
@@ -456,6 +649,74 @@ class LivenessEngine {
   void online_register_edge(int src, int tgt, int reset_class);
   void online_expand(int u);
   bool online_build_all();
+
+  // ---- lazy liveness refinement -------------------------------------------------------------
+  /// @brief One unresolved covered edge, and what it takes to make it exact.
+  struct LazyObligation {
+    int src;        ///< source record
+    int ordinal;    ///< which successor of @ref src, in ::tagged_successors order
+    int slot;       ///< index into `online_raw_adj_`
+    int pos;        ///< index of the edge within that raw vector
+    int cover;      ///< the record the exact successor was covered by
+    int key;        ///< discrete key of both
+    int scc;        ///< key-SCC the target recurs in; a live one, by construction
+    int depth;      ///< BFS distance of @ref src from node 0 within the psi-closure
+  };
+  /// @brief Decide `E[] psi` with demand-driven refinement of unresolved covers.
+  ///
+  /// @param[out] sat set only when the loop reaches a verdict of its own
+  /// @return @c false when the budget was spent, in which case @p sat is untouched and the
+  ///         caller must fall back to the exact route
+  bool lazy_refine_eg(bool* sat);
+  /// @brief Install a read-only view of the online graph as `adj` / `node_key_`.
+  /// @return @c false when the online state cannot be projected, which is never expected here
+  bool lazy_snapshot(std::vector<std::vector<OtfEdge>>* saved_adj, std::vector<int>* saved_key);
+  void lazy_restore(std::vector<std::vector<OtfEdge>>* saved_adj, std::vector<int>* saved_key);
+  /// @brief Key-projected SCC ids, and each component's size.
+  ///
+  /// Computed once: the key graph is closed under refinement, because a covered successor's
+  /// enabled transitions are a subset of its coverer's and the coverer is expanded, so every key
+  /// edge a materialised record can produce is already present.
+  void lazy_build_key_sccs(std::vector<int>* comp, std::vector<char>* comp_live);
+  /// @brief Collect the unresolved covered edges that can still carry a recurrent witness.
+  void lazy_collect(const std::vector<int>& S, const std::vector<Federation>& W,
+                    const std::vector<int>& key_comp, const std::vector<char>& comp_live,
+                    std::vector<LazyObligation>* out);
+  /// @brief Replay one obligation's exact successor and splice it into the graph.
+  /// @return @c false on replay failure, which abandons the loop rather than the verdict
+  bool lazy_materialise(const LazyObligation& ob);
+  /// @brief ::LivenessEngine::online_replay with the source's successor batch cached.
+  bool online_replay_cached(int source, int ordinal, int key, detail::SymState& out);
+  int lazy_replay_src_ = -1;                       ///< source the cached batch belongs to
+  std::vector<detail::SymState> lazy_replay_succ_; ///< its successors, in tagged_successors order
+  // ---- forward-only Buchi prototype (src/liveness/forward_buchi.cpp, HORA_FWD) --------------
+  /// @brief Decide `E[] psi` by cycle detection on the forward graph, with no backward pass.
+  ///
+  /// Herbreteau/Srivathsan/Tran/Walukiewicz, FSTTCS 2016, Theorem 6: the abstract zone graph has
+  /// an infinite accepting path iff a *liveness compatible* subsumption graph has one consisting
+  /// of ordinary edges -- where liveness compatible (their C5) means no cycle carries both an
+  /// accepting node and a subsumption edge.  For `E[] psi` every node of the psi-closure is
+  /// accepting, so C5 reduces to "no cover edge lies on a cycle", and the verdict becomes two
+  /// Tarjan runs instead of a greatest fixpoint: no `Pre`, no federations, no zone algebra at all.
+  /// @param[out] sat set only when the prototype reaches a verdict of its own
+  /// @return @c false when it declines, and the caller must use the backward route
+  bool forward_buchi_eg(bool* sat);
+  /// @brief Emit the per-query refinement census under `HORA_REFINE_STATS`.
+  void lazy_report(bool verdict);
+  /// @brief Nodes whose backward value can have changed since the last fixpoint pass.
+  ///
+  /// Every materialised record (its value starts at its own zone, not empty) and the source of
+  /// every rewritten edge (its predecessor term gained a case).  Seeds the cone below.
+  std::vector<int> lazy_changed_;
+  /// @brief Restrict @p S to the nodes that can reach a changed one, changed nodes included.
+  ///
+  /// Sound because the loop only refines when the readout found EVERY `W[v]` empty, so a node
+  /// outside the cone already sits at its own fixpoint value: it cannot reach a change, so none
+  /// of its successors is in the cone either, and its whole subsystem is untouched.  Dropping it
+  /// from `S` is exactly how ::LivenessEngine::solve_greatest_fixpoint is told "this one is
+  /// empty" -- `inS[w] = 0` -- so no change to the solver is needed.
+  void lazy_cone(const std::vector<int>& S, std::vector<int>* cone) const;
+  LazyStats lazy_;
   void online_drain_forward_work();
   void online_complete_eg_history();
   void online_base_forward();

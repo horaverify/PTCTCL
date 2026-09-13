@@ -83,6 +83,29 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
     restricted.compute_active();
     restricted.compute_int_live();
   }
+  // HORA_LBUMP: raise the LOWER LU bound of every clock psi constrains, to psi's own constant.
+  //
+  // The upper bounds already carry the property's constants -- compute_bounds sees `x <= 40` in
+  // the invariants above and sets U[x]=40 -- but nothing raises L[x], so a_LU stays free to relax
+  // x anywhere above the model's own L (2 on fischer/arbiter). That relaxation is exactly where
+  // an accepted cover's discarded successor sticks out of the stored zone, i.e. it is the entire
+  // source of the backward phase's debt. Raising L[x] to psi's constant makes a_LU stop relaxing
+  // x below it, and since the invariant caps x there anyway, covering on x becomes inclusion and
+  // the debt from that clock disappears. Finer covering stores more nodes; this prices the trade.
+  if (!psi_clocks.empty() && std::getenv("HORA_LBUMP")) {
+    for (const auto& c : psi_clocks) {
+      const std::int32_t k = raw_bound(c.bound) < 0 ? -raw_bound(c.bound) : raw_bound(c.bound);
+      auto bump_lo = [&](int idx) {
+        if (idx <= 0 || idx >= (int)restricted.lbound.size()) return;
+        restricted.lbound[idx] = std::max(restricted.lbound[idx], k);
+        for (auto& pl : restricted.lbound_loc)
+          for (auto& l : pl)
+            if (idx < (int)l.size()) l[idx] = std::max(l[idx], k);
+      };
+      bump_lo(c.i);
+      bump_lo(c.j);
+    }
+  }
   const Network& net = psi_clocks.empty() ? net_in : restricted;
 
   // The non-convex part of psi, if any: terms of `!psi` that constrain clocks. Each is a

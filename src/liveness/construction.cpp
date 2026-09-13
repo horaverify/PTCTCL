@@ -120,6 +120,19 @@ void LivenessEngine::online_reset() {
   online_deferred_index_enabled_ = false;
   online_work_.clear();
   online_inq_.clear();
+  // Grown only when the lazy refinement loop actually pins something, so a run that never
+  // refines pays nothing for it; every reader guards on the size.
+  online_pinned_.clear();
+  online_unsafe_target_.clear();
+  online_merged_.clear();
+  online_merge_pieces_.clear();
+  fwd_refining_ = false;
+  lazy_replay_src_ = -1;
+  lazy_replay_succ_.clear();
+  lazy_exact_.clear();
+  online_forbidden_cover_.clear();
+  online_refuse_cover_ = -1;
+  lazy_ = LazyStats{};
 }
 
 /// @brief Compute the current D-covering bounds at one discrete key.
@@ -162,6 +175,23 @@ bool LivenessEngine::online_covers(const SymState& a, int b, int key) {
   classify_atoms(a.zone, diag, &ain, &aout);
   classify_atoms(bz, diag, &bin, &bout);
   return cover_rec(a.zone, ain, bz, bout, diag, 0);
+}
+
+bool LivenessEngine::online_equiv(const SymState& a, int b, int key) {
+  online_configure_bounds(key);
+  const OnlineKeyInfo& ki = *online_key_by_id_[key];
+  if (!ki.diag)
+    return use_alu ? (alu_le_stored(a.zone, b) && alu_le_new(b, a.zone))
+                   : (stored_includes(b, a.zone) && includes_stored(a.zone, b));
+  Dbm bsc;
+  const Dbm& bz = zread(b, bsc);
+  const std::vector<AtomC>& diag = *ki.diag;
+  if (diag.size() > 64)
+    return online_cover_rec(a.zone, bz, diag, 0) && online_cover_rec(bz, a.zone, diag, 0);
+  std::uint64_t ain, aout, bin, bout;
+  classify_atoms(a.zone, diag, &ain, &aout);
+  classify_atoms(bz, diag, &bin, &bout);
+  return cover_rec(a.zone, ain, bz, bout, diag, 0) && cover_rec(bz, bin, a.zone, aout, diag, 0);
 }
 
 /// @brief Does stored node @p a have a current D cover in stored node @p b?
@@ -348,7 +378,10 @@ void LivenessEngine::online_compact_key(int v) {
     // reachability, not for the exact backward predecessor used below.  Let it expand once;
     // after that it may leave the forward antichain while remaining as a historical graph
     // vertex with its exact zone and exact outgoing edges.
+    // A record materialised by the lazy refinement loop is pinned: collapsing it back into the
+    // antichain it was created to escape would undo the refinement and stall the loop.
     if (j == 0 || j == v || !online_active_[j] ||
+        (j < (int)online_pinned_.size() && online_pinned_[j]) ||
         (online_eg_repair_ && !expanded[j])) {
       j = next;
       continue;
@@ -397,8 +430,21 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
   std::chrono::steady_clock::time_point cover_start;
   if (profile) cover_start = std::chrono::steady_clock::now();
   int cover = -1;
-  for (int j = ki.active_head; j >= 0; j = online_active_next_[j])
+  for (int j = ki.active_head; j >= 0; j = online_active_next_[j]) {
+    // The lazy refinement loop is interning the exact successor this cover discarded.  Accepting
+    // it again would recreate the obligation the refinement exists to discharge.
+    if (j == online_refuse_cover_) continue;
+    // A node inside an unsafe SCC cannot be a cover target while that SCC is being re-explored;
+    // see ::LivenessEngine::online_unsafe_target_.
+    if (j < (int)online_unsafe_target_.size() && online_unsafe_target_[j]) continue;
+    // Nor can a MERGED node once refinement has begun: it is a union of post images, so a cycle
+    // closed through it proves nothing.  See ::LivenessEngine::online_merged_.
+    if (fwd_refining_ && j < (int)online_merged_.size() && online_merged_[j]) continue;
+    if (source >= 0 && ordinal >= 0 && !online_forbidden_cover_.empty() &&
+        online_forbidden_cover_.count(forbid_key(source, ordinal)))
+      continue;
     if (online_active_[j] && online_covers(s, j, key)) { cover = j; break; }
+  }
   if (profile)
     online_perf.intern_cover_probe_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - cover_start).count();
@@ -407,7 +453,12 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
   // every concrete valuation and every successor of `s` is already present in `cover`.  Do not
   // retain a fake "provisional" record in that case.  The append-only provenance is needed only
   // for covers that rely on the relation currently being refined.
-  if (cover >= 0 && stored_includes(cover, s.zone)) return cover;
+  if (cover >= 0 && stored_includes(cover, s.zone)) {
+    // Inclusion, not identity: `Z_cover` may be strictly larger than this successor.  The
+    // backward operator does not care, but forward cycle detection does -- see ::kEdgeSubsumed.
+    if (deferred) *deferred = kEdgeSubsumed;
+    return cover;
+  }
 
   // Do not turn an ordinary provisional cover into a full stored state.  The expanded source
   // is immutable, and successor generation is deterministic, so (source, ordinal) is an exact
@@ -436,7 +487,17 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
   // the union is set-theoretically exact and is materialised as a fresh immutable record.
   std::chrono::steady_clock::time_point join_start;
   if (profile) join_start = std::chrono::steady_clock::now();
-  if (cover < 0) {
+  // HORA_FWD_NOMERGE: keep every stored zone exactly one post image.
+  //
+  // The convex-union merge below is set-theoretically exact and costs the backward route nothing,
+  // but it makes a node the union of several post images, and Theorem 6's argument -- a cycle
+  // gives `a(post^n(Z)) = Z`, so `post^n(Z)` is non-empty and pumps into a real run -- needs a
+  // node to be the abstraction of ONE post image.  Merged, `post^n(Z_0)` can be empty while every
+  // zone on the cycle is not, which is exactly the spurious cycle
+  // ::LivenessEngine::forward_buchi_eg reports on fischer.
+  bool merged_zone = false;
+  std::vector<Dbm> merge_pieces;
+  if (cover < 0 && !fwd_refining_) {
     Dbm old;
     // Iterated to a fixpoint, not stopped at the first success: each union enlarges the
     // candidate, and a larger zone can be convex with an active record the smaller one was not.
@@ -452,8 +513,19 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
         // test each one is re-analysed in full on every later pass, which is what made the
         // fixpoint quadratic in the width of the antichain.
         if (includes_stored(s.zone, j)) continue;
+        // MERGE ONLY WITHIN AN a_LU CLASS on the forward route.
+        //
+        // The union is set-theoretically exact, so merging never invents a run -- but the
+        // ordinary-edge test asks whether the target's stored zone is a_LU-EQUIVALENT to the
+        // exact successor, and a merged zone is a strict superset of it.  The edge is then
+        // classified as a cover and the cycle search never sees it, so merging LOSES cycles:
+        // single4 q5 finds six without it and none with.  Restricting the merge to operands that
+        // are already a_LU-equivalent keeps the node's identity in the abstraction unchanged, so
+        // no edge can be misclassified, while still absorbing the merges that cost nothing.
+
         // Read the stored operand at its own entry type. ::dbm_try_union is templated on it, so
         // widening it into a scratch first is a ZoneStore::load bought for nothing.
+        Dbm piece_before = s.zone;                 // the candidate, before this union
         Dbm joined = s.zone;
         const bool merged = zs_.with(j, [&](const auto* pz) {
           return dbm_try_union(joined.data().data(), pz, zdim_);
@@ -461,6 +533,12 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
         if (!merged || joined == s.zone) continue;
         s.zone = std::move(joined);
         grew = true;
+        merged_zone = true;
+        if (fwd_route_) {                          // remember both operands as pieces
+          merge_pieces.push_back(std::move(piece_before));
+          Dbm jz2;
+          merge_pieces.push_back(zread(j, jz2));
+        }
       }
     }
   }
@@ -470,7 +548,20 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
 
   std::chrono::steady_clock::time_point append_start;
   if (profile) append_start = std::chrono::steady_clock::now();
+  // A convex-union merge makes the stored zone a strict SUPERSET of this successor, so the edge
+  // into it is an inclusion cover, not an ordinary edge: the node is no longer a single post
+  // image.  Forward cycle detection needs that distinction -- a cycle closed through such a node
+  // need not be realised -- and marking it here is what lets merging stay ON.  Without it,
+  // single4 q1 never terminates with merging enabled; with merging disabled instead, grc6 q2
+  // costs 38s against 1.4s.
+  if (merged_zone && deferred) *deferred = kEdgeSubsumed;
   const int id = online_append(std::move(s), key);
+  if (merged_zone) {
+    if (online_merged_.size() <= static_cast<std::size_t>(id))
+      online_merged_.resize(static_cast<std::size_t>(id) + 1, 0);
+    online_merged_[id] = 1;
+    if (!merge_pieces.empty()) online_merge_pieces_[id] = std::move(merge_pieces);
+  }
   if (profile)
     online_perf.intern_append_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - append_start).count();
@@ -763,6 +854,7 @@ int LivenessEngine::intern(SymState&& s) {
   for (std::size_t k = 0; k < b.size(); ++k)
       if (same_disc(b[k]) && covers(b[k])) {
         zstore(b[k], Dbm(s.zone));
+        carrier_invalidate(b[k]);
         if (reccheck) { ntag_[b[k]] = tag; ntag_out_[b[k]] = tag_out; }
         intern_grew = true;
         return b[k];
@@ -780,6 +872,7 @@ int LivenessEngine::intern(SymState&& s) {
       if (t.try_union(s.zone)) {          // union is exactly convex: absorb, no approximation
         if (reccheck) classify_atoms(t, *atoms, &ntag_[j], &ntag_out_[j]);
         zstore(j, std::move(t));
+        carrier_invalidate(j);
         intern_grew = true;
         return j;
       }
@@ -1030,3 +1123,4 @@ Federation LivenessEngine::stop_set(int u) {
 ///          into a verdict; see ::LivenessEngine::certificate_in.
 
 }  // namespace hora
+

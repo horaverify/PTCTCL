@@ -25,3 +25,11 @@ add_executable(hora_bisim bisim_tests.cpp)
 target_link_libraries(hora_bisim PRIVATE hora_core)
 add_test(NAME bisim COMMAND hora_bisim)
 set_tests_properties(bisim PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL ")
+
+# The lazy liveness refinement path (HORA_LAZY): the recurrence criterion's three-way
+# discriminator, and the refinement machinery itself, which no benchmark row reaches because the
+# criterion discharges every obligation. See tests/liveness/refinement/run.sh.
+add_test(NAME liveness_refinement
+         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/liveness/refinement/run.sh
+                 $<TARGET_FILE:hora> ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_tests_properties(liveness_refinement PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")

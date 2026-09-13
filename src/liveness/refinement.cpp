@@ -660,7 +660,8 @@ void LivenessEngine::online_expand(int u) {
     int deferred = -1;
     const int v = online_intern(std::move(succ[k]), target_keys[k], u,
                                 static_cast<int>(k), &deferred);
-    online_raw_adj_[raw_slot].push_back(OtfEdge{v, tag_ids[k], deferred});
+    online_raw_adj_[raw_slot].push_back(
+        OtfEdge{v, tag_ids[k], deferred, static_cast<int>(k)});
     if (cancelled() || online_failed_) return;
   }
   if (profile) {
@@ -721,7 +722,7 @@ bool LivenessEngine::online_eg_probe(std::size_t* work) {
       if (t < 0 || t >= static_cast<int>(n) || !expanded[t] || online_raw_slot_[t] < 0)
         t = online_resolve_cover(e.tgt, /*require_expanded=*/true);
       if (t < 0 || t >= static_cast<int>(n)) continue;   // unresolved: drop, keeping a subgraph
-      out.push_back(OtfEdge{t, e.tag, -1});
+      out.push_back(OtfEdge{t, e.tag, kEdgeExact, e.ordinal});
     }
   }
 

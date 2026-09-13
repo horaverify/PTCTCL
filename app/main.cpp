@@ -280,6 +280,11 @@ int main(int argc, char** argv) {
       hora::set_no_probe(true);
     } else if (a == "--deterministic") {   // thread-invariant state counts (see config.hpp)
       hora::set_deterministic(true);
+    } else if (a == "--criterion" && i + 1 < argc) {   // poly (default) | guided | exact
+      if (!hora::set_criterion(argv[++i])) {
+        std::cerr << "--criterion takes 'poly', 'guided' or 'exact', got '" << argv[i] << "'\n";
+        return 2;
+      }
     } else if (a == "--sim" && i + 1 < argc) {   // alu (default) | g
       hora::set_gsim(std::string(argv[++i]) == "g");
     } else if (a == "--exploration" && i + 1 < argc) {   // bfs (default) | dfs
@@ -313,7 +318,7 @@ int main(int argc, char** argv) {
   if (nf == 2) return run(files[0], files[1], backend);
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
-            << "usage: hora [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats]\n              [--zones dense|packed] [--exploration bfs|dfs] <model.xml> <query.q>\n"
+            << "usage: hora [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats]\n              [--zones dense|packed] [--exploration bfs|dfs]\n              [--criterion poly|guided|exact] <model.xml> <query.q>\n"
             << "       --no-probe: skip the shared-lock subsumption pre-filter (ablation;\n"
             << "                   slower on every model measured -- see config.hpp)\n"
             << "       --deterministic: insert each level in canonical order, so the state\n"

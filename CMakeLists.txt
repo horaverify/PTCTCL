@@ -12,6 +12,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(HORA_ENABLE_CUDA  "Enable the CUDA GPU backend if a CUDA toolkit is found" ON)
 option(HORA_ENABLE_METAL "Enable the Metal GPU backend on macOS if available" ON)
 option(HORA_BUILD_TESTS  "Build tests" ON)
+# `E[] psi` is decided by forward cycle detection over the D-subsumed graph.  -DHORA_LIVENESS_GFP=ON
+# selects the backward greatest fixpoint instead, which is the older route: it decides the same
+# queries but pays a full `Pre` sweep -- 36.3s against 4.5s on twolock10 q3.  Kept for differential
+# testing, not as a supported default.
+option(HORA_LIVENESS_GFP "Decide E[] with the backward greatest fixpoint instead of forward cycle detection" OFF)
 find_package(OpenMP QUIET)
 # Apple Clang ships without an OpenMP runtime, so find_package fails even when
 # Homebrew's libomp is installed. Wire it up by hand so the parallel network
@@ -131,6 +136,10 @@ if(HORA_HAVE_METAL)
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(hora_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter>)
+endif()
+
+if(HORA_LIVENESS_GFP)
+  target_compile_definitions(hora_core PUBLIC HORA_LIVENESS_GFP=1)
 endif()
 
 add_executable(hora ${CMAKE_CURRENT_SOURCE_DIR}/app/main.cpp)

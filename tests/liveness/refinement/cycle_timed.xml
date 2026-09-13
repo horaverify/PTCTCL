@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.1//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_2.dtd'>
+<nta>
+<declaration>clock x, y;</declaration>
+<template>
+<name>P</name>
+<location id="id0"><name>L0</name></location>
+<location id="id1"><name>L1</name></location>
+<init ref="id0"/>
+<transition><source ref="id0"/><target ref="id1"/><label kind="guard">y &gt;= 1</label><label kind="assignment">y = 0</label></transition>
+<transition><source ref="id1"/><target ref="id0"/><label kind="guard">y &gt;= 1</label><label kind="assignment">y = 0</label></transition>
+</template>
+<system>Proc = P();
+system Proc;</system>
+</nta>

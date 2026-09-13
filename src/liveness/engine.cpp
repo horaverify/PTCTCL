@@ -98,13 +98,98 @@ const SymState& LivenessEngine::sread(int i, SymState& sc) const {
   return sc;
 }
 
+/// @brief Extra_LU+(Z_v) under @p v's OWN local bounds, cached; nullptr when it equals Z_v.
+///
+/// @note The bounds are recomputed from `v`'s locations rather than read from @ref bL / @ref bU.
+///       Those members are scratch, configured as a side effect of whichever cover probe ran
+///       last, so reading them here made the carrier depend on call order. Using the global
+///       arrays instead is deterministic but far too fine -- larger constants widen less, the
+///       carrier shrinks, and covering collapses (arbiter12: 0.4s to over 45s). Per-node local
+///       bounds are the only choice that is both deterministic and as coarse as the covering
+///       test expects, and they are well defined for a comparison because covering only ever
+///       relates two nodes that share a discrete key.
+/// @brief Raise @p l / @p u by every constant the psi-restriction constrains a clock with.
+///
+/// Extra_LU+ may not widen a zone back across the psi boundary: the restriction is carried by
+/// the avoid set, not by the bounds, so an extrapolation blind to the query's constants merges
+/// states the property separates and the fixpoint then reports runs that leave psi. This is the
+/// liveness counterpart of ::extend_bounds in the reachability lane.
+void LivenessEngine::raise_by_psi(std::vector<std::int32_t>& l, std::vector<std::int32_t>& u) const {
+  if (!avoid_) return;
+  for (const auto& part : avoid_->parts) {
+    const Dbm& f = part.forbid;
+    if (f.empty()) continue;
+    for (int i = 0; i <= net.nclocks; ++i)
+      for (int j = 0; j <= net.nclocks; ++j) {
+        if (i == j) continue;
+        const raw_t b = f.get(i, j);
+        if (b >= kInf) continue;
+        const std::int32_t c = raw_bound(b);
+        const std::int32_t a = c < 0 ? -c : c;
+        if (i >= 1 && i <= net.nclocks) { l[i] = std::max(l[i], a); u[i] = std::max(u[i], a); }
+        if (j >= 1 && j <= net.nclocks) { l[j] = std::max(l[j], a); u[j] = std::max(u[j], a); }
+      }
+  }
+}
+
+const Dbm* LivenessEngine::carrier_of(int v) {
+  if (carrier_state_.size() < nrec()) { carrier_state_.resize(nrec(), kCarUnknown); carrier_.resize(nrec()); }
+  if (carrier_state_[v] == kCarUnknown) {
+    Dbm z; zread(v, z);
+    Dbm w = z;
+    // Forward phase: the caller configured bL/bU for this node's key, and covering only ever
+    // compares nodes sharing a key, so the ambient arrays ARE this node's bounds. The discrete
+    // half does not exist yet on the online route, so they cannot be recomputed here.
+    //
+    // Backward phase: NOTHING configures bL/bU, so reading them would extrapolate with whatever
+    // key the last cover probe left behind -- non-deterministic, and coarser than this node's
+    // own bounds, which is how spurious witnesses appeared on viking. Derive them instead: from
+    // the node's locations when the network has per-location bounds, and from the global arrays
+    // when it does not.
+    std::vector<std::int32_t> l, u;
+    if (fc_mode_ || carrier_mode_) {
+      if (net.lbound_loc.empty()) {
+        l = aL; u = aU;                        // already carry the constraint-map bumps
+      } else {
+        SymState sc;
+        nstate(v, sc);
+        local_bounds(sc.locs.data(), l, u);
+        if (amap_)
+          for (int c = 1; c <= net.nclocks && c < (int)amap_->bump.size(); ++c)
+            if (amap_->bump[c] != kNoBump) {
+              l[c] = std::max(l[c], amap_->bump[c]);
+              u[c] = std::max(u[c], amap_->bump[c]);
+            }
+      }
+    } else {
+      l = bL; u = bU;
+    }
+    raise_by_psi(l, u);
+    w.extrapolate_lu_plus(l, u);
+    if (w == z) { carrier_state_[v] = kCarSame; carrier_[v] = Dbm(); }
+    else { carrier_state_[v] = kCarWide; carrier_[v] = std::move(w); }
+  }
+  return carrier_state_[v] == kCarWide ? &carrier_[v] : nullptr;
+}
+
 bool LivenessEngine::alu_le_stored(const Dbm& z, int j) const {
+  if (tight_) {                       // Z subset of Extra_LU+(Z_j); see @ref tight_
+    const Dbm* car = const_cast<LivenessEngine*>(this)->carrier_of(j);
+    if (!car) return stored_includes(j, z);      // carrier == zone: no copy, as in the baseline
+    return car->includes(z);
+  }
   return zs_.with(j, [&](const auto* pz) {
     return dbm_is_alu_le(z.data().data(), pz, zdim_, bL.data(), bU.data());
   });
 }
 
 bool LivenessEngine::alu_le_new(int j, const Dbm& z) const {
+  if (tight_) {                       // Z_j subset of Extra_LU+(Z)
+    Dbm car = z;
+    std::vector<std::int32_t> l = bL, u = bU; raise_by_psi(l, u);
+    car.extrapolate_lu_plus(l, u);   // newcomer shares the key; psi constants raised in
+    return includes_stored(car, j);
+  }
   return zs_.with(j, [&](const auto* pz) {
     return dbm_is_alu_le(pz, z.data().data(), zdim_, bL.data(), bU.data());
   });
@@ -123,6 +208,12 @@ bool LivenessEngine::includes_stored(const Dbm& z, int j) const {
 }
 
 bool LivenessEngine::base_cover(const Dbm& a, const Dbm& b) const {
+  if (use_alu && tight_) {
+    Dbm car = b;
+    std::vector<std::int32_t> l = bL, u = bU; raise_by_psi(l, u);
+    car.extrapolate_lu_plus(l, u);
+    return car.includes(a);
+  }
   return use_alu ? a.alu_subsumed_by(b, bL, bU) : b.includes(a);
 }
 
@@ -152,8 +243,35 @@ void LivenessEngine::setup() {
   M.resize(net.nclocks + 1);
   for (int c = 0; c <= net.nclocks; ++c) M[c] = std::max(net.lbound[c], net.ubound[c]);
   M[0] = 0;
+  if (std::getenv("HORA_DBG_LU")) {
+    std::fprintf(stderr, "[LU] ");
+    for (int c = 1; c <= net.nclocks && c < 6; ++c)
+      std::fprintf(stderr, "c%d L=%d U=%d  ", c,
+                   c < (int)net.lbound.size() ? net.lbound[c] : -9,
+                   c < (int)net.ubound.size() ? net.ubound[c] : -9);
+    std::fprintf(stderr, "\n");
+  }
   use_alu = !force_exact_ && !network_has_diagonal(net);
-  emode = network_has_diagonal(net) ? ExNoDiag : (use_alu ? ExNone : ExLuPlus);
+  tight_ = std::getenv("HORA_TIGHT") != nullptr;
+  // ExNone relies on a_LU/D subsumption alone for finiteness.  The lazy refinement loop suspends
+  // that subsumption on demand, so on its route the graph needs a bound that survives having
+  // covers taken away; see ::LivenessEngine::lazy_mode_.
+  // HORA_LAZY_XP=1 puts an Extra_LU+ floor under the lazy route.  OFF by default, and the
+  // reason is measured: the floor exists only to bound REFINEMENT, and once the recurrence
+  // filter proves a component cannot fire infinitely often the loop materialises nothing at all.
+  // On every benchmark row the obligation set is empty, so the floor protects nothing and costs
+  // exploration order -- arbiter8 q5 12 -> 15 records, csma10 q5 14 -> 16, phil10 q4 13 -> 14,
+  // all early-terminated SAT rows where the first witness simply turns up later.  With it off
+  // the lazy route is bit-identical to the default one.
+  //
+  // It is still the right thing to switch on for a model where the filter leaves a LIVE
+  // component, because there refinement can run and `emode == ExNone` leaves a_LU/D subsumption
+  // as the only finiteness argument -- which is precisely what refinement suspends.  Deciding
+  // that at ::LivenessEngine::setup time needs the syntactic form of the filter, which reads only
+  // per-process location graphs and so can run before any graph exists.
+  static const bool lazy_xp = std::getenv("HORA_LAZY_XP") != nullptr;
+  emode = network_has_diagonal(net) ? ExNoDiag
+                                    : ((use_alu && !(lazy_mode_ && lazy_xp)) ? ExNone : ExLuPlus);
   // Clocks the query forces to stay live. A leads-to predicate carries no clock constraints, so
   // this starts all-zero; reset_inactive reads it as "additionally keep alive", so all-zero is
   // maximal reduction, not none. The reduction is safe for a backward analysis because exact_predecessor

@@ -3,6 +3,7 @@
 #include "hora/detail/engine_config.hpp"
 
 #include "hora/config.hpp"
+#include <string>
 
 #include <algorithm>
 
@@ -20,6 +21,15 @@ bool narrow_ranges_on() { return detail::options().narrow_ranges; }
 void set_slice(bool on) { detail::options().slice = on; }
 bool slice_on() { return detail::options().slice; }
 void set_gsim(bool on) { detail::options().gsim = on; }
+bool set_criterion(const std::string& mode) {
+  using C = detail::EngineOptions::Criterion;
+  if (mode == "poly") detail::options().criterion = C::Poly;
+  else if (mode == "guided") detail::options().criterion = C::Guided;
+  else if (mode == "exact") detail::options().criterion = C::Exact;
+  else return false;
+  return true;
+}
+detail::EngineOptions::Criterion criterion_mode() { return detail::options().criterion; }
 bool gsim_on() { return detail::options().gsim; }
 void set_deterministic(bool on) { detail::options().deterministic = on; }
 bool deterministic_on() { return detail::options().deterministic; }

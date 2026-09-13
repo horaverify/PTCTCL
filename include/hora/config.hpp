@@ -8,6 +8,9 @@
 /// @see hora::detail::EngineOptions for the storage behind them.
 #pragma once
 
+#include <string>
+#include "hora/detail/engine_config.hpp"
+
 #include <cstddef>
 
 namespace hora {
@@ -122,6 +125,13 @@ bool slice_on();
 /// @warning Changes which states are stored; off by default.
 /// @see hora::Network::lraw_loc, hora::Network::uraw_loc
 void set_gsim(bool on);
+
+/// @brief Select the recurrence criterion used by the forward liveness route.
+/// @param mode "poly" (default), "guided" or "exact"
+/// @return @c false if @p mode is not one of those
+bool set_criterion(const std::string& mode);
+/// @return the criterion last selected
+detail::EngineOptions::Criterion criterion_mode();
 
 /// @brief Store liveness zones as minimal graphs instead of dense matrices.
 ///

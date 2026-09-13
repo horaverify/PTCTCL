@@ -194,16 +194,68 @@ bool LivenessEngine::eg_probe() {
   return sat;
 }
 
+/// @brief The infinite-witness half of the verdict, on the widened carrier and without `stop`.
+///
+/// @return @c true iff some reachable valuation of the initial zone starts an infinite
+///         psi-execution built from genuine transitions.
+/// @note The readout intersects the EXACT initial zone: the carrier contains valuations below
+///       it that no run can reach, and a witness from one of those would be a false positive.
+bool LivenessEngine::eg_verdict_fc() {
+  const std::vector<int> S = eg_closure();
+  if (S.empty()) return false;
+  fc_mode_ = true;
+  std::vector<Federation> W;
+  solve_greatest_fixpoint(S, W);
+  fc_mode_ = false;
+  if (capped || W.empty() || fed_is_empty(W[0])) return false;
+  Dbm z0sc;
+  return !fed_is_empty(fed_intersect(W[0], Federation{zread(0, z0sc)}));
+}
+
 bool LivenessEngine::eg_verdict(GfpStats* gs) {
   scc_iter_ = true;             // the verdict is one node's, so diameter is what costs here
   bool res = false;
+  carrier_mode_ = std::getenv("HORA_MERGED") != nullptr;
   if (fwd_ok_ && nrec() != 0) {
     const std::vector<int> S = eg_closure();
     if (!S.empty()) {
       std::vector<Federation> W;
       solve_greatest_fixpoint(S, W);
-      if (!capped) res = !fed_is_empty(W[0]);
+      if (!capped) {
+        // HORA_ANYNODE: read the whole closure, not just the initial node.
+        //
+        // ::LivenessEngine::eg_closure is the psi-closure REACHED FROM node 0 through psi-nodes,
+        // so every v in S is joined to the initial state by a psi-path, and every point of a
+        // stored zone is a valuation that path actually reaches. A non-empty W[v] therefore
+        // composes: psi-path 0 ->* v, then the maximal psi-run W[v] certifies. That is a maximal
+        // psi-run from the initial state, i.e. the verdict -- without the chain having to survive
+        // all the way back to node 0, which is what the carrier exists to protect.
+        static const bool anynode = std::getenv("HORA_ANYNODE") != nullptr;
+        if (anynode) {
+          res = false;
+          Dbm z0sc;
+          for (int v : S) {
+            const Federation& wv = (v == 0 && carrier_mode_)
+                                     ? fed_intersect(W[0], Federation{zread(0, z0sc)}) : W[v];
+            if (!fed_is_empty(wv)) { res = true; break; }
+          }
+        } else if (carrier_mode_) {   // the carrier holds unreachable valuations; cut to Z_0
+          Dbm z0sc;
+          res = !fed_is_empty(fed_intersect(W[0], Federation{zread(0, z0sc)}));
+        } else {
+          res = !fed_is_empty(W[0]);
+        }
+      }
     }
+  }
+  carrier_mode_ = false;
+  if (!res && std::getenv("HORA_FC")) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool fc = eg_verdict_fc();
+    const double ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::steady_clock::now() - t0).count() / 1000.0;
+    std::fprintf(stderr, "FC nodes=%zu base=%d fc=%d fc_ms=%.1f\n", nrec(), (int)res, (int)fc, ms);
+    res = res || fc;
   }
   fill_stats(gs);
   return res;
@@ -357,6 +409,7 @@ bool LivenessEngine::decide_exists_invariant_run(GfpStats* gs) {
   // Discrete states outside psi are terminal for this query and need no successor expansion.
   // This is forward pruning only: the sole backward pass still starts after D stabilises.
   online_eg_prune_ = true;
+  lazy_mode_ = false;
   setup();
   online_base_forward();
   if (online_perf.enabled) {
@@ -373,9 +426,42 @@ bool LivenessEngine::decide_exists_invariant_run(GfpStats* gs) {
   if (eg_early_hit_) { fill_stats(gs); return true; }
   online_complete_eg_history();
   if (eg_early_hit_) { fill_stats(gs); return true; }
+  // HORA_LAZY: repair, on demand, the covers the exact backward operator cannot justify.
+  //
+  // It runs HERE and not after the seal because ::LivenessEngine::online_finalize_graph is
+  // precisely what destroys the state it needs: every `edge.deferred` is reset, and the key
+  // registry, cover map and raw adjacency are released.  Before the seal, materialising a
+  // discarded successor is ::LivenessEngine::online_replay plus the ordinary worklist, which is
+  // already incremental; after it, that machinery no longer exists.
+  // HORA_FWD: the forward-only Buchi prototype, src/liveness/forward_buchi.cpp.  It decides the
+  // query by two Tarjan runs instead of a backward fixpoint; it declines unless HORA_FWD_TRUST is
+  // also set, because the premise its soundness rests on is broken by zone merging here.
+#ifndef HORA_LIVENESS_GFP
+  if (fwd_ok_ && !cancelled() && !online_failed_) {
+    bool fwd_sat = false;
+    if (forward_buchi_eg(&fwd_sat)) {
+      if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
+      fill_stats(gs);
+      return fwd_sat;
+    }
+  }
+#endif
+  static const bool lazy_on = std::getenv("HORA_LAZY") != nullptr;
+  bool lazy_decided = false, lazy_sat = false;
+  if (lazy_on && fwd_ok_ && !cancelled() && !online_failed_)
+    lazy_decided = lazy_refine_eg(&lazy_sat);
+  if (eg_early_hit_) { fill_stats(gs); return true; }
   if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
   if (online_failed_ || cancelled()) { capped = true; fill_stats(gs); return false; }
   const std::size_t rss_fin = rss_mb();
+  // A decided loop has already run the fixpoint the verdict comes from; re-running it on the
+  // sealed graph would answer the same question at full price.
+  if (lazy_decided) {
+    lazy_report(lazy_sat);
+    fill_stats(gs);
+    return lazy_sat;
+  }
+  if (lazy_.exhausted) { lazy_report(false); fill_stats(gs); return false; }
   const bool r = eg_verdict(gs);
   if (std::getenv("HORA_RSS"))
     std::fprintf(stderr, "RSS-MB eg_forward=%zu eg_finalize=%zu eg_backward=%zu nodes=%zu\n",
@@ -429,7 +515,18 @@ bool exists_invariant_run_otf(const Network& net, const DiscPred& nq, GfpStats* 
     return e;
   };
   (void)witness_only;
-  return make(false)->decide_exists_invariant_run(gs);
+  auto engine = make(false);
+  const bool r = engine->decide_exists_invariant_run(gs);
+  // The lazy loop spent its budget without a verdict.  `emode` is ExNone on the online route, so
+  // a_LU/D subsumption is the only thing that made the forward search finite, and the loop
+  // suspends exactly that; there is no bound left to run to.  The exact route covers by
+  // INCLUSION -- the discarded successor is always inside its coverer -- so its backward operator
+  // is complete with no repair at all, and it answers the query outright.
+  if (engine->lazy_exhausted()) {
+    engine.reset();
+    return make(true)->decide_exists_invariant_run(gs);
+  }
+  return r;
 }
 
 /// @brief `p --> q` where either operand constrains clocks or carries boolean structure.

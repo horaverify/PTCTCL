@@ -68,6 +68,17 @@ struct EngineOptions {
   bool memo = false;             ///< memoise the successor-zone pipeline (see gen_succ_reuse)
   bool deterministic = false;    ///< insert each level in canonical order; see reach_engine
   bool no_probe = false;         ///< skip the shared-lock subsumption pre-filter (ablation)
+  /// @brief Which recurrence criterion the forward liveness route uses; see `--criterion`.
+  ///
+  /// A key-SCC owes refinement obligations only when it can host an infinite psi-run.  Deciding
+  /// that exactly is exponential, so the default is a pair of polynomial tests that are
+  /// sufficient but not complete; the other two settle the components those leave live.
+  enum class Criterion {
+    Poly,    ///< polynomial tests only: every cycle resets something, and resets imply guards
+    Guided,  ///< ... then branch on a clock that actually conflicts in an SCC
+    Exact,   ///< ... then enumerate the choice functions, pruning on acyclicity
+  };
+  Criterion criterion = Criterion::Poly;
   /// @brief Expand the `E[] psi` online construction depth-first rather than breadth-first.
   ///
   /// Only the order the worklist is popped in; the graph, the abstraction and the verdict are
