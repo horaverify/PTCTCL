@@ -669,8 +669,14 @@ class LivenessEngine {
   ///         caller must fall back to the exact route
   bool lazy_refine_eg(bool* sat);
   /// @brief Install a read-only view of the online graph as `adj` / `node_key_`.
+  ///
+  /// @param[out] lost  optional: edges the projection had to DROP because their target is a
+  ///                   query-relevant record with no expanded representative.  Zero means the
+  ///                   view is the whole graph; anything else means it is a truncation, which a
+  ///                   cycle search must not read a negative verdict out of.
   /// @return @c false when the online state cannot be projected, which is never expected here
-  bool lazy_snapshot(std::vector<std::vector<OtfEdge>>* saved_adj, std::vector<int>* saved_key);
+  bool lazy_snapshot(std::vector<std::vector<OtfEdge>>* saved_adj, std::vector<int>* saved_key,
+                     std::size_t* lost = nullptr);
   void lazy_restore(std::vector<std::vector<OtfEdge>>* saved_adj, std::vector<int>* saved_key);
   /// @brief Key-projected SCC ids, and each component's size.
   ///

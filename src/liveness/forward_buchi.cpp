@@ -216,12 +216,23 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
 
   for (;; ++rounds) {
     if (cancelled() || online_failed_) return false;
+    // A CONCRETE WITNESS, already proven.  ::LivenessEngine::online_drain_forward_work runs the
+    // E[] probe -- an exact backward solve over the partial closure -- and stops the moment it
+    // succeeds; the refinement wave below drains, so the hit can land in the middle of one.  That
+    // flag is the verdict and must be read before anything else, because the same stop leaves
+    // every record the wave had queued UNEXPANDED, and `lazy_snapshot` then projects a truncated
+    // graph in which the cycles this search is looking for have been cut away.  Measured on
+    // single5 `E[] x0 <= 6`: the probe hit at 381 records, the drains stopped, and the next two
+    // rounds watched the full-graph cycle count fall 78 -> 15 -> 0 and answered NOT for a
+    // satisfied query.
+    if (eg_early_hit_) { *sat = true; return true; }
 
     std::vector<std::vector<OtfEdge>> saved_adj;
     std::vector<int> saved_key;
-    if (!lazy_snapshot(&saved_adj, &saved_key)) return false;
+    std::size_t lost_edges = 0;
+    if (!lazy_snapshot(&saved_adj, &saved_key, &lost_edges)) return false;
 
-    bool decided = false, verdict = false;
+    bool decided = false, verdict = false, truncated = false;
     std::size_t exact_cycles = 0, unsafe = 0, covers = 0, edges = 0;
     std::vector<LazyObligation> obligations;
     {
@@ -287,6 +298,24 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
               if (inS[e.tgt]) out->push_back(e.tgt);
           };
           scc_of(n, inS, all_succ, &fcomp, &fcyclic);
+          // WHY a round reached the answer it did.  The three numbers that separate the possible
+          // causes of a negative verdict: `fullcycles` distinguishes "the closure is acyclic, so
+          // no infinite run exists at all" from "it has cycles but every cover on one was ruled
+          // safe"; `dead_tgt` says how many of those cycle edges the recurrence criterion
+          // exonerated; and `lost` says whether the view was the whole graph.
+          if (dbg) {
+            std::size_t fcyc = 0, dead_tgt = 0, expanded_n = 0;
+            for (char c : fcyclic) fcyc += c ? 1 : 0;
+            for (std::size_t v = 0; v < n; ++v) if (expanded[v]) ++expanded_n;
+            for (int v : S)
+              for (const OtfEdge& e : adj[v])
+                if (inS[e.tgt] && fcomp[v] >= 0 && fcomp[v] == fcomp[e.tgt] &&
+                    fcyclic[fcomp[v]] && !live_at(e.tgt)) ++dead_tgt;
+            std::fprintf(stderr,
+                         "FWD-DIAG round=%zu nrec=%zu expanded=%zu |S|=%zu fullcycles=%zu "
+                         "dead_tgt=%zu lost=%zu\n",
+                         rounds, n, expanded_n, S.size(), fcyc, dead_tgt, lost_edges);
+          }
 
           // UNSAFE components, per Definition 3.3: a component is unsafe when it carries a
           // subsumption edge with both ends inside it AND contains an accepting node.
@@ -365,7 +394,15 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
           online_unsafe_target_.assign(nrec(), 0);
           for (int v : S)
             if (fcomp[v] >= 0 && reaches_unsafe[fcomp[v]]) online_unsafe_target_[v] = 1;
-          if (unsafe == 0) {
+          if (unsafe == 0 && lost_edges != 0) {
+            // THE VIEW IS NOT THE GRAPH.  `lazy_snapshot` could not place some edge whose target
+            // is a psi-record with no expanded representative, so "no ordinary cycle and no
+            // unsafe cover" was decided on a subgraph and proves nothing: the missing edge may be
+            // the one that closes a witness cycle.  Decline and let the exact backward route
+            // answer, rather than report a verdict this view cannot support.  The guard above
+            // removes the one cause we know of, so this is a safety net and not a routine exit.
+            truncated = true;
+          } else if (unsafe == 0) {
             // BOTH HALVES, and this is the second one.
             //
             // `E[] psi` is satisfied by an infinite run OR by a maximal FINITE one -- a deadlock,
@@ -402,6 +439,7 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
                      how, ms, ms_ord, ms_scc, ms_refine);
     };
 
+    if (truncated) { report("undecided=truncated"); return false; }
     if (decided) {
       report(verdict ? "verdict=SAT" : "verdict=NOT");
       *sat = verdict;
@@ -436,6 +474,10 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
       if (ob.src < static_cast<int>(dirty.size())) dirty[ob.src] = 1;
       if (!lazy_materialise(ob)) { report("undecided=replay-failed"); return false; }
       if (cancelled() || online_failed_) { report("undecided=aborted"); return false; }
+      // The replay drains the forward worklist, so the probe can prove the query here; see the
+      // top of the loop.  Stopping now also stops the wave from queueing records that would
+      // never be expanded.
+      if (eg_early_hit_) { report("verdict=SAT-probe"); *sat = true; return true; }
     }
     dirty.resize(nrec(), 1);
     for (std::size_t v = before_nodes; v < nrec(); ++v) dirty[v] = 1;

@@ -64,8 +64,9 @@ std::size_t budget_multiple() {
 }  // namespace
 
 bool LivenessEngine::lazy_snapshot(std::vector<std::vector<OtfEdge>>* saved_adj,
-                                   std::vector<int>* saved_key) {
+                                   std::vector<int>* saved_key, std::size_t* lost) {
   const std::size_t n = nrec();
+  if (lost) *lost = 0;
   if (n == 0 || online_raw_slot_.size() < n || online_key_of_.size() < n) return false;
 
   std::vector<std::vector<OtfEdge>> snap(n);
@@ -78,7 +79,19 @@ bool LivenessEngine::lazy_snapshot(std::vector<std::vector<OtfEdge>>* saved_adj,
       int t = e.tgt;
       if (t < 0 || t >= static_cast<int>(n) || !expanded[t] || online_raw_slot_[t] < 0)
         t = online_resolve_cover(e.tgt, /*require_expanded=*/true);
-      if (t < 0 || t >= static_cast<int>(n)) continue;
+      if (t < 0 || t >= static_cast<int>(n)) {
+        // The edge is DROPPED, and the snapshot is then a truncation of the real graph rather
+        // than a view of it.  For the backward operator that is conservative -- a missing
+        // `Pre_e` term only shrinks `W` -- but a cycle search reads a missing edge as a missing
+        // cycle, and a truncated graph can answer "no witness" for a query that has one.  So the
+        // losses are counted, and the caller decides what its own conclusion is worth.
+        //
+        // A target that FAILS the query predicate is not a loss: under
+        // ::LivenessEngine::online_eg_prune_ it is deliberately left unexpanded, and no witness
+        // can pass through it, so neither route ever wanted the edge.
+        if (lost && !(online_eg_prune_ && !online_is_nq(e.tgt))) ++*lost;
+        continue;
+      }
       // The classification travels with the edge.  ::LivenessEngine::solve_greatest_fixpoint does
       // not read it -- the backward operator is unchanged, and an unresolved cover still
       // contributes `Pre_e(W_tgt)`, which is exactly the term that comes out empty and creates
