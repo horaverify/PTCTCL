@@ -300,6 +300,8 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
           if (c < 0 || c >= static_cast<int>(comp_live.size())) return true;
           return comp_live[c] != 0;
         };
+        const double ms_crit = std::chrono::duration_cast<std::chrono::microseconds>(
+                                   std::chrono::steady_clock::now() - t0).count() / 1000.0;
         bool any_live = false;
         for (int v : S)
           if (live_at(v)) { any_live = true; break; }
@@ -365,8 +367,10 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
           }
           if (dbg)
             std::fprintf(stderr, "FWD-DIAG round=%zu nrec=%zu |S|=%zu all-components-dead"
-                                 " stop_witness=%d lost=%zu\n",
-                         rounds, n, S.size(), (int)verdict, lost_edges);
+                                 " stop_witness=%d lost=%zu setup+crit=%.1fms stopscan=%.1fms\n",
+                         rounds, n, S.size(), (int)verdict, lost_edges, ms_crit,
+                         std::chrono::duration_cast<std::chrono::microseconds>(
+                             std::chrono::steady_clock::now() - t0).count() / 1000.0 - ms_crit);
         } else {
 
         refresh_ord(S, inS);

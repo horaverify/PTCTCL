@@ -149,6 +149,7 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
   const auto admits = [&](std::size_t v) {
     return !nodes || (v < nodes->size() && (*nodes)[v]);
   };
+  const auto t_a = std::chrono::steady_clock::now();
   std::vector<char> key_ok(nk, 1);
   {
     detail::SymState ks;
@@ -170,25 +171,54 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
       if (!key_used[k]) key_ok[k] = 0;
   }
 
+  // ONE SCAN OF THE RECORDS, and the per-key result is reused.
+  //
+  // The key graph is tiny next to the record graph, but deriving it is not: this used to walk
+  // every record and every edge TWICE -- once for the Tarjan adjacency and again, after the
+  // components were known, for the per-clock passes -- and the second walk deduplicated
+  // (source, target, transition) through a global hash set, one insert per intra-component edge.
+  // On arbiter16 `E[] (C0.idle || C0.want) && x0 <= 40` that is 557,056 records and some millions
+  // of edges, and the whole function cost 3049 ms of a 3718 ms route.
+  //
+  // Instead the scan groups records BY KEY -- ::OnlineKeyInfo::node_head threads them already --
+  // and deduplicates (target, transition) within the key, where the list is short enough to scan
+  // linearly.  `kpairs` is then the key graph itself, and the per-clock passes filter it by
+  // component rather than touching a record again.
+  const auto t_b = std::chrono::steady_clock::now();
+  struct KPair { int tgt, tag; };
+  std::vector<std::vector<KPair>> kpairs(nk);
   std::vector<std::vector<int>> kadj(nk);
-  std::vector<std::vector<int>> ktag(nk);           // the transition behind each key edge
   {
     std::vector<int> seen(nk, -1);
-    for (std::size_t v = 0; v < nrec(); ++v) {
-      if (!admits(v) || !expanded[v] || online_raw_slot_[v] < 0) continue;
-      const int kv = online_key_of_[v];
-      if (kv < 0 || kv >= static_cast<int>(nk) || !key_ok[kv]) continue;
-      for (const OtfEdge& e : online_raw_adj_[online_raw_slot_[v]]) {
-        const int t = (e.tgt >= 0 && e.tgt < static_cast<int>(nrec()) && admits(e.tgt))
-                          ? online_key_of_[e.tgt] : -1;
-        if (t < 0 || t >= static_cast<int>(nk) || !key_ok[t] || seen[t] == kv) continue;
-        seen[t] = kv;
-        kadj[kv].push_back(t);
-        ktag[kv].push_back(e.tag);
+    for (std::size_t k = 0; k < nk; ++k) {
+      if (!key_ok[k]) continue;
+      std::vector<KPair>& pairs = kpairs[k];
+      for (int v = online_key_by_id_[k]->node_head; v >= 0; v = online_next_in_key_[v]) {
+        if (v >= static_cast<int>(nrec()) || !admits(static_cast<std::size_t>(v)) ||
+            !expanded[v] || online_raw_slot_[v] < 0)
+          continue;
+        for (const OtfEdge& e : online_raw_adj_[online_raw_slot_[v]]) {
+          if (e.tgt < 0 || e.tgt >= static_cast<int>(nrec()) ||
+              !admits(static_cast<std::size_t>(e.tgt)))
+            continue;
+          const int t = online_key_of_[e.tgt];
+          if (t < 0 || t >= static_cast<int>(nk) || !key_ok[t]) continue;
+          if (e.tag < 0 || e.tag >= static_cast<int>(tags_.size())) continue;
+          bool dup = false;
+          for (const KPair& kp : pairs)
+            if (kp.tgt == t && kp.tag == e.tag) { dup = true; break; }
+          if (dup) continue;
+          pairs.push_back(KPair{t, e.tag});
+          if (seen[t] != static_cast<int>(k)) {     // Tarjan needs each target once
+            seen[t] = static_cast<int>(k);
+            kadj[k].push_back(t);
+          }
+        }
       }
     }
   }
 
+  const auto t_c = std::chrono::steady_clock::now();
   // Iterative Tarjan; the key graph reaches 10^5 nodes and the recursive form would not survive
   // the stack, exactly as in ::LivenessEngine::solve_greatest_fixpoint.
   std::vector<int> idx(nk, -1), low(nk, 0), stk;
@@ -268,6 +298,7 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
   // deduplicated by target because Tarjan needs nothing more, but four self-loops that reset four
   // different clocks collapse to one entry there, and reading resets off that entry sees one
   // clock instead of four -- which is the other half of the same single4 bug.
+  const auto t_f0 = std::chrono::steady_clock::now();
   comp_live->assign(ncomp, 1);
   for (std::size_t k = 0; k < nk; ++k)
     if ((*comp)[k] >= 0 && members[(*comp)[k]] == 0) (*comp_live)[(*comp)[k]] = 0;
@@ -295,6 +326,7 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
     tag_burns[t] = (r & lo) != 0;
   }
 
+  const auto t_d = std::chrono::steady_clock::now();
   // (a)'s two masks, and the residual adjacency for (b).
   std::vector<std::uint64_t> bounded(ncomp, all_clocks), reset(ncomp, 0);
   std::vector<Constraint> inv;
@@ -325,6 +357,7 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
   // version -- is far too strict: fischer resets `x_i` on one edge and guards it on a later one,
   // so no single edge qualifies, every component stays live, and refinement then blows the graph
   // from 17,215 records to 238,180.
+  const auto t_e = std::chrono::steady_clock::now();
   std::vector<std::uint64_t> tag_lower(tags_.size(), 0);
   for (std::size_t t = 0; t < tags_.size(); ++t) {
     std::uint64_t lo = 0;
@@ -339,87 +372,16 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
   // can filter them without touching the records again.
   struct KEdge { int src, tgt, tag; };
   std::vector<KEdge> kedges;
-  {
-    std::unordered_set<std::uint64_t> seen_edge;
-    for (std::size_t v = 0; v < nrec(); ++v) {
-      if (!expanded[v] || online_raw_slot_[v] < 0) continue;
-      const int kv = online_key_of_[v];
-      if (!admits(v) || kv < 0 || kv >= static_cast<int>(nk) || !key_ok[kv] ||
-          (*comp)[kv] < 0) continue;
-      for (const OtfEdge& e : online_raw_adj_[online_raw_slot_[v]]) {
-        if (e.tgt < 0 || e.tgt >= static_cast<int>(nrec()) || !admits(e.tgt)) continue;
-        const int kt = online_key_of_[e.tgt];
-        if (kt < 0 || kt >= static_cast<int>(nk) || !key_ok[kt]) continue;
-        const int c = (*comp)[kv];
-        if ((*comp)[kt] != c) continue;     // leaves the component: on no cycle inside it
-        if (e.tag < 0 || e.tag >= static_cast<int>(tags_.size())) continue;
-        reset[c] |= tag_reset[e.tag];       // EVERY edge, not the key-graph representative
-        const std::uint64_t sig = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(kv)) << 40) ^
-                                  (static_cast<std::uint64_t>(static_cast<std::uint32_t>(kt)) << 16) ^
-                                  static_cast<std::uint64_t>(static_cast<std::uint32_t>(e.tag));
-        if (seen_edge.insert(sig).second) kedges.push_back(KEdge{kv, kt, e.tag});
-      }
+  for (std::size_t k = 0; k < nk; ++k) {
+    const int c = (*comp)[k];
+    if (c < 0 || !key_ok[k]) continue;
+    for (const KPair& kp : kpairs[k]) {
+      if ((*comp)[kp.tgt] != c) continue;   // leaves the component: on no cycle inside it
+      reset[c] |= tag_reset[kp.tag];        // EVERY transition, not one representative per target
+      kedges.push_back(KEdge{static_cast<int>(k), kp.tgt, kp.tag});
     }
   }
 
-  // Is the component acyclic once the edges selected by `drop` are removed?
-  std::vector<char> cyclic(ncomp, 0);
-  std::vector<std::vector<int>> sub(nk);
-  std::vector<int> idx2(nk, -1), low2(nk, 0), stk2;
-  std::vector<char> on2(nk, 0);
-  std::vector<std::pair<int, std::size_t>> call2;
-  auto residual_cyclic = [&](auto&& drop) {
-    for (auto& a : sub) a.clear();
-    for (const KEdge& ke : kedges)
-      if (!drop(ke.tag)) sub[ke.src].push_back(ke.tgt);
-    std::fill(cyclic.begin(), cyclic.end(), 0);
-    std::fill(idx2.begin(), idx2.end(), -1);
-    std::fill(on2.begin(), on2.end(), 0);
-    stk2.clear();
-    int next2 = 0;
-    for (std::size_t root = 0; root < nk; ++root) {
-      if (idx2[root] != -1 || (*comp)[root] < 0) continue;
-      call2.clear();
-      call2.push_back({static_cast<int>(root), 0});
-      idx2[root] = low2[root] = next2++;
-      stk2.push_back(static_cast<int>(root));
-      on2[root] = 1;
-      while (!call2.empty()) {
-        auto& [v, ei] = call2.back();
-        if (ei < sub[v].size()) {
-          const int w = sub[v][ei++];
-          if (idx2[w] == -1) {
-            idx2[w] = low2[w] = next2++;
-            stk2.push_back(w);
-            on2[w] = 1;
-            call2.push_back({w, 0});
-          } else if (on2[w]) {
-            low2[v] = std::min(low2[v], idx2[w]);
-          }
-        } else {
-          if (low2[v] == idx2[v]) {
-            int size = 0, any = v;
-            for (;;) {
-              const int w = stk2.back();
-              stk2.pop_back();
-              on2[w] = 0;
-              any = w;
-              ++size;
-              if (w == v) break;
-            }
-            bool loop = false;
-            if (size == 1)
-              for (int w : sub[v]) if (w == v) { loop = true; break; }
-            if (size > 1 || loop) cyclic[(*comp)[any]] = 1;
-          }
-          const int child = v;
-          call2.pop_back();
-          if (!call2.empty())
-            low2[call2.back().first] = std::min(low2[call2.back().first], low2[child]);
-        }
-      }
-    }
-  };
 
   // (b) EVERY CYCLE MUST BURN TIME, with different cycles allowed to use different clocks.
   //
@@ -451,16 +413,28 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
       comp_reset[c] |= tag_reset[kedges[i].tag];
       comp_lower[c] |= tag_lower[kedges[i].tag];
     }
+    // The DISTINCT nodes of each component.  The residual passes below reset their scratch over
+    // this, not over the edge list: a component with 4,915,200 edges over 589,824 nodes was paying
+    // 9.8M redundant clears per pass, sixteen times.
+    std::vector<std::vector<int>> cnodes(ncomp);
+    {
+      std::vector<char> seen_node(nk, 0);
+      for (int c = 0; c < ncomp; ++c) {
+        for (std::size_t i : inside[c])
+          for (const int u : {kedges[i].src, kedges[i].tgt})
+            if (!seen_node[u]) { seen_node[u] = 1; cnodes[c].push_back(u); }
+        for (int u : cnodes[c]) seen_node[u] = 0;
+      }
+    }
     std::vector<char> removed(kedges.size(), 0);
     std::vector<int> st(nk, 0);
     std::vector<std::pair<int, std::size_t>> dfs;
     std::vector<std::vector<std::size_t>> g(nk);
     // Does component `c` still contain a cycle once `drop` has removed its edges?
     auto cyclic_after = [&](int c, auto&& drop) {
-      for (std::size_t i : inside[c]) { g[kedges[i].src].clear(); g[kedges[i].tgt].clear(); }
+      for (int u : cnodes[c]) { g[u].clear(); st[u] = 0; }
       for (std::size_t i : inside[c])
         if (!drop(i)) g[kedges[i].src].push_back(i);
-      for (std::size_t i : inside[c]) { st[kedges[i].src] = 0; st[kedges[i].tgt] = 0; }
       for (std::size_t i0 : inside[c]) {
         if (st[kedges[i0].src]) continue;
         dfs.clear();
@@ -479,20 +453,26 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
     };
     // After `drop`, does any edge satisfying `probe` lie on a cycle?  Both ends in one nontrivial
     // SCC of the surviving subgraph is exactly that.
+    // The scratch is hoisted, and reset only over the nodes this component touches.
+    //
+    // Sizing five `nk`-wide vectors inside the lambda made the per-clock loop the whole cost of
+    // the criterion: `nk` is one key PER RECORD on a model whose zones never split, so arbiter16
+    // `E[] (C0.idle || C0.want) && x0 <= 40` ran it at nk = 589,824 with 4,915,200 key edges, and
+    // 16 clocks x (five allocations plus a `keep` list the size of the edge set) came to 1928 ms
+    // of a 2151 ms criterion.  The traversals themselves were never the problem.
+    std::vector<int> idx(nk, -1), low(nk, 0), stk, cid(nk, -1);
+    std::vector<char> on(nk, 0), big;
+    std::vector<std::pair<int, std::size_t>> call;
     auto cyclic_through = [&](int c, auto&& drop, auto&& probe) {
-      std::vector<std::size_t> keep;
-      for (std::size_t i : inside[c]) if (!drop(i)) keep.push_back(i);
-      for (std::size_t i : keep) { g[kedges[i].src].clear(); g[kedges[i].tgt].clear(); }
-      for (std::size_t i : keep) g[kedges[i].src].push_back(i);
-      // Tarjan over the surviving subgraph, recording component ids in `st`.
-      std::vector<int> idx(nk, -1), low(nk, 0), stk;
-      std::vector<char> on(nk, 0);
-      std::vector<int> cid(nk, -1);
-      std::vector<char> big;
-      std::vector<std::pair<int, std::size_t>> call;
+      for (int u : cnodes[c]) { g[u].clear(); idx[u] = -1; on[u] = 0; cid[u] = -1; }
+      for (std::size_t i : inside[c])
+        if (!drop(i)) g[kedges[i].src].push_back(i);
+      big.clear();
+      stk.clear();
+      call.clear();
       int next = 0, nc = 0;
-      for (std::size_t i : keep) {
-        const int r = kedges[i].src;
+      for (int r0 : cnodes[c]) {
+        const int r = r0;
         if (idx[r] != -1) continue;
         call.push_back({r, 0});
         idx[r] = low[r] = next++; stk.push_back(r); on[r] = 1;
@@ -517,9 +497,9 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
           }
         }
       }
-      for (std::size_t i : keep)
-        if (probe(i) && cid[kedges[i].src] >= 0 && cid[kedges[i].src] == cid[kedges[i].tgt] &&
-            big[cid[kedges[i].src]])
+      for (std::size_t i : inside[c])
+        if (!drop(i) && probe(i) && cid[kedges[i].src] >= 0 &&
+            cid[kedges[i].src] == cid[kedges[i].tgt] && big[cid[kedges[i].src]])
           return true;
       return false;
     };
@@ -544,8 +524,24 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
       // These two tests are O(clocks * edges) with no search at all, and they are still sharp
       // enough for the shape that matters -- fischer resets x_p and guards it several edges later
       // on the same cycle, which the single-clock Tripakis test misses and (2) catches.
+      // (a) FIRST, because it is already computed and (b) is the expensive half.  Dead needs both
+      // conjuncts, so a component with no clock bounded at every key and reset by nothing inside
+      // is live whatever (b) says, and the passes below would be answering a question nobody asks.
+      if ((bounded[c] & ~reset[c]) == 0) continue;
       const std::uint64_t both = comp_reset[c] & comp_lower[c];
       if (!both) continue;                               // nothing here can burn: (b) fails
+      // (0) THE SINGLE-EDGE FORM, TRIED FIRST.  Delete every edge that both resets a clock and
+      // lower-guards that same clock; if the component is then acyclic, every cycle contains such
+      // an edge and so forces its constant to elapse on every traversal.  One DFS with an early
+      // exit, against the sixteen full Tarjan passes (2) costs on a model where every clock is
+      // both reset and guarded.  It is strictly weaker -- fischer resets `x_i` on one edge and
+      // guards it several edges later, so no single edge qualifies -- which is why it precedes
+      // (1)+(2) rather than replacing them.  arbiter16 spent 1996 ms of a 2151 ms criterion in
+      // (2); this settles it in one pass.
+      if (!cyclic_after(c, [&](std::size_t i) { return tag_burns[kedges[i].tag] != 0; })) {
+        burns[c] = 1;
+        continue;
+      }
       // (1)
       if (cyclic_after(c, [&](std::size_t i) { return tag_reset[kedges[i].tag] != 0; })) continue;
       // (2)
@@ -553,6 +549,10 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
       for (int z = 1; z <= net.nclocks && z < 64 && ok; ++z) {
         const std::uint64_t bit = std::uint64_t(1) << z;
         if (!(comp_reset[c] & bit)) continue;            // z is not reset here: nothing to check
+        // A clock reset here but never lower-guarded here fails (2) outright, with no pass: the
+        // component is an SCC, so every one of its edges lies on a cycle, and removing the
+        // (empty) set of z-guard edges leaves that z-reset edge on one.
+        if (!(comp_lower[c] & bit)) { ok = false; break; }
         // Remove the z-guard edges, then ask whether any z-reset edge sits on a surviving cycle.
         if (cyclic_through(c, [&](std::size_t i) { return (tag_lower[kedges[i].tag] & bit) != 0; },
                            [&](std::size_t i) { return (tag_reset[kedges[i].tag] & bit) != 0; }))
@@ -676,6 +676,16 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
                  fail_a, fail_b, fail_both, biggest);
     std::fprintf(stderr, "LAZY key-sccs=%d dead=%zu (acyclic, or time-pinned with every cycle "
                  "burning time)\n", ncomp, dead);
+  }
+  if (std::getenv("HORA_CRIT_COST")) {
+    const auto ms = [](auto a, auto b) {
+      return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
+    };
+    const auto t_end = std::chrono::steady_clock::now();
+    std::fprintf(stderr, "CRIT nk=%zu ncomp=%d kedges=%zu nclocks=%d | key_ok=%.1f kpairs=%.1f "
+                 "tarjan=%.1f masks=%.1f taglower=%.1f perclock=%.1f\n",
+                 nk, ncomp, kedges.size(), net.nclocks, ms(t_a, t_b), ms(t_b, t_c), ms(t_c, t_f0),
+                 ms(t_f0, t_d), ms(t_d, t_e), ms(t_e, t_end));
   }
 }
 
