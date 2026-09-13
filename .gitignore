@@ -106,3 +106,8 @@ benchmarks/**/STOP
 shard*
 *shard*
 hddi/
+# hora E[] sharded sweep (benchmarks/scripts/hora_eg_shards.py): only the MERGED table
+# benchmarks/results/eg/hora/hora_eg_t1.csv is tracked. Each per-family shard directory holds
+# its own partial CSV, seed and driver log -- working files of one run, superseded the moment
+# `hora_eg_shards.py merge` folds them in, and meaningless on any other machine.
+benchmarks/results/eg/hora/*/

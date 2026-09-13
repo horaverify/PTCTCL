@@ -876,87 +876,127 @@ twolock,twolock17,hora-omp,1,1,25,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[]
 twolock,twolock17,hora-omp,1,2,25,0.066,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs
 twolock,twolock17,hora-omp,1,1,27,0.067,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
 twolock,twolock17,hora-omp,1,2,27,0.068,0.007,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18)
-viking,viking4,hora-omp,1,1,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking4,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking4,hora-omp,1,1,170,0.067,0.007,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking4,hora-omp,1,2,170,0.067,0.006,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking4,hora-omp,1,1,101,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking4,hora-omp,1,2,101,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking4,hora-omp,1,1,69,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking4,hora-omp,1,2,69,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking4,hora-omp,1,1,6,0.071,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking4,hora-omp,1,2,6,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking4,hora-omp,1,1,170,0.068,0.005,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking4,hora-omp,1,2,170,0.076,0.005,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking4,hora-omp,1,1,101,0.076,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking4,hora-omp,1,2,101,0.070,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking4,hora-omp,1,1,69,0.076,0.005,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking4,hora-omp,1,2,69,0.072,0.005,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
 viking,viking4,hora-omp,1,1,16,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking4,hora-omp,1,2,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking4,hora-omp,1,1,115,0.067,0.006,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking4,hora-omp,1,2,115,0.068,0.006,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking6,hora-omp,1,1,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking6,hora-omp,1,2,6,0.067,0.006,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking6,hora-omp,1,1,994,0.217,0.007,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking6,hora-omp,1,2,994,0.218,0.007,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking6,hora-omp,1,1,574,0.118,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking6,hora-omp,1,2,574,0.118,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking4,hora-omp,1,2,16,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking4,hora-omp,1,1,115,0.070,0.005,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking4,hora-omp,1,2,115,0.070,0.005,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking6,hora-omp,1,1,6,0.071,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking6,hora-omp,1,2,6,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking6,hora-omp,1,1,994,0.070,0.007,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking6,hora-omp,1,2,994,0.069,0.007,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking6,hora-omp,1,1,574,0.070,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking6,hora-omp,1,2,574,0.072,0.006,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
 viking,viking6,hora-omp,1,1,442,0.068,0.007,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking6,hora-omp,1,2,442,0.067,0.007,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking6,hora-omp,1,1,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking6,hora-omp,1,2,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking6,hora-omp,1,1,862,0.334,0.007,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking6,hora-omp,1,2,862,0.334,0.007,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking10,hora-omp,1,1,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking10,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking10,hora-omp,1,1,8223,0.435,0.013,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking10,hora-omp,1,2,8223,0.388,0.013,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking10,hora-omp,1,1,3892,0.219,0.009,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking10,hora-omp,1,2,3892,0.219,0.009,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking10,hora-omp,1,1,3218,0.119,0.008,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking10,hora-omp,1,2,3218,0.119,0.008,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking10,hora-omp,1,1,16,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking10,hora-omp,1,2,16,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking10,hora-omp,1,1,6508,0.485,0.011,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking10,hora-omp,1,2,6508,0.486,0.011,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking6,hora-omp,1,2,442,0.070,0.007,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking6,hora-omp,1,1,16,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking6,hora-omp,1,2,16,0.069,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking6,hora-omp,1,1,862,0.068,0.007,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking6,hora-omp,1,2,862,0.070,0.007,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking10,hora-omp,1,1,6,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking10,hora-omp,1,2,6,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking10,hora-omp,1,1,8223,0.271,0.012,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking10,hora-omp,1,2,8223,0.270,0.012,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking10,hora-omp,1,1,3892,0.121,0.009,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking10,hora-omp,1,2,3892,0.120,0.009,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking10,hora-omp,1,1,3218,0.120,0.008,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking10,hora-omp,1,2,3218,0.118,0.009,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking10,hora-omp,1,1,16,0.072,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking10,hora-omp,1,2,16,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking10,hora-omp,1,1,6508,0.340,0.011,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking10,hora-omp,1,2,6508,0.340,0.011,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
 viking,viking12,hora-omp,1,1,6,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking12,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking12,hora-omp,1,1,17565,0.702,0.021,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking12,hora-omp,1,2,17565,0.702,0.021,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking12,hora-omp,1,1,7726,0.334,0.012,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking12,hora-omp,1,2,7726,0.334,0.012,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking12,hora-omp,1,1,6525,0.217,0.011,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking12,hora-omp,1,2,6525,0.220,0.011,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking12,hora-omp,1,1,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking12,hora-omp,1,2,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking12,hora-omp,1,1,13251,1.142,0.016,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking12,hora-omp,1,2,13251,1.073,0.016,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking15,hora-omp,1,1,6,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking15,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking15,hora-omp,1,1,44368,1.675,0.041,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking15,hora-omp,1,2,44368,1.678,0.041,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking15,hora-omp,1,1,17917,0.654,0.024,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking15,hora-omp,1,2,17917,0.654,0.024,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking15,hora-omp,1,1,15493,0.486,0.020,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking15,hora-omp,1,2,15493,0.486,0.021,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking12,hora-omp,1,2,6,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking12,hora-omp,1,1,17565,0.491,0.020,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking12,hora-omp,1,2,17565,0.491,0.019,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking12,hora-omp,1,1,7726,0.170,0.012,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking12,hora-omp,1,2,7726,0.171,0.012,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking12,hora-omp,1,1,6525,0.220,0.011,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking12,hora-omp,1,2,6525,0.221,0.011,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking12,hora-omp,1,1,16,0.072,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking12,hora-omp,1,2,16,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking12,hora-omp,1,1,13251,0.811,0.015,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking12,hora-omp,1,2,13251,0.810,0.015,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking15,hora-omp,1,1,6,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking15,hora-omp,1,2,6,0.071,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking15,hora-omp,1,1,44368,1.030,0.040,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking15,hora-omp,1,2,44368,1.030,0.040,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking15,hora-omp,1,1,17917,0.489,0.023,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking15,hora-omp,1,2,17917,0.491,0.022,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking15,hora-omp,1,1,15493,0.440,0.022,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking15,hora-omp,1,2,15493,0.443,0.022,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
 viking,viking15,hora-omp,1,1,16,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking15,hora-omp,1,2,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking15,hora-omp,1,1,31528,1.679,0.027,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking15,hora-omp,1,2,31528,1.676,0.027,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking17,hora-omp,1,1,6,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking17,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking17,hora-omp,1,1,74485,2.481,0.062,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking17,hora-omp,1,2,74485,2.475,0.062,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking17,hora-omp,1,1,28756,0.975,0.034,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking17,hora-omp,1,2,28756,0.972,0.034,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking17,hora-omp,1,1,25170,0.703,0.032,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking17,hora-omp,1,2,25170,0.703,0.032,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking17,hora-omp,1,1,16,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking17,hora-omp,1,2,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking17,hora-omp,1,1,51231,3.218,0.040,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking17,hora-omp,1,2,51231,3.218,0.040,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking20,hora-omp,1,1,6,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking20,hora-omp,1,2,6,0.067,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
-viking,viking20,hora-omp,1,1,145663,4.700,0.120,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking20,hora-omp,1,2,145663,4.675,0.120,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
-viking,viking20,hora-omp,1,1,53242,1.822,0.057,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking20,hora-omp,1,2,53242,1.823,0.057,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
-viking,viking20,hora-omp,1,1,47293,1.241,0.052,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking20,hora-omp,1,2,47293,1.240,0.052,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
-viking,viking20,hora-omp,1,1,16,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking20,hora-omp,1,2,16,0.067,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
-viking,viking20,hora-omp,1,1,96223,5.246,0.067,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
-viking,viking20,hora-omp,1,2,96223,5.205,0.067,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking15,hora-omp,1,2,16,0.068,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking15,hora-omp,1,1,31528,1.151,0.026,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking15,hora-omp,1,2,31528,1.150,0.026,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking17,hora-omp,1,1,6,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking17,hora-omp,1,2,6,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking17,hora-omp,1,1,74485,1.569,0.061,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking17,hora-omp,1,2,74485,1.573,0.061,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking17,hora-omp,1,1,28756,0.710,0.034,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking17,hora-omp,1,2,28756,0.708,0.034,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking17,hora-omp,1,1,25170,0.666,0.032,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking17,hora-omp,1,2,25170,0.710,0.032,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking17,hora-omp,1,1,16,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking17,hora-omp,1,2,16,0.070,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking17,hora-omp,1,1,51231,2.503,0.039,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking17,hora-omp,1,2,51231,2.500,0.039,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking20,hora-omp,1,1,6,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking20,hora-omp,1,2,6,0.069,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] y1 <= 40
+viking,viking20,hora-omp,1,1,145663,2.816,0.114,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking20,hora-omp,1,2,145663,2.822,0.114,OK,-,-,8,alu,adaptive,eg,1,NOT,E[] time <= 40
+viking,viking20,hora-omp,1,1,53242,1.028,0.055,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking20,hora-omp,1,2,53242,1.029,0.055,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] y1 <= 40 && !Viking1.safe
+viking,viking20,hora-omp,1,1,47293,1.197,0.052,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking20,hora-omp,1,2,47293,1.196,0.052,OK,-,-,8,alu,adaptive,eg,3,NOT,E[] (Viking1.safe || Viking1.unsafe) && y1 <= 40
+viking,viking20,hora-omp,1,1,16,0.075,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking20,hora-omp,1,2,16,0.069,0.006,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] !(Viking1.safe && Viking2.safe) && y1 <= 40
+viking,viking20,hora-omp,1,1,96223,4.126,0.066,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+viking,viking20,hora-omp,1,2,96223,4.116,0.066,OK,-,-,8,alu,adaptive,eg,5,NOT,E[] y1 <= 40 && (y2 <= 30 || y2 >= 35) && !Viking1.safe
+hddi,hddi2,hora-omp,1,1,8,0.070,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi2,hora-omp,1,2,8,0.068,0.005,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi2,hora-omp,1,1,8,0.069,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi2,hora-omp,1,2,8,0.067,0.005,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi2,hora-omp,1,1,3,0.067,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,2,3,0.068,0.005,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,1,8,0.069,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,2,8,0.067,0.005,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi2,hora-omp,1,1,8,0.067,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi2,hora-omp,1,2,8,0.071,0.005,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi10,hora-omp,1,1,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi10,hora-omp,1,1,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi10,hora-omp,1,1,3,0.068,0.006,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,2,3,0.068,0.006,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,1,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,2,40,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi10,hora-omp,1,1,40,0.068,0.007,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi10,hora-omp,1,2,40,0.070,0.007,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi15,hora-omp,1,1,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi15,hora-omp,1,2,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi15,hora-omp,1,1,60,0.070,0.008,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi15,hora-omp,1,2,60,0.069,0.008,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi15,hora-omp,1,1,3,0.069,0.008,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,2,3,0.069,0.007,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,1,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,2,60,0.069,0.008,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi15,hora-omp,1,1,60,0.069,0.008,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi15,hora-omp,1,2,60,0.068,0.008,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi20,hora-omp,1,1,80,0.068,0.011,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi20,hora-omp,1,2,80,0.071,0.010,OK,-,-,8,alu,adaptive,eg,-,SAT,E[] ST1.z <= 40
+hddi,hddi20,hora-omp,1,1,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi20,hora-omp,1,2,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] ST1.z <= 40 && !ST2.station_z_async
+hddi,hddi20,hora-omp,1,1,3,0.070,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,2,3,0.069,0.010,OK,-,-,8,alu,adaptive,eg,2,NOT,E[] (ST1.station_z_idle || ST1.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,1,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,2,80,0.068,0.011,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] !(ST1.station_z_sync && ST2.station_z_sync) && ST1.z <= 40
+hddi,hddi20,hora-omp,1,1,80,0.071,0.011,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
+hddi,hddi20,hora-omp,1,2,80,0.069,0.011,OK,-,-,8,alu,adaptive,eg,4,SAT,E[] ST1.z <= 20 && (ST2.z <= 15 || ST2.z >= 18)
