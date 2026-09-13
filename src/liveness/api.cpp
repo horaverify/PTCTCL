@@ -177,6 +177,71 @@ std::vector<int> LivenessEngine::eg_closure() {
   return S;
 }
 
+/// @brief The `!q` nodes the forward `p --> q` route may read a witness at.
+///
+/// @return every expanded, slotted node reachable through `!q` edges from an expanded, slotted
+///         `p /\ !q` node, the accepting nodes themselves included
+///
+/// @pre ::LivenessEngine::lazy_snapshot has installed the pre-seal adjacency.
+/// @note The counterpart of ::LivenessEngine::eg_closure, which seeds at the initial vertex
+///       because an `E[] psi` run must start there.  A leads-to counterexample may start
+///       anywhere, so every accepting node is a seed.
+std::vector<int> LivenessEngine::fwd_accepting_closure() {
+  grow();
+  const std::size_t N = nrec();
+  std::vector<int> out;
+  if (N == 0) return out;
+  // A record without a raw slot was compacted away; see ::LivenessEngine::fwd_accepting_closure
+  // in the header for why seeding one would manufacture a witness.
+  const auto usable = [&](std::size_t v) {
+    return expanded[v] && (!online_d_ || (v < online_raw_slot_.size() && online_raw_slot_[v] >= 0));
+  };
+  std::vector<char> in(N, 0);
+  std::vector<int> stk;
+  for (std::size_t v = 0; v < N; ++v)
+    if (usable(v) && is_nq(static_cast<int>(v)) && is_p(static_cast<int>(v))) {
+      in[v] = 1;
+      stk.push_back(static_cast<int>(v));
+    }
+  while (!stk.empty()) {
+    const int v = stk.back();
+    stk.pop_back();
+    out.push_back(v);
+    for (const auto& e : adj[v])
+      if (e.tgt >= 0 && e.tgt < static_cast<int>(N) && !in[e.tgt] && usable(e.tgt) &&
+          is_nq(e.tgt)) {
+        in[e.tgt] = 1;
+        stk.push_back(e.tgt);
+      }
+  }
+  return out;
+}
+
+/// @brief May `p --> q` be handed to the forward route?
+///
+/// Two things put the verdict out of the forward search's reach.
+///
+/// A `q` that constrains clocks arrives as a @ref detail::DelayAvoidSet, and for leads-to it is
+/// installed with `forward=false`: the path to the `p`-state is ordinary reachability that need
+/// not stay in `!q`, so the region confines the BACKWARD pass only and the stored zones carry no
+/// trace of it.  A cycle found among them is a cycle of the unrestricted system, which says
+/// nothing about a run that has to stay inside `!q`.
+///
+/// A `p` that constrains clocks needs the witness to begin at a valuation of the accepting node
+/// that satisfies `p` -- ::LivenessEngine::certificate_in intersects the fixpoint with
+/// ::LivenessEngine::p_region for exactly that reason.  The forward route reads a witness at a
+/// node the accepting one merely REACHES, and cannot say which valuations of the accepting node
+/// the path departs from, so it cannot honour that intersection.
+///
+/// Both fall back to the exact backward route, which handles them already.
+bool LivenessEngine::fwd_leadsto_ok() const {
+  if (avoid_) return false;
+  if (!p.clocks.empty()) return false;
+  for (const auto& t : p.forbid)
+    if (!t.clocks.empty()) return false;
+  return true;
+}
+
 bool LivenessEngine::eg_probe() {
   if (!fwd_ok_ || nrec() == 0) return false;
   const bool saved_capped = capped;         // sticky, and a probe must not condemn the real run
@@ -293,10 +358,25 @@ bool LivenessEngine::decide_leads_to(GfpStats* gs) {
   // where it cannot buy anything.
   if (network_has_diagonal(net) || force_exact_) return run(gs);
 
+  // The forward Buchi route replaces the backward fixpoint entirely; see
+  // ::LivenessEngine::fwd_leadsto_ok for the queries it cannot take, and
+  // src/liveness/forward_buchi.cpp for what it does with the rest.
+#ifdef HORA_LIVENESS_GFP
+  const bool fwd = false;
+#else
+  const bool fwd = fwd_leadsto_ok();
+#endif
+  fwd_leadsto_ = fwd;                       // ::LivenessEngine::grow sizes `pc`/`qc` for it
+
   // D = a_LU is known before the first successor in a globally time-open network.  Entering the
   // revocable-cover machinery in that case cannot refine a single cover; it only duplicates the
   // ordinary a_LU graph's key, edge, and replay metadata.
-  if (structurally_empty_d(*dead_net)) return run(gs);
+  //
+  // The forward route overrides that: it is built on the online graph -- raw adjacency, key
+  // registry, replay handles -- and none of it survives on the plain a_LU path, so declining the
+  // online construction here would decline the forward route with it.  What the shortcut saves is
+  // bookkeeping; what it would cost is the whole speedup.
+  if (!fwd && structurally_empty_d(*dead_net)) return run(gs);
 
   online_d_ = true;
   online_reset();
@@ -339,6 +419,21 @@ bool LivenessEngine::decide_leads_to(GfpStats* gs) {
       [](const OnlineKeyInfo& ki) { return ki.diag && !ki.diag->empty(); });
   const std::size_t bumped = std::count_if(online_am_.bump.begin() + 1, online_am_.bump.end(),
                                            [](std::int32_t x) { return x != kNoBump; });
+  if (fwd && fwd_ok_ && !cancelled() && !online_failed_) {
+    bool fwd_witness = false;
+    // Before the seal, for the same reason the `E[] psi` call is: ::LivenessEngine::online_finalize_graph
+    // releases the raw adjacency, the key registry and every replay handle the refinement wave
+    // needs, and rebuilds `adj` from what is left.
+    if (forward_buchi(/*leadsto=*/true, &fwd_witness)) {
+      online_finalize_graph();
+      fill_stats(gs);
+      return !fwd_witness;                  // a `p /\ EG !q` witness REFUTES the query
+    }
+  }
+  // A witness the construction or the declined forward route proved on the way is the verdict,
+  // and ::LivenessEngine::online_finalize_graph declines to seal a graph in that state -- so the
+  // backward pass below must not be handed one.  See ::LivenessEngine::leadsto_witness.
+  if (eg_early_hit_) { fill_stats(gs); return false; }
   if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
   const auto finalised = std::chrono::steady_clock::now();
   const std::size_t rss_fin = rss_mb();
@@ -433,13 +528,12 @@ bool LivenessEngine::decide_exists_invariant_run(GfpStats* gs) {
   // registry, cover map and raw adjacency are released.  Before the seal, materialising a
   // discarded successor is ::LivenessEngine::online_replay plus the ordinary worklist, which is
   // already incremental; after it, that machinery no longer exists.
-  // HORA_FWD: the forward-only Buchi prototype, src/liveness/forward_buchi.cpp.  It decides the
-  // query by two Tarjan runs instead of a backward fixpoint; it declines unless HORA_FWD_TRUST is
-  // also set, because the premise its soundness rests on is broken by zone merging here.
+  // The forward Buchi route, src/liveness/forward_buchi.cpp: two Tarjan runs and a demand-driven
+  // refinement wave instead of a backward fixpoint.  `-DHORA_LIVENESS_GFP=ON` compiles it out.
 #ifndef HORA_LIVENESS_GFP
   if (fwd_ok_ && !cancelled() && !online_failed_) {
     bool fwd_sat = false;
-    if (forward_buchi_eg(&fwd_sat)) {
+    if (forward_buchi(/*leadsto=*/false, &fwd_sat)) {
       if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
       fill_stats(gs);
       return fwd_sat;

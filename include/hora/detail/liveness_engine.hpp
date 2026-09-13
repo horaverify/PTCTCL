@@ -64,7 +64,7 @@ struct GfpTag {
 /// means "no promise outstanding".  Negative values keep that meaning; the non-negative values
 /// remain the online construction's own replay marker.
 /// The BACKWARD operator and FORWARD cycle detection disagree about what counts as safe, and the
-/// difference is the whole reason ::LivenessEngine::forward_buchi_eg needs its own marker.
+/// difference is the whole reason ::LivenessEngine::forward_buchi needs its own marker.
 ///
 ///   * `X subseteq Z_tgt` (inclusion cover) is SAFE BACKWARD -- `Pre` against a superset of the
 ///     exact successor loses no predecessor -- but it is a SUBSUMPTION EDGE FORWARD: it jumps to
@@ -279,6 +279,13 @@ class LivenessEngine {
   // counterexample, so the forward search may stop the moment one is found.
   bool leadsto_early_ = false;
   bool online_eg_prune_ = false;
+  /// @brief `p --> q` is being decided by the forward route (src/liveness/forward_buchi.cpp).
+  ///
+  /// Read by ::LivenessEngine::grow: that route runs BEFORE the seal, where the online path
+  /// normally leaves `pc` and `qc` unsized because nothing consults the vertex predicates until
+  /// ::LivenessEngine::online_finalize_graph has rebuilt the graph.  The forward route consults
+  /// them every round, to find the accepting nodes its closure is seeded from.
+  bool fwd_leadsto_ = false;
   /// @brief Stop the forward search at the first record holding a deadlocked valuation.
   bool deadlock_scan_ = false;
   bool deadlock_hit_ = false;   ///< set by the scan; meaningful only when @ref deadlock_scan_
@@ -695,8 +702,8 @@ class LivenessEngine {
   bool online_replay_cached(int source, int ordinal, int key, detail::SymState& out);
   int lazy_replay_src_ = -1;                       ///< source the cached batch belongs to
   std::vector<detail::SymState> lazy_replay_succ_; ///< its successors, in tagged_successors order
-  // ---- forward-only Buchi prototype (src/liveness/forward_buchi.cpp, HORA_FWD) --------------
-  /// @brief Decide `E[] psi` by cycle detection on the forward graph, with no backward pass.
+  // ---- forward Buchi route (src/liveness/forward_buchi.cpp) ---------------------------------
+  /// @brief Decide `E[] psi` or `p --> q` by cycle detection, with no backward pass.
   ///
   /// Herbreteau/Srivathsan/Tran/Walukiewicz, FSTTCS 2016, Theorem 6: the abstract zone graph has
   /// an infinite accepting path iff a *liveness compatible* subsumption graph has one consisting
@@ -704,9 +711,28 @@ class LivenessEngine {
   /// accepting node and a subsumption edge.  For `E[] psi` every node of the psi-closure is
   /// accepting, so C5 reduces to "no cover edge lies on a cycle", and the verdict becomes two
   /// Tarjan runs instead of a greatest fixpoint: no `Pre`, no federations, no zone algebra at all.
-  /// @param[out] sat set only when the prototype reaches a verdict of its own
+  /// `p --> q` is the same search with a different seed.  Its counterexample is
+  /// `EF(p /\ EG !q)`, so the accepting set is the `!q` closure of the `p /\ !q` nodes rather
+  /// than the psi-closure of the initial vertex, and the answer is negated: a witness there
+  /// REFUTES the query.  See ::LivenessEngine::fwd_leadsto_ok for when that is legitimate.
+  ///
+  /// @param leadsto      seed from every accepting `p /\ !q` node instead of the initial vertex
+  /// @param[out] witness set only on a verdict: an infinite or maximal accepting run exists
   /// @return @c false when it declines, and the caller must use the backward route
-  bool forward_buchi_eg(bool* sat);
+  bool forward_buchi(bool leadsto, bool* witness);
+  /// @brief The `!q` closure of the accepting nodes, as the forward route needs it.
+  ///
+  /// ::LivenessEngine::accepting_closure answers the same question on the SEALED graph.  This one
+  /// runs against the snapshot ::LivenessEngine::lazy_snapshot installs, where a record that lost
+  /// its raw slot to compaction has no adjacency of its own and must not be seeded: an empty
+  /// adjacency reads as a maximal run to ::LivenessEngine::stop_set, and the node would report a
+  /// witness it does not have.  Dropping it loses nothing, because its coverer carries the same
+  /// discrete key -- hence the same `p` and `q` -- and a larger zone.
+  std::vector<int> fwd_accepting_closure();
+  /// @brief May `p --> q` be handed to the forward route at all?
+  ///
+  /// @return @c false when the verdict needs a zone the forward search does not carry
+  bool fwd_leadsto_ok() const;
   /// @brief Emit the per-query refinement census under `HORA_REFINE_STATS`.
   void lazy_report(bool verdict);
   /// @brief Nodes whose backward value can have changed since the last fixpoint pass.

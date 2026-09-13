@@ -405,6 +405,13 @@ void LivenessEngine::grow() {
     if (online_raw_slot_.size() < n) online_raw_slot_.resize(n, -1);
     if (online_inq_.size() < n) online_inq_.resize(n, 0);
     if (online_eg_prune_ && qc.size() < n) qc.resize(n, 2);
+    // The forward `p --> q` route reads the vertex predicates before the seal; see
+    // ::LivenessEngine::fwd_leadsto_.  Nothing else on the online path does, so this stays off
+    // by default rather than costing every query two bytes a record.
+    if (fwd_leadsto_) {
+      if (pc.size() < n) pc.resize(n, 2);
+      if (qc.size() < n) qc.resize(n, 2);
+    }
     return;
   }
   if (pc.size() < n) pc.resize(n, 2);

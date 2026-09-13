@@ -1,11 +1,13 @@
 /// @file src/liveness/forward_buchi.cpp
-/// @brief PROTOTYPE: decide `E[] psi` by cycle detection on the forward graph, with no backward
-///        pass at all.  Enabled by HORA_FWD; the production route is unaffected.
+/// @brief Decide `E[] psi` and `p --> q` by cycle detection on the forward graph, with no
+///        backward pass at all.  The production route; `-DHORA_LIVENESS_GFP=ON` selects the
+///        backward greatest fixpoint instead.
 ///
 /// The backward greatest fixpoint is 89-96% of the runtime on the expensive refuted rows
 /// (fischer8 q3, twolock10 q3).  It is there because a cycle in a SUBSUMED zone graph need not
 /// correspond to a run -- a cover edge can close a loop no concrete execution realises.  This
-/// file asks what happens if the cover edges are simply excluded from the cycle search instead.
+/// file excludes the cover edges from the cycle search instead, and repairs the ones that
+/// matter.
 ///
 /// The justification is Herbreteau, Srivathsan, Tran and Walukiewicz, "Why Liveness for Timed
 /// Automata Is Hard, and What We Can Do About It", FSTTCS 2016.  Their Definition 5 calls a
@@ -17,29 +19,32 @@
 /// liveness compatible subsumption graph has one made of ordinary edges.  Both directions, so the
 /// reduction is exact rather than an under-approximation.
 ///
-/// For `E[] psi` every node of the psi-closure is accepting -- the run has only to stay in psi --
-/// so C5 collapses to "no cover edge lies on a cycle", and the whole verdict is two Tarjan runs:
+/// Every node of the accepting set is accepting here -- the run has only to stay in it -- so C5
+/// collapses to "no cover edge lies on a cycle", and the whole verdict is two Tarjan runs:
 ///
-///   * a cycle among EXACT edges is an accepting run          -> SAT
+///   * a cycle among EXACT edges is an accepting run          -> witness
 ///   * a cover edge inside a cycle violates C5                -> that cover must be refined
-///   * neither                                                -> NOT
+///   * neither                                                -> no infinite witness
 ///
-/// No `Pre`, no federations, no zone algebra whatsoever in the decision.
+/// No `Pre`, no federations, no zone algebra whatsoever in the decision.  The two queries differ
+/// only in what the accepting set is, and in the sign of the answer:
+///
+///   * `E[] psi`  accepts the psi-closure of the initial vertex; a witness SATISFIES it.
+///   * `p --> q`  accepts the `!q` closure of the `p /\ !q` nodes; a witness REFUTES it.
 ///
 /// @note The premise the cycle argument needs -- a node being one abstracted post image -- is met
 /// here.  The classical argument behind Theorem 6 needs every node to be exactly
 /// `a(post_t(.))` of a single predecessor: a cycle then gives `a(post^n(Z)) = Z`, and since
 /// `a(empty) = empty`, `Z` non-empty forces `post^n(Z)` non-empty, which is what yields the
-/// concrete run.  ::LivenessEngine::online_intern deliberately breaks that premise -- it merges by
-/// exact convex union (`Dbm::try_union`), and the fixed-map ::LivenessEngine::intern also rewrites
-/// zones in place -- so a stored zone can be strictly larger than any single post image, and then
-/// `post^n(Z_0)` can be EMPTY while every zone on the cycle is non-empty.  That is precisely the
-/// unsoundness hora/liveness.hpp records: "`Z1 = post(Z)` gives every valuation of `Z1` a
-/// predecessor in `Z`, not every valuation of `Z` a successor in `Z1`."
+/// concrete run.  ::LivenessEngine::online_intern can break that premise -- it merges by exact
+/// convex union (`Dbm::try_union`), so a stored zone can be a union of several post images rather
+/// than one.  A merged node is therefore matched against the PIECES it absorbed
+/// (::LivenessEngine::online_merge_pieces_), which is the same question the unmerged graph would
+/// have answered, and ::LivenessEngine::fwd_refining_ stops the merging outright once refinement
+/// begins.
 ///
-/// So a cycle found here is a *candidate*, and this file exists to measure how often the candidate
-/// is right and what the cycle search costs, not to be believed.  Reading HORA_FWD_TRUST=1 makes
-/// it answer anyway, for differential runs against the backward route.
+/// @note Node identity throughout is `a_LU`-EQUIVALENCE, not zone equality; see the comment in
+/// `refresh_ord` below, which is where getting it wrong costs both termination and the verdict.
 
 #include "hora/zone.hpp"
 #include "hora/detail/liveness_engine.hpp"
@@ -126,7 +131,7 @@ int scc_of(std::size_t n, const std::vector<char>& inS, Succ&& succ, std::vector
 
 }  // namespace
 
-bool LivenessEngine::forward_buchi_eg(bool* sat) {
+bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
   const auto t0 = std::chrono::steady_clock::now();
   static const bool dbg = std::getenv("HORA_FWD_DBG") != nullptr;
   std::size_t rounds = 0, refined = 0, nodes_before = nrec();
@@ -191,16 +196,26 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
         // fix for a model where D fires.
         detail::SymState xs;
         xs.zone = succ[e.ordinal].zone;
-        bool ordinary = online_equiv(xs, e.tgt, online_key_of_[e.tgt]);
-        if (!ordinary) {
-          // A merged target is a union of exact post images, so the successor may match one of
-          // the PIECES even though it cannot match the union.  That is the same question the
-          // unmerged graph would have answered; see ::LivenessEngine::online_merge_pieces_.
-          const auto it = online_merge_pieces_.find(e.tgt);
-          if (it != online_merge_pieces_.end())
-            for (const Dbm& pc : it->second)
-              if (pc == succ[e.ordinal].zone) { ordinary = true; break; }
-        }
+        // A MERGED TARGET IS NEVER ORDINARY, and matching the absorbed PIECES is not a way
+        // around that.  It is tempting: ::LivenessEngine::online_intern merges by exact convex
+        // union, so `post_e(Z_src)` can equal one piece of `Z_tgt` and the edge looks like the
+        // one the unmerged graph would have had.  But the merged node's OUTGOING edges are
+        // computed from the whole union, so a cycle through it composes "enter via piece P" with
+        // "leave via P u P' u ...", which is not one concrete run -- the premise Theorem 6 needs,
+        // a node being ONE abstracted post image, is exactly what merging gave up.
+        //
+        // Measured on phil4 `P0.Eat --> P0.Dropped`: P2 laps Think -> HoldL -> Eat -> Dropped
+        // while P0 sits in Eat under `c0 <= 2`, and each lap must burn a time unit to pass
+        // `c2 >= 1`, so at most two fit and the query is SATISFIED.  With the piece match that
+        // four-node cycle read as ordinary and the route answered NOT.  grc4 `T0.in --> T0.far`
+        // is the same shape.
+        //
+        // Left as a cover the edge becomes an ordinary C5 obligation, and refinement splits the
+        // piece back out into a record of its own -- the honest repair, and a cheap one: phil4
+        // settles in 3 refinements and 8 extra records.
+        const bool ordinary = online_equiv(xs, e.tgt, online_key_of_[e.tgt]) &&
+                              !(e.tgt < static_cast<int>(online_merged_.size()) &&
+                                online_merged_[e.tgt]);
         if (ordinary) ord[v].push_back(e.tgt);
       }
     }
@@ -217,7 +232,8 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
   for (;; ++rounds) {
     if (cancelled() || online_failed_) return false;
     // A CONCRETE WITNESS, already proven.  ::LivenessEngine::online_drain_forward_work runs the
-    // E[] probe -- an exact backward solve over the partial closure -- and stops the moment it
+    // early-witness probes -- an exact backward solve over the partial closure for `E[] psi`, a
+    // `p /\ !q` valuation that ends a maximal run for leads-to -- and stops the moment one
     // succeeds; the refinement wave below drains, so the hit can land in the middle of one.  That
     // flag is the verdict and must be read before anything else, because the same stop leaves
     // every record the wave had queued UNEXPANDED, and `lazy_snapshot` then projects a truncated
@@ -225,7 +241,7 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
     // single5 `E[] x0 <= 6`: the probe hit at 381 records, the drains stopped, and the next two
     // rounds watched the full-graph cycle count fall 78 -> 15 -> 0 and answered NOT for a
     // satisfied query.
-    if (eg_early_hit_) { *sat = true; return true; }
+    if (eg_early_hit_) { *witness = true; return true; }
 
     std::vector<std::vector<OtfEdge>> saved_adj;
     std::vector<int> saved_key;
@@ -236,9 +252,13 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
     std::size_t exact_cycles = 0, unsafe = 0, covers = 0, edges = 0;
     std::vector<LazyObligation> obligations;
     {
-      const std::vector<int> S = eg_closure();
+      // The accepting set.  For `E[] psi` it is the psi-closure of the initial vertex, and an
+      // empty one means node 0 already fails psi.  For `p --> q` it is the `!q` closure of the
+      // `p /\ !q` nodes, and an empty one means the query has no antecedent to violate: both
+      // read as "no witness", which is SAT for the first query and REFUTED-NOT for the second.
+      const std::vector<int> S = leadsto ? fwd_accepting_closure() : eg_closure();
       if (S.empty()) {
-        decided = true;                       // node 0 fails psi: no run can stay in it
+        decided = true;
         verdict = false;
       } else {
         const std::size_t n = nrec();
@@ -246,7 +266,103 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
         for (int v : S)
           if (v >= 0 && v < static_cast<int>(n)) inS[v] = 1;
         settled.resize(n, 0);
+
+        // THE CRITERION RUNS FIRST, because it can retire the whole round.
+        //
+        // It is a sufficient condition for "no infinite run can stay in this key component"; see
+        // ::LivenessEngine::lazy_build_key_sccs for the two conjuncts.  Its usual job below is to
+        // exonerate covers, but when it kills EVERY component the accepting set touches it has
+        // said something much stronger: an infinite run's key sequence is an infinite path in a
+        // finite key graph, so it must end up inside one key-SCC, and every candidate SCC is
+        // dead.  No infinite witness exists anywhere in `S`, and the ordinary-edge sweep and both
+        // Tarjan passes below are then searching for a cycle that cannot be there.
+        //
+        // This is the arbiter ladder.  arbiter12 `E[] (C0.idle || C0.want) && x0 <= 40` reports
+        // `key-sccs=2050 dead=2050` and then spent 158 ms re-deriving every node's successors for
+        // `ord` and 66 ms on the two searches; arbiter14 spent 982 ms and 518 ms.  Every one of
+        // those covers was exonerated anyway -- `dead_tgt=180224` on arbiter12 -- so the round's
+        // answer is unchanged and only the work goes away.
+        //
+        // The one thing this gives up is a cross-check: today an ordinary cycle found in a
+        // component the criterion calls dead would short-circuit to a witness before the
+        // criterion is ever consulted.  That cannot happen if the criterion is sound -- conjunct
+        // (b) makes every cycle burn time and (a) forbids a time-divergent run -- so the two can
+        // only ever disagree when the criterion is wrong, and the shortcut makes that a verdict
+        // instead of a contradiction.
+        std::vector<int> key_comp;
+        std::vector<char> comp_live;
+        lazy_build_key_sccs(&key_comp, &comp_live);
+        auto live_at = [&](int node) {
+          if (node < 0 || node >= static_cast<int>(nrec())) return true;
+          const int k = online_key_of_[node];
+          if (k < 0 || k >= static_cast<int>(key_comp.size())) return true;
+          const int c = key_comp[k];
+          if (c < 0 || c >= static_cast<int>(comp_live.size())) return true;
+          return comp_live[c] != 0;
+        };
+        bool any_live = false;
+        for (int v : S)
+          if (live_at(v)) { any_live = true; break; }
+
+        // R: THE PART OF THE CLOSURE A WITNESS MAY BE READ AT.
+        //
+        // `S` is closed under ALL edges, cover edges included, and that is the wrong relation to
+        // compose a witness back along.  A cover edge `u -> v` says `post_e(u) subseteq
+        // a_LU(Z_v)`: `Z_v` is the LARGER zone, so a run starting in `Z_v` need not start
+        // anywhere `u` can reach, and a cycle behind such an edge is not a run from `u` at all.
+        // An ORDINARY edge is `a_LU`-EQUIVALENCE, which is symmetric, so a run from `Z_tgt` is
+        // matched by a run from `post_e(Z_src)` and the witness does compose backwards.
+        //
+        // `E[] psi` never needed this.  ::LivenessEngine::online_eg_prune_ expands only
+        // psi-nodes, so every node of the psi-closure was CREATED as the exact post image of an
+        // expanded psi-node -- an ordinary edge, by construction -- and the creator chain back to
+        // node 0 is already all-ordinary.  R is S there and computing it would be dead work.
+        //
+        // `p --> q` has no such prune: the path to the `p`-node is ordinary reachability that may
+        // leave `!q`, so a node of the `!q` closure can be reachable from an accepting node only
+        // THROUGH a cover, and R is then strictly smaller than S.
+        //
+        // No benchmark row is known to distinguish the two -- the phil4 and grc4 false witnesses
+        // that first exposed a gap here were the merged-node bug above, not this -- so R is here
+        // because it is the relation the composition argument actually licenses, not because a
+        // measurement forced it.
+        std::vector<char> inR;
+        const auto build_R = [&] {                 // needs `ord`, so only after refresh_ord
+          if (!leadsto) { inR = inS; return; }
+          inR.assign(n, 0);
+          std::vector<int> rstk;
+          for (int v : S)
+            if (is_nq(v) && is_p(v)) { inR[v] = 1; rstk.push_back(v); }
+          while (!rstk.empty()) {
+            const int v = rstk.back();
+            rstk.pop_back();
+            for (int w : ord[v])
+              if (w >= 0 && w < static_cast<int>(n) && !inR[w]) { inR[w] = 1; rstk.push_back(w); }
+          }
+        };
+
+        if (!any_live) {
+          // No infinite witness is possible, so only the MAXIMAL FINITE half is left -- the same
+          // `stop_set` pass the `unsafe == 0` branch runs below, and the same reasoning for why a
+          // non-empty one at any `v` of R is a witness.
+          //
+          // `E[] psi` needs nothing computed for this: R is S there.  `p --> q` restricts the
+          // scan to R, which is defined through `ord`, so it still pays the sweep -- but not the
+          // two searches.
+          if (leadsto) refresh_ord(S, inS);
+          build_R();
+          decided = true;
+          verdict = false;
+          for (int v : S)
+            if (inR[v] && !stop_set(v).empty()) { verdict = true; break; }
+          if (dbg)
+            std::fprintf(stderr, "FWD-DIAG round=%zu nrec=%zu |S|=%zu all-components-dead"
+                                 " stop_witness=%d lost=%zu\n",
+                         rounds, n, S.size(), (int)verdict, lost_edges);
+        } else {
+
         refresh_ord(S, inS);
+        build_R();
 
         const auto t_scc = std::chrono::steady_clock::now();
         // (1) A cycle of ORDINARY edges is an accepting run -- every node of the psi-closure is
@@ -257,7 +373,10 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
           for (int w : ord[v]) out->push_back(w);
         };
         scc_of(n, inS, ord_succ, &comp, &cyclic);
-        for (std::size_t c = 0; c < cyclic.size(); ++c) exact_cycles += cyclic[c] ? 1 : 0;
+        // Only a component R reaches.  R is closed under ordinary edges, so a cyclic component
+        // with one member in R lies wholly inside it.
+        for (int v : S)
+          if (inR[v] && comp[v] >= 0 && cyclic[comp[v]]) { ++exact_cycles; break; }
 
         if (exact_cycles != 0) {
           decided = true;
@@ -279,18 +398,9 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
           //
           // It is a sufficient condition for "dead" and so can only ever leave MORE covers unsafe
           // than necessary, never fewer -- it cannot manufacture a verdict, only save work.
-          // HORA_FWD_NOCRIT turns it off to price it.
-          std::vector<int> key_comp;
-          std::vector<char> comp_live;
-          lazy_build_key_sccs(&key_comp, &comp_live);
-          auto live_at = [&](int node) {
-            if (node < 0 || node >= static_cast<int>(nrec())) return true;
-            const int k = online_key_of_[node];
-            if (k < 0 || k >= static_cast<int>(key_comp.size())) return true;
-            const int c = key_comp[k];
-            if (c < 0 || c >= static_cast<int>(comp_live.size())) return true;
-            return comp_live[c] != 0;
-          };
+          // `--criterion` selects how the components it leaves live are settled.  It has already
+          // run, above the ordinary-edge sweep, because an all-dead census retires the round
+          // outright; `live_at` is its readout.
           std::vector<int> fcomp;
           std::vector<char> fcyclic;
           auto all_succ = [&](int v, std::vector<int>* out) {
@@ -320,14 +430,14 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
           // UNSAFE components, per Definition 3.3: a component is unsafe when it carries a
           // subsumption edge with both ends inside it AND contains an accepting node.
           //
-          // "Accepting" is where our criterion enters the paper's framework.  For `E[] psi` every
-          // node of the closure is nominally accepting, which makes C5 condemn every cover.  But
+          // "Accepting" is where our criterion enters the paper's framework.  Every node of the
+          // closure is nominally accepting, which makes C5 condemn every cover.  But
           // a component the criterion proves cannot host an infinite psi-run has, for Buchi
           // purposes, no accepting node at all -- no run visits it infinitely often -- so C5 has
           // nothing to say about its cycles.  `live_at` is exactly that test.
           std::vector<char> comp_clean(fcyclic.size(), 1);
           for (int v : S) {
-            if (settled[v]) continue;
+            if (settled[v] || !inR[v]) continue;   // a cover R cannot reach owes nothing
             for (const OtfEdge& e : adj[v]) {
               ++edges;
               if (std::find(ord[v].begin(), ord[v].end(), e.tgt) != ord[v].end()) continue;
@@ -405,25 +515,28 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
           } else if (unsafe == 0) {
             // BOTH HALVES, and this is the second one.
             //
-            // `E[] psi` is satisfied by an infinite run OR by a maximal FINITE one -- a deadlock,
-            // or a state time can diverge in.  The cycle search above decides only the infinite
-            // half.  Answering `NOT` on "no ordinary cycle and liveness compatible" silently
-            // assumes the forward search's early-exit caught every `Stop` witness, and on single4
-            // it does not: q2 and q3 are satisfied, no cycle exists, and the route reported `NOT`.
+            // Both queries are witnessed by an infinite run OR by a maximal FINITE one -- a
+            // deadlock, or a state time can diverge in.  The cycle search above decides only the
+            // infinite half.  Answering "no witness" on "no ordinary cycle and liveness
+            // compatible" silently assumes the forward search's early-exit caught every `Stop`
+            // witness, and on single4 it does not: q2 and q3 are satisfied, no cycle exists, and
+            // the route reported `NOT`.
             //
             // ::LivenessEngine::stop_set is the same term the backward operator uses, computed
-            // exactly on the stored zone, and a non-empty one at any `v` of the psi-closure IS a
-            // witness: `v` is joined to the initial state by a psi-path, so the maximal run that
-            // ends there composes into a maximal run from the start.  One pass over `S`, no
-            // fixpoint.
+            // exactly on the stored zone, and a non-empty one at any `v` of the accepting set IS
+            // a witness.  Every such `v` is joined to a seed by a path inside the set -- the
+            // initial vertex for `E[] psi`, an accepting `p /\ !q` node for `p --> q` -- so the
+            // maximal run that ends at `v` composes with that path into a maximal run from the
+            // seed.  One pass over `S`, no fixpoint.
             decided = true;
             verdict = false;
             for (int v : S)
-              if (!stop_set(v).empty()) { verdict = true; break; }
+              if (inR[v] && !stop_set(v).empty()) { verdict = true; break; }
           }
         }
         ms_scc += std::chrono::duration_cast<std::chrono::microseconds>(
                       std::chrono::steady_clock::now() - t_scc).count() / 1000.0;
+        }                                          // end: some component is live
       }
     }
     lazy_restore(&saved_adj, &saved_key);
@@ -434,15 +547,15 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
       if (dbg)
         std::fprintf(stderr,
                      "FWD nodes=%zu->%zu edges=%zu covers=%zu cycles=%zu unsafe=%zu rounds=%zu "
-                     "refined=%zu %s ms=%.2f (ord=%.2f scc=%.2f refine=%.2f)\n",
+                     "refined=%zu %s%s ms=%.2f (ord=%.2f scc=%.2f refine=%.2f)\n",
                      nodes_before, nrec(), edges, covers, exact_cycles, unsafe, rounds, refined,
-                     how, ms, ms_ord, ms_scc, ms_refine);
+                     leadsto ? "leadsto " : "", how, ms, ms_ord, ms_scc, ms_refine);
     };
 
     if (truncated) { report("undecided=truncated"); return false; }
     if (decided) {
-      report(verdict ? "verdict=SAT" : "verdict=NOT");
-      *sat = verdict;
+      report(verdict ? "witness=yes" : "witness=no");
+      *witness = verdict;
       return true;
     }
     if (obligations.empty()) {                // unsafe covers with nothing left to refine
@@ -475,9 +588,10 @@ bool LivenessEngine::forward_buchi_eg(bool* sat) {
       if (!lazy_materialise(ob)) { report("undecided=replay-failed"); return false; }
       if (cancelled() || online_failed_) { report("undecided=aborted"); return false; }
       // The replay drains the forward worklist, so the probe can prove the query here; see the
-      // top of the loop.  Stopping now also stops the wave from queueing records that would
-      // never be expanded.
-      if (eg_early_hit_) { report("verdict=SAT-probe"); *sat = true; return true; }
+      // top of the loop.  Either early-witness shape counts -- a `p /\ !q` valuation that ends a
+      // maximal run, or an `E[] psi` terminal one -- and both are concrete.  Stopping now also
+      // stops the wave from queueing records that would never be expanded.
+      if (eg_early_hit_) { report("witness=yes-probe"); *witness = true; return true; }
     }
     dirty.resize(nrec(), 1);
     for (std::size_t v = before_nodes; v < nrec(); ++v) dirty[v] = 1;

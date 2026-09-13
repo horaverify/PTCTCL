@@ -881,6 +881,14 @@ void LivenessEngine::online_finalize_graph() {
   if (!fwd_ok_ || cancelled() || online_failed_) return;
 
   for (;;) {
+    // THE VERDICT IS ALREADY DECIDED, so there is nothing left to seal the graph FOR.  An early
+    // witness stops every drain -- ::LivenessEngine::online_drain_forward_work breaks on
+    // `eg_early_hit_` -- so a record woken below would never be expanded, the next pass would
+    // find it unresolvable and wake it again, and this loop would not terminate.  The seal exists
+    // only to hand a complete graph to the backward solver, and no caller runs that solver once
+    // the witness is proven.  Measured: single5 `E[] P.A && x0 <= 4` spun here indefinitely once
+    // a refinement wave left one materialised record queued behind the hit.
+    if (eg_early_hit_) return;
     bool woke = false;
     for (std::size_t u = 0; u < nrec(); ++u) {
       if (!online_active_[u] || !expanded[u]) continue;
