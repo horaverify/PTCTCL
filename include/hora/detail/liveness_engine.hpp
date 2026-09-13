@@ -690,7 +690,12 @@ class LivenessEngine {
   /// Computed once: the key graph is closed under refinement, because a covered successor's
   /// enabled transitions are a subset of its coverer's and the coverer is expanded, so every key
   /// edge a materialised record can produce is already present.
-  void lazy_build_key_sccs(std::vector<int>* comp, std::vector<char>* comp_live);
+  /// @param nodes  optional membership filter: only these records contribute keys and edges.
+  ///               Restricting it to the accepting closure is sound -- a witness run never leaves
+  ///               that set -- and much sharper, because the components come out smaller and both
+  ///               conjuncts then have fewer keys to bind and fewer transitions to avoid.
+  void lazy_build_key_sccs(std::vector<int>* comp, std::vector<char>* comp_live,
+                           const std::vector<char>* nodes = nullptr);
   /// @brief Collect the unresolved covered edges that can still carry a recurrent witness.
   void lazy_collect(const std::vector<int>& S, const std::vector<Federation>& W,
                     const std::vector<int>& key_comp, const std::vector<char>& comp_live,

@@ -114,7 +114,8 @@ void LivenessEngine::lazy_restore(std::vector<std::vector<OtfEdge>>* saved_adj,
   saved_key->clear();
 }
 
-void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<char>* comp_live) {
+void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<char>* comp_live,
+                                         const std::vector<char>* nodes) {
   Phase phase(&lazy_.ms_scc);
   ++lazy_.scc_builds;
   const std::size_t nk = online_key_by_id_.size();
@@ -126,18 +127,61 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
   // read out of `online_key_edges_`: that skeleton exists only once D has an atom to pull back
   // (::LivenessEngine::online_enable_key_graph), and D finds no atom at all on the models this
   // loop is for, so it is empty exactly when it would be needed.
+  // ONLY THE KEYS A WITNESS MAY LIVE IN.  A maximal `E[] psi` run satisfies psi at every step,
+  // and a `p --> q` counterexample is inside `!q` from the accepting node onwards, so a key where
+  // the query predicate fails lies on no witness and neither do its edges.  Dropping them splits
+  // the key graph into smaller components, and BOTH conjuncts below get easier: fewer keys for
+  // one clock to be bounded at, fewer transitions that could reset it.  The reasoning is
+  // unchanged -- an infinite witness run's key sequence is an infinite path in this restricted
+  // graph, so it still settles inside one of its SCCs.
+  //
+  // `E[] psi` barely notices: ::LivenessEngine::online_eg_prune_ already leaves a non-psi record
+  // unexpanded, so its key contributes no edges either way.  `p --> q` has no such prune -- the
+  // path to the `p`-node is ordinary reachability that may leave `!q` -- and without this the
+  // whole reachable graph is one component the criterion cannot kill: grc4 `T0.in --> T0.far`
+  // reported `key-sccs=1 dead=0`, C5 then condemned every cover on a cycle, and refinement walked
+  // toward the containment graph (15 rounds, 37,656 refinements, 1,335 -> 28,405 records) while
+  // grc5 did not finish at all.
+  // A record contributes at all only if @p nodes admits it.  The caller passes the accepting
+  // closure, which on a leads-to query is a tiny slice of the graph -- 512 records of 624,452 on
+  // twolock10 `P0.reqB --> P0.waitB` -- while this function otherwise walks every record twice
+  // and cost 876 ms of that query's 915 ms route time.
+  const auto admits = [&](std::size_t v) {
+    return !nodes || (v < nodes->size() && (*nodes)[v]);
+  };
+  std::vector<char> key_ok(nk, 1);
+  {
+    detail::SymState ks;
+    for (std::size_t k = 0; k < nk; ++k) {
+      key_state(static_cast<int>(k), ks);
+      key_ok[k] = holds(q, ks) ? 0 : 1;
+    }
+  }
+  // With a filter, a key is in play only if some admitted record carries it.  Without this the
+  // Tarjan below still roots at every `!q` key in the whole graph.
+  if (nodes) {
+    std::vector<char> key_used(nk, 0);
+    for (std::size_t v = 0; v < nrec(); ++v)
+      if (admits(v) && expanded[v] && online_raw_slot_[v] >= 0) {
+        const int kv = online_key_of_[v];
+        if (kv >= 0 && kv < static_cast<int>(nk)) key_used[kv] = 1;
+      }
+    for (std::size_t k = 0; k < nk; ++k)
+      if (!key_used[k]) key_ok[k] = 0;
+  }
+
   std::vector<std::vector<int>> kadj(nk);
   std::vector<std::vector<int>> ktag(nk);           // the transition behind each key edge
   {
     std::vector<int> seen(nk, -1);
     for (std::size_t v = 0; v < nrec(); ++v) {
-      if (!expanded[v] || online_raw_slot_[v] < 0) continue;
+      if (!admits(v) || !expanded[v] || online_raw_slot_[v] < 0) continue;
       const int kv = online_key_of_[v];
-      if (kv < 0 || kv >= static_cast<int>(nk)) continue;
+      if (kv < 0 || kv >= static_cast<int>(nk) || !key_ok[kv]) continue;
       for (const OtfEdge& e : online_raw_adj_[online_raw_slot_[v]]) {
-        const int t = (e.tgt >= 0 && e.tgt < static_cast<int>(nrec()))
+        const int t = (e.tgt >= 0 && e.tgt < static_cast<int>(nrec()) && admits(e.tgt))
                           ? online_key_of_[e.tgt] : -1;
-        if (t < 0 || t >= static_cast<int>(nk) || seen[t] == kv) continue;
+        if (t < 0 || t >= static_cast<int>(nk) || !key_ok[t] || seen[t] == kv) continue;
         seen[t] = kv;
         kadj[kv].push_back(t);
         ktag[kv].push_back(e.tag);
@@ -153,7 +197,7 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
   std::vector<int> members;                       // component sizes, 0 when provably acyclic
   int next = 0, ncomp = 0;
   for (std::size_t root = 0; root < nk; ++root) {
-    if (idx[root] != -1) continue;
+    if (idx[root] != -1 || !key_ok[root]) continue;   // no witness passes through it
     call.push_back({static_cast<int>(root), 0});
     idx[root] = low[root] = next++;
     stk.push_back(static_cast<int>(root));
@@ -257,7 +301,7 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
   detail::SymState ksc;
   for (std::size_t k = 0; k < nk; ++k) {
     const int c = (*comp)[k];
-    if (c < 0) continue;
+    if (c < 0 || !key_ok[k]) continue;
     key_state(static_cast<int>(k), ksc);
     all_invariants(net, ksc.locs, inv);
     std::uint64_t here = 0;
@@ -300,11 +344,12 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
     for (std::size_t v = 0; v < nrec(); ++v) {
       if (!expanded[v] || online_raw_slot_[v] < 0) continue;
       const int kv = online_key_of_[v];
-      if (kv < 0 || kv >= static_cast<int>(nk) || (*comp)[kv] < 0) continue;
+      if (!admits(v) || kv < 0 || kv >= static_cast<int>(nk) || !key_ok[kv] ||
+          (*comp)[kv] < 0) continue;
       for (const OtfEdge& e : online_raw_adj_[online_raw_slot_[v]]) {
-        if (e.tgt < 0 || e.tgt >= static_cast<int>(nrec())) continue;
+        if (e.tgt < 0 || e.tgt >= static_cast<int>(nrec()) || !admits(e.tgt)) continue;
         const int kt = online_key_of_[e.tgt];
-        if (kt < 0 || kt >= static_cast<int>(nk)) continue;
+        if (kt < 0 || kt >= static_cast<int>(nk) || !key_ok[kt]) continue;
         const int c = (*comp)[kv];
         if ((*comp)[kt] != c) continue;     // leaves the component: on no cycle inside it
         if (e.tag < 0 || e.tag >= static_cast<int>(tags_.size())) continue;

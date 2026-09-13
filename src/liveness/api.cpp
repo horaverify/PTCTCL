@@ -372,11 +372,14 @@ bool LivenessEngine::decide_leads_to(GfpStats* gs) {
   // revocable-cover machinery in that case cannot refine a single cover; it only duplicates the
   // ordinary a_LU graph's key, edge, and replay metadata.
   //
-  // The forward route overrides that: it is built on the online graph -- raw adjacency, key
-  // registry, replay handles -- and none of it survives on the plain a_LU path, so declining the
-  // online construction here would decline the forward route with it.  What the shortcut saves is
-  // bookkeeping; what it would cost is the whole speedup.
-  if (!fwd && structurally_empty_d(*dead_net)) return run(gs);
+  // The forward route is built on the online graph -- raw adjacency, key registry, replay
+  // handles -- and none of that survives on the plain a_LU path, so taking this shortcut declines
+  // the forward route with it.  That is the right trade for `p --> q`: the route costs the online
+  // bookkeeping and, measured over the live and live_violated sets, buys nothing back.  Forcing
+  // the online path so the route could run made the violated rows 1.4x SLOWER (3.41s against the
+  // backward build's 2.40s, twolock10 `P0.reqB --> P0.cs` 2.71s against 1.81s) because those rows
+  // are decided by the early witness before the route is ever consulted.
+  if (structurally_empty_d(*dead_net)) return run(gs);
 
   online_d_ = true;
   online_reset();

@@ -291,7 +291,7 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
         // instead of a contradiction.
         std::vector<int> key_comp;
         std::vector<char> comp_live;
-        lazy_build_key_sccs(&key_comp, &comp_live);
+        lazy_build_key_sccs(&key_comp, &comp_live, &inS);
         auto live_at = [&](int node) {
           if (node < 0 || node >= static_cast<int>(nrec())) return true;
           const int k = online_key_of_[node];
@@ -349,12 +349,20 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
           // `E[] psi` needs nothing computed for this: R is S there.  `p --> q` restricts the
           // scan to R, which is defined through `ord`, so it still pays the sweep -- but not the
           // two searches.
-          if (leadsto) refresh_ord(S, inS);
-          build_R();
           decided = true;
           verdict = false;
-          for (int v : S)
-            if (inR[v] && !stop_set(v).empty()) { verdict = true; break; }
+          // The stop scan comes FIRST and R is built only if it finds something.  R is defined
+          // through `ord`, and for `p --> q` that means a second full successor sweep -- 624,452
+          // records on twolock10 `P0.reqB --> P0.waitB` -- whose only use is to decide whether a
+          // witness found here composes back to an accepting node.  On a row with no maximal-run
+          // witness at all, which is every satisfied row, that sweep would be paid for nothing.
+          // `E[] psi` has R = S and needs no sweep either way.
+          for (int v : S) {
+            if (stop_set(v).empty()) continue;
+            if (!leadsto) { verdict = true; break; }
+            if (inR.empty()) { refresh_ord(S, inS); build_R(); }
+            if (inR[v]) { verdict = true; break; }
+          }
           if (dbg)
             std::fprintf(stderr, "FWD-DIAG round=%zu nrec=%zu |S|=%zu all-components-dead"
                                  " stop_witness=%d lost=%zu\n",
@@ -479,24 +487,26 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
           //
           // Tarjan emits a component only after everything reachable from it, so successors carry
           // SMALLER ids and one ascending pass propagates the flag.
+          // ONE ASCENDING PASS, which is what the paragraph above describes and what the
+          // previous code did not do: it iterated RECORDS, whose order says nothing about
+          // component id, so a component could be flagged after its predecessors had already been
+          // scanned and the flag needed a repeat-until-quiet loop to travel -- O(depth of the
+          // condensation) passes over every edge, inside the refinement loop.  Bucketing the
+          // cross-component edges by source component once makes the propagation a single sweep
+          // in ascending id order, because a successor's id is always smaller.
           std::vector<char> reaches_unsafe(fcyclic.size(), 0);
           for (std::size_t c = 0; c < fcyclic.size(); ++c) reaches_unsafe[c] = !comp_clean[c];
+          std::vector<std::vector<int>> csucc(fcyclic.size());
           for (int v : S)
             for (const OtfEdge& e : adj[v]) {
               if (!inS[e.tgt] || fcomp[v] < 0 || fcomp[e.tgt] < 0) continue;
               if (fcomp[v] == fcomp[e.tgt]) continue;
-              if (reaches_unsafe[fcomp[e.tgt]]) reaches_unsafe[fcomp[v]] = 1;
+              csucc[fcomp[v]].push_back(fcomp[e.tgt]);
             }
-          for (std::size_t pass = 1; pass < fcyclic.size(); ++pass) {  // to a fixpoint
-            bool moved = false;
-            for (int v : S)
-              for (const OtfEdge& e : adj[v]) {
-                if (!inS[e.tgt] || fcomp[v] < 0 || fcomp[e.tgt] < 0) continue;
-                if (fcomp[v] == fcomp[e.tgt] || !reaches_unsafe[fcomp[e.tgt]]) continue;
-                if (!reaches_unsafe[fcomp[v]]) { reaches_unsafe[fcomp[v]] = 1; moved = true; }
-              }
-            if (!moved) break;
-          }
+          for (std::size_t c = 0; c < fcyclic.size(); ++c)
+            if (!reaches_unsafe[c])
+              for (int w : csucc[c])
+                if (reaches_unsafe[w]) { reaches_unsafe[c] = 1; break; }
           // A component that reaches nothing unsafe is finished with, permanently.
           for (int v : S)
             if (!settled[v] && fcomp[v] >= 0 && !reaches_unsafe[fcomp[v]]) settled[v] = 1;
