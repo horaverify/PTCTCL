@@ -580,7 +580,7 @@ bool check_network_query(const Network& net, const Query& q, bool* satisfied, Ba
       if (has_clocks || pp.forbid.size() > 1 || nqp.forbid.size() > 1) {
         GfpStats gs2;
         *satisfied = leads_to_clocks(net, pp, nqp, &gs2);
-        if (stats) stats->explored = gs2.outer_nodes;
+        if (stats) { stats->explored = gs2.outer_nodes; stats->expanded = gs2.outer_expands; }
         return true;
       }
       // Purely discrete and single-term on both sides: the long-standing path, untouched.
@@ -592,10 +592,13 @@ bool check_network_query(const Network& net, const Query& q, bool* satisfied, Ba
     GfpStats gs;
     *satisfied = leads_to_otf(net, p, qq, &gs);
     if (stats) {
-      // `explored` is the like-for-like count: successor computations actually performed.
-      // On a violated query the on-the-fly engine settles early, so this is far below
-      // fwd_nodes -- which is the entire point of the engine and must not be papered over.
-      stats->explored = gs.expanded_nodes ? gs.expanded_nodes : gs.fwd_nodes;
+      // Reported as `E[] psi` and the clock route above report them: `explored` is the states
+      // STORED, `expanded` the successor computations actually performed. This used to print the
+      // expanded count under the name `explored`, so a leads-to row and an E[] row of the same
+      // table counted different things. On a violated query the on-the-fly engine settles early
+      // and `expanded` is far below the stored count -- printing both keeps that visible.
+      stats->explored = gs.outer_nodes;
+      stats->expanded = gs.outer_expands;
       stats->generated = gs.fwd_edges;
     }
     return true;
