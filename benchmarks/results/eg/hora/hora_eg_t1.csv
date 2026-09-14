@@ -999,3 +999,5 @@ twolock,twolock17,hora-omp,1,1,25,0.069,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[]
 twolock,twolock17,hora-omp,1,2,25,0.068,0.007,OK,-,-,8,alu,adaptive,eg,1,SAT,E[] x0 <= 30 && !P1.cs,-
 twolock,twolock17,hora-omp,1,1,27,0.069,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18),-
 twolock,twolock17,hora-omp,1,2,27,0.068,0.006,OK,-,-,8,alu,adaptive,eg,3,SAT,E[] x0 <= 20 && (x1 <= 15 || x1 >= 18),-
+twolock,twolock14,hora-omp,1,1,12232427,4567.812,13.481,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (P0.idle || P0.waitA) && x0 <= 30,-
+twolock,twolock14,hora-omp,1,1,12232427,4537.812,13.481,OK,-,-,8,alu,adaptive,eg,2,SAT,E[] (P0.idle || P0.waitA) && x0 <= 30,-
