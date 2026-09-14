@@ -112,3 +112,4 @@ hddi/
 # `hora_eg_shards.py merge` folds them in, and meaningless on any other machine.
 benchmarks/results/eg/hora/*/
 benchmarks/scripts/hora_exact.sh
+benchmarks/results/eg/hora/twolock_seed.csv
