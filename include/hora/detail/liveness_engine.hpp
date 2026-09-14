@@ -274,6 +274,10 @@ class LivenessEngine {
   bool avoid_forward_ = true;
   bool scc_iter_ = true;
   bool eg_early_ = false;
+  /// @brief Auto-selected depth-first `E[] psi` order for a statically single-key model.
+  ///
+  /// Reconstructed 2026-09-14 after an over-broad `git checkout` discarded it.
+  bool online_auto_eg_dfs_ = false;
   bool eg_early_hit_ = false;
   // `p --> q`: a reached `p /\ !q` valuation that can end a maximal run is already a
   // counterexample, so the forward search may stop the moment one is found.

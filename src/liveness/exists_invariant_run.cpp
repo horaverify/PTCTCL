@@ -306,7 +306,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
         std::fprintf(stderr, "SUB result=%s nodes=%zu\n", sub_sat ? "SAT" : "no witness",
                      (std::size_t)gsub.outer_nodes);
       if (sub_sat) {
-        if (stats) stats->explored = gsub.outer_nodes;
+        if (stats) { stats->explored = gsub.outer_nodes; stats->expanded = gsub.outer_expands; }
         return true;
       }
     }
@@ -315,7 +315,7 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   GfpStats gs;
   const bool r = exists_invariant_run_otf(*engine_net, nq, &gs, &net_in,
                                           av.parts.empty() ? nullptr : &av);
-  if (stats) stats->explored = gs.outer_nodes;
+  if (stats) { stats->explored = gs.outer_nodes; stats->expanded = gs.outer_expands; }
   return r;
 }
 

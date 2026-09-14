@@ -59,6 +59,7 @@ int run(const char* model, const char* query, hora::Backend backend) {
         if (check_network_query(net, q, &sat, backend, &st))
           std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
                     << "  [explored " << st.explored << " symbolic states"
+                    << (st.expanded ? ", expanded " + std::to_string(st.expanded) : "")
                     << (g_stats ? ", generated " + std::to_string(st.generated) : "") << "]\n";
         else {
           std::cout << "-- Formula is UNSUPPORTED" << (q.note.empty() ? "" : " (" + q.note + ")") << "\n";
@@ -113,6 +114,7 @@ int run(const char* model, const char* query, hora::Backend backend) {
       if (done) {
         std::cout << (sat ? "-- Formula is satisfied." : "-- Formula is NOT satisfied.")
                   << "  [explored " << st.explored << " symbolic states"
+                  << (st.expanded ? ", expanded " + std::to_string(st.expanded) : "")
                   << (g_stats ? ", generated " + std::to_string(st.generated) : "") << "]\n";
       } else {
         std::cout << "-- Formula is UNSUPPORTED" << (q.note.empty() ? "" : " (" + q.note + ")") << "\n";
@@ -287,7 +289,7 @@ int main(int argc, char** argv) {
       }
     } else if (a == "--sim" && i + 1 < argc) {   // alu (default) | g
       hora::set_gsim(std::string(argv[++i]) == "g");
-    } else if (a == "--exploration" && i + 1 < argc) {   // bfs (default) | dfs
+    } else if (a == "--exploration" && i + 1 < argc) {   // explicit bfs | dfs (default: auto)
       const std::string v = argv[++i];
       if (v != "bfs" && v != "dfs") {
         std::cerr << "--exploration takes 'bfs' or 'dfs', got '" << v << "'\n";
@@ -319,6 +321,7 @@ int main(int argc, char** argv) {
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
             << "usage: hora [--backend seq|omp|metal|cuda] [--adaptive] [--chunking [N]] [--stats]\n              [--zones dense|packed] [--exploration bfs|dfs]\n              [--criterion poly|guided|exact] <model.xml> <query.q>\n"
+            << "       E[] uses automatic worklist order by default; --exploration explicitly selects FIFO or DFS.\n"
             << "       --no-probe: skip the shared-lock subsumption pre-filter (ablation;\n"
             << "                   slower on every model measured -- see config.hpp)\n"
             << "       --deterministic: insert each level in canonical order, so the state\n"

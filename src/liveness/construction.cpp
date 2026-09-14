@@ -37,6 +37,21 @@
 
 namespace hora {
 
+namespace {
+
+/// @brief Is every discrete state of @p net the same one -- one location per process, no live
+///        integer variable?  A `singleN` model is the case this exists for.
+bool has_one_discrete_key(const Network& net) {
+  if (net.procs.empty()) return false;
+  for (const auto& proc : net.procs)
+    if (proc.locations.size() != 1) return false;
+  for (const auto& var : net.intvars)
+    if (var.lo != var.hi) return false;
+  return true;
+}
+
+}  // namespace
+
 // ---- Online D: persistent, monotonically refined forward quotient -------------------------
 
 void LivenessEngine::online_reset() {
@@ -118,6 +133,12 @@ void LivenessEngine::online_reset() {
   online_raw_owner_.clear();
   online_raw_slot_.clear();
   online_deferred_index_enabled_ = false;
+  // The normal default remains FIFO.  The lone exception is a statically single-key model such
+  // as `singleN`: every symbolic record sits in the same bucket, so FIFO fills the whole zone
+  // breadth before the sound partial-graph GFP probe can see its cyclic witness.  DFS exposes one
+  // path to that existing probe.  A caller that explicitly requests `--exploration bfs` retains
+  // FIFO, which is important on the wider models where it keeps refuted E[] queries compact.
+  online_auto_eg_dfs_ = eg_dfs_auto_on() && has_one_discrete_key(net);
   online_work_.clear();
   online_inq_.clear();
   // Grown only when the lazy refinement loop actually pins something, so a run that never
@@ -349,7 +370,11 @@ void LivenessEngine::online_activate(int v) {
     // worth of records depth-first, and only after the whole breadth under FIFO -- see
     // hora::detail::EngineOptions::eg_dfs for the measurement. Guarded by `eg_early_` so it
     // applies to the E[] construction alone and leaves leads-to on its FIFO order.
-    if (eg_dfs_on() && eg_early_) online_work_.push_front(v);
+    // `--exploration dfs`, and auto mode for a static one-key model: depth-first for `E[] psi`.
+    // A cyclic witness closes after one path's worth of records depth-first, and only after the
+    // whole breadth under FIFO.  Guarded by `eg_early_` so it applies to E[] alone and leaves
+    // leads-to on FIFO order.
+    if ((eg_dfs_on() || online_auto_eg_dfs_) && eg_early_) online_work_.push_front(v);
     else if (key_seen_semantically || !online_deferred_index_enabled_) online_work_.push_back(v);
     else online_work_.push_front(v);
   }

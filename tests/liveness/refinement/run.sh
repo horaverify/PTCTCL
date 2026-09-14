@@ -78,6 +78,25 @@ for row in "arbiter4 3 NOT" "arbiter4 2 SAT" "arbiter4 5 SAT" "fischer4 3 NOT" "
   done
 done
 
+# ---- 2a. automatic DFS only for a one-discrete-key E[] search -------------------------------
+# `single6` has one process, one location and no integer variables, hence one possible discrete
+# key.  Its `x0 <= 3` witness is cyclic (not a globally entailed invariant), so this exercises the
+# real partial-graph GFP early exit: auto mode must reach it before forced FIFO does.  The exact
+# counts intentionally remain unconstrained; they depend on harmless zone-insertion details.
+sed -n '2p' "$QUERIES/single.q" > "$TMP/single-auto.q"
+auto_out=$("$HORA" "$MODELS/single6.xml" "$TMP/single-auto.q" 2>&1 || true)
+bfs_out=$("$HORA" --exploration bfs "$MODELS/single6.xml" "$TMP/single-auto.q" 2>&1 || true)
+auto_states=$(printf '%s\n' "$auto_out" | sed -n 's/.*\[explored \([0-9][0-9]*\) symbolic states.*/\1/p' | tail -1)
+bfs_states=$(printf '%s\n' "$bfs_out" | sed -n 's/.*\[explored \([0-9][0-9]*\) symbolic states.*/\1/p' | tail -1)
+case "$auto_out" in *'Formula is satisfied.'*) ;; *) fail "single6 auto: expected SAT" ;; esac
+case "$bfs_out" in *'Formula is satisfied.'*) ;; *) fail "single6 forced BFS: expected SAT" ;; esac
+case "$auto_states:$bfs_states" in
+  :*|*:) fail "single6 automatic-order probe did not report both state counts" ;;
+  *[!0-9:]* ) fail "single6 automatic-order probe did not report numeric state counts" ;;
+  *) [ "$auto_states" -lt "$bfs_states" ] ||
+       fail "single6 auto DFS explored $auto_states states; forced FIFO explored $bfs_states" ;;
+esac
+
 # ---- 3. leads-to: a witness that lies beyond a cover edge ------------------------------------
 # R is the part of the accepting closure a witness may be READ at: the nodes an ordinary path
 # reaches from a `p /\ !q` seed. A cover edge is asymmetric, so a witness behind one does not

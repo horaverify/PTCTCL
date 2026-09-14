@@ -113,3 +113,8 @@ hddi/
 benchmarks/results/eg/hora/*/
 benchmarks/scripts/hora_exact.sh
 benchmarks/results/eg/hora/twolock_seed.csv
+benchmarks/results/reach.zip
+benchmarks/results/eg/hora/forward.csv
+benchmarks/results/eg/hora_gfp_back/backward.csv
+benchmarks/results/live/hora/forward.csv
+benchmarks/results/live/hora_backward/backward.csv

@@ -155,13 +155,20 @@ bool gsim_on();
 /// exactly the sequential order -- so the count equals the one-thread count at any thread count.
 /// @note Costs a level's worth of buffered successors and serialises insertion, so it is off by
 ///       default: it buys reproducibility, not speed.
-/// @brief Select the `E[] psi` expansion order: @c true for depth-first, @c false (default) for
-///        breadth-first. Order only -- it changes cost, never the verdict.
+/// @brief Explicitly select the `E[] psi` expansion order: @c true for depth-first, @c false for
+///        breadth-first.
+///
+/// Without this call, the engine uses its automatic policy: it selects depth-first only when the
+/// model has exactly one possible discrete key, and otherwise preserves breadth-first expansion.
+/// Order only -- it changes cost, never the verdict.
 /// @param on @c true to expand depth-first
 void set_eg_dfs(bool on);
 
-/// @return the value last passed to ::set_eg_dfs (default @c false)
+/// @return @c true iff depth-first was explicitly selected with ::set_eg_dfs
 bool eg_dfs_on();
+
+/// @return @c true iff no explicit `E[]` worklist order was selected
+bool eg_dfs_auto_on();
 
 void set_deterministic(bool on);
 /// @brief Skip the shared-lock subsumption pre-filter before the exclusive insert.

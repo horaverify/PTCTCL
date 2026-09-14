@@ -79,16 +79,15 @@ struct EngineOptions {
     Exact,   ///< ... then enumerate the choice functions, pruning on acyclicity
   };
   Criterion criterion = Criterion::Poly;
-  /// @brief Expand the `E[] psi` online construction depth-first rather than breadth-first.
+  /// @brief Worklist order for the online `E[] psi` construction.
   ///
-  /// Only the order the worklist is popped in; the graph, the abstraction and the verdict are
-  /// unchanged. It matters because the two constant-time witness tests in
-  /// ::hora::LivenessEngine::online_eg_terminal_witness recognise a DIVERGENT or a TERMINAL state
-  /// and nothing else, so a witness that is a CYCLE stops the construction only once the cycle is
-  /// closed among expanded records. Breadth-first closes it last, after the whole breadth;
-  /// depth-first closes it after one path. On `single7` `E[] x0 <= 6` that is 40197 records and
-  /// 172 s against 122 records and 0.008 s, for the same SAT.
-  bool eg_dfs = false;
+  /// Only the order changes; the graph abstraction and verdict do not.  `Auto` uses depth-first
+  /// only for a model with one possible discrete key.  There, FIFO can postpone a cyclic witness
+  /// until it has enumerated a wide zone layer, while depth-first closes the same cycle after one
+  /// path.  General models stay FIFO in auto mode: on refuted properties its narrower antichains
+  /// are materially cheaper.
+  enum class EgExploration { Auto, Bfs, Dfs };
+  EgExploration eg_exploration = EgExploration::Auto;
 };
 
 /// @brief The process-wide options block.

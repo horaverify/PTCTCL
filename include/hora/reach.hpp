@@ -10,6 +10,12 @@ namespace hora {
 struct ReachStats {
   std::size_t explored = 0;   // symbolic states added to the passed list
   std::size_t generated = 0;  // successor zones generated
+  // States actually POPPED AND EXPANDED, as opposed to merely stored.  The two differ by the
+  // branching factor -- one expansion interns up to one record per outgoing transition -- and
+  // other tools do not all report the same one of them: TChecker's VISITED_STATES is this
+  // quantity, while `explored` above is its STORED_STATES.  Reported separately so a comparison
+  // can state which it is using instead of mixing them.
+  std::size_t expanded = 0;
 };
 
 enum class Backend { Seq, Omp, Cuda, Metal };
