@@ -78,6 +78,23 @@ for row in "arbiter4 3 NOT" "arbiter4 2 SAT" "arbiter4 5 SAT" "fischer4 3 NOT" "
   done
 done
 
+# ---- 3. leads-to: a witness that lies beyond a cover edge ------------------------------------
+# R is the part of the accepting closure a witness may be READ at: the nodes an ordinary path
+# reaches from a `p /\ !q` seed. A cover edge is asymmetric, so a witness behind one does not
+# compose back to the seed and must not be reported from there -- but it must not be DISCARDED
+# either, and C5 owes nothing for a cover that lies on no cycle. So a cover leaving R for a node
+# that can still reach a readout is an obligation in its own right; discharging it grows R, and
+# at the fixed point R = S.
+#
+# `rcover` is the minimal shape. `Start` reaches `Big` with `x >= 0` and `P` with `x == 3`; `P`
+# covers into that `Big` record with `x >= 3`, which the two guards out of `Big` keep a_LU-
+# distinct. Time diverges at `Big`, so the run stays out of `Start` for ever and the query is
+# violated -- but the graph has no cycle at all, so nothing else ever refines that cover.
+# Expected verdict cross-checked against the exact backward route (-DHORA_LIVENESS_GFP=ON).
+printf 'R.P --> R.Start\n' > "$TMP/rcover.q"
+got=$(verdict "$HORA" "$HERE/rcover.xml" "$TMP/rcover.q")
+[ "$got" = "NOT" ] || fail "rcover: verdict $got, expected NOT (witness lies beyond a cover edge)"
+
 if [ "$fails" -eq 0 ]; then
   note "forward liveness tests: all passed"
 else

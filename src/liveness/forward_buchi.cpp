@@ -249,7 +249,7 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
     if (!lazy_snapshot(&saved_adj, &saved_key, &lost_edges)) return false;
 
     bool decided = false, verdict = false, truncated = false;
-    std::size_t exact_cycles = 0, unsafe = 0, covers = 0, edges = 0;
+    std::size_t exact_cycles = 0, unsafe = 0, covers = 0, edges = 0, r_block = 0;
     std::vector<LazyObligation> obligations;
     {
       // The accepting set.  For `E[] psi` it is the psi-closure of the initial vertex, and an
@@ -343,6 +343,79 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
           }
         };
 
+        // R-EXTENSION OBLIGATIONS: what makes the R restriction complete and not merely sound.
+        //
+        // Both readouts -- the ordinary cycle and the `stop_set` scan -- are confined to R,
+        // because a cover edge does not compose a witness backwards.  That is sound, but on its
+        // own it is not complete: a `stop` valuation, or an ordinary cycle, sitting at a node of
+        // `S \ R` is a genuine witness that neither readout would ever look at, and C5 owes
+        // nothing for it either -- the cover that keeps it out of R need not lie on any cycle,
+        // and an acyclic cover is never refined.  The route would then answer "no witness" for a
+        // query that has one.
+        //
+        // So a cover `u -> w` with `u` in R and `w` in `S \ R` is an obligation in its own
+        // right.  Discharging it makes the edge ordinary, which puts the materialised `w` into R;
+        // at the fixed point no cover leaves R inside S, hence R = S and the readouts see the
+        // whole accepting set.  Termination is the C5 argument unchanged: a discharged cover is
+        // forbidden and never recreated, and the graph is finite.
+        //
+        // `E[] psi` has R = S by construction, so `rlist` is always empty and none of this runs.
+        //
+        // The usefulness filter is what stops this from refining a whole leads-to closure: a node
+        // beyond the cover can only matter if it REACHES a readout, so a cover that blocks
+        // nothing is left alone.  Reachability is taken over every edge of `G[S]`, cover edges
+        // included, which over-approximates what a run can do and therefore only ever refines
+        // more than strictly needed.
+        struct RCover { int src, ordinal, tgt; };
+        std::vector<RCover> rlist;
+        // An edge from R to `S \ R` is a cover by definition: an ordinary one would have put its
+        // target in R.  So no `ord` lookup is needed to classify it.
+        const auto collect_r_leaving = [&] {
+          rlist.clear();
+          if (!leadsto) return;                    // R = S
+          for (int v : S) {
+            if (!inR[v]) continue;
+            for (const OtfEdge& e : adj[v])
+              if (inS[e.tgt] && !inR[e.tgt]) rlist.push_back(RCover{v, e.ordinal, e.tgt});
+          }
+        };
+        const auto push_obligation = [&](int v, int ordinal, int tgt) {
+          if (ordinal < 0 || online_forbidden_cover_.count(forbid_key(v, ordinal))) return;
+          const int slot = online_raw_slot_[v];
+          int pos = -1;
+          if (slot >= 0)
+            for (std::size_t r = 0; r < online_raw_adj_[slot].size(); ++r)
+              if (online_raw_adj_[slot][r].ordinal == ordinal) { pos = static_cast<int>(r); break; }
+          if (pos >= 0)
+            obligations.push_back(LazyObligation{v, ordinal, slot, pos, tgt,
+                                                 online_key_of_[tgt], 0, 0});
+        };
+        // @p readout says whether a node could itself carry a witness readout, now or after any
+        // amount of refinement.  Seeds the backward sweep over `G[S]`.
+        const auto owe_r_extensions = [&](auto&& readout) {
+          collect_r_leaving();
+          if (rlist.empty()) return;
+          std::vector<std::vector<int>> rev(n);
+          for (int v : S)
+            for (const OtfEdge& e : adj[v])
+              if (inS[e.tgt]) rev[e.tgt].push_back(v);
+          std::vector<char> useful(n, 0);
+          std::vector<int> stk;
+          for (int v : S)
+            if (readout(v)) { useful[v] = 1; stk.push_back(v); }
+          while (!stk.empty()) {
+            const int v = stk.back();
+            stk.pop_back();
+            for (int u : rev[v])
+              if (!useful[u]) { useful[u] = 1; stk.push_back(u); }
+          }
+          for (const RCover& rc : rlist) {
+            if (!useful[rc.tgt]) continue;
+            ++r_block;
+            push_obligation(rc.src, rc.ordinal, rc.tgt);
+          }
+        };
+
         if (!any_live) {
           // No infinite witness is possible, so only the MAXIMAL FINITE half is left -- the same
           // `stop_set` pass the `unsafe == 0` branch runs below, and the same reasoning for why a
@@ -359,18 +432,34 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
           // witness found here composes back to an accepting node.  On a row with no maximal-run
           // witness at all, which is every satisfied row, that sweep would be paid for nothing.
           // `E[] psi` has R = S and needs no sweep either way.
+          std::vector<char> has_stop(n, 0);
+          bool stop_outside_R = false;
           for (int v : S) {
             if (stop_set(v).empty()) continue;
+            has_stop[v] = 1;
             if (!leadsto) { verdict = true; break; }
             if (inR.empty()) { refresh_ord(S, inS); build_R(); }
             if (inR[v]) { verdict = true; break; }
+            stop_outside_R = true;      // a real witness the composition cannot reach yet
           }
-          if (dbg)
-            std::fprintf(stderr, "FWD-DIAG round=%zu nrec=%zu |S|=%zu all-components-dead"
-                                 " stop_witness=%d lost=%zu setup+crit=%.1fms stopscan=%.1fms\n",
-                         rounds, n, S.size(), (int)verdict, lost_edges, ms_crit,
+          if (!verdict && stop_outside_R) {
+            // Every component is dead, so `stop` is the only witness shape left, and one of them
+            // sits beyond a cover.  Refine what blocks R from reaching it rather than reporting a
+            // verdict this readout cannot support.  `has_stop` is complete here: the scan above
+            // ran to the end of `S` precisely because it never found one inside R.
+            owe_r_extensions([&](int v) { return has_stop[v] != 0; });
+            if (r_block != 0) decided = false;
+          }
+          if (dbg) {
+            std::size_t rsz = S.size();
+            if (!inR.empty()) { rsz = 0; for (int v : S) if (inR[v]) ++rsz; }
+            std::fprintf(stderr, "FWD-DIAG round=%zu nrec=%zu |S|=%zu |R|=%zu all-components-dead"
+                                 " stop_witness=%d rblock=%zu lost=%zu setup+crit=%.1fms"
+                                 " stopscan=%.1fms\n",
+                         rounds, n, S.size(), rsz, (int)verdict, r_block, lost_edges, ms_crit,
                          std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::steady_clock::now() - t0).count() / 1000.0 - ms_crit);
+          }
         } else {
 
         refresh_ord(S, inS);
@@ -459,21 +548,17 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
               if (!live_at(e.tgt)) continue;
               ++unsafe;
               comp_clean[fcomp[v]] = 0;
-              if (e.ordinal < 0 || online_forbidden_cover_.count(forbid_key(v, e.ordinal)))
-                continue;
-              const int slot = online_raw_slot_[v];
-              int pos = -1;
-              if (slot >= 0)
-                for (std::size_t r = 0; r < online_raw_adj_[slot].size(); ++r)
-                  if (online_raw_adj_[slot][r].ordinal == e.ordinal) {
-                    pos = static_cast<int>(r);
-                    break;
-                  }
-              if (pos >= 0)
-                obligations.push_back(LazyObligation{v, e.ordinal, slot, pos, e.tgt,
-                                                     online_key_of_[e.tgt], 0, 0});
+              push_obligation(v, e.ordinal, e.tgt);
             }
           }
+          // The other half of the obligation set; see `owe_r_extensions`.  A node can still carry
+          // a readout if it sits in a cyclic component whose keys can host an infinite psi-run --
+          // refinement may yet turn that component's cycle ordinary -- or if it already ends a
+          // maximal run.
+          owe_r_extensions([&](int v) {
+            if (fcomp[v] >= 0 && fcyclic[fcomp[v]] && live_at(v)) return true;
+            return !stop_set(v).empty();
+          });
           // Nodes of the UNSAFE components are barred from being cover targets for the
           // re-exploration that follows, per Herbreteau et al. section 5.  Without this the
           // successors of a freshly materialised node are immediately subsumed by nodes of the
@@ -526,7 +611,7 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
             // answer, rather than report a verdict this view cannot support.  The guard above
             // removes the one cause we know of, so this is a safety net and not a routine exit.
             truncated = true;
-          } else if (unsafe == 0) {
+          } else if (unsafe == 0 && r_block == 0) {
             // BOTH HALVES, and this is the second one.
             //
             // Both queries are witnessed by an infinite run OR by a maximal FINITE one -- a
@@ -560,9 +645,10 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
                             std::chrono::steady_clock::now() - t0).count() / 1000.0;
       if (dbg)
         std::fprintf(stderr,
-                     "FWD nodes=%zu->%zu edges=%zu covers=%zu cycles=%zu unsafe=%zu rounds=%zu "
-                     "refined=%zu %s%s ms=%.2f (ord=%.2f scc=%.2f refine=%.2f)\n",
-                     nodes_before, nrec(), edges, covers, exact_cycles, unsafe, rounds, refined,
+                     "FWD nodes=%zu->%zu edges=%zu covers=%zu cycles=%zu unsafe=%zu rblock=%zu "
+                     "rounds=%zu refined=%zu %s%s ms=%.2f (ord=%.2f scc=%.2f refine=%.2f)\n",
+                     nodes_before, nrec(), edges, covers, exact_cycles, unsafe, r_block, rounds,
+                     refined,
                      leadsto ? "leadsto " : "", how, ms, ms_ord, ms_scc, ms_refine);
     };
 

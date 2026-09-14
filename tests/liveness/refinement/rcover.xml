@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+<declaration>clock x;</declaration>
+<template><name>R</name>
+<location id="r_start"><name>Start</name></location>
+<location id="r_p"><name>P</name><label kind="invariant">x&lt;=3</label></location>
+<location id="r_big"><name>Big</name></location>
+<location id="r_lo"><name>Lo</name></location>
+<location id="r_hi"><name>Hi</name></location>
+<init ref="r_start"/>
+<transition><source ref="r_start"/><target ref="r_big"/><label kind="guard">x&lt;=10</label></transition>
+<transition><source ref="r_start"/><target ref="r_p"/><label kind="guard">x&gt;=3</label></transition>
+<transition><source ref="r_p"/><target ref="r_big"/></transition>
+<transition><source ref="r_big"/><target ref="r_lo"/><label kind="guard">x&gt;=3</label></transition>
+<transition><source ref="r_big"/><target ref="r_hi"/><label kind="guard">x&lt;=5</label></transition>
+</template>
+<system>system R;</system>
+</nta>
