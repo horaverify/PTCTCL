@@ -292,6 +292,10 @@ class Tool:
     def __init__(self, name, threaded, states_re):
         self.name, self.threaded, self.states_re = name, threaded, states_re
 
+    def states_regex(self, a):
+        """The pattern the `states` column is read with. Overridden where a flag picks the count."""
+        return self.states_re
+
     def argv(self, a, xml, q, th, so, qidx=0):
         raise NotImplementedError
 
@@ -330,6 +334,17 @@ class Tool:
 class HoraTool(Tool):
     def __init__(self):
         super().__init__("hora-omp", True, r"explored ([0-9]+) symbolic")
+
+    def states_regex(self, a):
+        # hora prints `[explored N symbolic states, expanded M]`. `explored` is the STORED count
+        # (TChecker's STORED_STATES) and what every recorded hora table holds; `expanded` is the
+        # states popped and expanded (TChecker's VISITED_STATES). The binary omits `expanded`
+        # when it is zero or the route does not count it, and such a row records `-` rather than
+        # a stored count under the wrong name. No CSV column says which one a table holds, so
+        # never resume one table under the other setting; the driver log header records it.
+        if a.hora_states == "expanded":
+            return r", expanded ([0-9]+)"
+        return self.states_re
 
     def argv(self, a, xml, q, th, so, qidx=0):
         cmd = [a.hora_bin, "--backend", "omp"]
@@ -558,9 +573,10 @@ def cmd_run(a):
     def log(msg):
         print("[%s] %s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg), flush=True)
 
-    log("bench.py run  tool=%s sim=%s engine=%s chunk=%s%s"
+    log("bench.py run  tool=%s sim=%s engine=%s chunk=%s%s%s"
         % (a.tool, a.sim, a.engine, a.chunk,
-           (" tck_alg=%s" % a.tchecker_alg) if a.tool == "tchecker" else ""))
+           (" tck_alg=%s" % a.tchecker_alg) if a.tool == "tchecker" else "",
+           (" states=%s" % a.hora_states) if a.tool == "hora" else ""))
     log("threads=%s reps=%d timeout=%ds memgb=%g strike=%d pin=%d"
         % (threads, a.reps, a.timeout, a.memgb, a.strike_limit, a.pin))
     log("families: %s" % "; ".join("%s:%s" % (f, ",".join(map(str, n))) for f, n in sorted(fams.items())))
@@ -746,7 +762,7 @@ def run_one_config(a, tool, fams, th, out_csv, knobs, log, stop_file):
                 secs, rss, st, out = measure(pre + tool.argv(a, xml, q, th, so, qidx),
                                              tool.env(a, th), a.timeout, a.memgb)
                 st = tool.status(a, st, out)
-                g = re.search(tool.states_re, out)
+                g = re.search(tool.states_regex(a), out)
                 states = next((x for x in (g.groups() if g else ()) if x), "-") if g else "-"
                 emit({"family": fam, "model": model, "tool": tool.name, "threads": th,
                       "rep": rep, "states": states, "seconds": "%.3f" % secs,
@@ -876,6 +892,9 @@ def main():
     r.add_argument("--hotlen", type=int, default=None, help="HORA_HOTLEN")
     r.add_argument("--hora-bin", default=HORA)
     r.add_argument("--hora-extra", nargs="*", default=[], help="extra hora flags")
+    r.add_argument("--hora-states", default="explored", choices=["explored", "expanded"],
+                   help="which hora count goes in `states`: explored = stored (default, what "
+                        "the recorded tables hold), expanded = popped and expanded")
     r.add_argument("--cores", default=None,
                    help="taskset CPU list for every measured run (e.g. '16-31'). Overrides the "
                         "default '0-(threads-1)' pinning, which is the methodology the recorded "
