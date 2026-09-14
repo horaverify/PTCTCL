@@ -111,3 +111,4 @@ hddi/
 # its own partial CSV, seed and driver log -- working files of one run, superseded the moment
 # `hora_eg_shards.py merge` folds them in, and meaningless on any other machine.
 benchmarks/results/eg/hora/*/
+benchmarks/scripts/hora_exact.sh
