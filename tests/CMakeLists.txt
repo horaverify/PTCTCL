@@ -33,3 +33,11 @@ add_test(NAME liveness_refinement
          COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/liveness/refinement/run.sh
                  $<TARGET_FILE:hora> ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_tests_properties(liveness_refinement PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
+
+# Declared constants must reach edge guards and location invariants. They did not: an
+# unresolvable bound fell through to 0, so `c <= SA` became `c <= 0` and the model was silently
+# replaced by a degenerate one. See tests/frontend/run.sh.
+add_test(NAME frontend_const_bounds
+         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/frontend/run.sh
+                 $<TARGET_FILE:hora> ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_tests_properties(frontend_const_bounds PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")

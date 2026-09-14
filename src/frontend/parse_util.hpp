@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "hora/expression.hpp"
 #include "hora/network.hpp"
 #include "hora/zone.hpp"
 
@@ -21,6 +22,21 @@ namespace frontend {
 
 /// @brief A clock's name mapped to its index in a zone. Index 0 is the reference clock.
 using ClockMap = std::unordered_map<std::string, int>;
+
+/// @brief Where a guard, invariant or assignment resolves a symbolic bound.
+///
+/// A bound that is neither a clock nor an integer variable is a declared constant -- `x <= SA`
+/// with `const int SA = 20;`. Resolving it needs the scope's symbol table, which only the model
+/// reader has; the query side passes none and keeps the older, lenient reading, where an
+/// unresolvable token is simply not a clock atom and the caller retries it as a location name.
+///
+/// @warning Without a context an unresolvable bound silently became `0`, which turned `x <= SA`
+///          into `x <= 0` and quietly replaced the model with a degenerate one. When a context
+///          IS supplied the same case now raises ::ModelError instead.
+struct BoundScope {
+  const SymTab* st = nullptr;
+  const std::vector<Func>* funcs = nullptr;
+};
 
 /// @brief May @p c appear inside an identifier?
 ///
@@ -42,7 +58,8 @@ bool parse_atom(const std::string& atom, const ClockMap& cm, std::vector<Constra
 /// @brief Parse one network-level atom into either a clock constraint or an integer test.
 void parse_net_atom(const std::string& atom, const ClockMap& cm,
                     const std::unordered_map<std::string, int>& im,
-                    std::vector<Constraint>& cc, std::vector<IntAtom>& ic);
+                    std::vector<Constraint>& cc, std::vector<IntAtom>& ic,
+                    const BoundScope& ev = {});
 
 }  // namespace frontend
 }  // namespace hora

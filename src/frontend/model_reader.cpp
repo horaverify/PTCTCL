@@ -22,6 +22,7 @@
 
 namespace hora {
 
+using frontend::BoundScope;
 using frontend::ClockMap;
 using frontend::ident_char;
 using frontend::parse_atom;
@@ -449,7 +450,7 @@ struct Side2 {
 /// @param cm  clock name to index
 /// @return the parsed side, classified as clock, variable or constant
 Side2 parse_side2(const std::string& raw, const ClockMap& cm,
-                  const std::unordered_map<std::string, int>& im) {
+                  const std::unordered_map<std::string, int>& im, const BoundScope& ev) {
   std::string t = trim(raw);
   std::size_t minus = std::string::npos;
   for (std::size_t i = 1; i < t.size(); ++i) if (t[i] == '-') { minus = i; break; }
@@ -460,7 +461,25 @@ Side2 parse_side2(const std::string& raw, const ClockMap& cm,
   }
   auto ic = cm.find(t); if (ic != cm.end()) return {SideKind::Clock, ic->second, -1, 0};
   auto ii = im.find(t); if (ii != im.end()) return {SideKind::Int, ii->second, -1, 0};
-  long v = 0; try { v = std::stol(t); } catch (...) {}
+  long v = 0;
+  try {
+    std::size_t used = 0;
+    v = std::stol(t, &used);
+    if (used == t.size()) return {SideKind::Const, 0, -1, v};
+    throw std::invalid_argument("trailing characters");
+  } catch (...) {
+    // Not a numeral. With a scope it must be a constant expression -- `SA`, `N-1`, `2*SA`; the
+    // same const_eval the declaration parser uses for array sizes and initialisers settles it.
+    // Falling through to `0` instead is what silently degenerated every hddi guard and invariant.
+    if (ev.st && ev.funcs) {
+      SymTab tmp = *ev.st;
+      try {
+        return {SideKind::Const, 0, -1, const_eval(parse_expression(t, tmp, *ev.funcs), *ev.funcs)};
+      } catch (const std::exception& e) {
+        throw ModelError("cannot evaluate bound '" + t + "': " + e.what());
+      }
+    }
+  }
   return {SideKind::Const, 0, -1, v};
 }
 
@@ -472,8 +491,9 @@ Side2 parse_side2(const std::string& raw, const ClockMap& cm,
 /// @param[out] ic integer atoms
 void parse_net_guard(const std::string& text, const ClockMap& cm,
                      const std::unordered_map<std::string, int>& im,
-                     std::vector<Constraint>& cc, std::vector<IntAtom>& ic) {
-  for (auto atom : split_conjuncts(text)) { atom = trim(atom); if (!atom.empty()) parse_net_atom(atom, cm, im, cc, ic); }
+                     std::vector<Constraint>& cc, std::vector<IntAtom>& ic,
+                     const BoundScope& ev = {}) {
+  for (auto atom : split_conjuncts(text)) { atom = trim(atom); if (!atom.empty()) parse_net_atom(atom, cm, im, cc, ic, ev); }
 }
 
 /// @brief Parse an edge update into clock resets and integer assignments.
@@ -483,16 +503,33 @@ void parse_net_guard(const std::string& text, const ClockMap& cm,
 /// @param[out] ia     integer assignments
 void parse_net_assign(const std::string& text, const ClockMap& cm,
                       const std::unordered_map<std::string, int>& im,
-                      std::vector<int>& resets, std::vector<IntAsgn>& updates) {
+                      std::vector<int>& resets, std::vector<IntAsgn>& updates,
+                      const BoundScope& ev = {}) {
+  // The right-hand side is a numeral, or a constant expression once a scope is available --
+  // `z := 0` and `n := N-1` alike. Without a scope an unresolvable side keeps the older reading:
+  // the assignment is dropped rather than guessed at.
+  const auto value = [&](const std::string& rhs, long* out) -> bool {
+    try {
+      std::size_t used = 0;
+      const long v = std::stol(rhs, &used);
+      if (used == rhs.size()) { *out = v; return true; }
+    } catch (...) {}
+    if (!ev.st || !ev.funcs) return false;
+    SymTab tmp = *ev.st;
+    try { *out = const_eval(parse_expression(rhs, tmp, *ev.funcs), *ev.funcs); return true; }
+    catch (...) { return false; }
+  };
   for (auto part : split_conjuncts(text)) {
     std::size_t p = part.find(":="); std::size_t adv = 2;
     if (p == std::string::npos) { p = part.find('='); adv = 1; }
     if (p == std::string::npos) continue;
     std::string lhs = trim(part.substr(0, p)), rhs = trim(part.substr(p + adv));
+    long v = 0;
+    const bool known = value(rhs, &v);
     auto cit = cm.find(lhs);
-    if (cit != cm.end()) { if (rhs == "0") resets.push_back(cit->second); continue; }
+    if (cit != cm.end()) { if (known && v == 0) resets.push_back(cit->second); continue; }
     auto iit = im.find(lhs);
-    if (iit != im.end()) { try { updates.push_back({iit->second, std::stol(rhs)}); } catch (...) {} }
+    if (iit != im.end() && known) updates.push_back({iit->second, v});
   }
 }
 
@@ -1057,7 +1094,8 @@ Network load_network(const std::string& path) {
       loc.urgent = k.first("urgent") != nullptr;
       for (const auto& lb : k.kids)
         if (lb.tag == "label" && lb.attr("kind") == "invariant") {
-          std::vector<IntAtom> ic; parse_net_guard(lb.text, lcm, im, loc.invariant, ic);
+          std::vector<IntAtom> ic;
+          parse_net_guard(lb.text, lcm, im, loc.invariant, ic, BoundScope{&ldc.st, &net.funcs});
         }
       lid[k.attr("id")] = (int)proc.locations.size();
       proc.locations.push_back(std::move(loc));
@@ -1113,10 +1151,12 @@ Network load_network(const std::string& path) {
               if (mentions_clock(part, lcm)) {  // zone side, unchanged
                 if (is_guard) {
                   std::vector<IntAtom> ic;
-                  parse_net_guard(part, lcm, im, base_edge.clock_guard, ic);
+                  parse_net_guard(part, lcm, im, base_edge.clock_guard, ic,
+                                  BoundScope{&ldc.st, &net.funcs});
                 } else {
                   std::vector<IntAsgn> up;
-                  parse_net_assign(part, lcm, im, base_edge.clock_resets, up);
+                  parse_net_assign(part, lcm, im, base_edge.clock_resets, up,
+                                   BoundScope{&ldc.st, &net.funcs});
                 }
                 continue;
               }
@@ -1128,10 +1168,12 @@ Network load_network(const std::string& path) {
               for (const auto& part : plain) {
                 if (is_guard) {
                   std::vector<Constraint> cc;
-                  parse_net_guard(part, lcm, im, cc, base_edge.int_guard);
+                  parse_net_guard(part, lcm, im, cc, base_edge.int_guard,
+                                  BoundScope{&ldc.st, &net.funcs});
                 } else {
                   std::vector<int> rs;
-                  parse_net_assign(part, lcm, im, rs, base_edge.int_updates);
+                  parse_net_assign(part, lcm, im, rs, base_edge.int_updates,
+                                   BoundScope{&ldc.st, &net.funcs});
                 }
               }
             } else {
@@ -1312,7 +1354,8 @@ bool parse_atom(const std::string& atom, const ClockMap& cm, std::vector<Constra
 ///       ::build_pred relies on this to refuse a clock constraint in a liveness predicate.
 void parse_net_atom(const std::string& atom, const ClockMap& cm,
                     const std::unordered_map<std::string, int>& im,
-                    std::vector<Constraint>& cc, std::vector<IntAtom>& ic) {
+                    std::vector<Constraint>& cc, std::vector<IntAtom>& ic,
+                    const BoundScope& ev) {
   static const std::pair<const char*, int> ops[] = {{"<=", 0}, {">=", 1}, {"==", 2}, {"!=", 3}, {"<", 4}, {">", 5}};
   std::size_t pos = std::string::npos; int opi = -1, oplen = 0;
   for (auto& o : ops) {
@@ -1320,8 +1363,8 @@ void parse_net_atom(const std::string& atom, const ClockMap& cm,
     if (q != std::string::npos && (pos == std::string::npos || q < pos)) { pos = q; opi = o.second; oplen = (int)std::string(o.first).size(); }
   }
   if (pos == std::string::npos) return;
-  Side2 l = parse_side2(atom.substr(0, pos), cm, im);
-  Side2 r = parse_side2(atom.substr(pos + oplen), cm, im);
+  Side2 l = parse_side2(atom.substr(0, pos), cm, im, ev);
+  Side2 r = parse_side2(atom.substr(pos + oplen), cm, im, ev);
   auto flip = [](int o) { switch (o) { case 0: return 1; case 1: return 0; case 4: return 5; case 5: return 4; default: return o; } };
   if (l.kind == SideKind::Const && r.kind != SideKind::Const) { std::swap(l, r); opi = flip(opi); }
   if (r.kind != SideKind::Const) return;

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.1//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_1.dtd'>
+<nta>
+<declaration>const  int SA =     20; 
+const int HALF = SA / 2;</declaration>
+<template><name>T</name>
+<declaration>clock c;</declaration>
+<location id="a"><name>A</name><label kind="invariant">c &lt;= SA</label></location>
+<location id="b"><name>B</name><label kind="invariant">c &lt;= SA</label></location>
+<init ref="a"/>
+<transition><source ref="a"/><target ref="b"/><label kind="guard">c &gt;= HALF</label></transition>
+</template>
+<template><name>U</name><location id="u0"><name>U0</name></location><init ref="u0"/></template>
+<system>system T, U;</system>
+</nta>
