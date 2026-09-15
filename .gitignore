@@ -120,3 +120,4 @@ benchmarks/results/live/hora/forward.csv
 benchmarks/results/live/hora_backward/backward.csv
 benchmarks/results/eg/hora_expanded/*/
 benchmarks/results/live/hora_expanded/*/
+benchmarks/results/deadlock/hora_expanded/*/
