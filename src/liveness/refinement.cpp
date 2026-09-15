@@ -47,9 +47,14 @@ namespace hora {
 void LivenessEngine::online_enable_deferred_index() {
   if (online_deferred_index_enabled_) return;
   online_deferred_index_enabled_ = true;
+  if (online_lazy_edges_) {
+    online_lazy_edges_ = false;
+    online_rebuild_raw_edges();
+    if (online_failed_) return;
+  }
   for (std::size_t raw_slot = 0; raw_slot < online_raw_adj_.size(); ++raw_slot) {
     if (raw_slot > UINT32_MAX) { online_failed_ = true; return; }
-    std::vector<OtfEdge>& edges = online_raw_adj_[raw_slot];
+    const EdgeSpan edges = online_raw_adj_[raw_slot];
     for (std::size_t ordinal = 0; ordinal < edges.size(); ++ordinal) {
       const OtfEdge& edge = edges[ordinal];
       if (edge.deferred < 0) continue;
@@ -62,9 +67,67 @@ void LivenessEngine::online_enable_deferred_index() {
       const std::uint64_t handle =
           (static_cast<std::uint64_t>(static_cast<std::uint32_t>(raw_slot)) << 32) |
           static_cast<std::uint32_t>(ordinal);
-      online_key_by_id_[key]->deferred.push_back(handle);
+      online_key_by_id_[key]->ext().deferred.push_back(handle);
     }
   }
+}
+
+/// @brief Recreate the raw edges of every record expanded while ::online_lazy_edges_ was on.
+///
+/// Called once, when D gains its first atom and before that atom is installed, from the log
+/// ::online_expand kept instead of the edges. Each logged successor becomes the edge the expansion
+/// would have stored, less its exact target record, which nothing reads on this query: the key
+/// skeleton needs only the target KEY, and a revocable cover's target is only the first candidate
+/// ::online_recheck_key tries before scanning the key's active records -- any record of the key
+/// serves. The `(source, ordinal)` replay recipe is exact, because an expanded record's zone
+/// never changes (enlargement and merging touch only unexpanded records) and successor generation
+/// is deterministic. A record that was being expanded when the atom arrived is not in the log;
+/// ::online_expand stores its edges itself.
+void LivenessEngine::online_rebuild_raw_edges() {
+  std::size_t chunk = 0, pos = 0, consumed = 0;
+  bool bad = false;
+  const auto next = [&]() -> std::uint64_t {
+    std::uint64_t x = 0;
+    for (int shift = 0;; shift += 7) {
+      if (consumed >= online_edge_log_bytes_ || shift > 63) { bad = true; return 0; }
+      if (pos == online_edge_log_[chunk].size()) { ++chunk; pos = 0; }
+      const std::uint8_t byte = online_edge_log_[chunk][pos++];
+      ++consumed;
+      x |= static_cast<std::uint64_t>(byte & 0x7f) << shift;
+      if (!(byte & 0x80)) return x;
+    }
+  };
+  const std::int64_t nrecords = static_cast<std::int64_t>(nrec());
+  const std::int64_t nkeys = static_cast<std::int64_t>(online_key_by_id_.size());
+  std::int64_t u = 0;
+  while (consumed < online_edge_log_bytes_) {
+    u += unzigzag(next());
+    const std::uint64_t nsucc = next();
+    if (bad || u < 0 || u >= nrecords || !expanded[u] || online_raw_slot_[u] >= 0) {
+      online_failed_ = true;
+      return;
+    }
+    const std::int64_t src = online_key_of_[u];
+    online_raw_slot_[u] = online_raw_adj_.open_slot();
+    online_raw_owner_.push_back(static_cast<int>(u));
+    const int raw_slot = online_raw_slot_[u];
+    for (std::uint64_t k = 0; k < nsucc; ++k) {
+      const std::int64_t key = src + unzigzag(next());
+      const std::uint64_t tag_bit = next();
+      if (bad || key < 0 || key >= nkeys) { online_failed_ = true; return; }
+      const OnlineKeyInfo& ki = *online_key_by_id_[key];
+      const bool revocable = tag_bit & 1;
+      const int tgt = revocable && ki.active_head >= 0 ? ki.active_head : ki.node_head;
+      if (tgt < 0 ||
+          !online_raw_adj_.push(raw_slot, OtfEdge{tgt, static_cast<int>(tag_bit >> 1),
+                                                  revocable ? 1 : kEdgeExact, static_cast<int>(k)})) {
+        online_failed_ = true;
+        return;
+      }
+    }
+  }
+  std::vector<std::vector<std::uint8_t>>().swap(online_edge_log_);
+  online_edge_log_bytes_ = 0;
 }
 
 bool LivenessEngine::online_add_diag(int key, const AtomC& atom, bool closure) {
@@ -81,6 +144,7 @@ bool LivenessEngine::online_add_diag(int key, const AtomC& atom, bool closure) {
   if (!online_key_graph_enabled_) online_enable_key_graph();
   if (online_failed_) return false;
   as.push_back(atom);
+  online_edge_ord_valid_ = false;   // the covering relation just changed under the recorded bits
   online_atom_work_.push_back(OnlineAtomWork{key, atom});
   if (!online_dirty_queued_[key]) {
     online_dirty_queued_[key] = 1;
@@ -96,6 +160,7 @@ bool LivenessEngine::online_raise_bump(int clock, std::int32_t bound, bool closu
   online_enable_deferred_index();
   if (online_failed_) return false;
   online_am_.bump[clock] = bound;
+  online_edge_ord_valid_ = false;   // the covering relation just changed under the recorded bits
   online_am_.live[clock] = 1;
   ++online_bound_epoch_;
   online_global_dirty_ = true;
@@ -123,7 +188,12 @@ void LivenessEngine::online_seed_key(int key_id) {
   // constraint x <= c.  Difference and lower constraints alone cannot anchor an upper bound to
   // clock 0.  Detect that syntactically before allocating and closing two dense DBMs; this is the
   // overwhelmingly common seed case in scalable networks.
-  if (!fc && !fu) {
+  //
+  // NOT for `A[] not deadlock`. The two time-open shortcuts below are sound only where a
+  // time-divergent continuation is itself a witness -- the stop term of `E[] psi` and `p --> q`.
+  // A deadlock is a valuation from which no ACTION is ever enabled, and delaying for ever does not
+  // change that, so a time-open key can still hold one and must be seeded exactly.
+  if (!fc && !fu && !deadlock_scan_) {
     bool has_upper = false;
     for (const Constraint& c : ci)
       if (c.i > 0 && c.j == 0 && c.bound < kInf) { has_upper = true; break; }
@@ -146,7 +216,7 @@ void LivenessEngine::online_seed_key(int key_id) {
   bool open = true;
   for (int c = 1; c <= nc; ++c)
     if (inv.get(c, 0) != kInf) { open = false; break; }
-  if (open && !fc && !fu) return;                 // divergence already covers every stop
+  if (open && !fc && !fu && !deadlock_scan_) return;   // divergence already covers every stop
 
   Federation stuck, esc;
   if (!state_has_deadlock(*dead_net, u, &stuck, &esc)) return;
@@ -233,17 +303,18 @@ void LivenessEngine::online_pullback(const OnlineKeyEdge& e, const AtomC& atom) 
   }
 
   OnlineKeyInfo& si = *online_key_by_id_.at(e.src);
-  if (!si.inv_ready) {
+  OnlineKeyExtra& sx = si.ext();
+  if (!sx.inv_ready) {
     SymState rep;
     key_state(si.id, rep);
-    si.inv_ready = true;
+    sx.inv_ready = true;
     Dbm inv;
     if (key_invariant(*dead_net, rep, net.nclocks, inv))
-      si.inv = std::make_unique<Dbm>(std::move(inv));
+      sx.inv = std::make_unique<Dbm>(std::move(inv));
   }
-  if (si.inv) {
-    if (si.inv->get(i, j) <= atom.b) return;
-    if (raw_add(si.inv->get(j, i), atom.b) < kZeroLe) {
+  if (sx.inv) {
+    if (sx.inv->get(i, j) <= atom.b) return;
+    if (raw_add(sx.inv->get(j, i), atom.b) < kZeroLe) {
       ++online_am_.dropped_disjoint;
       return;
     }
@@ -260,7 +331,7 @@ void LivenessEngine::online_drain_atoms() {
     // A pullback may append an atom to the source of a self-loop.  Copy each intrusive edge
     // record before the call so neither atom-map growth nor a future edge-arena reallocation can
     // invalidate the iteration state.
-    for (int ei = ki.incoming; ei >= 0;) {
+    for (int ei = ki.incoming(); ei >= 0;) {
       const OnlineKeyEdge edge = online_key_edges_[ei];
       ei = edge.next_in;
       online_pullback(edge, w.atom);
@@ -294,8 +365,7 @@ int LivenessEngine::online_register_key(const LocVec& locs, const IntVec& ints,
     h = disc_hash(locs, ints);
     slots = &online_key_index_[h];
     for (int id : *slots) {
-      const int* kl = key_locs(id);
-      if (!std::equal(locs.begin(), locs.end(), kl, kl + key_loc_stride_)) continue;
+      if (!key_locs_equal(id, locs)) continue;
       const long* kint = key_ints(id);
       if (!std::equal(ints.begin(), ints.end(), kint, kint + key_int_stride_)) continue;
       return id;
@@ -306,7 +376,7 @@ int LivenessEngine::online_register_key(const LocVec& locs, const IntVec& ints,
   OnlineKeyInfo& ki = online_keys_.back();
   ki.id = static_cast<int>(online_key_by_id_.size());
   ki.packed_key = packed;
-  key_locs_.insert(key_locs_.end(), locs.begin(), locs.end());
+  key_locs_append(locs);
   key_ints_.insert(key_ints_.end(), ints.begin(), ints.end());
   online_key_by_id_.push_back(&ki);
   online_dirty_queued_.push_back(0);
@@ -396,13 +466,14 @@ void LivenessEngine::online_register_edge(int src, int tgt, int reset_class) {
     online_failed_ = true;
     return;
   }
-  OnlineKeyInfo& source = *online_key_by_id_.at(src);
+  OnlineKeyExtra& source = online_key_by_id_.at(src)->ext();
   for (int ei = source.outgoing; ei >= 0; ei = online_key_edges_[ei].next_out) {
     const OnlineKeyEdge& old = online_key_edges_[ei];
     if (old.tgt == tgt && old.reset_class == reset_class) return;
   }
   const int id = static_cast<int>(online_key_edges_.size());
-  OnlineKeyInfo& target = *online_key_by_id_.at(tgt);
+  OnlineKeyInfo& target_info = *online_key_by_id_.at(tgt);
+  OnlineKeyExtra& target = target_info.ext();
   online_key_edges_.push_back(OnlineKeyEdge{src, tgt, reset_class, source.outgoing,
                                              target.incoming});
   source.outgoing = id;
@@ -410,8 +481,8 @@ void LivenessEngine::online_register_edge(int src, int tgt, int reset_class) {
 
   // An edge discovered after its target's atoms must observe all of them immediately; future
   // atoms arrive through online_atom_work_ and use the same incoming list.
-  if (target.diag) {
-    const std::vector<AtomC> atoms = *target.diag;
+  if (target_info.diag) {
+    const std::vector<AtomC> atoms = *target_info.diag;
     for (const AtomC& a : atoms) online_pullback(online_key_edges_[id], a);
   }
 }
@@ -423,7 +494,7 @@ void LivenessEngine::online_recheck_key(int key) {
   int v = ki.node_head;  // activation itself does not append ahead of this captured list
   if (online_perf.enabled) {
     ++online_perf.recheck_calls;
-    online_perf.recheck_nodes += count + ki.deferred.size();
+    online_perf.recheck_nodes += count + ki.deferred_count();
   }
   for (std::size_t n = 0; n < count && v >= 0; ++n) {
     const int current = v;
@@ -438,6 +509,7 @@ void LivenessEngine::online_recheck_key(int key) {
     if (cover >= 0) {
       online_set_cover(current, cover);
     } else {
+      online_compact_complete_ = false;
       online_activate(current);
     }
   }
@@ -446,9 +518,9 @@ void LivenessEngine::online_recheck_key(int key) {
   // only those belonging to this D-dirty key, retest the exact candidate, and materialise it
   // only if the refined map leaves it uncovered.  The raw edge remains in the same graph and is
   // simply retargeted; this is local lazy reconstruction, not another reachability traversal.
-  const std::size_t deferred_count = ki.deferred.size();
+  const std::size_t deferred_count = ki.deferred_count();
   for (std::size_t n = 0; n < deferred_count; ++n) {
-    const std::uint64_t handle = ki.deferred[n];
+    const std::uint64_t handle = ki.extra->deferred[n];   // re-read: interning below may append
     const int raw_slot = static_cast<int>(static_cast<std::uint32_t>(handle >> 32));
     const int ordinal = static_cast<int>(static_cast<std::uint32_t>(handle));
     if (raw_slot < 0 || raw_slot >= static_cast<int>(online_raw_adj_.size()) ||
@@ -482,6 +554,7 @@ void LivenessEngine::online_recheck_key(int key) {
 
     if (cover >= 0) {
       edge.tgt = cover;
+      online_set_edge_ord(raw_slot, static_cast<std::size_t>(ordinal), false);   // retargeted
       // These two relations are future-proof.  Once either holds, even another D refinement
       // cannot wake the candidate, so its replay recipe can be discarded permanently.
       const bool permanent = stored_includes(cover, candidate.zone);
@@ -499,6 +572,7 @@ void LivenessEngine::online_recheck_key(int key) {
     }
     edge.tgt = v;
     edge.deferred = -1;
+    online_set_edge_ord(raw_slot, static_cast<std::size_t>(ordinal), false);     // retargeted
     if (online_perf.enabled) ++online_perf.deferred_promoted;
   }
 }
@@ -649,19 +723,38 @@ void LivenessEngine::online_expand(int u) {
   // Only expanded representatives own an outgoing raw-edge vector.  Keep its slot separate
   // from the persistent record id.  Provisionally covered successors are not materialised, so
   // allocating an empty vector for every possible target would dominate the metadata footprint.
-  if (online_raw_slot_[u] < 0) {
-    online_raw_slot_[u] = static_cast<int>(online_raw_adj_.size());
-    online_raw_adj_.emplace_back();
+  const bool keep_edges = !online_lazy_edges_;
+  if (keep_edges && online_raw_slot_[u] < 0) {
+    online_raw_slot_[u] = online_raw_adj_.open_slot();
     online_raw_owner_.push_back(u);
   }
-  const int raw_slot = online_raw_slot_[u];
-  online_raw_adj_[raw_slot].reserve(online_raw_adj_[raw_slot].size() + succ.size());
+  const int raw_slot = keep_edges ? online_raw_slot_[u] : -1;
+  if (!keep_edges) {
+    online_log_varint(zigzag(static_cast<std::int64_t>(u) - online_edge_log_prev_));
+    online_edge_log_prev_ = u;
+    online_log_varint(succ.size());
+  }
   for (std::size_t k = 0; k < succ.size(); ++k) {
     int deferred = -1;
-    const int v = online_intern(std::move(succ[k]), target_keys[k], u,
-                                static_cast<int>(k), &deferred);
-    online_raw_adj_[raw_slot].push_back(
-        OtfEdge{v, tag_ids[k], deferred, static_cast<int>(k)});
+    bool ordinary = false;
+    // Only the forward E[] and `p --> q` routes read the ordinary-edge bit.
+    const int v = online_intern(std::move(succ[k]), target_keys[k], u, static_cast<int>(k),
+                                &deferred, deadlock_scan_ ? nullptr : &ordinary);
+    if (!keep_edges) {
+      // Interning never installs an atom, so the log entry this record began is completed here.
+      if (!online_lazy_edges_) { online_failed_ = true; return; }
+      online_log_varint(zigzag(static_cast<std::int64_t>(target_keys[k]) - src));
+      online_log_varint((static_cast<std::uint64_t>(tag_ids[k]) << 1) | (deferred >= 0 ? 1u : 0u));
+      if (cancelled() || online_failed_) return;
+      continue;
+    }
+    // A slot is one contiguous run of the arena, so only the newest slot can grow. The slot was
+    // opened by this very expansion and interning opens none, so it always is.
+    if (!online_raw_adj_.push(raw_slot, OtfEdge{v, tag_ids[k], deferred, static_cast<int>(k)})) {
+      online_failed_ = true;
+      return;
+    }
+    if (!deadlock_scan_) online_push_edge_ord(ordinary);
     if (cancelled() || online_failed_) return;
   }
   if (profile) {
@@ -676,7 +769,15 @@ void LivenessEngine::online_expand(int u) {
 
   // Keep the active quotient lean.  A materialised representative that becomes covered turns
   // inactive; its already generated raw edges remain available if a later atom reactivates it.
-  online_compact_key(u);
+  //
+  // ...but only when it can find something.  ::online_intern already ran this compaction the moment
+  // `u` became active, and every record activated since went through ::online_intern's own cover
+  // scan with `u` among the candidates, so a record that `u` covers never became active in the
+  // first place -- the relation only ever gets finer, so a cover `u` grants now it granted then.
+  // The scan can only find work once something has activated records OUTSIDE that path, or has
+  // made that scan skip candidates; ::online_compact_complete_ records whether that happened.
+  // Measured on grc6 q1, whose keys hold wide antichains: 11% of the run, with identical states.
+  if (!online_compact_complete_) online_compact_key(u);
 }
 
 /// @brief Greatest-fixpoint witness probe over a read-only snapshot of the online graph.
@@ -714,7 +815,7 @@ bool LivenessEngine::online_eg_probe(std::size_t* work) {
   std::vector<std::vector<OtfEdge>> snap(n);
   for (std::size_t v = 0; v < n; ++v) {
     if (!expanded[v] || online_raw_slot_[v] < 0) continue;
-    const std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
+    const EdgeSpan raw = online_raw_adj_[online_raw_slot_[v]];
     std::vector<OtfEdge>& out = snap[v];
     out.reserve(raw.size());
     for (const OtfEdge& e : raw) {
@@ -759,6 +860,77 @@ bool LivenessEngine::online_eg_probe(std::size_t* work) {
   return sat;
 }
 
+std::vector<int> LivenessEngine::online_eg_closure_raw() {
+  std::vector<int> S;
+  const std::size_t n = nrec();
+  if (n == 0 || online_raw_slot_.size() < n || online_key_of_.size() < n) return S;
+  const auto usable = [&](int v) {
+    return v >= 0 && v < static_cast<int>(n) && expanded[v] && online_raw_slot_[v] >= 0 &&
+           online_is_nq(v);
+  };
+  if (!usable(0)) return S;
+  std::vector<char> in(n, 0);
+  std::vector<int> stk{0};
+  in[0] = 1;
+  while (!stk.empty()) {
+    const int v = stk.back();
+    stk.pop_back();
+    S.push_back(v);
+    for (const OtfEdge& e : online_raw_adj_[online_raw_slot_[v]]) {
+      int t = e.tgt;
+      if (t < 0 || t >= static_cast<int>(n) || !expanded[t] || online_raw_slot_[t] < 0)
+        t = online_resolve_cover(e.tgt, /*require_expanded=*/true);
+      if (t >= 0 && !in[t] && usable(t)) { in[t] = 1; stk.push_back(t); }
+    }
+  }
+  return S;
+}
+
+bool LivenessEngine::online_eg_cycle_probe() {
+  if (!fwd_ok_ || online_failed_ || cancelled()) return false;
+  const std::size_t n = nrec();
+  // The psi-closure of the initial record over EVERY edge.  Every member is joined to the initial
+  // state by a psi-path, which is what lets a cycle anywhere in it compose into a witness from the
+  // initial state.
+  const std::vector<int> S = online_eg_closure_raw();
+  if (S.empty()) return false;
+  std::vector<char> in(n, 0);
+  for (int v : S) in[v] = 1;
+
+  // A cycle of ordinary edges inside it, by iterative three-colour DFS: an edge back to a grey
+  // record closes one.  An edge counts only while it still names the record it was classified
+  // against -- the bit is cleared on every retarget -- so no coverer is substituted here.
+  std::vector<char> colour(n, 0);            // 0 unvisited, 1 on the DFS path, 2 finished
+  std::vector<std::pair<int, std::size_t>> dfs;
+  for (std::size_t root = 0; root < n; ++root) {
+    if (!in[root] || colour[root]) continue;
+    colour[root] = 1;
+    dfs.push_back({static_cast<int>(root), 0});
+    while (!dfs.empty()) {
+      const int v = dfs.back().first;
+      const int slot = online_raw_slot_[v];
+      const EdgeSpan raw = online_raw_adj_[slot];
+      int next = -1;
+      for (std::size_t& pos = dfs.back().second; pos < raw.size();) {
+        const std::size_t p = pos++;
+        if (!online_edge_ord_at(slot, p)) continue;
+        const int t = raw[p].tgt;
+        if (t < 0 || t >= static_cast<int>(n) || !in[t]) continue;
+        if (colour[t] == 1) return true;
+        if (colour[t] == 0) { next = t; break; }
+      }
+      if (next < 0) {
+        colour[v] = 2;
+        dfs.pop_back();
+      } else {
+        colour[next] = 1;
+        dfs.push_back({next, 0});
+      }
+    }
+  }
+  return false;
+}
+
 /// @brief Drain the coupled expansion / atom / cover-certificate worklists to quiescence.
 void LivenessEngine::online_drain_forward_work() {
   // WHEN to probe: amortization in ZONE OPERATIONS, not in wall-clock.
@@ -799,6 +971,21 @@ void LivenessEngine::online_drain_forward_work() {
     return !(e && e[0] == '0');
   }();
   const bool probe_on = eg_early_ && probe_enabled;
+  // WHICH probe. The default asks the question the forward route itself decides witnesses by -- a
+  // cycle of ORDINARY edges (::online_eg_cycle_probe) -- from bits recorded as edges were made, so
+  // a probe is pointer work over the graph and no zone operation at all. Its cost is O(records +
+  // edges), the same order as the construction's own bookkeeping per record, so charging it its
+  // record count keeps total probe work within a constant factor of exploration by construction.
+  //
+  // The greatest-fixpoint probe (`HORA_EG_ONLINE_PROBE=gfp`, and the fallback once a D atom has
+  // changed the covering relation under the bits) can also read a witness closed through a cover,
+  // but its sweep grows superlinearly in the graph -- 41,664 predecessor computations at 10,876
+  // records on twolock10 q2, then 1,574,759 at 70,795 -- so one probe on a refuted query outruns
+  // the whole exploration budget it was scheduled against: 11.1s against 2.96s without it.
+  static const bool probe_gfp = [] {
+    const char* e = std::getenv("HORA_EG_ONLINE_PROBE");
+    return e && std::strcmp(e, "gfp") == 0;
+  }();
   // Both counters are members: see hora::detail::LivenessEngine::online_probed_nodes_ for why
   // this budget must span every drain of one construction and not restart per call.
   std::size_t& probed_nodes = online_probed_nodes_;
@@ -810,11 +997,12 @@ void LivenessEngine::online_drain_forward_work() {
     if (probe_on && nrec() - nodes_at_last_probe >= probed_nodes) {
       const std::size_t snapshot = nrec();
       std::size_t sweep = 0;
-      const bool hit = online_eg_probe(&sweep);
+      const bool cycle = !probe_gfp && online_edge_ord_valid_;
+      const bool hit = cycle ? online_eg_cycle_probe() : online_eg_probe(&sweep);
       probed_nodes += snapshot + sweep;
       if (probe_dbg)
-        std::fprintf(stderr, "ONLINE-PROBE at_nodes=%zu hit=%d sweep_pre=%zu cumulative_probed=%zu\n",
-                     nrec(), static_cast<int>(hit), sweep, probed_nodes);
+        std::fprintf(stderr, "ONLINE-PROBE %s at_nodes=%zu hit=%d sweep_pre=%zu cumulative_probed=%zu\n",
+                     cycle ? "cycle" : "gfp", nrec(), static_cast<int>(hit), sweep, probed_nodes);
       if (hit) { eg_early_hit_ = true; return; }
       nodes_at_last_probe = nrec();
     }
@@ -829,8 +1017,7 @@ void LivenessEngine::online_drain_forward_work() {
       // redirection and D seeding, but its successors cannot influence the initial-state gfp.
       expanded[u] = 1;
       if (online_raw_slot_[u] < 0) {
-        online_raw_slot_[u] = static_cast<int>(online_raw_adj_.size());
-        online_raw_adj_.emplace_back();
+        online_raw_slot_[u] = online_raw_adj_.open_slot();
         online_raw_owner_.push_back(u);
       }
       continue;
@@ -852,7 +1039,11 @@ void LivenessEngine::online_complete_eg_history() {
   const std::size_t parked = nrec();
   std::size_t pending = 0;
   for (std::size_t v = 0; v < parked; ++v)
-    if (!expanded[v]) { ++pending; online_activate(static_cast<int>(v)); }
+    if (!expanded[v]) {
+      ++pending;
+      online_compact_complete_ = false;
+      online_activate(static_cast<int>(v));
+    }
   if (online_perf.enabled)
     std::fprintf(stderr, "ONLINE-EG-REPAIR before=%zu pending=%zu queued=%zu\n",
                  parked, pending, online_work_.size());
@@ -905,6 +1096,7 @@ void LivenessEngine::online_finalize_graph() {
         // unexpanded target is also explicitly queued here, guarding against stale queue bits
         // left by representative compaction.
         if (!online_active_[e.tgt] || !expanded[e.tgt]) {
+          online_compact_complete_ = false;
           online_activate(e.tgt);
           woke = true;
         } else {
@@ -940,7 +1132,7 @@ void LivenessEngine::online_finalize_graph() {
     adj.resize(nrec());
     node_key_.assign(online_key_of_.begin(), online_key_of_.begin() + nrec());
     for (std::size_t v = 0; v < nrec(); ++v) {
-      std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
+      const EdgeSpan raw = online_raw_adj_[online_raw_slot_[v]];
       for (OtfEdge& edge : raw) {
         // Materialised targets keep their own identity, even after leaving the active forward
         // antichain. A never-materialised provisional successor already names its final active
@@ -953,7 +1145,7 @@ void LivenessEngine::online_finalize_graph() {
         }
         edge.deferred = -1;
       }
-      adj[v] = std::move(raw);
+      adj[v].assign(raw.begin(), raw.end());
     }
   } else {
     // Reindex only when refinement really left inactive materialised records. No successor is
@@ -984,7 +1176,7 @@ void LivenessEngine::online_finalize_graph() {
     for (std::size_t old = 0; old < nrec(); ++old) {
       const int now = remap[old];
       if (now < 0) continue;
-      std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[old]];
+      const EdgeSpan raw = online_raw_adj_[online_raw_slot_[old]];
       for (OtfEdge& e : raw) {
         int representative = e.tgt;
         if (representative < 0 || representative >= static_cast<int>(nrec()) ||
@@ -996,7 +1188,7 @@ void LivenessEngine::online_finalize_graph() {
         e.tgt = tgt;
         e.deferred = -1;
       }
-      adj[now] = std::move(raw);
+      adj[now].assign(raw.begin(), raw.end());
     }
     zs_.truncate(kept);
   }
@@ -1025,6 +1217,8 @@ void LivenessEngine::online_finalize_graph() {
   online_raw_adj_.clear();
   online_raw_owner_.clear();
   online_raw_slot_.clear();
+  online_edge_ord_.clear();
+  online_edge_ord_n_ = 0;
   online_inq_.clear();
   online_work_.clear();
   online_key_by_id_.clear();

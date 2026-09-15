@@ -20,6 +20,7 @@
 /// No public liveness route uses it.
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -135,16 +136,13 @@ struct OnlineKeyEdge {
   int next_in;
 };
 
-/// @brief One discrete key of the online quotient.
+/// @brief The part of a key's record that only the D refinement ever touches.
 ///
-/// The location and integer vectors are NOT here: they live in @ref LivenessEngine's `key_locs_` /
-/// `key_ints_` arenas at a fixed stride, reached through @ref LivenessEngine::key_locs. Two heap vectors per
-/// key cost more in headers and allocator metadata than the locations themselves, and on the
-/// families where every reachable state has its own key that was the largest single block of
-/// memory after the zones.
-struct OnlineKeyInfo {
-  int id = -1;
-  std::uint64_t packed_key = 0;
+/// None of it exists until D gains an atom: the key skeleton, the replay index and the cached
+/// invariant are all built on first use.  On every benchmark row D stays empty, so this is never
+/// allocated, and holding it inline cost every key 48 bytes for nothing -- on the families where
+/// each reachable state has a key of its own that was the largest block after the zones.
+struct OnlineKeyExtra {
   // Intrusive lists into LivenessEngine::online_key_edges_.  This avoids three heap-allocated vectors per
   // discrete key while preserving exact incoming propagation and source-local deduplication.
   int incoming = -1;
@@ -152,16 +150,36 @@ struct OnlineKeyInfo {
   // Packed `(raw-adjacency slot, edge ordinal)` handles for revocable cover edges at this key.
   // The edge itself is the replay recipe; no separate provisional-state object is allocated.
   std::vector<std::uint64_t> deferred;
+  std::unique_ptr<Dbm> inv;
+  bool inv_ready = false;
+};
+
+/// @brief One discrete key of the online quotient.
+///
+/// The location and integer vectors are NOT here: they live in @ref LivenessEngine's key arenas at
+/// a fixed stride, reached through @ref LivenessEngine::key_locs_to. Two heap vectors per key cost
+/// more in headers and allocator metadata than the locations themselves, and on the families where
+/// every reachable state has its own key that was the largest single block of memory after the
+/// zones.
+struct OnlineKeyInfo {
+  int id = -1;
   // Materialised and active nodes use intrusive lists stored once per node in LivenessEngine.  Most keys
   // own exactly one record, so a heap-allocated vector per key was mostly allocator metadata.
   int node_head = -1;
-  std::size_t node_count = 0;
+  std::uint64_t packed_key = 0;
+  std::uint32_t node_count = 0;
   int active_head = -1;
-  std::size_t active_count = 0;
-  std::unique_ptr<std::vector<AtomC>> diag;
-  std::unique_ptr<Dbm> inv;
-  bool inv_ready = false;
+  std::uint32_t active_count = 0;
   bool may_deadlock = false;
+  std::unique_ptr<std::vector<AtomC>> diag;
+  std::unique_ptr<OnlineKeyExtra> extra;
+  /// @brief The D-only part, allocated on first use.
+  OnlineKeyExtra& ext() {
+    if (!extra) extra = std::make_unique<OnlineKeyExtra>();
+    return *extra;
+  }
+  int incoming() const { return extra ? extra->incoming : -1; }
+  std::size_t deferred_count() const { return extra ? extra->deferred.size() : 0; }
 };
 
 /// @brief One diagonal atom waiting to be pulled through the incoming-key worklist.
@@ -197,6 +215,87 @@ struct LazyStats {
   double ms_backward = 0;            ///< every later backward pass
   double ms_forward = 0;             ///< replay plus incremental forward expansion
   double ms_scc = 0;                 ///< key-graph construction and SCC maintenance
+};
+
+/// @brief A mutable view of one slot's edges inside ::RawAdjArena.
+struct EdgeSpan {
+  OtfEdge* b = nullptr;
+  OtfEdge* e = nullptr;
+  OtfEdge* begin() const { return b; }
+  OtfEdge* end() const { return e; }
+  std::size_t size() const { return static_cast<std::size_t>(e - b); }
+  bool empty() const { return b == e; }
+  OtfEdge& operator[](std::size_t i) const { return b[i]; }
+};
+
+/// @brief Every expanded record's raw successor edges, one contiguous run per slot, in blocks.
+///
+/// A record's edges are generated in one batch when it is expanded and never grow afterwards --
+/// refinement only rewrites their targets -- so they need no vector of their own.  A
+/// `vector<vector<OtfEdge>>` paid a 24-byte header plus an allocator block per expanded record.
+/// One growing vector for all of them was the next step, and it still cost up to its own size
+/// again: a doubling vector holds half its capacity idle, and each regrowth briefly holds the old
+/// and the new buffer together, which is what the peak resident size records -- 67 MB of capacity
+/// behind 35 MB of edges on csma13 `A[] not deadlock`.  Fixed blocks have neither cost, and a
+/// span stays valid for the life of the arena.
+///
+/// A slot costs a 4-byte running count, whose differences are the slot lengths and which also
+/// numbers the edges (the ordinary-edge bits index by it), plus an 8-byte block reference.  A run
+/// that does not fit in what is left of the current block moves, whole, into a fresh one.
+class RawAdjArena {
+ public:
+  RawAdjArena() : off_(1, 0) {}
+  /// @brief Number of slots.
+  std::size_t size() const { return off_.size() - 1; }
+  EdgeSpan operator[](std::size_t s) const {
+    const std::size_t len = off_[s + 1] - off_[s];
+    if (len == 0) return EdgeSpan{};
+    OtfEdge* b = blocks_[static_cast<std::size_t>(ref_[s] >> 32)].get() +
+                 static_cast<std::uint32_t>(ref_[s]);
+    return EdgeSpan{b, b + len};
+  }
+  /// @brief Open a new, empty slot after every existing one.
+  int open_slot() {
+    off_.push_back(off_.back());
+    ref_.push_back((static_cast<std::uint64_t>(blocks_.size() ? blocks_.size() - 1 : 0) << 32) | fill_);
+    return static_cast<int>(size() - 1);
+  }
+  /// @brief Append @p e to slot @p s. @return @c false unless @p s is the newest slot.
+  bool push(std::size_t s, const OtfEdge& e) {
+    if (s + 1 != size() || off_.back() >= UINT32_MAX) return false;
+    const std::size_t len = off_.back() - off_[s];
+    if (fill_ == cap_) {                       // no room left: a fresh block, and the run moves
+      cap_ = std::max<std::size_t>(kBlock, 2 * (len + 1));
+      blocks_.emplace_back(new OtfEdge[cap_]);
+      OtfEdge* nb = blocks_.back().get();
+      if (len) {
+        const OtfEdge* old = (*this)[s].begin();
+        std::copy(old, old + len, nb);
+      }
+      ref_[s] = static_cast<std::uint64_t>(blocks_.size() - 1) << 32;
+      fill_ = len;
+    }
+    blocks_.back()[fill_++] = e;
+    ++off_.back();
+    return true;
+  }
+  /// @brief Running index of slot @p s's first edge.
+  std::size_t first(std::size_t s) const { return off_[s]; }
+  std::size_t edge_count() const { return off_.back(); }
+  void clear() {
+    blocks_.clear();
+    ref_.clear();
+    off_.assign(1, 0);
+    fill_ = cap_ = 0;
+  }
+
+ private:
+  static constexpr std::size_t kBlock = std::size_t(1) << 16;   ///< edges per block, 1 MiB
+  std::vector<std::unique_ptr<OtfEdge[]>> blocks_;
+  std::vector<std::uint64_t> ref_;             ///< per slot: block index << 32 | offset in it
+  std::vector<std::uint32_t> off_;             ///< running edge count at each slot's start
+  std::size_t fill_ = 0;                       ///< edges used in the newest block
+  std::size_t cap_ = 0;                        ///< capacity of the newest block
 };
 
 /// @brief Private liveness engine instance: one graph construction and one backward solve.
@@ -402,7 +501,15 @@ class LivenessEngine {
   std::deque<OnlineKeyInfo> online_keys_;
   // Discrete state of every key, flat: `key_locs_` at stride nprocs, `key_ints_` at stride
   // |intvars|. Empty when the network has no integer variables, which is the common case.
-  std::vector<int> key_locs_;
+  // Locations are stored as narrow as the largest location count allows -- one byte for up to
+  // 256 locations per process, which is every model here -- because on families where each
+  // reachable state is its own key this arena is one `nprocs`-wide row per state: 84 bytes a key
+  // at int width on viking20. Exactly one of the three is in use; ::key_loc_width_ says which.
+  std::vector<std::uint8_t> key_loc8_;
+  std::vector<std::uint16_t> key_loc16_;
+  std::vector<int> key_loc32_;
+  int key_loc_width_ = 4;
+  std::vector<int> key_loc_scratch_;   // ::online_configure_bounds decodes a key's row here
   std::vector<long> key_ints_;
   int key_loc_stride_ = 0;
   int key_int_stride_ = 0;
@@ -440,10 +547,82 @@ class LivenessEngine {
   // Only expanded representatives own an outgoing raw-edge vector.  `online_raw_slot_[v]`
   // maps a persistent active record to that compact storage, avoiding an empty vector for every
   // provisionally covered successor.
-  std::vector<std::vector<OtfEdge>> online_raw_adj_;
+  RawAdjArena online_raw_adj_;
+  /// @brief Has every active record been compacted against every record that became active later?
+  ///
+  /// True while activation happens only through ::online_intern's fresh-record path, whose cover
+  /// scan considers every active candidate.  Cleared for good by anything else that activates a
+  /// record (a D recheck, the E[] history repair, the seal's wake-up, a refinement wave) or that
+  /// makes that scan skip candidates (refinement's forbidden, unsafe and merged targets), after
+  /// which ::online_expand compacts again as it always did.
+  bool online_compact_complete_ = true;
+  /// @brief ::online_intern's convex-union scratch: per active-list position, the candidate version
+  /// that record last failed to merge with.  A member only so the hot path does not allocate.
+  std::vector<int> online_union_tried_;
   std::vector<int> online_raw_owner_;
   std::vector<int> online_raw_slot_;
+  // ORDINARY-EDGE BITS, one per raw edge, recorded when the edge is made.  Deciding whether an
+  // edge is ordinary needs its exact successor zone, which exists only at that moment: afterwards
+  // it costs a full ::tagged_successors replay of the source.  A bit is meaningful only while the
+  // edge still names the record it was classified against -- every retarget clears it -- and
+  // only while no D atom has refined the covering relation (@ref online_edge_ord_valid_).
+  // A bit's index is its edge's index in the raw arena.
+  std::vector<std::uint64_t> online_edge_ord_;
+  std::size_t online_edge_ord_n_ = 0;
+  bool online_edge_ord_valid_ = true;
+  void online_push_edge_ord(bool ordinary) {
+    if ((online_edge_ord_n_ & 63) == 0) online_edge_ord_.push_back(0);
+    if (ordinary) online_edge_ord_.back() |= std::uint64_t(1) << (online_edge_ord_n_ & 63);
+    ++online_edge_ord_n_;
+  }
+  bool online_edge_ord_at(int slot, std::size_t pos) const {
+    const std::size_t i = online_raw_adj_.first(slot) + pos;
+    return i < online_edge_ord_n_ && ((online_edge_ord_[i >> 6] >> (i & 63)) & 1);
+  }
+  void online_set_edge_ord(int slot, std::size_t pos, bool ordinary) {
+    if (slot < 0 || static_cast<std::size_t>(slot) >= online_raw_adj_.size()) return;
+    const std::size_t i = online_raw_adj_.first(slot) + pos;
+    if (i >= online_edge_ord_n_) return;
+    const std::uint64_t bit = std::uint64_t(1) << (i & 63);
+    if (ordinary) online_edge_ord_[i >> 6] |= bit;
+    else online_edge_ord_[i >> 6] &= ~bit;
+  }
   bool online_deferred_index_enabled_ = false;
+  /// @brief `A[] not deadlock` keeps no raw edge while D is empty.
+  ///
+  /// A raw edge is read only by the D refinement -- to index replay recipes, to build the key
+  /// skeleton atoms are pulled back through, and to replay a revoked cover -- and a reachability
+  /// query needs none of that until D gains its first atom. On most models it never does, and the
+  /// edges were the second-largest block of the run. ::online_rebuild_raw_edges recreates them,
+  /// once, when the first atom arrives; from then on every expansion stores its edges as usual.
+  bool online_lazy_edges_ = false;
+  // What ::online_rebuild_raw_edges needs instead of the edges, kept while ::online_lazy_edges_ is
+  // on: per expanded record its id and successor count, then per successor its target key and its
+  // tag with the revocable-cover bit, as LEB128 varints relative to the previous record and to the
+  // source key. A few bytes an edge against the arena's sixteen, and replaying it regenerates no
+  // successor -- which, when the first atom arrives late, is most of what the search has done.
+  std::vector<std::vector<std::uint8_t>> online_edge_log_;
+  std::size_t online_edge_log_bytes_ = 0;
+  int online_edge_log_prev_ = 0;
+  void online_log_varint(std::uint64_t x) {
+    const std::size_t chunk = std::size_t(1) << 20;
+    do {
+      if (online_edge_log_.empty() || online_edge_log_.back().size() == chunk) {
+        online_edge_log_.emplace_back();
+        online_edge_log_.back().reserve(chunk);
+      }
+      online_edge_log_.back().push_back(static_cast<std::uint8_t>((x & 0x7f) | (x > 0x7f ? 0x80 : 0)));
+      ++online_edge_log_bytes_;
+      x >>= 7;
+    } while (x);
+  }
+  static std::uint64_t zigzag(std::int64_t x) {
+    return (static_cast<std::uint64_t>(x) << 1) ^ static_cast<std::uint64_t>(x >> 63);
+  }
+  static std::int64_t unzigzag(std::uint64_t x) {
+    return static_cast<std::int64_t>(x >> 1) ^ -static_cast<std::int64_t>(x & 1);
+  }
+  void online_rebuild_raw_edges();
   std::deque<int> online_work_;
 
   // ---- lazy liveness refinement (HORA_LAZY) --------------------------------------------------
@@ -514,16 +693,6 @@ class LivenessEngine {
   /// cycle still cannot close through a node that is not a single post image.  They are therefore
   /// barred as cover targets while refining, exactly like the nodes of an unsafe SCC.
   std::vector<char> online_merged_;
-  /// @brief The exact post images a merged record absorbed, by record id.
-  ///
-  /// The convex union is set-theoretically exact, so a merged node really does contain each
-  /// piece -- merging never invents a run.  What it breaks is the ORDINARY-EDGE TEST, which asks
-  /// whether the target's stored zone is a_LU-equivalent to the exact successor: against the
-  /// union that fails, the edge is misclassified as a cover, and the cycle search loses it.
-  /// Keeping the pieces lets the test ask "equivalent to the node, OR to any piece it absorbed",
-  /// which is the same question the unmerged graph would have answered.  Only merged records
-  /// appear here, and only on the forward route.
-  std::unordered_map<int, std::vector<Dbm>> online_merge_pieces_;
   std::vector<char> online_inq_;
 
   // General graph mechanics.
@@ -531,10 +700,6 @@ class LivenessEngine {
   std::size_t nrec() const {
     if (online_d_) return online_nrec_;
     return node_key_.empty() ? node.size() : node_key_.size();
-  }
-  /// @brief Node @p v's locations, `nlocs_n()` of them.
-  const int* nlocs(int v) const {
-    return node_key_.empty() ? node[v].locs.data() : key_locs(node_key_[v]);
   }
   /// @brief Node @p v's integer variables, `nints_n()` of them.
   const long* nints(int v) const {
@@ -548,8 +713,8 @@ class LivenessEngine {
   }
   /// @brief Copy node @p v's discrete half into @p s, leaving its zone alone.
   void nstate(int v, detail::SymState& s) const {
-    const int* l = nlocs(v);
-    s.locs.assign(l, l + nlocs_n(v));
+    if (node_key_.empty()) s.locs.assign(node[v].locs.begin(), node[v].locs.end());
+    else key_locs_to(node_key_[v], s.locs);
     const long* i = nints(v);
     s.ints.assign(i, i + nints_n(v));
   }
@@ -573,6 +738,7 @@ class LivenessEngine {
   void expand(int u);
   bool time_diverges(const detail::SymState& s) const;
   Federation stop_set(int u);
+  bool stop_known_empty(int v);
   bool orig_time_open(const detail::SymState& s) const;
   void solve_greatest_fixpoint(const std::vector<int>& S, std::vector<Federation>& W);
   bool certificate_in(const std::vector<int>& S);
@@ -613,7 +779,13 @@ class LivenessEngine {
   bool online_cover_rec(const Dbm& a, const Dbm& b, const std::vector<AtomC>& as, int depth);
   int online_append(detail::SymState&& s, int key);
   int online_intern(detail::SymState&& s, int key, int source = -1, int ordinal = -1,
-                    int* deferred = nullptr);
+                    int* deferred = nullptr, bool* ordinary = nullptr);
+  /// @brief Is an edge whose exact successor is @p s, landing on stored record @p j, ORDINARY?
+  ///
+  /// Ordinary in the sense of src/liveness/forward_buchi.cpp: @p j is a single post image (not a
+  /// convex-union merge) and the successor is equivalent to it under the covering relation, in
+  /// both directions.  @pre @p s is already covered by @p j, which supplies the first direction.
+  bool online_ordinary_to(const detail::SymState& s, int j, int key);
   bool online_replay(int source, int ordinal, int key, detail::SymState& out) const;
   bool online_is_nq(int v);
   bool online_eg_terminal_witness(int v, bool no_restricted_successor);
@@ -624,6 +796,19 @@ class LivenessEngine {
   ///              greatest-fixpoint sweep actually spent -- the probe's real cost, which the
   ///              record count it was handed does not predict.  Zero on every early return.
   bool online_eg_probe(std::size_t* work = nullptr);
+  /// @brief Does the explored psi-closure already contain a cycle of ORDINARY edges?
+  ///
+  /// Herbreteau et al.'s Theorem 6 direction that needs no liveness compatibility: a cycle of
+  /// ordinary edges is a path of the abstract zone graph, hence an infinite run, and every record
+  /// of the closure is joined to the initial state by a psi-path.  So a hit is a real witness on a
+  /// partial graph; a miss says nothing.  No zone operation at all -- the classification was paid
+  /// for when each edge was made.
+  bool online_eg_cycle_probe();
+  /// @brief ::eg_closure read straight off the raw adjacency, with no snapshot installed.
+  ///
+  /// The same node set: a raw target that is not itself an expanded record stands for its expanded
+  /// coverer, exactly as ::lazy_snapshot resolves it.  Order is depth-first from the initial record.
+  std::vector<int> online_eg_closure_raw();
   int online_coverer(int v, bool require_expanded);
   int online_resolve_cover(int v, bool require_expanded);
   void online_set_cover(int v, int cover);
@@ -639,9 +824,39 @@ class LivenessEngine {
   void online_drain_atoms();
   int online_register_key(const detail::LocVec& locs, const detail::IntVec& ints,
                           std::uint64_t packed = 0, bool packed_ready = false);
-  /// @brief Locations of key @p id, `key_loc_stride_` of them.
-  const int* key_locs(int id) const {
-    return key_locs_.data() + static_cast<std::size_t>(id) * key_loc_stride_;
+  /// @brief Decode key @p id's `key_loc_stride_` locations into @p out.
+  void key_locs_to(int id, int* out) const {
+    const std::size_t base = static_cast<std::size_t>(id) * key_loc_stride_;
+    switch (key_loc_width_) {
+      case 1: for (int p = 0; p < key_loc_stride_; ++p) out[p] = key_loc8_[base + p]; break;
+      case 2: for (int p = 0; p < key_loc_stride_; ++p) out[p] = key_loc16_[base + p]; break;
+      default: for (int p = 0; p < key_loc_stride_; ++p) out[p] = key_loc32_[base + p]; break;
+    }
+  }
+  void key_locs_to(int id, detail::LocVec& out) const {
+    out.resize(static_cast<std::size_t>(key_loc_stride_));
+    key_locs_to(id, out.data());
+  }
+  /// @brief Is key @p id's location vector exactly @p locs?
+  bool key_locs_equal(int id, const detail::LocVec& locs) const {
+    if (static_cast<int>(locs.size()) != key_loc_stride_) return false;
+    const std::size_t base = static_cast<std::size_t>(id) * key_loc_stride_;
+    for (int p = 0; p < key_loc_stride_; ++p) {
+      const int l = key_loc_width_ == 1 ? key_loc8_[base + p]
+                  : key_loc_width_ == 2 ? key_loc16_[base + p] : key_loc32_[base + p];
+      if (l != locs[p]) return false;
+    }
+    return true;
+  }
+  void key_locs_append(const detail::LocVec& locs) {
+    switch (key_loc_width_) {
+      case 1: for (int l : locs) key_loc8_.push_back(static_cast<std::uint8_t>(l)); break;
+      case 2: for (int l : locs) key_loc16_.push_back(static_cast<std::uint16_t>(l)); break;
+      default: key_loc32_.insert(key_loc32_.end(), locs.begin(), locs.end()); break;
+    }
+  }
+  std::size_t key_locs_bytes() const {
+    return key_loc8_.capacity() + key_loc16_.capacity() * 2 + key_loc32_.capacity() * sizeof(int);
   }
   /// @brief Integer variables of key @p id, `key_int_stride_` of them (possibly none).
   const long* key_ints(int id) const {
@@ -650,8 +865,7 @@ class LivenessEngine {
   }
   /// @brief Copy key @p id's discrete state into @p s, leaving its zone alone.
   void key_state(int id, detail::SymState& s) const {
-    const int* l = key_locs(id);
-    s.locs.assign(l, l + key_loc_stride_);
+    key_locs_to(id, s.locs);
     const long* i = key_ints(id);
     s.ints.assign(i, i + key_int_stride_);
   }
@@ -700,6 +914,8 @@ class LivenessEngine {
   ///               conjuncts then have fewer keys to bind and fewer transitions to avoid.
   void lazy_build_key_sccs(std::vector<int>* comp, std::vector<char>* comp_live,
                            const std::vector<char>* nodes = nullptr);
+  void lazy_build_key_sccs_csr(std::vector<int>* comp, std::vector<char>* comp_live,
+                               const std::vector<char>* nodes);
   /// @brief Collect the unresolved covered edges that can still carry a recurrent witness.
   void lazy_collect(const std::vector<int>& S, const std::vector<Federation>& W,
                     const std::vector<int>& key_comp, const std::vector<char>& comp_live,

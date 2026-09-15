@@ -72,7 +72,7 @@ bool LivenessEngine::lazy_snapshot(std::vector<std::vector<OtfEdge>>* saved_adj,
   std::vector<std::vector<OtfEdge>> snap(n);
   for (std::size_t v = 0; v < n; ++v) {
     if (!expanded[v] || online_raw_slot_[v] < 0) continue;
-    const std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
+    const EdgeSpan raw = online_raw_adj_[online_raw_slot_[v]];
     std::vector<OtfEdge>& out = snap[v];
     out.reserve(raw.size());
     for (const OtfEdge& e : raw) {
@@ -116,131 +116,121 @@ void LivenessEngine::lazy_restore(std::vector<std::vector<OtfEdge>>* saved_adj,
 
 void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<char>* comp_live,
                                          const std::vector<char>* nodes) {
-  Phase phase(&lazy_.ms_scc);
-  ++lazy_.scc_builds;
+  {
+    Phase phase(&lazy_.ms_scc);
+    ++lazy_.scc_builds;
+    lazy_build_key_sccs_csr(comp, comp_live, nodes);
+  }
+}
+
+/// @brief ::lazy_build_key_sccs over flat, offset-indexed arrays.
+///
+/// Every per-key and per-component list is
+/// one contiguous array addressed through an offset table instead of a `vector<vector<>>`.  That
+/// form cost a 24-byte header per key or component plus a heap block for every non-empty one, and
+/// on the families where every state is its own key it was the largest allocation of the whole
+/// run at the moment the criterion ran: 8.3 MB of a 44.7 MB peak on viking20 q2.  The per-clock
+/// passes also rebuilt a filtered adjacency list per node on every pass; here the edges of one
+/// source are one contiguous run of `kedges`, and a pass skips the dropped ones in place.
+void LivenessEngine::lazy_build_key_sccs_csr(std::vector<int>* comp, std::vector<char>* comp_live,
+                                             const std::vector<char>* nodes) {
   const std::size_t nk = online_key_by_id_.size();
   comp->assign(nk, -1);
   comp_live->clear();
   if (nk == 0) return;
-
-  // The key-projected adjacency, deduplicated per source.  Built from the raw edges rather than
-  // read out of `online_key_edges_`: that skeleton exists only once D has an atom to pull back
-  // (::LivenessEngine::online_enable_key_graph), and D finds no atom at all on the models this
-  // loop is for, so it is empty exactly when it would be needed.
-  // ONLY THE KEYS A WITNESS MAY LIVE IN.  A maximal `E[] psi` run satisfies psi at every step,
-  // and a `p --> q` counterexample is inside `!q` from the accepting node onwards, so a key where
-  // the query predicate fails lies on no witness and neither do its edges.  Dropping them splits
-  // the key graph into smaller components, and BOTH conjuncts below get easier: fewer keys for
-  // one clock to be bounded at, fewer transitions that could reset it.  The reasoning is
-  // unchanged -- an infinite witness run's key sequence is an infinite path in this restricted
-  // graph, so it still settles inside one of its SCCs.
-  //
-  // `E[] psi` barely notices: ::LivenessEngine::online_eg_prune_ already leaves a non-psi record
-  // unexpanded, so its key contributes no edges either way.  `p --> q` has no such prune -- the
-  // path to the `p`-node is ordinary reachability that may leave `!q` -- and without this the
-  // whole reachable graph is one component the criterion cannot kill: grc4 `T0.in --> T0.far`
-  // reported `key-sccs=1 dead=0`, C5 then condemned every cover on a cycle, and refinement walked
-  // toward the containment graph (15 rounds, 37,656 refinements, 1,335 -> 28,405 records) while
-  // grc5 did not finish at all.
-  // A record contributes at all only if @p nodes admits it.  The caller passes the accepting
-  // closure, which on a leads-to query is a tiny slice of the graph -- 512 records of 624,452 on
-  // twolock10 `P0.reqB --> P0.waitB` -- while this function otherwise walks every record twice
-  // and cost 876 ms of that query's 915 ms route time.
   const auto admits = [&](std::size_t v) {
     return !nodes || (v < nodes->size() && (*nodes)[v]);
   };
+  const int nr = static_cast<int>(nrec());
+
+  // ONLY THE KEYS A WITNESS MAY LIVE IN.  A maximal `E[] psi` run satisfies psi at every step, and
+  // a `p --> q` counterexample is inside `!q` from the accepting node onwards, so a key where the
+  // query predicate fails lies on no witness and neither do its edges.  Dropping them splits the
+  // key graph into smaller components and makes both conjuncts below easier.  With a filter, a key
+  // is in play only if some admitted record carries it, so the predicate is evaluated for those
+  // keys alone.
   const auto t_a = std::chrono::steady_clock::now();
   std::vector<char> key_ok(nk, 1);
+  if (nodes) {
+    std::fill(key_ok.begin(), key_ok.end(), 0);
+    for (int v = 0; v < nr; ++v)
+      if (admits(static_cast<std::size_t>(v)) && expanded[v] && online_raw_slot_[v] >= 0) {
+        const int kv = online_key_of_[v];
+        if (kv >= 0 && kv < static_cast<int>(nk)) key_ok[kv] = 1;
+      }
+  }
   {
     detail::SymState ks;
     for (std::size_t k = 0; k < nk; ++k) {
+      if (!key_ok[k]) continue;
       key_state(static_cast<int>(k), ks);
       key_ok[k] = holds(q, ks) ? 0 : 1;
     }
   }
-  // With a filter, a key is in play only if some admitted record carries it.  Without this the
-  // Tarjan below still roots at every `!q` key in the whole graph.
-  if (nodes) {
-    std::vector<char> key_used(nk, 0);
-    for (std::size_t v = 0; v < nrec(); ++v)
-      if (admits(v) && expanded[v] && online_raw_slot_[v] >= 0) {
-        const int kv = online_key_of_[v];
-        if (kv >= 0 && kv < static_cast<int>(nk)) key_used[kv] = 1;
-      }
-    for (std::size_t k = 0; k < nk; ++k)
-      if (!key_used[k]) key_ok[k] = 0;
-  }
 
-  // ONE SCAN OF THE RECORDS, and the per-key result is reused.
-  //
-  // The key graph is tiny next to the record graph, but deriving it is not: this used to walk
-  // every record and every edge TWICE -- once for the Tarjan adjacency and again, after the
-  // components were known, for the per-clock passes -- and the second walk deduplicated
-  // (source, target, transition) through a global hash set, one insert per intra-component edge.
-  // On arbiter16 `E[] (C0.idle || C0.want) && x0 <= 40` that is 557,056 records and some millions
-  // of edges, and the whole function cost 3049 ms of a 3718 ms route.
-  //
-  // Instead the scan groups records BY KEY -- ::OnlineKeyInfo::node_head threads them already --
-  // and deduplicates (target, transition) within the key, where the list is short enough to scan
-  // linearly.  `kpairs` is then the key graph itself, and the per-clock passes filter it by
-  // component rather than touching a record again.
+  // The key graph, one scan of the records grouped by key: `kp` holds each key's distinct
+  // (target key, transition) pairs and `ka` its distinct target keys in first-seen order, both
+  // addressed through per-key offsets.
   const auto t_b = std::chrono::steady_clock::now();
   struct KPair { int tgt, tag; };
-  std::vector<std::vector<KPair>> kpairs(nk);
-  std::vector<std::vector<int>> kadj(nk);
+  std::vector<std::uint32_t> kp_off(nk + 1, 0), ka_off(nk + 1, 0);
+  std::vector<KPair> kp;
+  std::vector<int> ka;
   {
     std::vector<int> seen(nk, -1);
+    const int ntags = static_cast<int>(tags_.size());
     for (std::size_t k = 0; k < nk; ++k) {
+      kp_off[k] = static_cast<std::uint32_t>(kp.size());
+      ka_off[k] = static_cast<std::uint32_t>(ka.size());
       if (!key_ok[k]) continue;
-      std::vector<KPair>& pairs = kpairs[k];
+      const std::size_t first = kp.size();
       for (int v = online_key_by_id_[k]->node_head; v >= 0; v = online_next_in_key_[v]) {
-        if (v >= static_cast<int>(nrec()) || !admits(static_cast<std::size_t>(v)) ||
-            !expanded[v] || online_raw_slot_[v] < 0)
+        if (v >= nr || !admits(static_cast<std::size_t>(v)) || !expanded[v] ||
+            online_raw_slot_[v] < 0)
           continue;
         for (const OtfEdge& e : online_raw_adj_[online_raw_slot_[v]]) {
-          if (e.tgt < 0 || e.tgt >= static_cast<int>(nrec()) ||
-              !admits(static_cast<std::size_t>(e.tgt)))
-            continue;
+          if (e.tgt < 0 || e.tgt >= nr || !admits(static_cast<std::size_t>(e.tgt))) continue;
           const int t = online_key_of_[e.tgt];
           if (t < 0 || t >= static_cast<int>(nk) || !key_ok[t]) continue;
-          if (e.tag < 0 || e.tag >= static_cast<int>(tags_.size())) continue;
+          if (e.tag < 0 || e.tag >= ntags) continue;
           bool dup = false;
-          for (const KPair& kp : pairs)
-            if (kp.tgt == t && kp.tag == e.tag) { dup = true; break; }
+          for (std::size_t x = first; x < kp.size(); ++x)
+            if (kp[x].tgt == t && kp[x].tag == e.tag) { dup = true; break; }
           if (dup) continue;
-          pairs.push_back(KPair{t, e.tag});
-          if (seen[t] != static_cast<int>(k)) {     // Tarjan needs each target once
+          kp.push_back(KPair{t, e.tag});
+          if (seen[t] != static_cast<int>(k)) {          // Tarjan needs each target once
             seen[t] = static_cast<int>(k);
-            kadj[k].push_back(t);
+            ka.push_back(t);
           }
         }
       }
     }
+    kp_off[nk] = static_cast<std::uint32_t>(kp.size());
+    ka_off[nk] = static_cast<std::uint32_t>(ka.size());
   }
 
+  // Iterative Tarjan over the key graph; the key graph reaches 10^5 nodes, so no recursion.
   const auto t_c = std::chrono::steady_clock::now();
-  // Iterative Tarjan; the key graph reaches 10^5 nodes and the recursive form would not survive
-  // the stack, exactly as in ::LivenessEngine::solve_greatest_fixpoint.
   std::vector<int> idx(nk, -1), low(nk, 0), stk;
   std::vector<char> on(nk, 0);
-  std::vector<std::pair<int, std::size_t>> call;
+  std::vector<std::pair<int, std::uint32_t>> call;
   std::vector<int> members;                       // component sizes, 0 when provably acyclic
   int next = 0, ncomp = 0;
   for (std::size_t root = 0; root < nk; ++root) {
-    if (idx[root] != -1 || !key_ok[root]) continue;   // no witness passes through it
-    call.push_back({static_cast<int>(root), 0});
+    if (idx[root] != -1 || !key_ok[root]) continue;
+    call.push_back({static_cast<int>(root), ka_off[root]});
     idx[root] = low[root] = next++;
     stk.push_back(static_cast<int>(root));
     on[root] = 1;
     while (!call.empty()) {
       auto& [v, ei] = call.back();
-      if (ei < kadj[v].size()) {
-        const int w = kadj[v][ei++];
+      if (ei < ka_off[v + 1]) {
+        const int w = ka[ei++];
         if (idx[w] == -1) {
           idx[w] = low[w] = next++;
           stk.push_back(w);
           on[w] = 1;
-          call.push_back({w, 0});
+          call.push_back({w, ka_off[w]});
         } else if (on[w]) {
           low[v] = std::min(low[v], idx[w]);
         }
@@ -255,11 +245,11 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
             ++size;
             if (w == v) break;
           }
-          // A singleton with a self-loop recurs just as a larger component does.
-          if (size == 1) {
+          if (size == 1) {                        // a singleton recurs only through a self-loop
             bool loop = false;
-            for (int w : kadj[v]) if (w == v) { loop = true; break; }
-            if (!loop) size = 0;                  // acyclic: no infinite run can stay here
+            for (std::uint32_t x = ka_off[v]; x < ka_off[v + 1]; ++x)
+              if (ka[x] == v) { loop = true; break; }
+            if (!loop) size = 0;
           }
           members.push_back(size);
           ++ncomp;
@@ -270,46 +260,28 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
       }
     }
   }
+  std::vector<int>().swap(ka);
+  std::vector<std::uint32_t>().swap(ka_off);
 
-  // ---- which components can host an infinite psi-run ---------------------------------------
+  // ---- which components can host an infinite psi-run --------------------------------------
   //
   // A component is DEAD -- owes nothing -- when BOTH hold:
-  //
   //  (a) some clock is bounded above at every key of the component and is reset by NO transition
-  //      inside it.  Along a run confined there that clock never decreases and never passes its
-  //      bound, so no TIME-DIVERGENT run can stay in the component.
-  //
-  //  (b) every cycle of the component must let time pass.  Checked by deleting every edge that
-  //      both lower-guards `z >= c`, c > 0, AND resets `z` -- taking such an edge twice forces c
-  //      time units in between -- and asking whether what remains is acyclic.  If it is, every
-  //      cycle uses at least one deleted edge and therefore burns time.
-  //
-  // Neither conjunct alone is sound.  Without (b) a ZENO cycle survives: `E[] psi` as implemented
-  // here AND by UPPAAL 5.0.0 accepts a run that fires forever with time frozen, so a component
-  // where time merely cannot diverge may still carry a witness.  Without (a) a component that
-  // resets its bounded clocks runs forever quite legitimately.
-  //
-  // (b) MUST be per-cycle, not per-component.  An earlier version asked only whether some clock
-  // was reset somewhere in the component and lower-guarded somewhere in it; that admits a reset
-  // on one cycle and a guard on another, and single4 -- one location, self-loops `xi >= 1, xi = 0`
-  // -- was wrongly declared dead, turning a SAT into a NOT against both the baseline and verifyta.
-  //
-  // The masks are read from EVERY edge, not from the key-graph representative.  `kadj` above is
-  // deduplicated by target because Tarjan needs nothing more, but four self-loops that reset four
-  // different clocks collapse to one entry there, and reading resets off that entry sees one
-  // clock instead of four -- which is the other half of the same single4 bug.
+  //      inside it, so no TIME-DIVERGENT run can stay there;
+  //  (b) every cycle of the component must let time pass, so no ZENO run can stay there either.
+  // Neither alone is sound: `E[] psi` here and in UPPAAL 5.0.0 accepts a zeno witness, and a
+  // component that resets its bounded clocks runs forever legitimately.  (b) is per cycle, not per
+  // component -- a reset on one cycle and a guard on another prove nothing (single4).
   const auto t_f0 = std::chrono::steady_clock::now();
   comp_live->assign(ncomp, 1);
   for (std::size_t k = 0; k < nk; ++k)
     if ((*comp)[k] >= 0 && members[(*comp)[k]] == 0) (*comp_live)[(*comp)[k]] = 0;
-  if (net.nclocks > 63 || ncomp == 0) return;   // no room for the mask: keep every component
+  if (net.nclocks > 63 || ncomp == 0) return;
 
   const std::uint64_t all_clocks = net.nclocks >= 63
                                        ? ~std::uint64_t(0) << 1
                                        : (((std::uint64_t(1) << net.nclocks) - 1) << 1);
-  // Per-tag masks, computed once: tags are pooled by value, so two edges with the same recipe
-  // share them.
-  std::vector<std::uint64_t> tag_reset(tags_.size(), 0);
+  std::vector<std::uint64_t> tag_reset(tags_.size(), 0), tag_lower(tags_.size(), 0);
   std::vector<char> tag_burns(tags_.size(), 0);
   for (std::size_t t = 0; t < tags_.size(); ++t) {
     std::uint64_t r = 0, lo = 0;
@@ -317,177 +289,147 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
       const auto& ed = net.procs[pe.first].edges[pe.second];
       for (int c : ed.clock_resets)
         if (c >= 1 && c <= net.nclocks) r |= std::uint64_t(1) << c;
-      // `z >= c` with c > 0 is stored as `0 - z <= -c`: the i == 0 side, strictly negative bound.
       for (const Constraint& g : ed.clock_guard)
         if (g.i == 0 && g.j > 0 && g.j <= net.nclocks && raw_bound(g.bound) < 0)
           lo |= std::uint64_t(1) << g.j;
     }
     tag_reset[t] = r;
+    tag_lower[t] = lo;
     tag_burns[t] = (r & lo) != 0;
   }
 
+  // (a)'s bound mask. Only keys of a component that can recur are read: an acyclic singleton is
+  // dead already and its mask is never consulted, and those are most keys on the families where
+  // every state is a key of its own.
   const auto t_d = std::chrono::steady_clock::now();
-  // (a)'s two masks, and the residual adjacency for (b).
   std::vector<std::uint64_t> bounded(ncomp, all_clocks), reset(ncomp, 0);
-  std::vector<Constraint> inv;
-  detail::SymState ksc;
-  for (std::size_t k = 0; k < nk; ++k) {
-    const int c = (*comp)[k];
-    if (c < 0 || !key_ok[k]) continue;
-    key_state(static_cast<int>(k), ksc);
-    all_invariants(net, ksc.locs, inv);
-    std::uint64_t here = 0;
-    for (const Constraint& ct : inv)          // `x <= c` only: a difference or lower bound
-      if (ct.i > 0 && ct.j == 0 && ct.i <= net.nclocks && ct.bound < kInf)  // anchors nothing
-        here |= std::uint64_t(1) << ct.i;
-    bounded[c] &= here;
+  {
+    std::vector<Constraint> inv;
+    detail::SymState ksc;
+    for (std::size_t k = 0; k < nk; ++k) {
+      const int c = (*comp)[k];
+      if (c < 0 || !key_ok[k] || members[c] == 0) continue;
+      key_state(static_cast<int>(k), ksc);
+      all_invariants(net, ksc.locs, inv);
+      std::uint64_t here = 0;
+      for (const Constraint& ct : inv)
+        if (ct.i > 0 && ct.j == 0 && ct.i <= net.nclocks && ct.bound < kInf)
+          here |= std::uint64_t(1) << ct.i;
+      bounded[c] &= here;
+    }
   }
 
-  // (b) is checked PER CLOCK, and per cycle.
-  //
-  // Tripakis' condition: some clock `z` is reset on every cycle of the component and guarded
-  // `z >= c` on every cycle.  Then each traversal forces c time units between the reset and the
-  // guard -- or, if the guard precedes the reset in cycle order, between two traversals -- so an
-  // infinite run through the component diverges in time.
-  //
-  // "Every cycle contains an edge of kind K" is checked by DELETING the K-edges and asking
-  // whether what remains is acyclic.  Two such tests per clock, both O(edges).
-  //
-  // Asking instead for one edge that resets AND guards the same clock -- the obvious cheap
-  // version -- is far too strict: fischer resets `x_i` on one edge and guards it on a later one,
-  // so no single edge qualifies, every component stays live, and refinement then blows the graph
-  // from 17,215 records to 238,180.
+  // Intra-component key edges, grouped by source key in ascending key order, so the edges of one
+  // source are the contiguous run [ke_off[k], ke_off[k+1]).
   const auto t_e = std::chrono::steady_clock::now();
-  std::vector<std::uint64_t> tag_lower(tags_.size(), 0);
-  for (std::size_t t = 0; t < tags_.size(); ++t) {
-    std::uint64_t lo = 0;
-    for (const auto& pe : tags_[t].parts)
-      for (const Constraint& g : net.procs[pe.first].edges[pe.second].clock_guard)
-        if (g.i == 0 && g.j > 0 && g.j <= net.nclocks && raw_bound(g.bound) < 0)
-          lo |= std::uint64_t(1) << g.j;
-    tag_lower[t] = lo;
-  }
-
-  // Intra-component key edges, kept once per (source, target, tag) so the per-clock passes below
-  // can filter them without touching the records again.
   struct KEdge { int src, tgt, tag; };
   std::vector<KEdge> kedges;
+  std::vector<std::uint32_t> ke_off(nk + 1, 0);
   for (std::size_t k = 0; k < nk; ++k) {
+    ke_off[k] = static_cast<std::uint32_t>(kedges.size());
     const int c = (*comp)[k];
     if (c < 0 || !key_ok[k]) continue;
-    for (const KPair& kp : kpairs[k]) {
-      if ((*comp)[kp.tgt] != c) continue;   // leaves the component: on no cycle inside it
-      reset[c] |= tag_reset[kp.tag];        // EVERY transition, not one representative per target
-      kedges.push_back(KEdge{static_cast<int>(k), kp.tgt, kp.tag});
+    for (std::uint32_t x = kp_off[k]; x < kp_off[k + 1]; ++x) {
+      if ((*comp)[kp[x].tgt] != c) continue;     // leaves the component: on no cycle inside it
+      reset[c] |= tag_reset[kp[x].tag];
+      kedges.push_back(KEdge{static_cast<int>(k), kp[x].tgt, kp[x].tag});
     }
   }
+  ke_off[nk] = static_cast<std::uint32_t>(kedges.size());
+  std::vector<KPair>().swap(kp);
+  std::vector<std::uint32_t>().swap(kp_off);
 
-
-  // (b) EVERY CYCLE MUST BURN TIME, with different cycles allowed to use different clocks.
-  //
-  // Tripakis' condition asks for ONE clock reset and guarded on every cycle of the component.  A
-  // network never has one: fischer's process 3 cycles resetting x3, process 5 resetting x5, so
-  // the single-clock test fails on models where every cycle plainly burns time.  Checking it per
-  // PROCESS instead is sound but blind to time forced across processes -- one process's invariant
-  // against another's guard on a shared clock -- and arbiter is exactly that shape.
-  //
-  // The exact characterisation: a cycle is NON-burning iff, for every clock z, it avoids the
-  // reset edges R_z or avoids the lower-guard edges G_z.  So
-  //
-  //     every cycle burns  <=>  for every choice f : z -> {R_z, G_z},
-  //                             the subgraph  E \ union_z f(z)  is acyclic.
-  //
-  // Only clocks BOTH reset and guarded inside the component can make a cycle burn, so the choice
-  // ranges over those alone.  And removing more edges can only destroy cycles, never create one,
-  // so a DFS over the choices prunes the moment the current subgraph is acyclic -- every
-  // extension of that branch is acyclic too.  In practice the search collapses immediately.
   std::vector<char> burns(ncomp, 0);
   {
-    // Intra-component edges per component, and the clocks that can burn there.
-    std::vector<std::vector<std::size_t>> inside(ncomp);
+    // Each component's edges, ascending, and its distinct nodes in first-seen order.
+    std::vector<std::uint32_t> in_off(static_cast<std::size_t>(ncomp) + 1, 0);
     std::vector<std::uint64_t> comp_reset(ncomp, 0), comp_lower(ncomp, 0);
-    for (std::size_t i = 0; i < kedges.size(); ++i) {
-      const int c = (*comp)[kedges[i].src];
-      if (c < 0 || (*comp)[kedges[i].tgt] != c) continue;
-      inside[c].push_back(i);
-      comp_reset[c] |= tag_reset[kedges[i].tag];
-      comp_lower[c] |= tag_lower[kedges[i].tag];
+    for (const KEdge& e : kedges) {
+      const int c = (*comp)[e.src];
+      ++in_off[c + 1];
+      comp_reset[c] |= tag_reset[e.tag];
+      comp_lower[c] |= tag_lower[e.tag];
     }
-    // The DISTINCT nodes of each component.  The residual passes below reset their scratch over
-    // this, not over the edge list: a component with 4,915,200 edges over 589,824 nodes was paying
-    // 9.8M redundant clears per pass, sixteen times.
-    std::vector<std::vector<int>> cnodes(ncomp);
+    for (int c = 0; c < ncomp; ++c) in_off[c + 1] += in_off[c];
+    std::vector<std::uint32_t> in_e(kedges.size());
+    {
+      std::vector<std::uint32_t> cur(in_off.begin(), in_off.end() - 1);
+      for (std::size_t i = 0; i < kedges.size(); ++i)
+        in_e[cur[(*comp)[kedges[i].src]]++] = static_cast<std::uint32_t>(i);
+    }
+    std::vector<std::uint32_t> cn_off(static_cast<std::size_t>(ncomp) + 1, 0);
+    std::vector<int> cn;
     {
       std::vector<char> seen_node(nk, 0);
       for (int c = 0; c < ncomp; ++c) {
-        for (std::size_t i : inside[c])
-          for (const int u : {kedges[i].src, kedges[i].tgt})
-            if (!seen_node[u]) { seen_node[u] = 1; cnodes[c].push_back(u); }
-        for (int u : cnodes[c]) seen_node[u] = 0;
+        cn_off[c] = static_cast<std::uint32_t>(cn.size());
+        for (std::uint32_t x = in_off[c]; x < in_off[c + 1]; ++x) {
+          const KEdge& e = kedges[in_e[x]];
+          for (const int u : {e.src, e.tgt})
+            if (!seen_node[u]) { seen_node[u] = 1; cn.push_back(u); }
+        }
+        for (std::size_t y = cn_off[c]; y < cn.size(); ++y) seen_node[cn[y]] = 0;
       }
+      cn_off[ncomp] = static_cast<std::uint32_t>(cn.size());
     }
-    std::vector<char> removed(kedges.size(), 0);
-    std::vector<int> st(nk, 0);
-    std::vector<std::pair<int, std::size_t>> dfs;
-    std::vector<std::vector<std::size_t>> g(nk);
+
+    std::vector<int> st(nk, 0), cid(nk, -1);
+    std::vector<char> big;
+    std::vector<std::pair<int, std::uint32_t>> dfs;
     // Does component `c` still contain a cycle once `drop` has removed its edges?
     auto cyclic_after = [&](int c, auto&& drop) {
-      for (int u : cnodes[c]) { g[u].clear(); st[u] = 0; }
-      for (std::size_t i : inside[c])
-        if (!drop(i)) g[kedges[i].src].push_back(i);
-      for (std::size_t i0 : inside[c]) {
-        if (st[kedges[i0].src]) continue;
+      for (std::uint32_t y = cn_off[c]; y < cn_off[c + 1]; ++y) st[cn[y]] = 0;
+      for (std::uint32_t x = in_off[c]; x < in_off[c + 1]; ++x) {
+        const int s0 = kedges[in_e[x]].src;
+        if (st[s0]) continue;
         dfs.clear();
-        dfs.push_back({kedges[i0].src, 0});
-        st[kedges[i0].src] = 1;
+        dfs.push_back({s0, ke_off[s0]});
+        st[s0] = 1;
         while (!dfs.empty()) {
           auto& [v, ei] = dfs.back();
-          if (ei < g[v].size()) {
-            const int w = kedges[g[v][ei++]].tgt;
+          while (ei < ke_off[v + 1] && drop(ei)) ++ei;
+          if (ei < ke_off[v + 1]) {
+            const int w = kedges[ei++].tgt;
             if (st[w] == 1) return true;
-            if (st[w] == 0) { st[w] = 1; dfs.push_back({w, 0}); }
-          } else { st[v] = 2; dfs.pop_back(); }
+            if (st[w] == 0) { st[w] = 1; dfs.push_back({w, ke_off[w]}); }
+          } else {
+            st[v] = 2;
+            dfs.pop_back();
+          }
         }
       }
       return false;
     };
-    // After `drop`, does any edge satisfying `probe` lie on a cycle?  Both ends in one nontrivial
-    // SCC of the surviving subgraph is exactly that.
-    // The scratch is hoisted, and reset only over the nodes this component touches.
-    //
-    // Sizing five `nk`-wide vectors inside the lambda made the per-clock loop the whole cost of
-    // the criterion: `nk` is one key PER RECORD on a model whose zones never split, so arbiter16
-    // `E[] (C0.idle || C0.want) && x0 <= 40` ran it at nk = 589,824 with 4,915,200 key edges, and
-    // 16 clocks x (five allocations plus a `keep` list the size of the edge set) came to 1928 ms
-    // of a 2151 ms criterion.  The traversals themselves were never the problem.
-    std::vector<int> idx(nk, -1), low(nk, 0), stk, cid(nk, -1);
-    std::vector<char> on(nk, 0), big;
-    std::vector<std::pair<int, std::size_t>> call;
+    // After `drop`, does any edge satisfying `probe` lie on a cycle?
     auto cyclic_through = [&](int c, auto&& drop, auto&& probe) {
-      for (int u : cnodes[c]) { g[u].clear(); idx[u] = -1; on[u] = 0; cid[u] = -1; }
-      for (std::size_t i : inside[c])
-        if (!drop(i)) g[kedges[i].src].push_back(i);
+      for (std::uint32_t y = cn_off[c]; y < cn_off[c + 1]; ++y) {
+        const int u = cn[y];
+        idx[u] = -1; on[u] = 0; cid[u] = -1;
+      }
       big.clear();
       stk.clear();
       call.clear();
-      int next = 0, nc = 0;
-      for (int r0 : cnodes[c]) {
-        const int r = r0;
+      int nx = 0, nc = 0;
+      for (std::uint32_t y = cn_off[c]; y < cn_off[c + 1]; ++y) {
+        const int r = cn[y];
         if (idx[r] != -1) continue;
-        call.push_back({r, 0});
-        idx[r] = low[r] = next++; stk.push_back(r); on[r] = 1;
+        call.push_back({r, ke_off[r]});
+        idx[r] = low[r] = nx++; stk.push_back(r); on[r] = 1;
         while (!call.empty()) {
           auto& [v, ei] = call.back();
-          if (ei < g[v].size()) {
-            const int w = kedges[g[v][ei++]].tgt;
-            if (idx[w] == -1) { idx[w] = low[w] = next++; stk.push_back(w); on[w] = 1; call.push_back({w, 0}); }
+          while (ei < ke_off[v + 1] && drop(ei)) ++ei;
+          if (ei < ke_off[v + 1]) {
+            const int w = kedges[ei++].tgt;
+            if (idx[w] == -1) { idx[w] = low[w] = nx++; stk.push_back(w); on[w] = 1; call.push_back({w, ke_off[w]}); }
             else if (on[w]) low[v] = std::min(low[v], idx[w]);
           } else {
             if (low[v] == idx[v]) {
               int sz = 0;
               for (;;) { const int w = stk.back(); stk.pop_back(); on[w] = 0; cid[w] = nc; ++sz; if (w == v) break; }
               bool loop = false;
-              if (sz == 1) for (std::size_t j : g[v]) if (kedges[j].tgt == v) { loop = true; break; }
+              if (sz == 1)
+                for (std::uint32_t j = ke_off[v]; j < ke_off[v + 1]; ++j)
+                  if (!drop(j) && kedges[j].tgt == v) { loop = true; break; }
               big.push_back(sz > 1 || loop);
               ++nc;
             }
@@ -497,164 +439,132 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
           }
         }
       }
-      for (std::size_t i : inside[c])
+      for (std::uint32_t x = in_off[c]; x < in_off[c + 1]; ++x) {
+        const std::uint32_t i = in_e[x];
         if (!drop(i) && probe(i) && cid[kedges[i].src] >= 0 &&
             cid[kedges[i].src] == cid[kedges[i].tgt] && big[cid[kedges[i].src]])
           return true;
+      }
       return false;
     };
 
+    // The exact branch's scratch, sized on first use and reset per call over the nodes it touches.
+    std::vector<int> xrb, xre, xstamp, xidx, xlow, xcid;
+    std::vector<char> xon;
+    int xclock = 0;
+    std::function<bool(const std::vector<std::uint32_t>&)> all_burn =
+        [&](const std::vector<std::uint32_t>& es) -> bool {
+      if (es.empty()) return true;
+      if (xidx.empty()) {
+        xrb.assign(nk, 0); xre.assign(nk, 0); xstamp.assign(nk, -1);
+        xidx.assign(nk, -1); xlow.assign(nk, 0); xcid.assign(nk, -1); xon.assign(nk, 0);
+      }
+      const int stamp = xclock++;
+      std::vector<int> touched;
+      // `es` ascends, so each source's edges form one contiguous run.
+      for (std::size_t p = 0; p < es.size(); ++p) {
+        const int s0 = kedges[es[p]].src;
+        if (xstamp[s0] != stamp) { xstamp[s0] = stamp; xrb[s0] = static_cast<int>(p); touched.push_back(s0); }
+        xre[s0] = static_cast<int>(p) + 1;
+      }
+      for (std::size_t p = 0; p < es.size(); ++p) {
+        const int t0 = kedges[es[p]].tgt;
+        if (xstamp[t0] != stamp) { xstamp[t0] = stamp; xrb[t0] = xre[t0] = 0; touched.push_back(t0); }
+      }
+      for (int u : touched) { xidx[u] = -1; xon[u] = 0; xcid[u] = -1; }
+      int nx = 0, nc = 0;
+      std::vector<int> xstk;
+      std::vector<std::pair<int, std::size_t>> xcall;
+      std::vector<char> xbig;
+      for (std::size_t p0 = 0; p0 < es.size(); ++p0) {
+        const int r = kedges[es[p0]].src;
+        if (xidx[r] != -1) continue;
+        xcall.push_back({r, static_cast<std::size_t>(xrb[r])});
+        xidx[r] = xlow[r] = nx++; xstk.push_back(r); xon[r] = 1;
+        while (!xcall.empty()) {
+          auto& [v, pos] = xcall.back();
+          if (pos < static_cast<std::size_t>(xre[v])) {
+            const int w = kedges[es[pos++]].tgt;
+            if (xidx[w] == -1) {
+              xidx[w] = xlow[w] = nx++; xstk.push_back(w); xon[w] = 1;
+              xcall.push_back({w, static_cast<std::size_t>(xrb[w])});
+            } else if (xon[w]) {
+              xlow[v] = std::min(xlow[v], xidx[w]);
+            }
+          } else {
+            if (xlow[v] == xidx[v]) {
+              int sz = 0;
+              for (;;) { const int w = xstk.back(); xstk.pop_back(); xon[w] = 0; xcid[w] = nc; ++sz; if (w == v) break; }
+              bool loop = false;
+              if (sz == 1)
+                for (std::size_t qq = static_cast<std::size_t>(xrb[v]); qq < static_cast<std::size_t>(xre[v]); ++qq)
+                  if (kedges[es[qq]].tgt == v) { loop = true; break; }
+              xbig.push_back(sz > 1 || loop);
+              ++nc;
+            }
+            const int ch = v;
+            xcall.pop_back();
+            if (!xcall.empty()) xlow[xcall.back().first] = std::min(xlow[xcall.back().first], xlow[ch]);
+          }
+        }
+      }
+      // Partition before recursing: the recursion reuses the scratch the component ids live in.
+      std::vector<std::vector<std::uint32_t>> subs(nc);
+      std::vector<std::uint64_t> R(nc, 0), G(nc, 0);
+      for (std::size_t p = 0; p < es.size(); ++p) {
+        const KEdge& e = kedges[es[p]];
+        const int k2 = xcid[e.src];
+        if (k2 < 0 || k2 != xcid[e.tgt] || !xbig[k2]) continue;
+        subs[k2].push_back(es[p]);
+        R[k2] |= tag_reset[e.tag];
+        G[k2] |= tag_lower[e.tag];
+      }
+      for (int k2 = 0; k2 < nc; ++k2) {
+        if (!xbig[k2] || subs[k2].empty()) continue;
+        const std::uint64_t conflict = R[k2] & G[k2];
+        if (!conflict) return false;                 // every cycle here is non-burning
+        int z = 1;
+        while (z < 64 && !(conflict & (std::uint64_t(1) << z))) ++z;
+        const std::uint64_t bit = std::uint64_t(1) << z;
+        std::vector<std::uint32_t> noR, noG;
+        for (std::uint32_t i : subs[k2]) {
+          if (!(tag_reset[kedges[i].tag] & bit)) noR.push_back(i);
+          if (!(tag_lower[kedges[i].tag] & bit)) noG.push_back(i);
+        }
+        if (!all_burn(noR) || !all_burn(noG)) return false;
+      }
+      return true;
+    };
+
+    const auto mode = detail::options().criterion;
     for (int c = 0; c < ncomp; ++c) {
-      if (members[c] == 0 || inside[c].empty()) continue;
-      // Two polynomial tests, together sufficient for "every cycle burns time".
-      //
-      //   (1) every cycle resets SOMETHING: deleting every reset edge leaves the component
-      //       acyclic;
-      //   (2) for each clock z, every cycle that resets z also guards it: in the component minus
-      //       the z-guard edges, no z-reset edge lies on a cycle.
-      //
-      // A cycle then resets some z (1) and guards that same z (2), so each traversal forces the
-      // guard's constant to elapse between the reset and the guard -- or, if the guard precedes
-      // the reset in cycle order, between two traversals.  Either way time diverges.
-      //
-      // This replaces the exact characterisation, which is inherently exponential: a cycle is
-      // non-burning iff for every z it avoids R_z or avoids G_z, so deciding it means recursing
-      // `all_burn(C) = all_burn(C \ R_z) and all_burn(C \ G_z)` over all clocks.  With pruning
-      // that collapses on most models but not on arbiter12, where it cost 3.59s of a 3.60s query.
-      // These two tests are O(clocks * edges) with no search at all, and they are still sharp
-      // enough for the shape that matters -- fischer resets x_p and guards it several edges later
-      // on the same cycle, which the single-clock Tripakis test misses and (2) catches.
-      // (a) FIRST, because it is already computed and (b) is the expensive half.  Dead needs both
-      // conjuncts, so a component with no clock bounded at every key and reset by nothing inside
-      // is live whatever (b) says, and the passes below would be answering a question nobody asks.
-      if ((bounded[c] & ~reset[c]) == 0) continue;
+      if (members[c] == 0 || in_off[c] == in_off[c + 1]) continue;
+      if ((bounded[c] & ~reset[c]) == 0) continue;           // (a) fails: live whatever (b) says
       const std::uint64_t both = comp_reset[c] & comp_lower[c];
-      if (!both) continue;                               // nothing here can burn: (b) fails
-      // (0) THE SINGLE-EDGE FORM, TRIED FIRST.  Delete every edge that both resets a clock and
-      // lower-guards that same clock; if the component is then acyclic, every cycle contains such
-      // an edge and so forces its constant to elapse on every traversal.  One DFS with an early
-      // exit, against the sixteen full Tarjan passes (2) costs on a model where every clock is
-      // both reset and guarded.  It is strictly weaker -- fischer resets `x_i` on one edge and
-      // guards it several edges later, so no single edge qualifies -- which is why it precedes
-      // (1)+(2) rather than replacing them.  arbiter16 spent 1996 ms of a 2151 ms criterion in
-      // (2); this settles it in one pass.
-      if (!cyclic_after(c, [&](std::size_t i) { return tag_burns[kedges[i].tag] != 0; })) {
+      if (!both) continue;                                  // nothing here can burn: (b) fails
+      // (0) the single-edge form
+      if (!cyclic_after(c, [&](std::uint32_t i) { return tag_burns[kedges[i].tag] != 0; })) {
         burns[c] = 1;
         continue;
       }
-      // (1)
-      if (cyclic_after(c, [&](std::size_t i) { return tag_reset[kedges[i].tag] != 0; })) continue;
-      // (2)
+      // (1) every cycle resets something
+      if (cyclic_after(c, [&](std::uint32_t i) { return tag_reset[kedges[i].tag] != 0; })) continue;
+      // (2) per clock: every cycle that resets z also guards it
       bool ok = true;
       for (int z = 1; z <= net.nclocks && z < 64 && ok; ++z) {
         const std::uint64_t bit = std::uint64_t(1) << z;
-        if (!(comp_reset[c] & bit)) continue;            // z is not reset here: nothing to check
-        // A clock reset here but never lower-guarded here fails (2) outright, with no pass: the
-        // component is an SCC, so every one of its edges lies on a cycle, and removing the
-        // (empty) set of z-guard edges leaves that z-reset edge on one.
+        if (!(comp_reset[c] & bit)) continue;
         if (!(comp_lower[c] & bit)) { ok = false; break; }
-        // Remove the z-guard edges, then ask whether any z-reset edge sits on a surviving cycle.
-        if (cyclic_through(c, [&](std::size_t i) { return (tag_lower[kedges[i].tag] & bit) != 0; },
-                           [&](std::size_t i) { return (tag_reset[kedges[i].tag] & bit) != 0; }))
+        if (cyclic_through(c, [&](std::uint32_t i) { return (tag_lower[kedges[i].tag] & bit) != 0; },
+                           [&](std::uint32_t i) { return (tag_reset[kedges[i].tag] & bit) != 0; }))
           ok = false;
       }
       burns[c] = ok ? 1 : 0;
-      // HORA_FWD_EXACT decides the components the cheap tests could not kill, exactly.  OFF by
-      // default: measured, those components are precisely the ones where the exact search is
-      // expensive, so turning it on trades 51 agree / 0 wrong / 4 timeout for more timeouts, not
-      // fewer -- it moves cost from refinement into the criterion without removing it.  Kept
-      // because it is the exact characterisation and the right starting point if the search can
-      // be made cheaper.
-      // `--criterion poly` stops here; the other two settle what the cheap tests left live.
-      const auto mode = detail::options().criterion;
       if (ok || mode == detail::EngineOptions::Criterion::Poly) continue;
-
-      // Branch only on clocks that ACTUALLY conflict in the graph.
-      //
-      // A cycle is non-burning exactly when the clocks it resets and the clocks it lower-guards
-      // are disjoint: a clock both reset and guarded on the cycle forces the guard's constant to
-      // elapse on every traversal.  So, on a set of edges:
-      //
-      //   * take its SCCs.  For one SCC, union the resets and union the guards over its edges.
-      //     DISJOINT means every cycle inside it is non-burning -- its masks are subsets of these
-      //     -- so a witness exists and the component is live, with no search at all.
-      //   * otherwise some clock z lies in both unions.  Every cycle either avoids R_z or avoids
-      //     G_z, so recurse on the two subgraphs and require both to burn.
-      //   * acyclic bottoms out as "burns": no cycle left to be non-burning.
-      //
-      // This is the exact characterisation, but the branching clock comes from a conflict the
-      // graph actually contains rather than from enumerating all 2^k assignments -- most of which
-      // correspond to no cycle at all.  The cheap tests above are what keep it from being reached:
-      // test (1) failing is already a complete proof (a cycle with no reset is non-burning for
-      // every clock) and returns without any search.
-      std::vector<char> gone(kedges.size(), 0);
-      std::function<bool(const std::vector<std::size_t>&)> all_burn =
-          [&](const std::vector<std::size_t>& es) -> bool {
-        if (es.empty()) return true;
-        // SCCs of `es`, by the same iterative Tarjan used elsewhere.
-        std::vector<std::vector<std::size_t>> g2(nk);
-        for (std::size_t i : es) g2[kedges[i].src].push_back(i);
-        std::vector<int> idx(nk, -1), low(nk, 0), stk, cid(nk, -1);
-        std::vector<char> on(nk, 0);
-        std::vector<std::pair<int, std::size_t>> call;
-        int next = 0, nc = 0;
-        std::vector<char> big;
-        for (std::size_t i : es) {
-          const int r = kedges[i].src;
-          if (idx[r] != -1) continue;
-          call.push_back({r, 0});
-          idx[r] = low[r] = next++; stk.push_back(r); on[r] = 1;
-          while (!call.empty()) {
-            auto& [v, ei] = call.back();
-            if (ei < g2[v].size()) {
-              const int w = kedges[g2[v][ei++]].tgt;
-              if (idx[w] == -1) { idx[w] = low[w] = next++; stk.push_back(w); on[w] = 1; call.push_back({w, 0}); }
-              else if (on[w]) low[v] = std::min(low[v], idx[w]);
-            } else {
-              if (low[v] == idx[v]) {
-                int sz = 0;
-                for (;;) { const int w = stk.back(); stk.pop_back(); on[w] = 0; cid[w] = nc; ++sz; if (w == v) break; }
-                bool loop = false;
-                if (sz == 1) for (std::size_t j : g2[v]) if (kedges[j].tgt == v) { loop = true; break; }
-                big.push_back(sz > 1 || loop);
-                ++nc;
-              }
-              const int ch = v;
-              call.pop_back();
-              if (!call.empty()) low[call.back().first] = std::min(low[call.back().first], low[ch]);
-            }
-          }
-        }
-        // Each nontrivial SCC decided on its own.
-        for (int k2 = 0; k2 < nc; ++k2) {
-          if (!big[k2]) continue;
-          std::vector<std::size_t> sub;
-          std::uint64_t R = 0, G = 0;
-          for (std::size_t i : es)
-            if (cid[kedges[i].src] == k2 && cid[kedges[i].tgt] == k2) {
-              sub.push_back(i);
-              R |= tag_reset[kedges[i].tag];
-              G |= tag_lower[kedges[i].tag];
-            }
-          if (sub.empty()) continue;
-          const std::uint64_t conflict = R & G;
-          if (!conflict) return false;                 // every cycle here is non-burning
-          int z = 1;
-          while (z < 64 && !(conflict & (std::uint64_t(1) << z))) ++z;
-          const std::uint64_t bit = std::uint64_t(1) << z;
-          std::vector<std::size_t> noR, noG;
-          for (std::size_t i : sub) {
-            if (!(tag_reset[kedges[i].tag] & bit)) noR.push_back(i);
-            if (!(tag_lower[kedges[i].tag] & bit)) noG.push_back(i);
-          }
-          if (!all_burn(noR) || !all_burn(noG)) return false;
-        }
-        return true;
-      };
-      burns[c] = all_burn(inside[c]) ? 1 : 0;
+      const std::vector<std::uint32_t> es0(in_e.begin() + in_off[c], in_e.begin() + in_off[c + 1]);
+      burns[c] = all_burn(es0) ? 1 : 0;
     }
   }
-
 
   for (int c = 0; c < ncomp; ++c) {
     if (!(*comp_live)[c]) continue;                        // already acyclic
@@ -683,7 +593,7 @@ void LivenessEngine::lazy_build_key_sccs(std::vector<int>* comp, std::vector<cha
     };
     const auto t_end = std::chrono::steady_clock::now();
     std::fprintf(stderr, "CRIT nk=%zu ncomp=%d kedges=%zu nclocks=%d | key_ok=%.1f kpairs=%.1f "
-                 "tarjan=%.1f masks=%.1f taglower=%.1f perclock=%.1f\n",
+                 "tarjan=%.1f masks=%.1f bounded=%.1f perclock=%.1f\n",
                  nk, ncomp, kedges.size(), net.nclocks, ms(t_a, t_b), ms(t_b, t_c), ms(t_c, t_f0),
                  ms(t_f0, t_d), ms(t_d, t_e), ms(t_e, t_end));
   }
@@ -721,7 +631,7 @@ void LivenessEngine::lazy_collect(const std::vector<int>& S, const std::vector<F
     // A source already certified winning cannot be helped by refining its covers, and the
     // verdict does not need it: something at `v` already survives the fixpoint.
     if (!W.empty() && v < static_cast<int>(W.size()) && !fed_is_empty(W[v])) continue;
-    const std::vector<OtfEdge>& raw = online_raw_adj_[online_raw_slot_[v]];
+    const EdgeSpan raw = online_raw_adj_[online_raw_slot_[v]];
     for (std::size_t pos = 0; pos < raw.size(); ++pos) {
       const OtfEdge& e = raw[pos];
       if (census) { if (e.deferred >= 0) ++lazy_.edges_covered; else ++lazy_.edges_exact; }
@@ -794,8 +704,7 @@ bool LivenessEngine::online_replay_cached(int source, int ordinal, int key,
   if (key < 0 || key >= static_cast<int>(online_key_by_id_.size())) return false;
   const OnlineKeyInfo& tk = *online_key_by_id_[key];
   const detail::SymState& cand = lazy_replay_succ_[static_cast<std::size_t>(ordinal)];
-  const int* tl = key_locs(tk.id);
-  if (!std::equal(cand.locs.begin(), cand.locs.end(), tl, tl + key_loc_stride_)) return false;
+  if (!key_locs_equal(tk.id, cand.locs)) return false;
   const long* ti = key_ints(tk.id);
   if (!std::equal(cand.ints.begin(), cand.ints.end(), ti, ti + key_int_stride_)) return false;
   out = cand;
@@ -892,6 +801,7 @@ bool LivenessEngine::lazy_materialise(const LazyObligation& ob) {
   // Only when the record IS the extrapolation of this successor.  A reused record already holds
   // a zone that includes `X`, and its own exactness is whatever it already was.
   if (nrec() > before) lazy_exact_.emplace(id, std::move(exact));
+  online_compact_complete_ = false;          // a pinned record, activated outside ::online_intern
   if (!online_active_[id]) online_activate(id);
 
   // Rewrite the promise into a real transition.  The edge now names a record whose stored zone
@@ -901,6 +811,10 @@ bool LivenessEngine::lazy_materialise(const LazyObligation& ob) {
     OtfEdge& e = online_raw_adj_[ob.slot][ob.pos];
     e.tgt = id;
     e.deferred = kEdgeMaterialized;
+    // Ordinary unless the reused record is a merge: it was reused by a_LU EQUIVALENCE or appended
+    // as the successor itself.
+    online_set_edge_ord(ob.slot, static_cast<std::size_t>(ob.pos),
+                        !(id < static_cast<int>(online_merged_.size()) && online_merged_[id]));
   }
 
   if (!expanded[id] && !online_inq_[id]) { online_inq_[id] = 1; online_work_.push_back(id); }

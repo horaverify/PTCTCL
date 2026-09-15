@@ -75,8 +75,14 @@ bool exists_invariant_run(const Network& net_in, const std::vector<Constraint>& 
   Network restricted;
   if (!psi_clocks.empty()) {
     restricted = net_in;
-    for (auto& proc : restricted.procs)
-      for (auto& loc : proc.locations)
+    // ONCE, on one process. A network state's invariant is the conjunction of its processes'
+    // location invariants, so psi adjoined to every location of process 0 is already in the
+    // invariant of every state -- and the derived data is the same too: the per-state LU bound and
+    // active-clock set are maxima and unions over the processes, which process 0 now carries at
+    // every one of its locations. Copying it into every process instead made each successor apply
+    // the same atoms once per process, before and again after the delay, for nothing.
+    if (!restricted.procs.empty())
+      for (auto& loc : restricted.procs[0].locations)
         loc.invariant.insert(loc.invariant.end(), psi_clocks.begin(), psi_clocks.end());
     restricted.compute_bounds();
     restricted.compute_loc_bounds();

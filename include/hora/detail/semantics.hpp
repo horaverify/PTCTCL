@@ -85,6 +85,17 @@ inline void all_invariants(const Network& net, const LocVec& locs, std::vector<C
     for (const auto& c : net.procs[p].locations[locs[p]].invariant) inv.push_back(c);
 }
 
+/// @brief Does the invariant of @p locs bound some clock from above, `x <= c`?
+///
+/// Such an atom caps that clock after any delay, so no zone at these locations can let time run
+/// away. Decided from the syntax alone, without building the invariant or touching a zone.
+inline bool has_upper_invariant(const Network& net, const LocVec& locs) {
+  for (int p = 0; p < net.nprocs(); ++p)
+    for (const auto& c : net.procs[p].locations[locs[p]].invariant)
+      if (c.i > 0 && c.j == 0 && c.bound < kInf) return true;
+  return false;
+}
+
 /// @brief Is a synchronisation over an urgent channel enabled in this discrete state?
 ///
 /// An urgent channel forbids the passage of time exactly while a synchronisation on it is

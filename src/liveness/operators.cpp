@@ -35,6 +35,23 @@
 
 namespace hora {
 
+namespace {
+
+/// @brief Can every atom of the guard @p g hold somewhere in the canonical zone @p z?
+///
+/// One atom `x_i - x_j ~ b` empties a canonical zone exactly when it closes a negative cycle with
+/// the shortest path back, `z(j,i)`, so each atom is decided in O(1). A conjunction can still die
+/// from atoms interacting with each other, so this only REJECTS: a guard it passes is applied in
+/// full afterwards. What it saves is the zone copy, which every disabled edge used to pay before
+/// its first constraint failed.
+bool guard_may_hold(const Dbm& z, const std::vector<Constraint>& g) {
+  for (const Constraint& c : g)
+    if (raw_add(z.get(c.j, c.i), c.bound) < kZeroLe) return false;
+  return true;
+}
+
+}  // namespace
+
 void tagged_successors(const Network& net, const SymState& s,
                             const std::vector<std::int32_t>& L,
                             const std::vector<std::int32_t>& U,
@@ -65,6 +82,7 @@ void tagged_successors(const Network& net, const SymState& s,
       const NEdge& e = net.procs[p].edges[ei];
       if (e.sync_chan >= 0) continue;
       if (!int_ok(e.int_guard, s.ints) || !gen_ok(net, e, s.ints.data(), s.ints.size())) continue;
+      if (!guard_may_hold(s.zone, e.clock_guard)) continue;
       Dbm z1 = s.zone;
       if (!apply_all(z1, e.clock_guard)) continue;
       for (int r : e.clock_resets) z1.reset(r);
@@ -90,6 +108,7 @@ void tagged_successors(const Network& net, const SymState& s,
       if (se.sync_chan < 0 || se.sync_dir != 1) continue;
       if (net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      if (!guard_may_hold(s.zone, se.clock_guard)) continue;   // no partner can rescue the sender
       const bool i_comm = net.procs[i].locations[s.locs[i]].committed;
       for (int j = 0; j < net.nprocs(); ++j) {
         if (j == i) continue;
@@ -98,6 +117,7 @@ void tagged_successors(const Network& net, const SymState& s,
           if (re.sync_chan != se.sync_chan || re.sync_dir != -1) continue;
           if (src_committed && !(i_comm || net.procs[j].locations[s.locs[j]].committed)) continue;
           if (!int_ok(re.int_guard, s.ints) || !gen_ok(net, re, s.ints.data(), s.ints.size())) continue;
+          if (!guard_may_hold(s.zone, re.clock_guard)) continue;
           Dbm z1 = s.zone;
           if (!apply_all(z1, se.clock_guard)) continue;
           if (!apply_all(z1, re.clock_guard)) continue;
@@ -128,6 +148,7 @@ void tagged_successors(const Network& net, const SymState& s,
       const NEdge& se = net.procs[i].edges[ei];
       if (se.sync_chan < 0 || se.sync_dir != 1 || !net.chan_broadcast[se.sync_chan]) continue;
       if (!int_ok(se.int_guard, s.ints) || !gen_ok(net, se, s.ints.data(), s.ints.size())) continue;
+      if (!guard_may_hold(s.zone, se.clock_guard)) continue;
       std::vector<std::pair<int, std::vector<RecvOpt>>> parts;   // see build_broadcast_parts
       build_broadcast_parts(net, s, se, i, parts);
       std::vector<std::size_t> pick(parts.size(), 0);

@@ -28,6 +28,7 @@ using detail::ExNoDiag;
 using detail::apply_all;
 using detail::int_ok;
 using detail::all_invariants;
+using detail::has_upper_invariant;
 using detail::frozen_flags;
 using detail::reset_inactive;
 using detail::close_succ_zone;

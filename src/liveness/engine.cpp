@@ -237,7 +237,9 @@ bool LivenessEngine::base_cover(const Dbm& a, const Dbm& b) const {
 ///       inclusion covering and extrapolation stays load-bearing there.
 void LivenessEngine::setup() {
   zdim_ = net.nclocks + 1;
-  zs_.reset(zdim_, packed_zones_on());
+  // `A[] not deadlock` stores dictionary codes: a quarter of the dense size on most models, read
+  // in place. See hdbm::ZoneStore, CODED.
+  zs_.reset(zdim_, packed_zones_on(), deadlock_scan_);
   L = net.lbound;
   U = net.ubound;
   M.resize(net.nclocks + 1);

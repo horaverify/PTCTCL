@@ -107,7 +107,14 @@ void LivenessEngine::online_reset() {
     online_packed_key_mask_ = initial_capacity - 1;
   }
   online_key_by_id_.clear();
-  key_locs_.clear();
+  key_loc8_.clear();
+  key_loc16_.clear();
+  key_loc32_.clear();
+  {
+    std::size_t widest = 0;
+    for (const auto& proc : net.procs) widest = std::max(widest, proc.locations.size());
+    key_loc_width_ = widest <= 256 ? 1 : (widest <= 65536 ? 2 : 4);
+  }
   key_ints_.clear();
   key_loc_stride_ = net.nprocs();
   key_int_stride_ = static_cast<int>(net.intvars.size());
@@ -132,6 +139,14 @@ void LivenessEngine::online_reset() {
   online_raw_adj_.clear();
   online_raw_owner_.clear();
   online_raw_slot_.clear();
+  online_edge_ord_.clear();
+  online_edge_ord_n_ = 0;
+  online_edge_ord_valid_ = true;
+  online_compact_complete_ = true;
+  online_lazy_edges_ = false;
+  online_edge_log_.clear();
+  online_edge_log_bytes_ = 0;
+  online_edge_log_prev_ = 0;
   online_deferred_index_enabled_ = false;
   // The normal default remains FIFO.  The lone exception is a statically single-key model such
   // as `singleN`: every symbolic record sits in the same bucket, so FIFO fills the whole zone
@@ -146,7 +161,6 @@ void LivenessEngine::online_reset() {
   online_pinned_.clear();
   online_unsafe_target_.clear();
   online_merged_.clear();
-  online_merge_pieces_.clear();
   fwd_refining_ = false;
   lazy_replay_src_ = -1;
   lazy_replay_succ_.clear();
@@ -166,7 +180,9 @@ void LivenessEngine::online_configure_bounds(int key) {
   if (online_bound_cached_epoch_ == online_bound_epoch_ && online_bound_key_ == key) return;
   online_bound_key_ = key;
   online_bound_cached_epoch_ = online_bound_epoch_;
-  local_bounds(key_locs(key), bL, bU);
+  key_loc_scratch_.resize(static_cast<std::size_t>(key_loc_stride_));
+  key_locs_to(key, key_loc_scratch_.data());
+  local_bounds(key_loc_scratch_.data(), bL, bU);
   for (int c = 1; c <= net.nclocks && c < (int)online_am_.bump.size(); ++c)
     if (online_am_.bump[c] != kNoBump) {
       bL[c] = std::max(bL[c], online_am_.bump[c]);
@@ -215,6 +231,16 @@ bool LivenessEngine::online_equiv(const SymState& a, int b, int key) {
   return cover_rec(a.zone, ain, bz, bout, diag, 0) && cover_rec(bz, bin, a.zone, aout, diag, 0);
 }
 
+bool LivenessEngine::online_ordinary_to(const SymState& s, int j, int key) {
+  if (j < static_cast<int>(online_merged_.size()) && online_merged_[j]) return false;
+  online_configure_bounds(key);
+  const OnlineKeyInfo& ki = *online_key_by_id_[key];
+  if (ki.diag || tight_) return online_equiv(s, j, key);
+  // Without atoms the relation ::online_covers just certified is the first half of
+  // ::online_equiv, and literal inclusion implies it too, so only the reverse half is left.
+  return use_alu ? alu_le_new(j, s.zone) : includes_stored(s.zone, j);
+}
+
 /// @brief Does stored node @p a have a current D cover in stored node @p b?
 ///
 /// Both records are already known to share a discrete key.  Keeping this form avoids rebuilding
@@ -229,6 +255,17 @@ bool LivenessEngine::online_covers(int a, int b, int key) {
   const OnlineKeyInfo& ki = *online_key_by_id_[key];
   Dbm asc;
   if (!ki.diag) {
+    // Both operands are stored, so compare them where they live.  Loading `a` into a scratch
+    // first -- a widening copy per probe -- was the largest single cost of compaction on keys
+    // with wide antichains (grc).  A packed store unpacks every read into ONE shared scratch, so
+    // two nested reads would alias there; it keeps the copying form.
+    if (!zs_.packed() && !tight_)
+      return zs_.with(a, [&](const auto* pa) {
+        return zs_.with(b, [&](const auto* pb) {
+          return use_alu ? dbm_is_alu_le(pa, pb, zdim_, bL.data(), bU.data())
+                         : dbm_includes(pb, pa, zdim_);
+        });
+      });
     const Dbm& az0 = zread(a, asc);
     return use_alu ? alu_le_stored(az0, b) : stored_includes(b, az0);
   }
@@ -440,8 +477,10 @@ void LivenessEngine::online_compact_key(int v) {
 }
 
 /// @brief Intern an active candidate or defer a revocably covered successor by replay recipe.
-int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal, int* deferred) {
+int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal, int* deferred,
+                                  bool* ordinary) {
   if (deferred) *deferred = -1;
+  if (ordinary) *ordinary = false;
   // online_build_all registers the root, and online_expand registers its whole successor batch
   // and settles the atom worklist *before* it gets here.  Keeping that boundary batched matters:
   // doing a no-op map drain and a no-op inactive-record scan for every successor was pure hot-path
@@ -482,6 +521,7 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
     // Inclusion, not identity: `Z_cover` may be strictly larger than this successor.  The
     // backward operator does not care, but forward cycle detection does -- see ::kEdgeSubsumed.
     if (deferred) *deferred = kEdgeSubsumed;
+    if (ordinary) *ordinary = online_ordinary_to(s, cover, key);
     return cover;
   }
 
@@ -494,6 +534,12 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
     const int raw_slot = source < static_cast<int>(online_raw_slot_.size())
                              ? online_raw_slot_[source]
                              : -1;
+    // No edge is being kept yet (::online_lazy_edges_): the revocable cover needs no recipe until
+    // D has an atom, and ::online_rebuild_raw_edges recreates this one then.
+    if (raw_slot < 0 && online_lazy_edges_) {
+      if (deferred) *deferred = 1;
+      return cover;
+    }
     if (raw_slot < 0 || static_cast<std::uint64_t>(raw_slot) > UINT32_MAX ||
         static_cast<std::uint64_t>(ordinal) > UINT32_MAX) {
       online_failed_ = true;
@@ -501,9 +547,10 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
     }
     const std::uint64_t handle = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(raw_slot)) << 32) |
                                  static_cast<std::uint32_t>(ordinal);
-    if (online_deferred_index_enabled_) ki.deferred.push_back(handle);
+    if (online_deferred_index_enabled_) ki.ext().deferred.push_back(handle);
     if (deferred) *deferred = 1;
     if (profile) ++online_perf.deferred_created;
+    if (ordinary) *ordinary = online_ordinary_to(s, cover, key);
     return cover;
   }
 
@@ -520,19 +567,52 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
   // node to be the abstraction of ONE post image.  Merged, `post^n(Z_0)` can be empty while every
   // zone on the cycle is not, which is exactly the spurious cycle
   // ::LivenessEngine::forward_buchi_eg reports on fischer.
+  // IN-PLACE ENLARGEMENT, for `A[] not deadlock` only.
+  //
+  // A record that became active but was never expanded, and that this successor contains, is
+  // enlarged to the successor instead of a second record being appended and the first being
+  // retired by ::online_compact_key. Retired-but-kept records were most of the store on this
+  // query: phil14 kept 5.74 M records of which 2.59 M were ever expanded. It is sound for three
+  // reasons. The stored zone stays an exactly reachable set -- it IS this successor, and the
+  // valuations it replaces are inside it. Inclusion is the one relation a later D atom cannot
+  // revoke, so no certificate granted to the old zone is lost: every one of them is monotone in
+  // the covering zone. And the record has no successors yet, so nothing was computed from the
+  // smaller zone. The other queries are left alone: `E[] psi` and `p --> q` need a record to stay
+  // the single post image its incoming ordinary edges were classified against.
+  if (cover < 0 && deadlock_scan_) {
+    for (int j = ki.active_head; j >= 0; j = online_active_next_[j]) {
+      if (j == 0 || !online_active_[j] || expanded[j]) continue;
+      if (!includes_stored(s.zone, j)) continue;
+      zstore(j, std::move(s.zone));
+      online_compact_key(j);               // anything the larger zone now contains retires
+      return j;
+    }
+  }
+
   bool merged_zone = false;
-  std::vector<Dbm> merge_pieces;
   if (cover < 0 && !fwd_refining_) {
-    Dbm old;
     // Iterated to a fixpoint, not stopped at the first success: each union enlarges the
     // candidate, and a larger zone can be convex with an active record the smaller one was not.
     // Still exact -- Dbm::try_union succeeds only when the union really is one zone -- so this
     // adds no point and removes none; it only leaves a tighter antichain behind, which is one
     // fewer record for ::online_compact_key to retire later.
+    //
+    // A retry that cannot succeed is skipped.  ::dbm_try_union is a function of its two zones, so a
+    // record that already failed against the candidate as it is NOW -- no union has grown it since
+    // -- fails again; only a record tried before the latest growth can have become mergeable.
+    // `online_union_tried_[pos]` is the candidate version that the record at `pos` in this key's
+    // active list last failed against.  The list does not change inside this loop, the scan order
+    // is the same, and every attempt that could succeed is still made, so the result is identical.
+    std::vector<int>& tried = online_union_tried_;
+    tried.clear();
+    int version = 0;
     for (bool grew = true; grew;) {
       grew = false;
-      for (int j = ki.active_head; j >= 0; j = online_active_next_[j]) {
+      std::size_t pos = 0;
+      for (int j = ki.active_head; j >= 0; j = online_active_next_[j], ++pos) {
+        if (pos == tried.size()) tried.push_back(-1);
         if (j == 0 || !online_active_[j]) continue;
+        if (tried[pos] == version) continue;
         // A record the candidate already contains has nothing to add: their union IS the
         // candidate. Every record absorbed by an earlier pass is in that state, so without this
         // test each one is re-analysed in full on every later pass, which is what made the
@@ -550,20 +630,19 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
 
         // Read the stored operand at its own entry type. ::dbm_try_union is templated on it, so
         // widening it into a scratch first is a ZoneStore::load bought for nothing.
-        Dbm piece_before = s.zone;                 // the candidate, before this union
-        Dbm joined = s.zone;
+        //
+        // IN PLACE, with no copy of the candidate: ::dbm_try_union writes its left operand only
+        // when the union is exactly convex, and leaves it untouched otherwise, so a failed attempt
+        // -- nearly every attempt -- needs no scratch to restore from.  A successful one always
+        // changes the candidate: the union is the entrywise maximum, which equals the candidate
+        // exactly when the candidate includes `j`, and that case was skipped just above.
         const bool merged = zs_.with(j, [&](const auto* pz) {
-          return dbm_try_union(joined.data().data(), pz, zdim_);
+          return dbm_try_union(s.zone.data().data(), pz, zdim_);
         });
-        if (!merged || joined == s.zone) continue;
-        s.zone = std::move(joined);
+        if (!merged) { tried[pos] = version; continue; }
+        ++version;
         grew = true;
         merged_zone = true;
-        if (fwd_route_) {                          // remember both operands as pieces
-          merge_pieces.push_back(std::move(piece_before));
-          Dbm jz2;
-          merge_pieces.push_back(zread(j, jz2));
-        }
       }
     }
   }
@@ -580,12 +659,13 @@ int LivenessEngine::online_intern(SymState&& s, int key, int source, int ordinal
   // single4 q1 never terminates with merging enabled; with merging disabled instead, grc6 q2
   // costs 38s against 1.4s.
   if (merged_zone && deferred) *deferred = kEdgeSubsumed;
+  // The record IS this successor unless the union absorbed others into it.
+  if (ordinary) *ordinary = !merged_zone;
   const int id = online_append(std::move(s), key);
   if (merged_zone) {
     if (online_merged_.size() <= static_cast<std::size_t>(id))
       online_merged_.resize(static_cast<std::size_t>(id) + 1, 0);
     online_merged_[id] = 1;
-    if (!merge_pieces.empty()) online_merge_pieces_[id] = std::move(merge_pieces);
   }
   if (profile)
     online_perf.intern_append_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -623,9 +703,7 @@ bool LivenessEngine::online_replay(int source, int ordinal, int key, SymState& o
 
   const OnlineKeyInfo& tk = *online_key_by_id_[key];
   SymState& candidate = succ[static_cast<std::size_t>(ordinal)];
-  const int* tl = key_locs(tk.id);
-  if (!std::equal(candidate.locs.begin(), candidate.locs.end(), tl, tl + key_loc_stride_))
-    return false;
+  if (!key_locs_equal(tk.id, candidate.locs)) return false;
   const long* ti = key_ints(tk.id);
   if (!std::equal(candidate.ints.begin(), candidate.ints.end(), ti, ti + key_int_stride_))
     return false;
@@ -1018,6 +1096,13 @@ void LivenessEngine::expand(int u) {
 ///       maximal-run witness out of nothing.
 bool LivenessEngine::time_diverges(const SymState& s) const {
   if (net.nclocks == 0) return false;
+  // An invariant `x <= c` caps x after every delay, so no valuation of any zone at these
+  // locations can let all clocks grow: the answer is `false` without looking at the zone. The
+  // DBM computation below reaches the same verdict -- the constraint leaves `z(x,0) <= c` or
+  // empties the zone -- but pays a copy, a delay and a constrain per invariant atom for it, on
+  // every expanded record and again in every ::stop_set. A capped location is the common case:
+  // a convex psi clock part is folded into every invariant.
+  if (has_upper_invariant(net, s.locs)) return false;
   { bool fc, fu; frozen_flags(net, s.locs, s.ints, &fc, &fu); if (fc || fu) return false; }
   std::vector<Constraint> inv;
   all_invariants(net, s.locs, inv);
@@ -1078,6 +1163,7 @@ bool LivenessEngine::time_diverges(const SymState& s) const {
 ///       from a state that merely cannot be extended *inside psi*.
 bool LivenessEngine::orig_time_open(const SymState& s) const {
   if (net.nclocks == 0) return false;
+  if (has_upper_invariant(*dead_net, s.locs)) return false;   // see ::time_diverges
   bool c, u;
   frozen_flags(*dead_net, s.locs, s.ints, &c, &u);
   if (c || u) return false;                       // frozen: no positive delay at all
@@ -1089,6 +1175,26 @@ bool LivenessEngine::orig_time_open(const SymState& s) const {
   for (int i = 1; i <= net.nclocks; ++i)
     if (z.get(i, 0) != kInf) return false;        // some clock is capped: time cannot run away
   return true;
+}
+
+/// @brief Is ::stop_set(@p v) already known to be empty, without computing it?
+///
+/// On the `E[] psi` construction every psi record goes through ::online_expand, which runs
+/// ::online_eg_terminal_witness on it before generating any edge, and that test is ::stop_set's
+/// restricted branch case for case -- `time_diverges`, `orig_time_open`, then `state_has_deadlock`
+/// against `dead_net`, with the per-key `may_deadlock` filter exact because a sub-zone of a zone
+/// with no deadlocked valuation has none either.  A positive answer stops the construction on the
+/// spot, so every expanded psi record that is still being looked at returned `false` there.
+/// Re-deriving it per record in the forward route's stop scan repeated the whole delay/deadlock
+/// computation for an answer that was already in hand.
+///
+/// Holds only where the test is known to have run: the online `E[] psi` route with the terminal
+/// witness armed, and not the deadlock or leads-to constructions, whose expansion tests differ.
+bool LivenessEngine::stop_known_empty(int v) {
+  if (!online_d_ || !eg_early_ || !online_eg_prune_ || deadlock_scan_ || leadsto_early_) return false;
+  if (v < 0 || v >= static_cast<int>(nrec()) || !expanded[v]) return false;
+  // A record outside psi is marked expanded by the prune without being tested.
+  return online_is_nq(v);
 }
 
 Federation LivenessEngine::stop_set(int u) {

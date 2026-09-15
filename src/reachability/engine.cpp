@@ -2397,7 +2397,11 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
     bool ok = false;
     const bool hit = e.deadlock_reachable_refined(&gs, &ok);
     if (ok) {
-      if (stats) stats->explored = gs.fwd_nodes;
+      // `explored` is every record the search stored, frontier included; `expanded` is the
+      // records whose successors were actually computed, which is what verifyta's `States
+      // explored` and TChecker's VISITED_STATES count. Reporting only the first overstated this
+      // route against both by the unexpanded frontier.
+      if (stats) { stats->explored = gs.fwd_nodes; stats->expanded = gs.outer_expands; }
       return hit;
     }
     // The construction declined; fall through to the abstraction that needs no refinement.

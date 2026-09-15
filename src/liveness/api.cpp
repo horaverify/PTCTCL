@@ -121,26 +121,36 @@ void LivenessEngine::build_forward(GfpStats* gs) {
 }
 
 bool LivenessEngine::deadlock_reachable_refined(GfpStats* gs, bool* ok) {
+  // ON THE ONLINE D CONSTRUCTION, which is what makes the covering deadlock-preserving.
+  //
+  // This used to run ::base_forward, whose ::intern covers by plain a_LU: no atom map is installed
+  // on that path and `online_d_` is off, so nothing refined the relation by `Dead`. a_LU is a
+  // simulation, and a simulation need not preserve a deadlock -- the simulator may enable an
+  // action the simulated valuation cannot -- so a record covered away could hide the only
+  // deadlocked valuation. The online construction seeds `Dead(key)` at every discovered key
+  // (::online_seed_key), pulls its atoms back through reset-labelled key edges, and revokes and
+  // replays every cover the refined map invalidates; at quiescence every certificate is a D-cover.
+  //
+  // The verdict needs no scan of the stored zones afterwards. ::online_expand tests every record it
+  // expands exactly, against its stored zone, and stops at the first deadlocked valuation. Every
+  // active record is expanded before the worklist drains, and every inactive or never-materialised
+  // successor holds a D-certificate to an active one, which preserves `Dead`: a deadlock a covered
+  // record carries is carried by its coverer too.
+  //
+  // It is also the compact store: key arenas, one edge arena and no per-record vectors, where the
+  // base construction kept a location vector per node and every edge it ever generated.
   deadlock_scan_ = true;
+  online_d_ = true;
+  online_reset();
+  online_lazy_edges_ = true;               // no raw edge until D gains an atom
+  online_perf = OnlinePerf{};
+  fwd_ok_ = false;
   setup();
-  base_forward();
+  online_base_forward();
   fill_stats(gs);
-  *ok = fwd_ok_;
-  if (!fwd_ok_) return false;
-  if (deadlock_hit_) return true;          // the search stopped at the witness
-  static const bool dl_dbg = std::getenv("HORA_DL_DBG") != nullptr;
-  SymState sc;
-  for (std::size_t i = 0; i < nrec(); ++i) {
-    if (cancelled()) { *ok = false; return false; }
-    if (detail::state_has_deadlock(net, sread(static_cast<int>(i), sc))) {
-      if (dl_dbg)
-        std::fprintf(stderr, "DL-POSTHOC found at rec=%zu of %zu  expanded=%d active=%d\n",
-                     i, nrec(), (int)expanded[i], (int)online_active_[i]);
-      return true;
-    }
-  }
-  if (dl_dbg) std::fprintf(stderr, "DL-POSTHOC no record deadlocks (nrec=%zu)\n", nrec());
-  return false;
+  *ok = fwd_ok_ && !online_failed_ && !cancelled();
+  if (!*ok) return false;
+  return deadlock_hit_;                    // the search stopped at the witness, or found none
 }
 
 bool LivenessEngine::finish_verdict(GfpStats* gs) {
@@ -396,9 +406,11 @@ bool LivenessEngine::decide_leads_to(GfpStats* gs) {
   const std::size_t rss_fwd = rss_mb();
   std::size_t raw_nodes = nrec(), raw_edges = 0, active_nodes = 0, active_slots = 0;
   std::size_t live_deferred = 0;
-  for (const auto& edges : online_raw_adj_)
+  for (std::size_t s = 0; s < online_raw_adj_.size(); ++s) {
+    const EdgeSpan edges = online_raw_adj_[s];
     live_deferred += std::count_if(edges.begin(), edges.end(),
                                   [](const OtfEdge& e) { return e.deferred >= 0; });
+  }
   for (std::size_t v = 0; v < online_active_.size(); ++v) active_nodes += online_active_[v] != 0;
   for (const OnlineKeyInfo& ki : online_keys_) {
     active_slots += ki.active_count;
@@ -537,7 +549,10 @@ bool LivenessEngine::decide_exists_invariant_run(GfpStats* gs) {
   if (fwd_ok_ && !cancelled() && !online_failed_) {
     bool fwd_sat = false;
     if (forward_buchi(/*leadsto=*/false, &fwd_sat)) {
-      if (fwd_ok_ && !cancelled() && !online_failed_) online_finalize_graph();
+      // No seal. It exists to hand a complete graph to the backward solver, and the verdict is
+      // already in hand; what the caller reads back is `outer_nodes`/`outer_expands`, which the
+      // construction counted. Sealing re-resolved every edge and hashed every record into
+      // `bucket` only for the engine to be destroyed straight after.
       fill_stats(gs);
       return fwd_sat;
     }

@@ -38,10 +38,8 @@
 /// `a(empty) = empty`, `Z` non-empty forces `post^n(Z)` non-empty, which is what yields the
 /// concrete run.  ::LivenessEngine::online_intern can break that premise -- it merges by exact
 /// convex union (`Dbm::try_union`), so a stored zone can be a union of several post images rather
-/// than one.  A merged node is therefore matched against the PIECES it absorbed
-/// (::LivenessEngine::online_merge_pieces_), which is the same question the unmerged graph would
-/// have answered, and ::LivenessEngine::fwd_refining_ stops the merging outright once refinement
-/// begins.
+/// than one.  A merged node is therefore never the target of an ordinary edge (see `refresh_ord`
+/// below), and ::LivenessEngine::fwd_refining_ stops the merging outright once refinement begins.
 ///
 /// @note Node identity throughout is `a_LU`-EQUIVALENCE, not zone equality; see the comment in
 /// `refresh_ord` below, which is where getting it wrong costs both termination and the verdict.
@@ -243,6 +241,47 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
     // satisfied query.
     if (eg_early_hit_) { *witness = true; return true; }
 
+    // `E[] psi` WITH EVERY COMPONENT DEAD, DECIDED ON THE RAW GRAPH.
+    //
+    // That round needs three things -- the psi-closure, the recurrence criterion over it, and the
+    // stop scan -- and none of them reads the resolved adjacency the snapshot below builds: the
+    // criterion walks the raw edges itself, the closure resolves covers as it goes exactly as
+    // ::eg_closure does over the snapshot, and on this construction the stop scan was already paid
+    // at expansion (::stop_known_empty).  The snapshot is a full copy of every edge -- as large as
+    // the raw adjacency itself, 16 MB of 174 on arbiter14 q2 -- bought only to be thrown away on
+    // the round that decides every refuted row.  So the criterion runs first, here, and the
+    // snapshot is taken only when some component is live and the cycle search needs it.
+    std::vector<int> crit_comp;
+    std::vector<char> crit_live;
+    bool have_crit = false;
+    if (!leadsto) {
+      const std::vector<int> S0 = online_eg_closure_raw();
+      bool all_known = !S0.empty();
+      for (int v : S0)
+        if (!stop_known_empty(v)) { all_known = false; break; }
+      if (all_known) {
+        std::vector<char> in0(nrec(), 0);
+        for (int v : S0) in0[v] = 1;
+        lazy_build_key_sccs(&crit_comp, &crit_live, &in0);
+        have_crit = true;
+        bool live = false;
+        for (int v : S0) {
+          const int k = online_key_of_[v];
+          const int c = (k >= 0 && k < static_cast<int>(crit_comp.size())) ? crit_comp[k] : -1;
+          if (c < 0 || c >= static_cast<int>(crit_live.size()) || crit_live[c]) { live = true; break; }
+        }
+        if (!live) {
+          if (dbg)
+            std::fprintf(stderr, "FWD-DIAG round=%zu nrec=%zu |S|=%zu all-components-dead raw-graph"
+                                 " ms=%.1f\n", rounds, nrec(), S0.size(),
+                         std::chrono::duration_cast<std::chrono::microseconds>(
+                             std::chrono::steady_clock::now() - t0).count() / 1000.0);
+          *witness = false;
+          return true;
+        }
+      }
+    }
+
     std::vector<std::vector<OtfEdge>> saved_adj;
     std::vector<int> saved_key;
     std::size_t lost_edges = 0;
@@ -291,7 +330,15 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
         // instead of a contradiction.
         std::vector<int> key_comp;
         std::vector<char> comp_live;
-        lazy_build_key_sccs(&key_comp, &comp_live, &inS);
+        // Already computed above over the same closure when the raw-graph shortcut ran and found a
+        // live component; the snapshot's ::eg_closure is the same node set.
+        if (have_crit) {
+          key_comp.swap(crit_comp);
+          comp_live.swap(crit_live);
+          have_crit = false;
+        } else {
+          lazy_build_key_sccs(&key_comp, &comp_live, &inS);
+        }
         auto live_at = [&](int node) {
           if (node < 0 || node >= static_cast<int>(nrec())) return true;
           const int k = online_key_of_[node];
@@ -435,6 +482,7 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
           std::vector<char> has_stop(n, 0);
           bool stop_outside_R = false;
           for (int v : S) {
+            if (!leadsto && stop_known_empty(v)) continue;   // decided at expansion
             if (stop_set(v).empty()) continue;
             has_stop[v] = 1;
             if (!leadsto) { verdict = true; break; }
@@ -630,7 +678,10 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
             decided = true;
             verdict = false;
             for (int v : S)
-              if (inR[v] && !stop_set(v).empty()) { verdict = true; break; }
+              if (inR[v] && !(!leadsto && stop_known_empty(v)) && !stop_set(v).empty()) {
+                verdict = true;
+                break;
+              }
           }
         }
         ms_scc += std::chrono::duration_cast<std::chrono::microseconds>(
@@ -680,6 +731,7 @@ bool LivenessEngine::forward_buchi(bool leadsto, bool* witness) {
               });
     settled.assign(settled.size(), 0);        // the graph is about to move
     fwd_refining_ = true;                     // from here on nodes must stay single post images
+    online_compact_complete_ = false;         // ::online_intern now skips barred cover targets
     lazy_replay_src_ = -1;                    // drop the replay cache: a new wave, fresh records
     lazy_replay_succ_.clear();
     for (const LazyObligation& ob : obligations) {
