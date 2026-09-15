@@ -23,7 +23,6 @@ Makefile
 
 # Vendored or sibling checkouts that are not part of this repository.
 # Root-anchored: `include/hora/` and `src/...` must not be caught by these.
-/HDBM/
 /HORA/
 /UDBM/
 /UppalOMP/

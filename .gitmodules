@@ -1,0 +1,4 @@
+[submodule "HDBM"]
+	path = HDBM
+	url = https://github.com/horaverify/HDBM.git
+	branch = main
