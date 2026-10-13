@@ -1,22 +1,22 @@
 // frontier_metal.mm — the frontier-batched reachability engine on Metal.
 //
-// Per BFS level, the frontier is cut into batches sized to a memory budget, and each batch runs
-// as two command buffers:
+// Each BFS level, the frontier is cut into chunks, and each chunk runs as one command buffer:
 //
-//   A  expand (one SIMD-group per zone x transition) -> radix sort by discrete key -> buckets
-//      -> each bucket's stored zones located in the passed set -> rows per bucket
-//   B  all-pairs reduction -> survivors placed in the arena -> survivors merged into the delta
+//   expand     one SIMD-group per (frontier zone, transition): the successor zone, the target
+//              test, a sort key -- the successor's discrete key, or a sentinel when disabled
+//   sort       stable LSD radix sort of (key, work item)
+//   group      buckets of equal keys, and each bucket's stored zones in the passed set
+//   reduce     candidates against stored zones, then all pairs among the survivors
+//   intern     the survivors' zones into the arena, each distinct zone stored once
+//   place      a passed-set entry per survivor, merged into the delta
 //
-// The host reads four counters between A and B (valid candidates, the first target hit, buckets,
-// rows) and sizes B's dispatches from them. At the level's end the next frontier is compacted to
-// the zones still alive, and the passed set and arena are compacted when garbage dominates.
+// Sizes that depend on the batch's own results are read on the device (indirect dispatch), so a
+// batch never stops for the host; the host enumerates the next chunk's transitions meanwhile.
 //
-// The passed set is a sorted *base* of (key, arena slot) plus a sorted *delta* receiving each
-// batch's survivors. A batch therefore merges into the delta, O(delta + survivors), rather than
-// rewriting the whole passed set; the delta is folded into the base once it outgrows a fraction
-// of it. A dropped zone is marked dead in `alive`, indexed by arena slot, and is removed when the
-// runs are next merged. All buffers are shared memory: the host reads results where the GPU
-// wrote them and fills the recipe and work tables in place.
+// The passed set is a sorted *base* of (key, entry) plus a sorted *delta* receiving each batch's
+// survivors, folded into the base once it outgrows a fraction of it. An entry names its zone
+// through zref; zones live in a paged arena, are reference-counted, and a zone no live entry names
+// is recycled. All buffers are shared memory: the host reads results where the GPU wrote them.
 #ifdef HORA_HAVE_METAL
 
 #import <Foundation/Foundation.h>
@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -39,6 +40,7 @@
 #endif
 
 #include "hdbm/metal/gdbm.hpp"
+#include "hora/detail/engine_config.hpp"
 #include "hora/detail/frontier_gpu.hpp"
 #include "hora/detail/semantics.hpp"
 #include "hora/zone.hpp"
@@ -51,6 +53,8 @@ namespace {
 constexpr int kMaxDim = 64;                   // clocks <= 63: one bit each in a 64-bit mask
 constexpr std::uint32_t kNoHit = UINT32_MAX;
 constexpr std::uint32_t kTile = 1024;         // must match the kernels' kTile
+constexpr std::size_t kMaxPages = 4096;       // must match the kernels' FR_MAX_PAGES
+constexpr std::size_t kPageBytes = std::size_t(256) << 20;
 // A level is cut into about this many chunks, of at least kMinChunkSlots frontier zones each, so
 // the host's enumeration of one chunk overlaps the GPU's work on the previous one.
 constexpr std::size_t kChunks = 4;
@@ -62,6 +66,10 @@ constexpr std::size_t kMinChunkSlots = 16384;
 constexpr std::int32_t kByteMaxConst = 30;
 constexpr std::int32_t kShortMaxConst = 4000;
 struct Overflow {};   // a zone did not fit the store's entries
+
+// Counters the kernels keep, in ctr_.
+enum Ctr { kValid = 0, kHit = 1, kNewKeys = 2, kKilled = 3, kWide = 4, kFreed = 5, kBig1 = 6, kBig2 = 7,
+           kUnion = 8 };
 
 using Clock = std::chrono::steady_clock;
 inline double ms_since(Clock::time_point t) {
@@ -81,6 +89,7 @@ class FrontierMetal {
  public:
   // `min_bits`: the narrowest stored-entry width to consider (8, 16 or 32).
   FrontierMetal(const FrontierProblem& p, int min_bits) : P_(p), net_(*p.net), min_bits_(min_bits) {}
+  ~FrontierMetal() { if (profile_) report_profile(); }
   int bits() const { return gz_ * 8; }
 
   int run() {
@@ -100,7 +109,7 @@ class FrontierMetal {
     if (!dev_) return false;
     q_ = [dev_ newCommandQueue];
 
-    // Largest constant anywhere: decides whether zones fit 16-bit storage.
+    // Largest constant anywhere: decides the stored entry width.
     std::int32_t maxc = 0;
     auto see = [&](std::int32_t v) { if (v != kAluNegInf) maxc = std::max(maxc, std::abs(v)); };
     for (const auto& pl : P_.Lloc) for (const auto& l : pl) for (auto v : l) see(v);
@@ -116,31 +125,39 @@ class FrontierMetal {
     if (const char* z = std::getenv("HORA_GPU_ZONES")) bits = std::atoi(z);   // 8 | 16 | 32
     bits = std::max(bits, min_bits_);
     gz_ = bits == 8 ? 1 : bits == 16 ? 2 : 4;
+    // Arena pages of about kPageBytes, a power of two zones each.
+    page_shift_ = 10;
+    while (page_shift_ < 24 && (std::size_t(2) << page_shift_) * nn_ * gz_ <= kPageBytes) ++page_shift_;
+    page_zones_ = std::size_t(1) << page_shift_;
 
     // SIMD-groups per threadgroup: as many as fit a 16 KB slice of threadgroup memory, so two
     // threadgroups can share a core.
-    const int per_sg = (nn_ + 2 * n_) * 4;
+    const int per_sg = 2 * nn_ * 4;   // the largest per-SIMD-group need: the union's zone and hull
     sgs_ = std::max(1, std::min(8, 16384 / per_sg));
     if (per_sg > 32768) return false;
 
-    // Coverage tests in the reduction: a pair per lane, or a pair per SIMD-group (GDBM's warp
-    // form, 32 entries a step). HORA_GPU_REDUCE=lane|simd overrides, for measuring.
-    //
-    // Measured against a tiled reduction that staged RT x CT blocks of the comparison matrix in
-    // threadgroup memory (64x64 down to 8x32): the per-row kernels won on every model, by 1.5x on
-    // grc6 and 4x on csma10. The GPU's caches already give the reuse the tiles were for, and the
-    // tiles cost barriers and idle SIMD-groups while some rows are still scanning.
-    // A pair per lane won at every dimension measured, including hddi15's 47 (7.9 s against 14.8
-    // s): the a_LU test usually finds its witness within a few entries, so a SIMD-group spent on
-    // one pair mostly votes on chunks it did not need.
-    lane_cmp_ = true;
-    if (const char* m = std::getenv("HORA_GPU_REDUCE")) lane_cmp_ = std::string(m) != "simd";
+    // The reduction tests coverage a pair per lane: a row alone where its bucket is small, the
+    // whole SIMD-group on one row otherwise, every lane against a different zone (FR_SOLO is the
+    // cut-over). Measured alternatives, kept out:
+    //   * a pair per SIMD-group (GDBM's warp form, 32 entries a step): slower at every dimension,
+    //     hddi15's 47 included (14.8 s against 7.9 s) -- the a_LU test usually finds its witness
+    //     within a few entries, so the group mostly votes on chunks it did not need;
+    //   * a tiled reduction staging RT x CT blocks of the comparison matrix in threadgroup memory
+    //     (64x64 down to 8x32): 1.5x slower on grc6, 4x on csma10. The GPU's caches already give
+    //     the reuse the tiles were for, and the tiles cost barriers and idle SIMD-groups.
+    solo_ = 8;
+    // Convex union is on, as on the CPU; HORA_GPU_UNION=0 turns it off, for measuring.
+    union_ = !(std::getenv("HORA_GPU_UNION") && std::string(std::getenv("HORA_GPU_UNION")) == "0");
+    if (const char* v = std::getenv("HORA_GPU_SOLO")) solo_ = std::atoi(v);
+    bound_bytes_ = maxc < 32767 ? 2 : 4;   // the a_LU bounds per bucket, stored narrow
     NSError* err = nil;
     MTLCompileOptions* o = [[MTLCompileOptions alloc] init];
     o.preprocessorMacros = @{
       @"PT_DIM" : @(n_), @"PT_NP" : @(np_), @"FR_SGS" : @(sgs_),
       @"GZ" : gz_ == 1 ? @"char" : gz_ == 2 ? @"short" : @"int",
-      @"FR_LANE_CMP" : @(lane_cmp_ ? 1 : 0),
+      @"FR_SOLO" : @(solo_), @"FR_PAGE_SHIFT" : @(page_shift_),
+      @"FR_MERGE_SCAN" : @(int(detail::kMergeScan)),
+      @"FR_BOUND" : bound_bytes_ == 2 ? @"short" : @"int",
     };
     std::string src = std::string(hdbm::metal::gdbm_source()) + metal::frontier_kernels_source();
     id<MTLLibrary> lib = [dev_ newLibraryWithSource:[NSString stringWithUTF8String:src.c_str()]
@@ -148,11 +165,11 @@ class FrontierMetal {
     FR_CHECK(lib != nil, std::string("kernel compile failed: ") +
                              (err ? err.localizedDescription.UTF8String : "?"));
     for (const char* name : {"fr_expand", "fr_scan_block", "fr_scan_add", "fr_rs_hist", "fr_rs_scatter",
-                             "fr_heads", "fr_buckets", "fr_bucket_setup", "fr_reduce_stored", "fr_survivors",
-                             "fr_keep_init", "fr_rows2", "fr_reduce_pairs", "fr_zhash", "fr_intern",
-                             "fr_zwin", "fr_zplace", "fr_place_new", "fr_merge_a", "fr_merge_b",
+                             "fr_heads", "fr_buckets", "fr_bucket_setup", "fr_bucket_bounds", "fr_reduce_stored", "fr_reduce_stored_big", "fr_survivors",
+                             "fr_keep_init", "fr_rows2", "fr_reduce_pairs", "fr_reduce_pairs_big", "fr_union", "fr_intern",
+                             "fr_zwin", "fr_winlist", "fr_zplace", "fr_place_new", "fr_merge_a", "fr_merge_b",
                              "fr_alive_flags", "fr_compact_frontier", "fr_fill_u32", "fr_zrebuild",
-                             "fr_gc_mark", "fr_gc_zcopy", "fr_gc_entries", "fr_remap", "fr_indirect"}) {
+                             "fr_gc_entries", "fr_remap", "fr_indirect"}) {
       id<MTLFunction> f = [lib newFunctionWithName:[NSString stringWithUTF8String:name]];
       FR_CHECK(f != nil, std::string("missing kernel ") + name);
       id<MTLComputePipelineState> ps = [dev_ newComputePipelineStateWithFunction:f error:&err];
@@ -198,6 +215,7 @@ class FrontierMetal {
     put(kshift_, kshift); put(kmask_, kmask); put(tdbm_, tdbm);
     put(Lx_, std::vector<int>(P_.Lx.begin(), P_.Lx.end()));
     put(Ux_, std::vector<int>(P_.Ux.begin(), P_.Ux.end()));
+    reserve(ptab_, kMaxPages * 8, false);
 
     for (int c = 1; c <= net_.nclocks; ++c) {
       clockbits_ |= 1ull << c;
@@ -211,7 +229,7 @@ class FrontierMetal {
     // grouping and reduction arrays, the work table) stay within an eighth of memory, capped.
     const std::size_t ram = static_cast<std::size_t>([NSProcessInfo processInfo].physicalMemory);
     const std::size_t budget = std::min<std::size_t>(ram / 8, std::size_t(2) << 30);
-    const std::size_t per_item = std::size_t(nn_) * gz_ + 112;
+    const std::size_t per_item = std::size_t(nn_) * gz_ + std::size_t(2 * n_) * bound_bytes_ + 140;
     wmax_ = std::max<std::size_t>(1024, budget / per_item);
     wmax_ = std::min<std::size_t>(wmax_, std::size_t(UINT32_MAX / 2));
 #ifdef HORA_HAVE_OPENMP
@@ -221,16 +239,18 @@ class FrontierMetal {
     // vector, so it must never reallocate. Eight levels of 1024-way blocks cover any length.
     scan_sums_.resize(8);
     trace_ = std::getenv("HORA_GPU_TRACE") != nullptr;
+    // HORA_GPU_PROFILE: every kernel in its own command buffer, timed; a table at the end.
+    profile_ = std::getenv("HORA_GPU_PROFILE") != nullptr;
     // HORA_GPU_STRESS: drive every rarely-taken path on every level -- sub-batches, many chunks,
-    // a fold after every batch, arena compaction whenever there is garbage -- so the small
-    // models of the differential test exercise them too. Verdicts must not change.
+    // a fold after every batch, entry compaction and a table rebuild whenever possible -- so the
+    // small models of the differential test exercise them too. Verdicts must not change.
     stress_ = std::getenv("HORA_GPU_STRESS") != nullptr;
     if (stress_) wmax_ = 256;
     if (trace_)
-      std::fprintf(stderr, "[gpu] %s | dim %d, %d procs, key %d bits, %s zones, %d SIMD-groups/tg, "
-                   "batch <= %zu items, reduce: %s\n", dev_.name.UTF8String, n_, np_, key_bits_,
-                   gz_ == 1 ? "8-bit" : gz_ == 2 ? "16-bit" : "32-bit", sgs_, wmax_,
-                   lane_cmp_ ? "a pair per lane" : "a pair per SIMD-group");
+      std::fprintf(stderr, "[gpu] %s | dim %d, %d procs, key %d bits, %s zones (%zu a page), "
+                   "%d SIMD-groups/tg, batch <= %zu items, solo rows <= %d zones\n", dev_.name.UTF8String,
+                   n_, np_, key_bits_, gz_ == 1 ? "8-bit" : gz_ == 2 ? "16-bit" : "32-bit", page_zones_,
+                   sgs_, wmax_, solo_);
     return true;
   }
 
@@ -243,12 +263,15 @@ class FrontierMetal {
   };
 
   int search() {
-    // Initial state: arena slot 0, the only entry of the base and of the frontier.
+    // Initial state: zone 0, entry 0, the only entry of the base and of the frontier.
     const std::uint64_t k0 = P_.keys.encode(P_.s0.locs, P_.s0.ints);
-    reserve(arena_, std::size_t(nn_) * gz_ * 1024, false);
+    ensure_zones(1);
     store_zone(0, P_.s0.zone.data().data());
     reserve(zhash_, 1024 * 4, false); zhash_.as<std::uint32_t>()[0] = zone_hash(0);
+    reserve(ztslot_, 1024 * 4, false);
+    reserve(zcnt_, 1024 * 4, false); zcnt_.as<std::uint32_t>()[0] = 1;
     reserve(zref_, 1024 * 4, false); zref_.as<std::uint32_t>()[0] = 0;
+    reserve(freel_, 1024 * 4, false); reserve(pend_, 1024 * 4, false);
     zcount_ = 1;
     ensure_table(1024);
     reserve(alive_, 1024 * 4, false); alive_.as<std::uint32_t>()[0] = 1;
@@ -259,14 +282,14 @@ class FrontierMetal {
     fk_.as<std::uint64_t>()[0] = k0; fa_.as<std::uint32_t>()[0] = 0;
     acount_ = 1; nbase_ = 1; ndelta_ = 0; nf_ = 1;
     reserve(ctr_, 64, false);
-    reserve(ind_, 64, false);
+    std::memset(ctr_.b.contents, 0, 64);
+    reserve(ind_, 12 * 8, false);
 
     while (nf_ > 0) {
       if (P_.cancel && P_.cancel->load(std::memory_order_relaxed)) return 0;
       if (P_.stats) P_.stats->explored += nf_;
       nf_prev_ = nf_;
       t_enum_ = t_wait_ = 0;
-      std::fill(std::begin(gpu_ms_), std::end(gpu_ms_), 0.0);
       lvl_w_ = lvl_valid_ = lvl_kept_ = lvl_rows_ = lvl_buckets_ = 0;
       nfn_ = 0;
       // Runs of equal keys (each batch's survivors arrive sorted, so equal keys are adjacent),
@@ -298,9 +321,9 @@ class FrontierMetal {
           id<MTLCommandBuffer> cb = encode_batch(ch, w0, w1 - w0);
           if (more && w1 == ch.W) prepare(cuts[c + 1], cuts[c + 2], chunks_[(c + 1) & 1]);
           const auto tw = Clock::now();
-          commit_wait(cb, false);
+          wait(cb);
           t_wait_ += ms_since(tw);
-          if (finish_batch(cb, w1 - w0)) return 1;
+          if (finish_batch(w1 - w0)) return 1;
         }
         if (more && ch.W == 0) prepare(cuts[c + 1], cuts[c + 2], chunks_[(c + 1) & 1]);
         if (P_.cancel && P_.cancel->load(std::memory_order_relaxed)) return 0;
@@ -314,16 +337,12 @@ class FrontierMetal {
         if (trace_) std::fprintf(stderr, "[gpu] Extra_LU+ on: %zu zones over %zu discrete states\n",
                                  nlive_, ndisc_);
       }
-      if (trace_) {
+      if (trace_)
         std::fprintf(stderr, "[gpu] level %4d  frontier %9zu  work %10zu  valid %10zu  kept %9zu  "
-                     "passed %10zu zones %10zu buckets %8zu rows %10zu chunks %zu | enum %7.2f wait %7.2f "
-                     "end %6.2f ms\n", level_, nf_prev_, lvl_w_, lvl_valid_, lvl_kept_,
-                     nbase_ + ndelta_, zcount_, lvl_buckets_, lvl_rows_, cuts.size() - 1, t_enum_, t_wait_,
-                     ms_since(t_end));
-        std::fprintf(stderr, "[gpu]            gpu: expand %7.2f sort %7.2f group %7.2f | phase1 %8.2f "
-                     "phase2 %8.2f place %7.2f ms\n", gpu_ms_[0], gpu_ms_[1], gpu_ms_[2], gpu_ms_[3],
-                     gpu_ms_[4], gpu_ms_[5]);
-      }
+                     "entries %10zu zones %10zu (+%zu free) buckets %8zu rows %10zu chunks %zu | "
+                     "enum %7.2f wait %7.2f end %6.2f ms\n", level_, nf_prev_, lvl_w_, lvl_valid_,
+                     lvl_kept_, nbase_ + ndelta_, zcount_ - nfree_, nfree_, lvl_buckets_, lvl_rows_,
+                     cuts.size() - 1, t_enum_, t_wait_, ms_since(t_end));
       ++level_;
     }
     return 0;
@@ -409,10 +428,10 @@ class FrontierMetal {
     t_enum_ += ms_since(t0);
   }
 
-  // Encode one batch -- work items [w0, w0 + W) of chunk `ch` -- as a single command buffer. Every
-  // size that depends on the batch's own results (valid candidates, reduction rows) is read on the
-  // device: those dispatches are indirect, and the rest are sized by W with the excess threads
-  // exiting at once. The caller commits; finish_batch() reads the outcome.
+  // Encode one batch -- work items [w0, w0 + W) of chunk `ch` -- as a single command buffer and
+  // commit it. Every size that depends on the batch's own results (valid candidates, reduction
+  // rows) is read on the device: those dispatches are indirect, and the rest are sized by W with
+  // the excess threads exiting at once. finish_batch() reads the outcome.
   id<MTLCommandBuffer> encode_batch(Chunk& ch, std::size_t w0, std::size_t W) {
     const std::uint32_t Wu = std::uint32_t(W);
     reserve(bz_, W * nn_ * gz_, false);
@@ -421,174 +440,193 @@ class FrontierMetal {
     reserve(head_, W * 4, false); reserve(hpre_, (W + 1) * 4, false);
     reserve(bstart_, W * 4, false); reserve(bkey_, W * 8, false); reserve(binfo_, W * 32, false);
     reserve(rowcnt_, W * 4, false); reserve(rowoff_, (W + 1) * 4, false);
+    reserve(Lb_, W * n_ * bound_bytes_, false); reserve(Ub_, W * n_ * bound_bytes_, false);
+    reserve(big1_, W * 4, false); reserve(big2_, W * 4, false); reserve(ulist_, W * 4, false);
     reserve(keep_, W * 4, false); reserve(keep1_, W * 4, false);
     reserve(k1pre_, (W + 1) * 4, false); reserve(kpre_, (W + 1) * 4, false);
     reserve(surv_, W * 4, false);
     reserve(new_k_, W * 8, false); reserve(new_a_, W * 4, false);
-    reserve(arena_, (zcount_ + W) * nn_ * gz_, true);
-    reserve(zhash_, (zcount_ + W) * 4, true);
+    // The batch may store W new zones and entries: room for them, kept contents and all. The
+    // arena grows by pages, nothing copied; the per-zone and per-entry arrays are small.
+    ensure_zones(zcount_ + W);
+    for (Buf* b : {&zhash_, &ztslot_, &zcnt_, &pend_}) reserve(*b, (zcount_ + W) * 4, true);
     reserve(zref_, (acount_ + W) * 4, true);
     reserve(alive_, (acount_ + W) * 4, true);
-    reserve(hsh_, W * 4, false); reserve(rep_, W * 4, false); reserve(zslot_, W * 4, false);
-    reserve(win_, W * 4, false); reserve(wpre_, (W + 1) * 4, false);
-    ensure_table(zcount_ + W);
     reserve(fnk_, (nfn_ + W) * 8, true);
     reserve(fna_, (nfn_ + W) * 4, true);
     reserve(delta2_k_, (ndelta_ + W) * 8, false);
     reserve(delta2_a_, (ndelta_ + W) * 4, false);
+    reserve(hsh_, W * 4, false); reserve(rep_, W * 4, false); reserve(zslot_, W * 4, false);
+    reserve(win_, W * 4, false); reserve(wpre_, (W + 1) * 4, false); reserve(zid_, W * 4, false);
+    reserve(wlist_, W * 4, false);
+    ensure_table(W);
     const std::uint32_t ntiles = std::uint32_t((W + kTile - 1) / kTile);
     reserve(ghist_, std::size_t(ntiles) * 256 * 4, false);
     std::uint32_t* ctr = ctr_.as<std::uint32_t>();
-    ctr[0] = 0; ctr[1] = kNoHit; ctr[2] = 0; ctr[3] = 0; ctr[4] = 0;
+    ctr[kValid] = 0; ctr[kHit] = kNoHit; ctr[kNewKeys] = 0; ctr[kKilled] = 0; ctr[kWide] = 0;
+    ctr[kBig1] = 0; ctr[kBig2] = 0; ctr[kUnion] = 0;
+    freed_before_ = ctr[kFreed];   // cumulative over the level
 
-    id<MTLCommandBuffer> cb = [q_ commandBuffer];
-    id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
+    begin();
     // ---- expand ----
     struct { std::uint32_t nwork; std::int32_t has_tclock; std::uint64_t qmask, clockbits, sentinel;
              std::int32_t extrap, pad; }
         ea{Wu, has_tclock_ ? 1 : 0, qbits_, clockbits_, sentinel_, extrap_ ? 1 : 0, 0};
-    use(e, "fr_expand");
-    bind(e, {&ch.wf, &ch.wr, &fa_, &arena_, &ch.rkey, &ch.rflags, &ch.rg_off, &ch.rg, &ch.rr_off,
-             &ch.rr, &locbase_, &inv_off_, &inv_, &actm_, &kshift_, &kmask_, &tdbm_, &bz_, &sk0_,
-             &sv0_, &ctr_});
-    [e setBuffer:ch.wf.b offset:w0 * 4 atIndex:0];
-    [e setBuffer:ch.wr.b offset:w0 * 4 atIndex:1];
-    [e setBytes:&ea length:sizeof(ea) atIndex:21];
-    [e setBuffer:Lx_.b offset:0 atIndex:22];
-    [e setBuffer:Ux_.b offset:0 atIndex:23];
-    [e setBuffer:zref_.b offset:0 atIndex:24];
-    dispatch_sg(e, W, (nn_ + n_) * 4);
-    mark(cb, e, 0);
+    use("fr_expand");
+    bind({&ch.wf, &ch.wr, &fa_, &ptab_, &ch.rkey, &ch.rflags, &ch.rg_off, &ch.rg, &ch.rr_off,
+          &ch.rr, &locbase_, &inv_off_, &inv_, &actm_, &kshift_, &kmask_, &tdbm_, &bz_, &sk0_,
+          &sv0_, &ctr_});
+    [enc_ setBuffer:ch.wf.b offset:w0 * 4 atIndex:0];
+    [enc_ setBuffer:ch.wr.b offset:w0 * 4 atIndex:1];
+    [enc_ setBytes:&ea length:sizeof(ea) atIndex:21];
+    set(22, Lx_); set(23, Ux_); set(24, zref_); set(25, hsh_);
+    dispatch_sg(W, (nn_ + n_) * 4);
     // ---- sort by discrete key ----
     Buf* sk = &sk0_; Buf* sv = &sv0_;
     for (int pass = 0; pass < passes_; ++pass) {
       Buf* dk = (sk == &sk0_) ? &sk1_ : &sk0_;
       Buf* dv = (sv == &sv0_) ? &sv1_ : &sv0_;
       struct { std::uint32_t n, ntiles, shift; } ra{Wu, ntiles, std::uint32_t(pass * 8)};
-      use(e, "fr_rs_hist");
-      bind(e, {sk, &ghist_});
-      [e setBytes:&ra length:sizeof(ra) atIndex:2];
-      [e dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-      scan(e, ghist_, ghist_, ntiles * 256, ntiles * 256);
-      use(e, "fr_rs_scatter");
-      bind(e, {sk, sv, dk, dv, &ghist_});
-      [e setBytes:&ra length:sizeof(ra) atIndex:5];
-      [e dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+      use("fr_rs_hist");
+      bind({sk, &ghist_});
+      [enc_ setBytes:&ra length:sizeof(ra) atIndex:2];
+      [enc_ dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+      scan(ghist_, ghist_, ntiles * 256, ntiles * 256);
+      use("fr_rs_scatter");
+      bind({sk, sv, dk, dv, &ghist_});
+      [enc_ setBytes:&ra length:sizeof(ra) atIndex:5];
+      [enc_ dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
       sk = dk; sv = dv;
     }
-    sorted_k_ = sk; sorted_v_ = sv;
-    mark(cb, e, 1);
     // ---- group into buckets, and find each bucket's stored zones ----
     struct { std::uint32_t W, nbase, ndelta; } ga{Wu, std::uint32_t(nbase_), std::uint32_t(ndelta_)};
-    use(e, "fr_heads");
-    bind(e, {sk, &head_, &ctr_});
-    [e setBytes:&ga length:sizeof(ga) atIndex:3];
-    [e setBuffer:keep1_.b offset:0 atIndex:4];
-    [e setBuffer:keep_.b offset:0 atIndex:5];
-    dispatch_threads(e, W);
-    scan(e, head_, hpre_, Wu, Wu + 1);
-    use(e, "fr_buckets");
-    bind(e, {sk, &head_, &hpre_, &bstart_, &bkey_});
-    [e setBytes:&ga length:sizeof(ga) atIndex:5];
-    dispatch_threads(e, W);
-    use(e, "fr_bucket_setup");
-    bind(e, {&bkey_, &bstart_, &hpre_, &ctr_, &base_k_, &delta_k_, &binfo_, &rowcnt_});
-    [e setBytes:&ga length:sizeof(ga) atIndex:8];
-    dispatch_threads(e, W);
-    mark(cb, e, 2);
+    use("fr_heads");
+    bind({sk, &head_, &ctr_, nullptr, &keep1_, &keep_});
+    [enc_ setBytes:&ga length:sizeof(ga) atIndex:3];
+    dispatch_threads(W);
+    scan(head_, hpre_, Wu, Wu + 1);
+    use("fr_buckets");
+    bind({sk, &head_, &hpre_, &bstart_, &bkey_});
+    [enc_ setBytes:&ga length:sizeof(ga) atIndex:5];
+    dispatch_threads(W);
+    use("fr_bucket_setup");
+    bind({&bkey_, &bstart_, &hpre_, &ctr_, &base_k_, &delta_k_, &binfo_, &rowcnt_});
+    [enc_ setBytes:&ga length:sizeof(ga) atIndex:8];
+    dispatch_threads(W);
+    indirect(hpre_, W, std::uint32_t(n_), 256, 3);
+    use("fr_bucket_bounds");
+    bind({&bkey_, &hpre_, &Lloc_, &Uloc_, &Lq_, &Uq_, &locbase_, &kshift_, &kmask_, &Lb_, &Ub_});
+    [enc_ setBytes:&Wu length:4 atIndex:11];
+    [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:3 * 12
+                           threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
     // ---- reduce, phase 1: each candidate against its bucket's stored zones ----
     struct { std::uint32_t W; } rd{Wu};
-    const int tg_red = (nn_ + 2 * n_) * 4;
-    indirect(e, ctr_, 0, 1, sgs_, 0);
-    use(e, "fr_reduce_stored");
-    bind(e, {&hpre_, &head_, &binfo_, &bkey_, &base_a_, &delta_a_, &arena_, &alive_, sv, &bz_,
-             &Lloc_, &Uloc_, &Lq_, &Uq_, &locbase_, &kshift_, &kmask_, &keep1_, &ctr_, &zref_});
-    dispatch_sg_indirect(e, 0, tg_red);
-    mark(cb, e, 3);
-    scan(e, keep1_, k1pre_, Wu, Wu + 1);
-    use(e, "fr_survivors");
-    bind(e, {&keep1_, &k1pre_, &surv_, &ctr_});
-    dispatch_threads(e, W);
-    use(e, "fr_keep_init");
-    bind(e, {&keep1_, &keep_, &ctr_});
-    dispatch_threads(e, W);
-    use(e, "fr_rows2");
-    bind(e, {&binfo_, &hpre_, &k1pre_, &rowcnt_});
-    [e setBytes:&rd length:sizeof(rd) atIndex:4];
-    [e setBuffer:ctr_.b offset:0 atIndex:5];
-    dispatch_threads(e, W);
-    scan(e, rowcnt_, rowoff_, Wu, Wu + 1);
+    const int tg_red = nn_ * 4;
+    indirect(ctr_, kValid, 1, 256, 0);
+    use("fr_reduce_stored");
+    bind({&hpre_, &head_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
+          &keep1_, &ctr_, &zref_, &big1_, &ctr_});
+    dispatch_indirect(0, 256);
+    indirect(ctr_, kBig1, 1, sgs_, 4);
+    use("fr_reduce_stored_big");
+    bind({&hpre_, &head_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
+          &keep1_, &ctr_, &zref_, &big1_});
+    dispatch_sg_indirect(4, tg_red);
+    scan(keep1_, k1pre_, Wu, Wu + 1);
+    use("fr_survivors");
+    bind({&keep1_, &k1pre_, &surv_, &ctr_});
+    dispatch_threads(W);
+    use("fr_keep_init");
+    bind({&keep1_, &keep_, &ctr_});
+    dispatch_threads(W);
+    use("fr_rows2");
+    bind({&binfo_, &hpre_, &k1pre_, &rowcnt_, nullptr, &ctr_, &ulist_});
+    [enc_ setBytes:&rd length:sizeof(rd) atIndex:4];
+    dispatch_threads(W);
+    scan(rowcnt_, rowoff_, Wu, Wu + 1);
     // ---- reduce, phase 2: survivors all-pairs, and stored zones against survivors ----
-    indirect(e, rowoff_, W, 1, sgs_, 1);
-    use(e, "fr_reduce_pairs");
-    bind(e, {&rowoff_, &hpre_, &binfo_, &bkey_, &base_a_, &delta_a_, &arena_, &alive_, sv, &bz_,
-             &Lloc_, &Uloc_, &Lq_, &Uq_, &locbase_, &kshift_, &kmask_, &keep_, &k1pre_, &surv_});
-    [e setBytes:&rd length:sizeof(rd) atIndex:20];
-    [e setBuffer:ctr_.b offset:0 atIndex:21];
-    [e setBuffer:zref_.b offset:0 atIndex:22];
-    dispatch_sg_indirect(e, 1, tg_red);
-    mark(cb, e, 4);
-    // ---- intern the survivors' zones, place the survivors, merge them into the delta ----
-    scan(e, keep_, kpre_, Wu, Wu + 1);
-    use(e, "fr_zhash");
-    bind(e, {&keep_, &ctr_, sv, &bz_, &hsh_});
-    [e setBytes:&Wu length:4 atIndex:5];
-    dispatch_sg_indirect(e, 0, 16);
+    indirect(rowoff_, W, 1, 256, 1);
+    use("fr_reduce_pairs");
+    bind({&rowoff_, &hpre_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
+          &keep_, &k1pre_, &surv_, nullptr, &ctr_, &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &big2_});
+    [enc_ setBytes:&rd length:sizeof(rd) atIndex:14];
+    dispatch_indirect(1, 256);
+    indirect(ctr_, kBig2, 1, sgs_, 4);
+    use("fr_reduce_pairs_big");
+    bind({&rowoff_, &hpre_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
+          &keep_, &k1pre_, &surv_, nullptr, &ctr_, &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &big2_,
+          &ctr_});
+    [enc_ setBytes:&rd length:sizeof(rd) atIndex:14];
+    dispatch_sg_indirect(4, tg_red);
+    // ---- convex union, as the CPU engine merges ----
+    if (union_) {
+      indirect(ctr_, kUnion, 1, sgs_, 5);
+      use("fr_union");
+      bind({&ulist_, &binfo_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &keep_, &k1pre_, &surv_,
+            &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &ctr_, &hsh_});
+      dispatch_sg_indirect(5, 2 * nn_ * 4);
+    }
+    // ---- intern the survivors' zones ----
+    scan(keep_, kpre_, Wu, Wu + 1);
     struct { std::uint32_t W, mask; } ia{Wu, std::uint32_t(zcap_ - 1)};
-    use(e, "fr_intern");
-    bind(e, {&keep_, &ctr_, sv, &bz_, &arena_, &hsh_, &zhash_, &ztab_, &rep_, &zslot_});
-    [e setBytes:&ia length:sizeof(ia) atIndex:10];
-    dispatch_threads(e, W);
-    use(e, "fr_zwin");
-    bind(e, {&keep_, &ctr_, &rep_, &win_});
-    [e setBytes:&Wu length:4 atIndex:4];
-    dispatch_threads(e, W);
-    scan(e, win_, wpre_, Wu, Wu + 1);
-    struct { std::uint32_t W, zcount; } za{Wu, std::uint32_t(zcount_)};
-    indirect(e, ctr_, 0, std::uint32_t(nn_), 256, 2);
-    use(e, "fr_zplace");
-    bind(e, {&win_, &wpre_, sv, &bz_, &arena_, &hsh_, &zhash_, &ztab_, &zslot_});
-    [e setBytes:&za length:sizeof(za) atIndex:9];
-    [e dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:2 * 12
-                        threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    use("fr_intern");
+    bind({&keep_, &ctr_, sv, &bz_, &ptab_, &hsh_, &zhash_, &ztab_, &rep_, &zslot_});
+    [enc_ setBytes:&ia length:sizeof(ia) atIndex:10];
+    dispatch_threads(W);
+    use("fr_zwin");
+    bind({&keep_, &ctr_, &rep_, &win_});
+    [enc_ setBytes:&Wu length:4 atIndex:4];
+    dispatch_threads(W);
+    scan(win_, wpre_, Wu, Wu + 1);
+    use("fr_winlist");
+    bind({&win_, &wpre_, &wlist_});
+    [enc_ setBytes:&Wu length:4 atIndex:3];
+    dispatch_threads(W);
+    struct { std::uint32_t W, zcount, nfree; } za{Wu, std::uint32_t(zcount_), std::uint32_t(nfree_)};
+    indirect(wpre_, W, std::uint32_t(nn_), 256, 2);
+    use("fr_zplace");
+    bind({&wlist_, &wpre_, sv, &bz_, &ptab_, &hsh_, &zhash_, &ztab_, &zslot_, nullptr, &freel_, &zid_,
+          &ztslot_, &zcnt_});
+    [enc_ setBytes:&za length:sizeof(za) atIndex:9];
+    [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:2 * 12
+                           threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    // ---- place the survivors, and merge them into the delta ----
     struct { std::uint32_t W, acount, fbase, zcount; }
         pa{Wu, std::uint32_t(acount_), std::uint32_t(nfn_), std::uint32_t(zcount_)};
-    use(e, "fr_place_new");
-    bind(e, {&keep_, &kpre_, sk, &ctr_, &new_k_, &new_a_, &alive_, &fnk_, &fna_});
-    [e setBytes:&pa length:sizeof(pa) atIndex:9];
-    [e setBuffer:rep_.b offset:0 atIndex:10];
-    [e setBuffer:wpre_.b offset:0 atIndex:11];
-    [e setBuffer:zref_.b offset:0 atIndex:12];
-    dispatch_threads(e, W);
+    use("fr_place_new");
+    bind({&keep_, &kpre_, sk, &ctr_, &new_k_, &new_a_, &alive_, &fnk_, &fna_, nullptr, &rep_, &zid_,
+          &zref_, &zcnt_});
+    [enc_ setBytes:&pa length:sizeof(pa) atIndex:9];
+    dispatch_threads(W);
     // delta' = merge(delta, survivors); the survivor count is read on the device (kpre[W]).
-    merge(e, delta_k_, delta_a_, ndelta_, new_k_, new_a_, kpre_, W * 4, W, nullptr, nullptr,
+    merge(delta_k_, delta_a_, ndelta_, new_k_, new_a_, kpre_, W * 4, W, nullptr, nullptr,
           delta2_k_, delta2_a_);
-    mark(cb, e, 5);
-    [e endEncoding];
-    [cb commit];
-    return cb;
+    return submit();
   }
 
   // After the batch's command buffer completed: bookkeeping, and true on a target hit.
-  bool finish_batch(id<MTLCommandBuffer> cb, std::size_t W) {
-    if (!trace_) gpu_ms_[6] += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+  bool finish_batch(std::size_t W) {
     const std::uint32_t* ctr = ctr_.as<std::uint32_t>();
-    const std::uint32_t nvalid = ctr[0], hit = ctr[1];
+    const std::uint32_t nvalid = ctr[kValid], hit = ctr[kHit];
     lvl_valid_ += nvalid;
     if (P_.stats) P_.stats->generated += nvalid;
     if (hit != kNoHit) return true;
-    if (ctr[4]) throw Overflow{};
+    if (ctr[kWide]) throw Overflow{};
     const std::uint32_t kept = kpre_.as<std::uint32_t>()[W];
+    const std::uint32_t fresh = wpre_.as<std::uint32_t>()[W];   // zones not already stored
     lvl_rows_ += rowoff_.as<std::uint32_t>()[W];
     lvl_buckets_ += hpre_.as<std::uint32_t>()[W];
     lvl_kept_ += kept;
     nlive_ += kept;
-    nlive_ -= ctr[3];   // stored zones a survivor strictly covered
-    ndisc_ += ctr[2];   // discrete states seen for the first time
+    nlive_ -= ctr[kKilled];   // stored entries a survivor strictly covered
+    ndisc_ += ctr[kNewKeys];  // discrete states seen for the first time
+    ntomb_ += ctr[kFreed] - freed_before_;
     std::swap(delta_k_, delta2_k_); std::swap(delta_a_, delta2_a_);
     ndelta_ += kept;
     acount_ += kept;
-    zcount_ += wpre_.as<std::uint32_t>()[W];   // zones not already stored
+    const std::size_t recycled = std::min<std::size_t>(fresh, nfree_);
+    nfree_ -= recycled;
+    zcount_ += fresh - recycled;
     nfn_ += kept;
     if (ndelta_ > std::max<std::size_t>(nbase_ / 4, 1u << 16) || (stress_ && ndelta_)) fold();
     return false;
@@ -601,16 +639,14 @@ class FrontierMetal {
     reserve(base2_k_, (nbase_ + ndelta_) * 8, false); reserve(base2_a_, (nbase_ + ndelta_) * 4, false);
     reserve(nbuf_, 16, false);
     nbuf_.as<std::uint32_t>()[0] = std::uint32_t(ndelta_);
-    id<MTLCommandBuffer> cb = [q_ commandBuffer];
-    id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
-    alive_flags(e, base_a_, nbase_, fl_a_);
-    scan(e, fl_a_, fl_ap_, std::uint32_t(nbase_), std::uint32_t(nbase_ + 1));
-    alive_flags(e, delta_a_, ndelta_, fl_b_);
-    scan(e, fl_b_, fl_bp_, std::uint32_t(ndelta_), std::uint32_t(ndelta_ + 1));
-    merge(e, base_k_, base_a_, nbase_, delta_k_, delta_a_, nbuf_, 0, ndelta_, &fl_ap_, &fl_bp_,
+    begin();
+    alive_flags(base_a_, nbase_, fl_a_);
+    scan(fl_a_, fl_ap_, std::uint32_t(nbase_), std::uint32_t(nbase_ + 1));
+    alive_flags(delta_a_, ndelta_, fl_b_);
+    scan(fl_b_, fl_bp_, std::uint32_t(ndelta_), std::uint32_t(ndelta_ + 1));
+    merge(base_k_, base_a_, nbase_, delta_k_, delta_a_, nbuf_, 0, ndelta_, &fl_ap_, &fl_bp_,
           base2_k_, base2_a_);
-    [e endEncoding];
-    commit_wait(cb);
+    wait(submit());
     const std::size_t n = fl_ap_.as<std::uint32_t>()[nbase_] + fl_bp_.as<std::uint32_t>()[ndelta_];
     std::swap(base_k_, base2_k_); std::swap(base_a_, base2_a_);
     nbase_ = n;
@@ -623,232 +659,266 @@ class FrontierMetal {
     reserve(fk_, std::max<std::size_t>(1, nfn_) * 8, false);
     reserve(fa_, std::max<std::size_t>(1, nfn_) * 4, false);
     if (nfn_ > 0) {
-      id<MTLCommandBuffer> cb = [q_ commandBuffer];
-      id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
-      alive_flags(e, fna_, nfn_, fl_a_);
-      scan(e, fl_a_, fl_ap_, std::uint32_t(nfn_), std::uint32_t(nfn_ + 1));
+      begin();
+      alive_flags(fna_, nfn_, fl_a_);
+      scan(fl_a_, fl_ap_, std::uint32_t(nfn_), std::uint32_t(nfn_ + 1));
       struct { std::uint32_t n; } ca{std::uint32_t(nfn_)};
-      use(e, "fr_compact_frontier");
-      bind(e, {&fnk_, &fna_, &fl_a_, &fl_ap_, &fk_, &fa_});
-      [e setBytes:&ca length:sizeof(ca) atIndex:6];
-      dispatch_threads(e, nfn_);
-      [e endEncoding];
-      commit_wait(cb);
+      use("fr_compact_frontier");
+      bind({&fnk_, &fna_, &fl_a_, &fl_ap_, &fk_, &fa_});
+      [enc_ setBytes:&ca length:sizeof(ca) atIndex:6];
+      dispatch_threads(nfn_);
+      wait(submit());
     }
     nf_ = nfn_ ? fl_ap_.as<std::uint32_t>()[nfn_] : 0;
-    // Arena compaction once dead zones outnumber live ones by a wide margin.
+    // The zones this level freed become reusable now: every frontier entry that could name one
+    // has been expanded.
+    std::uint32_t* ctr = ctr_.as<std::uint32_t>();
+    const std::size_t npend = ctr[kFreed];
+    if (npend) {
+      reserve(freel_, (nfree_ + npend) * 4, true);
+      std::memcpy(freel_.as<std::uint32_t>() + nfree_, pend_.b.contents, npend * 4);
+      nfree_ += npend;
+      ctr[kFreed] = 0;
+    }
+    // Entry compaction once dead entries outnumber live ones by a wide margin.
     if ((acount_ > (std::size_t(1) << 20) && acount_ > 3 * (nbase_ + ndelta_)) ||
         (stress_ && acount_ > nbase_ + ndelta_))
       gc();
   }
 
-  // Compaction: entries renumbered in base order, and the arena reduced to the zones a live
-  // entry names; the zone table is rebuilt over the compacted arena.
+  // Entry compaction: entries renumbered in base order; zones stay where they are.
   void gc() {
     fold();
-    const std::size_t n = nbase_, nz = zcount_;
-    reserve(zmark_, (nz + 1) * 4, false); reserve(zpre_, (nz + 1) * 4, false);
+    const std::size_t n = nbase_;
     reserve(zref2_, std::max<std::size_t>(n, 1024) * 4, false);
     reserve(alive2_, std::max<std::size_t>(n, 1024) * 4, false);
     reserve(remap_, acount_ * 4, false);
-    id<MTLCommandBuffer> cb = [q_ commandBuffer];
-    id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
     const std::uint32_t nu = std::uint32_t(n), fu = std::uint32_t(nf_);
-    fill(e, zmark_, nz, 0);
-    use(e, "fr_gc_mark");
-    bind(e, {&base_a_, &zref_, &zmark_});
-    [e setBytes:&nu length:4 atIndex:3];
-    dispatch_threads(e, n);
-    scan(e, zmark_, zpre_, std::uint32_t(nz), std::uint32_t(nz + 1));
-    [e endEncoding];
-    commit_wait(cb);
-    const std::size_t nz2 = zpre_.as<std::uint32_t>()[nz];
-    reserve(arena2_, std::max<std::size_t>(nz2, 1024) * nn_ * gz_, false);
-    reserve(zhash2_, std::max<std::size_t>(nz2, 1024) * 4, false);
-    cb = [q_ commandBuffer];
-    e = [cb computeCommandEncoder];
-    struct { std::uint32_t nzones, nbase; } ga{std::uint32_t(nz), nu};
-    use(e, "fr_gc_zcopy");
-    bind(e, {&zmark_, &zpre_, &arena_, &arena2_, &zhash_, &zhash2_});
-    [e setBytes:&ga length:sizeof(ga) atIndex:6];
-    dispatch_threads(e, nz * nn_);
-    use(e, "fr_gc_entries");
-    bind(e, {&base_a_, &zref_, &zref2_, &zpre_, &remap_, &alive2_});
-    [e setBytes:&ga length:sizeof(ga) atIndex:6];
-    dispatch_threads(e, n);
+    begin();
+    use("fr_gc_entries");
+    bind({&base_a_, &zref_, &zref2_, &remap_, &alive2_});
+    [enc_ setBytes:&nu length:4 atIndex:5];
+    dispatch_threads(n);
     if (nf_) {
-      use(e, "fr_remap");
-      bind(e, {&fa_, &remap_});
-      [e setBytes:&fu length:4 atIndex:2];
-      dispatch_threads(e, nf_);
+      use("fr_remap");
+      bind({&fa_, &remap_});
+      [enc_ setBytes:&fu length:4 atIndex:2];
+      dispatch_threads(nf_);
     }
-    [e endEncoding];
-    commit_wait(cb);
-    std::swap(arena_, arena2_); std::swap(zhash_, zhash2_);
+    wait(submit());
     std::swap(zref_, zref2_); std::swap(alive_, alive2_);
     acount_ = n;
-    zcount_ = nz2;
-    // The old arena is garbage; give its pages back.
-    [arena2_.b setPurgeableState:MTLPurgeableStateEmpty];
-    arena2_.b = nil;
-    rebuild_table();
+    for (Buf* b : {&zref2_, &alive2_, &remap_}) { [b->b setPurgeableState:MTLPurgeableStateEmpty]; b->b = nil; }
   }
 
-  // The zone table holds at least twice the zones that can be stored by the end of the next
-  // batch, so linear probing stays short.
-  void ensure_table(std::size_t need) {
-    if (zcap_ >= 2 * need) return;
-    while (zcap_ < 2 * need) zcap_ = zcap_ ? zcap_ * 2 : 4096;
+  // ---------------------------------------------------------------- the zone store
+  // Arena pages for `nz` zones; a new page is a new buffer, and its GPU address joins the table.
+  void ensure_zones(std::size_t nz) {
+    while (pages_.size() * page_zones_ < nz) {
+      FR_CHECK(pages_.size() < kMaxPages, "zone arena exceeds its page table");
+      id<MTLBuffer> b = [dev_ newBufferWithLength:page_zones_ * nn_ * gz_ options:MTLResourceStorageModeShared];
+      FR_CHECK(b != nil, "out of GPU memory (arena page)");
+      ptab_.as<std::uint64_t>()[pages_.size()] = b.gpuAddress;
+      pages_.push_back(b);
+    }
+  }
+  void* zone_ptr(std::size_t z) const {
+    return static_cast<char*>(((id<MTLBuffer>)pages_[z >> page_shift_]).contents) +
+           (z & (page_zones_ - 1)) * nn_ * gz_;
+  }
+  // The table holds at most half its capacity in live zones, tombstones and the next batch's
+  // zones; past that it is rebuilt -- larger when live zones alone need it.
+  void ensure_table(std::size_t W) {
+    const std::size_t live = zcount_ - nfree_;
+    if (zcap_ && (live + ntomb_ + W) * 2 <= zcap_ && !(stress_ && ntomb_)) return;
+    if (!zcap_) zcap_ = 4096;
+    while ((live + W) * 2 > zcap_) zcap_ *= 2;
     rebuild_table();
   }
   void rebuild_table() {
     reserve(ztab_, zcap_ * 4, false);
-    id<MTLCommandBuffer> cb = [q_ commandBuffer];
-    id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
-    fill(e, ztab_, zcap_, 0xffffffffu);
+    begin();
+    fill(ztab_, zcap_, 0xffffffffu);
     struct { std::uint32_t W, mask; } ia{std::uint32_t(zcount_), std::uint32_t(zcap_ - 1)};
-    use(e, "fr_zrebuild");
-    bind(e, {&zhash_, &ztab_});
-    [e setBytes:&ia length:sizeof(ia) atIndex:2];
-    dispatch_threads(e, zcount_);
-    [e endEncoding];
-    commit_wait(cb);
+    use("fr_zrebuild");
+    bind({&zhash_, &ztab_, nullptr, &zcnt_, &ztslot_});
+    [enc_ setBytes:&ia length:sizeof(ia) atIndex:2];
+    dispatch_threads(zcount_);
+    wait(submit());
+    ntomb_ = 0;
   }
-  void fill(id<MTLComputeCommandEncoder> e, const Buf& b, std::size_t n, std::uint32_t v) {
-    const std::uint32_t a[2] = {std::uint32_t(n), v};
-    use(e, "fr_fill_u32");
-    bind(e, {&b});
-    [e setBytes:a length:sizeof(a) atIndex:1];
-    dispatch_threads(e, n);
-  }
-  // The kernels' zone hash, on the host, for the zone stored at `slot` (fr_entry_hash).
+  // The kernels' zone hash, on the host, for zone `z` (fr_entry_hash).
   static std::uint32_t mix32(std::uint32_t x) {
     x ^= x >> 16; x *= 0x7feb352du;
     x ^= x >> 15; x *= 0x846ca68bu;
     return x ^ (x >> 16);
   }
-  std::uint32_t zone_hash(std::size_t slot) const {
+  std::uint32_t zone_hash(std::size_t z) const {
     std::uint32_t h = 0;
+    const void* p = zone_ptr(z);
     for (int e = 0; e < nn_; ++e) {
-      const std::int32_t v = gz_ == 1 ? std::int32_t(arena_.as<std::int8_t>()[slot * nn_ + e])
-                           : gz_ == 2 ? std::int32_t(arena_.as<std::int16_t>()[slot * nn_ + e])
-                                      : arena_.as<std::int32_t>()[slot * nn_ + e];
+      const std::int32_t v = gz_ == 1 ? std::int32_t(static_cast<const std::int8_t*>(p)[e])
+                           : gz_ == 2 ? std::int32_t(static_cast<const std::int16_t*>(p)[e])
+                                      : static_cast<const std::int32_t*>(p)[e];
       h += mix32(std::uint32_t(e) * 0x9e3779b9u ^ std::uint32_t(v));
     }
     return mix32(h);
   }
+  // The initial zone, stored on the host; throws Overflow like the kernels when it does not fit.
+  void store_zone(std::size_t z, const raw_t* d) {
+    for (int k = 0; k < nn_; ++k) {
+      const bool fits = d[k] >= kInf || (gz_ == 1 ? (d[k] > -127 && d[k] < kSInf)
+                                         : gz_ == 2 ? (d[k] > -32767 && d[k] < kNInf) : true);
+      if (!fits) throw Overflow{};
+    }
+    void* p = zone_ptr(z);
+    for (int k = 0; k < nn_; ++k) {
+      if (gz_ == 1) zput(static_cast<sraw_t*>(p), k, d[k]);
+      else if (gz_ == 2) zput(static_cast<nraw_t*>(p), k, d[k]);
+      else static_cast<raw_t*>(p)[k] = d[k];
+    }
+  }
 
-  // ---------------------------------------------------------------- encoding helpers
-  void use(id<MTLComputeCommandEncoder> e, const char* name) {
+  // ---------------------------------------------------------------- encoding
+  // One command buffer and one compute encoder at a time. The arena pages are named only through
+  // the page table, so every encoder declares them resident.
+  void begin() {
+    cb_ = [q_ commandBuffer];
+    enc_ = [cb_ computeCommandEncoder];
+    if (!pages_.empty())
+      [enc_ useResources:pages_.data() count:pages_.size()
+                   usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+  }
+  id<MTLCommandBuffer> submit() {
+    [enc_ endEncoding];
+    [cb_ commit];
+    id<MTLCommandBuffer> cb = cb_;
+    if (profile_) { wait(cb); charge(cb); }
+    enc_ = nil; cb_ = nil;
+    return cb;
+  }
+  void wait(id<MTLCommandBuffer> cb) {
+    [cb waitUntilCompleted];
+    FR_CHECK(cb.status == MTLCommandBufferStatusCompleted,
+             std::string("command buffer failed: ") + (cb.error ? cb.error.localizedDescription.UTF8String : "?"));
+  }
+  // Profiling: the kernel just finished is charged its command buffer's GPU time.
+  void charge(id<MTLCommandBuffer> cb) {
+    if (kernel_) { auto& p = prof_[kernel_]; p.first += (cb.GPUEndTime - cb.GPUStartTime) * 1e3; ++p.second; }
+    kernel_ = nullptr;
+  }
+  void report_profile() const {
+    std::vector<std::pair<double, std::string>> v;
+    double total = 0;
+    for (const auto& [k, p] : prof_) { v.push_back({p.first, k}); total += p.first; }
+    std::sort(v.rbegin(), v.rend());
+    std::fprintf(stderr, "[gpu] kernel profile (%.0f ms of GPU time):\n", total);
+    for (const auto& [ms, k] : v)
+      std::fprintf(stderr, "[gpu]   %-20s %9.1f ms  %5.1f%%  %8zu dispatches\n", k.c_str(), ms,
+                   100.0 * ms / std::max(total, 1e-9), prof_.at(k).second);
+  }
+  void use(const char* name) {
+    if (profile_ && kernel_) {   // profiling: the previous kernel gets a command buffer of its own
+      wait(submit());
+      begin();
+    }
+    kernel_ = name;
     cur_ = pso_.at(name);
-    [e setComputePipelineState:cur_];
+    [enc_ setComputePipelineState:cur_];
   }
-  void bind(id<MTLComputeCommandEncoder> e, std::initializer_list<const Buf*> bufs) {
+  // Bind buffers from index 0; a null entry leaves its index unbound (a kernel argument set
+  // separately, e.g. by setBytes).
+  void bind(std::initializer_list<const Buf*> bufs) {
     NSUInteger i = 0;
-    for (const Buf* b : bufs) [e setBuffer:b->b offset:0 atIndex:i++];
+    for (const Buf* b : bufs) { if (b) [enc_ setBuffer:b->b offset:0 atIndex:i]; ++i; }
   }
-  void dispatch_threads(id<MTLComputeCommandEncoder> e, std::size_t n) {
+  void set(NSUInteger index, const Buf& b) { [enc_ setBuffer:b.b offset:0 atIndex:index]; }
+  void dispatch_threads(std::size_t n) {
     if (n == 0) return;
     const NSUInteger tg = std::min<NSUInteger>(256, cur_.maxTotalThreadsPerThreadgroup);
-    [e dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+    [enc_ dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
   }
   // One SIMD-group per item, `tg_per_sg` bytes of threadgroup memory each.
-  void dispatch_sg(id<MTLComputeCommandEncoder> e, std::size_t items, int tg_per_sg) {
+  void dispatch_sg(std::size_t items, int tg_per_sg) {
     if (items == 0) return;
     const NSUInteger len = (NSUInteger(sgs_) * tg_per_sg + 15) & ~NSUInteger(15);
-    [e setThreadgroupMemoryLength:len atIndex:0];
+    [enc_ setThreadgroupMemoryLength:len atIndex:0];
     const std::size_t groups = (items + sgs_ - 1) / sgs_;
-    [e dispatchThreadgroups:MTLSizeMake(groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(sgs_ * 32, 1, 1)];
+    [enc_ dispatchThreadgroups:MTLSizeMake(groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(sgs_ * 32, 1, 1)];
   }
   // Indirect dispatch: slot `slot` of ind_ := threadgroups covering src[index] * mul items at
   // per_tg items a threadgroup, computed on the device.
-  void indirect(id<MTLComputeCommandEncoder> e, const Buf& src, std::size_t index, std::uint32_t mul,
-                std::uint32_t per_tg, std::uint32_t slot) {
+  void indirect(const Buf& src, std::size_t index, std::uint32_t mul, std::uint32_t per_tg,
+                std::uint32_t slot) {
     struct { std::uint32_t index, mul, per_tg, slot; } ia{std::uint32_t(index), mul, per_tg, slot};
-    use(e, "fr_indirect");
-    bind(e, {&src, &ind_});
-    [e setBytes:&ia length:sizeof(ia) atIndex:2];
-    [e dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+    use("fr_indirect");
+    bind({&src, &ind_});
+    [enc_ setBytes:&ia length:sizeof(ia) atIndex:2];
+    [enc_ dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
   }
-  void dispatch_sg_indirect(id<MTLComputeCommandEncoder> e, std::uint32_t slot, int tg_per_sg) {
+  // Indirect threads: slot `slot` holds the threadgroup count, `per_tg` threads each.
+  void dispatch_indirect(std::uint32_t slot, std::uint32_t per_tg) {
+    [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:slot * 12
+                           threadsPerThreadgroup:MTLSizeMake(per_tg, 1, 1)];
+  }
+  void dispatch_sg_indirect(std::uint32_t slot, int tg_per_sg) {
     const NSUInteger len = (NSUInteger(sgs_) * tg_per_sg + 15) & ~NSUInteger(15);
-    [e setThreadgroupMemoryLength:len atIndex:0];
-    [e dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:slot * 12
-                        threadsPerThreadgroup:MTLSizeMake(sgs_ * 32, 1, 1)];
+    [enc_ setThreadgroupMemoryLength:len atIndex:0];
+    [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:slot * 12
+                           threadsPerThreadgroup:MTLSizeMake(sgs_ * 32, 1, 1)];
   }
   // Exclusive scan of in[0 .. n_in) into out[0 .. n_out); in-place is allowed.
-  void scan(id<MTLComputeCommandEncoder> e, const Buf& in, const Buf& out, std::uint32_t n_in,
-            std::uint32_t n_out, std::size_t level = 0) {
+  void scan(const Buf& in, const Buf& out, std::uint32_t n_in, std::uint32_t n_out,
+            std::size_t level = 0) {
     if (n_out == 0) return;
     const std::uint32_t nblk = (n_out + kTile - 1) / kTile;
     reserve(scan_sums_[level], std::size_t(nblk) * 4, false);
     struct { std::uint32_t n_in, n_out; } sa{n_in, n_out};
-    use(e, "fr_scan_block");
-    bind(e, {&in, &out, &scan_sums_[level]});
-    [e setBytes:&sa length:sizeof(sa) atIndex:3];
-    [e dispatchThreadgroups:MTLSizeMake(nblk, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    use("fr_scan_block");
+    bind({&in, &out, &scan_sums_[level]});
+    [enc_ setBytes:&sa length:sizeof(sa) atIndex:3];
+    [enc_ dispatchThreadgroups:MTLSizeMake(nblk, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
     if (nblk > 1) {
-      scan(e, scan_sums_[level], scan_sums_[level], nblk, nblk, level + 1);
-      use(e, "fr_scan_add");
-      bind(e, {&out, &scan_sums_[level]});
-      [e setBytes:&sa length:sizeof(sa) atIndex:2];
-      dispatch_threads(e, n_out);
+      scan(scan_sums_[level], scan_sums_[level], nblk, nblk, level + 1);
+      use("fr_scan_add");
+      bind({&out, &scan_sums_[level]});
+      [enc_ setBytes:&sa length:sizeof(sa) atIndex:2];
+      dispatch_threads(n_out);
     }
   }
-  void alive_flags(id<MTLComputeCommandEncoder> e, const Buf& idx, std::size_t n, const Buf& flag) {
+  void alive_flags(const Buf& idx, std::size_t n, const Buf& flag) {
     if (n == 0) return;
     const std::uint32_t nu = std::uint32_t(n);
-    use(e, "fr_alive_flags");
-    bind(e, {&idx, &alive_, &flag});
-    [e setBytes:&nu length:4 atIndex:3];
-    dispatch_threads(e, n);
+    use("fr_alive_flags");
+    bind({&idx, &alive_, &flag});
+    [enc_ setBytes:&nu length:4 atIndex:3];
+    dispatch_threads(n);
+  }
+  void fill(const Buf& b, std::size_t n, std::uint32_t v) {
+    const std::uint32_t a[2] = {std::uint32_t(n), v};
+    use("fr_fill_u32");
+    bind({&b});
+    [enc_ setBytes:a length:sizeof(a) atIndex:1];
+    dispatch_threads(n);
   }
   // out = merge(a[0..na), b[0..*nb)), with *nb read on the device from `nbp` at `nb_off`; when
   // `apre` / `bpre` are given, only entries whose flag is set survive (their prefix sums).
-  void merge(id<MTLComputeCommandEncoder> e, const Buf& ak, const Buf& aa, std::size_t na,
-             const Buf& bk, const Buf& ba, const Buf& nbp, std::size_t nb_off, std::size_t nb_cap,
-             const Buf* apre, const Buf* bpre, const Buf& ok, const Buf& oa) {
+  void merge(const Buf& ak, const Buf& aa, std::size_t na, const Buf& bk, const Buf& ba,
+             const Buf& nbp, std::size_t nb_off, std::size_t nb_cap, const Buf* apre,
+             const Buf* bpre, const Buf& ok, const Buf& oa) {
     struct { std::uint32_t na, nb_cap, filter; } ma{std::uint32_t(na), std::uint32_t(nb_cap), apre ? 1u : 0u};
     const Buf& ap = apre ? *apre : nbp;   // unused when not filtering, but must be bound
     const Buf& bp = bpre ? *bpre : nbp;
-    if (na) {
-      use(e, "fr_merge_a");
-      bind(e, {&ak, &aa, &bk});
-      [e setBuffer:nbp.b offset:nb_off atIndex:3];
-      [e setBuffer:ap.b offset:0 atIndex:4];
-      [e setBuffer:bp.b offset:0 atIndex:5];
-      [e setBuffer:ok.b offset:0 atIndex:6];
-      [e setBuffer:oa.b offset:0 atIndex:7];
-      [e setBytes:&ma length:sizeof(ma) atIndex:8];
-      dispatch_threads(e, na);
+    for (int side = 0; side < 2; ++side) {
+      const std::size_t n = side == 0 ? na : nb_cap;
+      if (!n) continue;
+      use(side == 0 ? "fr_merge_a" : "fr_merge_b");
+      if (side == 0) bind({&ak, &aa, &bk}); else bind({&bk, &ba, &ak});
+      [enc_ setBuffer:nbp.b offset:nb_off atIndex:3];
+      set(4, ap); set(5, bp); set(6, ok); set(7, oa);
+      [enc_ setBytes:&ma length:sizeof(ma) atIndex:8];
+      dispatch_threads(n);
     }
-    if (nb_cap) {
-      use(e, "fr_merge_b");
-      bind(e, {&bk, &ba, &ak});
-      [e setBuffer:nbp.b offset:nb_off atIndex:3];
-      [e setBuffer:ap.b offset:0 atIndex:4];
-      [e setBuffer:bp.b offset:0 atIndex:5];
-      [e setBuffer:ok.b offset:0 atIndex:6];
-      [e setBuffer:oa.b offset:0 atIndex:7];
-      [e setBytes:&ma length:sizeof(ma) atIndex:8];
-      dispatch_threads(e, nb_cap);
-    }
-  }
-  // Trace mode only: close the commands so far, run them, and charge their GPU time to `slot`, so
-  // the trace can break a command buffer down by phase. Otherwise a no-op.
-  void mark(__strong id<MTLCommandBuffer>& cb, __strong id<MTLComputeCommandEncoder>& e, int slot) {
-    if (!trace_) return;
-    [e endEncoding];
-    commit_wait(cb);
-    gpu_ms_[slot] += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
-    cb = [q_ commandBuffer];
-    e = [cb computeCommandEncoder];
-  }
-  void commit_wait(id<MTLCommandBuffer> cb, bool commit = true) {
-    if (commit) [cb commit];
-    [cb waitUntilCompleted];
-    FR_CHECK(cb.status == MTLCommandBufferStatusCompleted,
-             std::string("command buffer failed: ") + (cb.error ? cb.error.localizedDescription.UTF8String : "?"));
   }
 
   // ---------------------------------------------------------------- buffers
@@ -867,50 +937,45 @@ class FrontierMetal {
     reserve(b, std::max<std::size_t>(1, v.size()) * sizeof(T), false);
     if (!v.empty()) std::memcpy(b.b.contents, v.data(), v.size() * sizeof(T));
   }
-  // The initial zone, stored on the host; throws Overflow like the kernels when it does not fit.
-  void store_zone(std::size_t slot, const raw_t* z) {
-    for (int k = 0; k < nn_; ++k) {
-      const bool fits = z[k] >= kInf || (gz_ == 1 ? (z[k] > -127 && z[k] < kSInf)
-                                         : gz_ == 2 ? (z[k] > -32767 && z[k] < kNInf) : true);
-      if (!fits) throw Overflow{};
-    }
-    if (gz_ == 1) {
-      for (int k = 0; k < nn_; ++k) zput(arena_.as<sraw_t>() + slot * nn_, k, z[k]);
-    } else if (gz_ == 2) {
-      for (int k = 0; k < nn_; ++k) zput(arena_.as<nraw_t>() + slot * nn_, k, z[k]);
-    } else {
-      std::memcpy(arena_.as<std::int32_t>() + slot * nn_, z, std::size_t(nn_) * 4);
-    }
-  }
 
   const FrontierProblem& P_;
   const Network& net_;
   int n_ = 0, nn_ = 0, np_ = 0, sgs_ = 1, gz_ = 2, passes_ = 1, key_bits_ = 0, nthreads_ = 1;
-  bool has_tclock_ = false, lane_cmp_ = true;
+  bool has_tclock_ = false;
+  int solo_ = 8, bound_bytes_ = 2;
+  bool union_ = true;
   int min_bits_ = 8;
   std::uint64_t clockbits_ = 0, qbits_ = 0, sentinel_ = 0;
   std::size_t wmax_ = 0;
-  bool trace_ = false, stress_ = false;
+  bool trace_ = false, stress_ = false, profile_ = false;
   int level_ = 0;
   std::size_t nf_prev_ = 0, lvl_w_ = 0, lvl_valid_ = 0, lvl_kept_ = 0, lvl_rows_ = 0, lvl_buckets_ = 0;
   double t_enum_ = 0, t_wait_ = 0;
-  double gpu_ms_[8] = {};
 
   id<MTLDevice> dev_ = nil;
   id<MTLCommandQueue> q_ = nil;
+  id<MTLCommandBuffer> cb_ = nil;
+  id<MTLComputeCommandEncoder> enc_ = nil;
   std::unordered_map<std::string, id<MTLComputePipelineState>> pso_;
   id<MTLComputePipelineState> cur_ = nil;
+  const char* kernel_ = nullptr;
+  std::map<std::string, std::pair<double, std::size_t>> prof_;   // kernel -> (GPU ms, dispatches)
 
   // model tables
   Buf locbase_, inv_off_, inv_, actm_, Lloc_, Uloc_, Lq_, Uq_, kshift_, kmask_, tdbm_, Lx_, Ux_;
-  // passed set and arena
-  Buf arena_, arena2_, alive_, alive2_, remap_;
-  // zone interning: zref[entry] -> arena slot; the table of arena slots by zone hash
-  Buf zref_, zref2_, zhash_, zhash2_, ztab_, zmark_, zpre_, hsh_, rep_, zslot_, win_, wpre_;
-  std::size_t zcount_ = 0, zcap_ = 0;
+  // the zone store: a paged arena, and per zone its hash, table slot and reference count
+  std::vector<id<MTLResource>> pages_;
+  Buf ptab_;
+  int page_shift_ = 16;
+  std::size_t page_zones_ = 0;
+  Buf zhash_, ztslot_, zcnt_, ztab_, freel_, pend_;
+  std::size_t zcount_ = 0, zcap_ = 0, nfree_ = 0, ntomb_ = 0;
+  std::uint32_t freed_before_ = 0;
+  // passed-set entries: zone, liveness, and the base and delta runs
+  Buf zref_, zref2_, alive_, alive2_, remap_;
   Buf base_k_, base_a_, base2_k_, base2_a_, delta_k_, delta_a_, delta2_k_, delta2_a_;
   std::size_t acount_ = 0, nbase_ = 0, ndelta_ = 0;
-  std::size_t nlive_ = 1, ndisc_ = 1;   // live zones, distinct discrete states (the initial one)
+  std::size_t nlive_ = 1, ndisc_ = 1;   // live entries, distinct discrete states (the initial one)
   bool extrap_ = false;
   // frontier, and the next one as it accumulates
   Buf fk_, fa_, fnk_, fna_;
@@ -923,10 +988,12 @@ class FrontierMetal {
   std::vector<int> run_tid_;
   // one batch
   Buf ind_;                 // indirect dispatch arguments, three uints a slot
-  Buf* sorted_k_ = nullptr;
-  Buf* sorted_v_ = nullptr;
+  Buf Lb_, Ub_;             // a_LU bounds of each bucket of the batch
+  Buf big1_, big2_;         // reduction rows too large for one lane
+  Buf ulist_;               // buckets for the convex-union phase
   Buf bz_, sk0_, sk1_, sv0_, sv1_, ghist_, head_, hpre_, bstart_, bkey_, binfo_, rowcnt_,
       rowoff_, keep_, kpre_, keep1_, k1pre_, surv_, new_k_, new_a_, ctr_, nbuf_;
+  Buf hsh_, rep_, zslot_, win_, wpre_, zid_, wlist_;
   Buf fl_a_, fl_ap_, fl_b_, fl_bp_;
   std::vector<Buf> scan_sums_;
 };

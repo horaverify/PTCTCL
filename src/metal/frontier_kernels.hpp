@@ -43,16 +43,39 @@ inline const char* frontier_kernels_source() {
 #ifndef FR_SGS
 #define FR_SGS 4
 #endif
-#ifndef FR_LANE_CMP
-#define FR_LANE_CMP 1          // lane-per-pair comparisons in fr_reduce (small zones)
-#endif
+
 
 #define kN    (PT_DIM)
 #define kNN   (PT_DIM * PT_DIM)
 #define kNP   (PT_NP)
 #define kTile 1024u                             // radix-sort and scan tile: 256 threads x 4
 
+// ---- the zone arena: fixed-size pages, reached through a table of their GPU addresses ----------
+// Growing the arena adds a page; no zone ever moves, so no old and new copy of the store exist at
+// once. Zone z is entry (z & FR_PAGE_MASK) of page z >> FR_PAGE_SHIFT.
+#ifndef FR_PAGE_SHIFT
+#define FR_PAGE_SHIFT 16
+#endif
+#define FR_PAGE_MASK ((1u << FR_PAGE_SHIFT) - 1u)
+#define FR_MAX_PAGES 4096
+struct ArenaPages { device GZ* p[FR_MAX_PAGES]; };
+inline device GZ* zone_at(device const ArenaPages& A, uint z) {
+  return A.p[z >> FR_PAGE_SHIFT] + ulong(z & FR_PAGE_MASK) * kNN;
+}
+
 // ---- small helpers --------------------------------------------------------------------------
+// The zone hash of the interning table, over the entries as stored (GZ, sentinel for infinity).
+inline uint fr_mix(uint x) {
+  x ^= x >> 16; x *= 0x7feb352du;
+  x ^= x >> 15; x *= 0x846ca68bu;
+  return x ^ (x >> 16);
+}
+// Order-independent, so lanes fold shares and combine with a SIMD sum. Mirrored on the host
+// (zone_hash in frontier_metal.mm) for the initial zone; the two must agree bit for bit.
+inline uint fr_entry_hash(uint e, int v) { return fr_mix(e * 0x9e3779b9u ^ uint(v)); }
+inline GZ fr_stored(int v) { return GZ(v >= GDBM_INF ? int(sizeof(GZ) == 1 ? int(GDBM_SINF)
+                                                           : sizeof(GZ) == 2 ? int(GDBM_NINF)
+                                                                             : GDBM_INF) : v); }
 inline uint lower_bound64(device const ulong* a, uint n, ulong k) {
   uint lo = 0, hi = n;
   while (lo < hi) { const uint m = (lo + hi) >> 1; if (a[m] < k) lo = m + 1; else hi = m; }
@@ -117,7 +140,7 @@ inline bool fr_invariants(threadgroup int* D, ulong key, device const int* kshif
 kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
                       device const uint*  wr      [[buffer(1)]],
                       device const uint*  fz      [[buffer(2)]],
-                      device const GZ*    arena   [[buffer(3)]],
+                      device const ArenaPages& AP [[buffer(3)]],
                       device const ulong* rkey    [[buffer(4)]],
                       device const uint*  rflags  [[buffer(5)]],
                       device const uint*  rg_off  [[buffer(6)]],
@@ -139,6 +162,7 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
                       device const int*   Lx      [[buffer(22)]],
                       device const int*   Ux      [[buffer(23)]],
                       device const uint*  zref    [[buffer(24)]],
+                      device uint*        hshw    [[buffer(25)]],
                       threadgroup int*    tgm     [[threadgroup(0)]],
                       uint tg [[threadgroup_position_in_grid]],
                       uint sgid [[simdgroup_index_in_threadgroup]],
@@ -148,7 +172,7 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
   threadgroup int* D = tgm + sgid * (kNN + kN);   // the zone, then a row of scratch
   const uint r = wr[w];
   const ulong key = rkey[r];
-  gdbm_load(D, arena + ulong(zref[fz[wf[w]]]) * kNN, kN, lane);
+  gdbm_load(D, zone_at(AP, zref[fz[wf[w]]]), kN, lane);
   bool ok = true;
   for (uint g = rg_off[r]; ok && g < rg_off[r + 1]; ++g)
     ok = gdbm_constrain(D, kN, rg[3 * g], rg[3 * g + 1], rg[3 * g + 2], lane);
@@ -178,8 +202,13 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
       if (lane == 0) atomic_store_explicit(&ctr[4], 1u, memory_order_relaxed);
       ok = false;
     } else {
-      gdbm_store(bz + ulong(w) * kNN, D, kN, lane);
-      if (lane == 0) atomic_fetch_add_explicit(&ctr[0], 1u, memory_order_relaxed);
+      // Store, and hash as stored while the zone is on chip: interning needs the hash of every
+      // survivor, and reading the zone back for it cost a pass over the candidate buffer.
+      device GZ* out = bz + ulong(w) * kNN;
+      uint h = 0;
+      GDBM_FOR_E(e, lane, kNN) { const GZ sv = fr_stored(D[e]); out[e] = sv; h += fr_entry_hash(uint(e), int(sv)); }
+      h = fr_mix(simd_sum(h));
+      if (lane == 0) { hshw[w] = h; atomic_fetch_add_explicit(&ctr[0], 1u, memory_order_relaxed); }
     }
   }
   if (lane == 0) { skey[w] = ok ? key : A.sentinel; sval[w] = w; }
@@ -354,79 +383,138 @@ kernel void fr_bucket_setup(device const ulong* bkey [[buffer(0)]], device const
 // reads it. That cannot change any answer: a stored zone dies only to a new zone that strictly
 // covers it, and that zone then covers whatever the dead one covered.
 
-// The a_LU bounds of the bucket whose key is `key`: per-location maxima over processes, floored
-// by the query's constants, (0, 0) for the reference clock.
-inline void fr_bounds(ulong key, threadgroup int* L, threadgroup int* U, device const int* Lloc,
-                      device const int* Uloc, device const int* Lq, device const int* Uq,
-                      device const int* locbase, device const int* kshift, device const ulong* kmask,
-                      uint lane) {
-  for (int c = int(lane); c < kN; c += 32) {
-    int l = Lq[c], u = Uq[c];
-    for (int p = 0; p < kNP; ++p) {
-      const int gl = locbase[p] + loc_of(key, kshift, kmask, p);
-      l = max(l, Lloc[gl * kN + c]);
-      u = max(u, Uloc[gl * kN + c]);
-    }
-    L[c] = (c == 0) ? 0 : l;
-    U[c] = (c == 0) ? 0 : u;
+// The a_LU bounds of every bucket, computed once per batch: per-location maxima over processes,
+// floored by the query's constants, and (0, 0) for the reference clock. Stored narrow (FR_BOUND:
+// short unless the model's constants need int), kBoundNone standing for kAluNegInf.
+#ifndef FR_BOUND
+#define FR_BOUND short
+#endif
+constant int kBoundNone = (sizeof(FR_BOUND) == 2) ? -32768 : (-2147483647 - 1);
+struct BoundView {
+  device const FR_BOUND* p;
+  int operator[](int i) const { const int v = int(p[i]); return v == kBoundNone ? GDBM_ALU_NEG_INF : v; }
+};
+kernel void fr_bucket_bounds(device const ulong* bkey [[buffer(0)]], device const uint* hpre [[buffer(1)]],
+                             device const int* Lloc [[buffer(2)]], device const int* Uloc [[buffer(3)]],
+                             device const int* Lq [[buffer(4)]], device const int* Uq [[buffer(5)]],
+                             device const int* locbase [[buffer(6)]], device const int* kshift [[buffer(7)]],
+                             device const ulong* kmask [[buffer(8)]], device FR_BOUND* Lb [[buffer(9)]],
+                             device FR_BOUND* Ub [[buffer(10)]], constant uint& W [[buffer(11)]],
+                             uint gid [[thread_position_in_grid]]) {
+  const uint b = gid / uint(kN), c = gid - b * uint(kN);
+  if (b >= hpre[W]) return;
+  const ulong key = bkey[b];
+  int l = Lq[c], u = Uq[c];
+  for (int p = 0; p < kNP; ++p) {
+    const int gl = locbase[p] + loc_of(key, kshift, kmask, p);
+    l = max(l, Lloc[gl * kN + c]);
+    u = max(u, Uloc[gl * kN + c]);
   }
+  if (c == 0) l = u = 0;
+  Lb[ulong(b) * kN + c] = FR_BOUND(l == GDBM_ALU_NEG_INF ? kBoundNone : l);
+  Ub[ulong(b) * kN + c] = FR_BOUND(u == GDBM_ALU_NEG_INF ? kBoundNone : u);
 }
 
 struct ReduceArgs { uint W; };
 
-// Phase 1: one SIMD-group per new candidate (sorted position i).
+// Both phases split their rows by size. A row comparing against at most FR_SOLO zones is decided
+// by one lane alone -- the common case wherever discrete states hold a handful of zones, and there
+// a SIMD-group per row would leave most lanes idle. A larger row is appended to a list (ctr[6] or
+// ctr[7] counts it) that a second kernel takes one SIMD-group per row, every lane testing a
+// different zone of the row's bucket, so a vote ends the row at its first dominator. Keeping the
+// large rows in a SIMD-group each, rather than one SIMD-group working through every large row of
+// its 32, is what keeps buckets of thousands of zones (grc) parallel.
+#ifndef FR_SOLO
+#define FR_SOLO 8
+#endif
+inline uint fr_stored_entry(uint4 st, uint t, device const uint* base_a, device const uint* delta_a) {
+  return (t < st.y) ? base_a[st.x + t] : delta_a[st.z + t - st.y];
+}
+
+// Phase 1: each candidate (sorted position i) against its bucket's live stored zones; the small
+// rows here, the large ones listed for fr_reduce_stored_big.
 kernel void fr_reduce_stored(device const uint*  hpre    [[buffer(0)]],
                              device const uint*  head    [[buffer(1)]],
                              device const uint4* binfo   [[buffer(2)]],
-                             device const ulong* bkey    [[buffer(3)]],
+                             device const FR_BOUND* Lb   [[buffer(3)]],
                              device const uint*  base_a  [[buffer(4)]],
                              device const uint*  delta_a [[buffer(5)]],
-                             device const GZ*    arena   [[buffer(6)]],
+                             device const ArenaPages& AP [[buffer(6)]],
                              device const uint*  alive   [[buffer(7)]],
                              device const uint*  sval    [[buffer(8)]],
                              device const GZ*    bz      [[buffer(9)]],
-                             device const int*   Lloc    [[buffer(10)]],
-                             device const int*   Uloc    [[buffer(11)]],
-                             device const int*   Lq      [[buffer(12)]],
-                             device const int*   Uq      [[buffer(13)]],
-                             device const int*   locbase [[buffer(14)]],
-                             device const int*   kshift  [[buffer(15)]],
-                             device const ulong* kmask   [[buffer(16)]],
-                             device uint*        keep1   [[buffer(17)]],
-                             device const uint*  ctr     [[buffer(18)]],
-                             device const uint*  zref    [[buffer(19)]],
-                             threadgroup int*    tgm     [[threadgroup(0)]],
-                             uint tg [[threadgroup_position_in_grid]],
-                             uint sgid [[simdgroup_index_in_threadgroup]],
-                             uint lane [[thread_index_in_simdgroup]]) {
-  const uint i = tg * FR_SGS + sgid;
-  if (i >= ctr[0]) return;
+                             device const FR_BOUND* Ub   [[buffer(10)]],
+                             device uint*        keep1   [[buffer(11)]],
+                             device const uint*  ctr     [[buffer(12)]],
+                             device const uint*  zref    [[buffer(13)]],
+                             device uint*        big1    [[buffer(14)]],
+                             device atomic_uint* bigc    [[buffer(15)]],
+                             uint gid [[thread_position_in_grid]]) {
+  // One thread per candidate: no SIMD-group cooperation here, so a plain thread grid.
+  const uint i0 = gid - (gid & 31u);
+  const uint lane = gid & 31u;
+  const uint nv = ctr[0];
+  if (i0 >= nv) return;
+  const uint i = i0 + lane;
+  const bool mine = i < nv;
+  uint b = 0;
+  uint4 st = uint4(0);
+  if (mine) { b = hpre[i] + head[i] - 1; st = binfo[2 * b]; }
+  const uint nold = st.y + st.w;
+  const bool big = mine && nold > FR_SOLO;
+  if (mine && !big) {
+    bool drop = false;
+    if (nold) {
+      device const GZ* X = bz + ulong(sval[i]) * kNN;
+      const BoundView L{Lb + ulong(b) * kN}, U{Ub + ulong(b) * kN};
+      for (uint t = 0; !drop && t < nold; ++t) {
+        const uint a = fr_stored_entry(st, t, base_a, delta_a);
+        drop = alive[a] != 0u && gdbm_alu_le_1(X, zone_at(AP, zref[a]), kN, L, U);
+      }
+    }
+    keep1[i] = drop ? 0u : 1u;
+  }
+  if (big) big1[atomic_fetch_add_explicit(&bigc[6], 1u, memory_order_relaxed)] = i;
+}
+// Phase 1, the large rows: one SIMD-group per listed candidate.
+kernel void fr_reduce_stored_big(device const uint*  hpre    [[buffer(0)]],
+                                 device const uint*  head    [[buffer(1)]],
+                                 device const uint4* binfo   [[buffer(2)]],
+                                 device const FR_BOUND* Lb   [[buffer(3)]],
+                                 device const uint*  base_a  [[buffer(4)]],
+                                 device const uint*  delta_a [[buffer(5)]],
+                                 device const ArenaPages& AP [[buffer(6)]],
+                                 device const uint*  alive   [[buffer(7)]],
+                                 device const uint*  sval    [[buffer(8)]],
+                                 device const GZ*    bz      [[buffer(9)]],
+                                 device const FR_BOUND* Ub   [[buffer(10)]],
+                                 device uint*        keep1   [[buffer(11)]],
+                                 device const uint*  ctr     [[buffer(12)]],
+                                 device const uint*  zref    [[buffer(13)]],
+                                 device const uint*  big1    [[buffer(14)]],
+                                 threadgroup int*    tgm     [[threadgroup(0)]],
+                                 uint tg [[threadgroup_position_in_grid]],
+                                 uint sgid [[simdgroup_index_in_threadgroup]],
+                                 uint lane [[thread_index_in_simdgroup]]) {
+  const uint k = tg * FR_SGS + sgid;
+  if (k >= ctr[6]) return;
+  const uint i = big1[k];
   const uint b = hpre[i] + head[i] - 1;
   const uint4 st = binfo[2 * b];
   const uint nold = st.y + st.w;
-  if (nold == 0) { if (lane == 0) keep1[i] = 1u; return; }
-  threadgroup int* X = tgm + sgid * (kNN + 2 * kN);
-  threadgroup int* L = X + kNN;
-  threadgroup int* U = L + kN;
-  fr_bounds(bkey[b], L, U, Lloc, Uloc, Lq, Uq, locbase, kshift, kmask, lane);
+  const BoundView L{Lb + ulong(b) * kN}, U{Ub + ulong(b) * kN};
+  threadgroup int* X = tgm + sgid * kNN;
   gdbm_load(X, bz + ulong(sval[i]) * kNN, kN, lane);
   bool drop = false;
-#if FR_LANE_CMP
   for (uint base = 0; !drop && base < nold; base += 32) {
     const uint t = base + lane;
     bool d = false;
     if (t < nold) {
-      const uint a = (t < st.y) ? base_a[st.x + t] : delta_a[st.z + t - st.y];
-      d = alive[a] != 0u && gdbm_alu_le_1(X, arena + ulong(zref[a]) * kNN, kN, L, U);
+      const uint a = fr_stored_entry(st, t, base_a, delta_a);
+      d = alive[a] != 0u && gdbm_alu_le_1(X, zone_at(AP, zref[a]), kN, L, U);
     }
     drop = simd_any(d);
   }
-#else
-  for (uint t = 0; !drop && t < nold; ++t) {
-    const uint a = (t < st.y) ? base_a[st.x + t] : delta_a[st.z + t - st.y];
-    if (simd_broadcast_first(alive[a]) != 0u) drop = gdbm_alu_le(X, arena + ulong(zref[a]) * kNN, kN, L, U, lane);
-  }
-#endif
   if (lane == 0) keep1[i] = drop ? 0u : 1u;
 }
 
@@ -440,102 +528,247 @@ kernel void fr_survivors(device const uint* keep1 [[buffer(0)]], device const ui
 kernel void fr_rows2(device const uint4* binfo [[buffer(0)]], device const uint* hpre [[buffer(1)]],
                      device const uint* k1pre [[buffer(2)]], device uint* rowcnt [[buffer(3)]],
                      constant ReduceArgs& A [[buffer(4)]], device atomic_uint* ctr [[buffer(5)]],
-                     uint b [[thread_position_in_grid]]) {
+                     device uint* ulist [[buffer(6)]], uint b [[thread_position_in_grid]]) {
   if (b >= A.W) return;
   if (b >= hpre[A.W]) { rowcnt[b] = 0; return; }
   const uint4 st = binfo[2 * b], nw = binfo[2 * b + 1];
   const uint ns = k1pre[nw.x + nw.y] - k1pre[nw.x];
   rowcnt[b] = ns ? st.y + st.w + ns : 0u;   // no survivor: nothing new, and no stored zone can die
   if (st.y + st.w == 0 && ns) atomic_fetch_add_explicit(&ctr[2], 1u, memory_order_relaxed);
+  // A bucket whose survivors may merge with something: listed for the convex-union phase.
+  if (ns && st.y + st.w + ns > 1) ulist[atomic_fetch_add_explicit(&ctr[8], 1u, memory_order_relaxed)] = b;
 }
 
-// Phase 2: one SIMD-group per row; rows past the device-side total exit at once.
+// A stored entry dies: it leaves the passed set, and when it was the last entry naming its zone,
+// the zone leaves the table (a tombstone keeps probe chains intact) and is queued for reuse.
+// Queued, not freed: a zone dying in this level may still be named by a frontier entry that a
+// later batch of the level has yet to expand, so the host recycles the queue at the level's end.
+constant uint kZTomb = 0xfffffffeu;
+inline void fr_kill(uint a, device uint* alive, device const uint* zref, device atomic_uint* zcnt,
+                    device atomic_uint* ztab, device const uint* ztslot, device uint* pend,
+                    device atomic_uint* ctr) {
+  alive[a] = 0u;
+  atomic_fetch_add_explicit(&ctr[3], 1u, memory_order_relaxed);
+  const uint z = zref[a];
+  if (atomic_fetch_sub_explicit(&zcnt[z], 1u, memory_order_relaxed) == 1u) {
+    atomic_store_explicit(&ztab[ztslot[z]], kZTomb, memory_order_relaxed);
+    pend[atomic_fetch_add_explicit(&ctr[5], 1u, memory_order_relaxed)] = z;
+  }
+}
+
+// Phase 2: rows are a bucket's stored zones, then its survivors; columns its survivors. A stored
+// row dies to a survivor strictly covering it; a survivor row is dropped by another covering it
+// that it does not cover back, or that ranks earlier.
+struct Phase2Row {
+  bool mine, stored;
+  uint b, a, pos, r, s0, ns;
+};
+inline bool fr_row_dominated(thread const Phase2Row& R, device const GZ* X, device const GZ* Y,
+                             uint t, BoundView L, BoundView U) {
+  if (R.stored) return gdbm_alu_le_1(X, Y, kN, L, U) && !gdbm_alu_le_1(Y, X, kN, L, U);
+  if (t == R.r) return false;
+  return gdbm_alu_le_1(X, Y, kN, L, U) && (t < R.r || !gdbm_alu_le_1(Y, X, kN, L, U));
+}
 kernel void fr_reduce_pairs(device const uint*  rowoff  [[buffer(0)]],
                             device const uint*  hpre    [[buffer(1)]],
                             device const uint4* binfo   [[buffer(2)]],
-                            device const ulong* bkey    [[buffer(3)]],
+                            device const FR_BOUND* Lb   [[buffer(3)]],
                             device const uint*  base_a  [[buffer(4)]],
                             device const uint*  delta_a [[buffer(5)]],
-                            device const GZ*    arena   [[buffer(6)]],
+                            device const ArenaPages& AP [[buffer(6)]],
                             device uint*        alive   [[buffer(7)]],
                             device const uint*  sval    [[buffer(8)]],
                             device const GZ*    bz      [[buffer(9)]],
-                            device const int*   Lloc    [[buffer(10)]],
-                            device const int*   Uloc    [[buffer(11)]],
-                            device const int*   Lq      [[buffer(12)]],
-                            device const int*   Uq      [[buffer(13)]],
-                            device const int*   locbase [[buffer(14)]],
-                            device const int*   kshift  [[buffer(15)]],
-                            device const ulong* kmask   [[buffer(16)]],
-                            device uint*        keep    [[buffer(17)]],
-                            device const uint*  k1pre   [[buffer(18)]],
-                            device const uint*  surv    [[buffer(19)]],
-                            constant ReduceArgs& A      [[buffer(20)]],
-                            device atomic_uint* ctr     [[buffer(21)]],
-                            device const uint*  zref    [[buffer(22)]],
-                            threadgroup int*    tgm     [[threadgroup(0)]],
-                            uint tg [[threadgroup_position_in_grid]],
-                            uint sgid [[simdgroup_index_in_threadgroup]],
-                            uint lane [[thread_index_in_simdgroup]]) {
-  const uint row = tg * FR_SGS + sgid;
-  if (row >= rowoff[A.W]) return;
+                            device const FR_BOUND* Ub   [[buffer(10)]],
+                            device uint*        keep    [[buffer(11)]],
+                            device const uint*  k1pre   [[buffer(12)]],
+                            device const uint*  surv    [[buffer(13)]],
+                            constant ReduceArgs& A      [[buffer(14)]],
+                            device atomic_uint* ctr     [[buffer(15)]],
+                            device const uint*  zref    [[buffer(16)]],
+                            device atomic_uint* zcnt    [[buffer(17)]],
+                            device atomic_uint* ztab    [[buffer(18)]],
+                            device const uint*  ztslot  [[buffer(19)]],
+                            device uint*        pend    [[buffer(20)]],
+                            device uint*        big2    [[buffer(21)]],
+                            uint gid [[thread_position_in_grid]]) {
+  // One thread per row: no SIMD-group cooperation here, so a plain thread grid.
+  const uint r0 = gid - (gid & 31u);
+  const uint lane = gid & 31u;
+  const uint nrows = rowoff[A.W];
+  if (r0 >= nrows) return;
+  Phase2Row R;
+  R.mine = r0 + lane < nrows;
+  R.stored = false; R.b = R.a = R.pos = R.r = R.s0 = R.ns = 0;
+  if (R.mine) {
+    const uint row = r0 + lane;
+    R.b = segment_of(rowoff, hpre[A.W], row);
+    const uint local = row - rowoff[R.b];
+    const uint4 st = binfo[2 * R.b], nw = binfo[2 * R.b + 1];
+    const uint nold = st.y + st.w;
+    R.s0 = k1pre[nw.x];
+    R.ns = k1pre[nw.x + nw.y] - R.s0;
+    R.stored = local < nold;
+    if (R.stored) {
+      R.a = fr_stored_entry(st, local, base_a, delta_a);
+      if (alive[R.a] == 0u) R.mine = false;           // already dead: nothing to decide
+    } else {
+      R.r = local - nold;
+      R.pos = surv[R.s0 + R.r];
+    }
+  }
+  const bool big = R.mine && R.ns > FR_SOLO;
+  if (R.mine && !big) {
+    const BoundView L{Lb + ulong(R.b) * kN}, U{Ub + ulong(R.b) * kN};
+    device const GZ* X = R.stored ? zone_at(AP, zref[R.a]) : bz + ulong(sval[R.pos]) * kNN;
+    bool dom = false;
+    for (uint t = 0; !dom && t < R.ns; ++t)
+      dom = fr_row_dominated(R, X, bz + ulong(sval[surv[R.s0 + t]]) * kNN, t, L, U);
+    if (R.stored) { if (dom) fr_kill(R.a, alive, zref, zcnt, ztab, ztslot, pend, ctr); }
+    else keep[R.pos] = dom ? 0u : 1u;
+  }
+  if (big) big2[atomic_fetch_add_explicit(&ctr[7], 1u, memory_order_relaxed)] = r0 + lane;
+}
+// Phase 2, the large rows: one SIMD-group per listed row.
+kernel void fr_reduce_pairs_big(device const uint*  rowoff  [[buffer(0)]],
+                                device const uint*  hpre    [[buffer(1)]],
+                                device const uint4* binfo   [[buffer(2)]],
+                                device const FR_BOUND* Lb   [[buffer(3)]],
+                                device const uint*  base_a  [[buffer(4)]],
+                                device const uint*  delta_a [[buffer(5)]],
+                                device const ArenaPages& AP [[buffer(6)]],
+                                device uint*        alive   [[buffer(7)]],
+                                device const uint*  sval    [[buffer(8)]],
+                                device const GZ*    bz      [[buffer(9)]],
+                                device const FR_BOUND* Ub   [[buffer(10)]],
+                                device uint*        keep    [[buffer(11)]],
+                                device const uint*  k1pre   [[buffer(12)]],
+                                device const uint*  surv    [[buffer(13)]],
+                                constant ReduceArgs& A      [[buffer(14)]],
+                                device atomic_uint* ctr     [[buffer(15)]],
+                                device const uint*  zref    [[buffer(16)]],
+                                device atomic_uint* zcnt    [[buffer(17)]],
+                                device atomic_uint* ztab    [[buffer(18)]],
+                                device const uint*  ztslot  [[buffer(19)]],
+                                device uint*        pend    [[buffer(20)]],
+                                device const uint*  big2    [[buffer(21)]],
+                                device const uint*  nbig    [[buffer(22)]],
+                                threadgroup int*    tgm     [[threadgroup(0)]],
+                                uint tg [[threadgroup_position_in_grid]],
+                                uint sgid [[simdgroup_index_in_threadgroup]],
+                                uint lane [[thread_index_in_simdgroup]]) {
+  const uint k = tg * FR_SGS + sgid;
+  if (k >= nbig[7]) return;
+  const uint row = big2[k];
   const uint b = segment_of(rowoff, hpre[A.W], row);
   const uint local = row - rowoff[b];
   const uint4 st = binfo[2 * b], nw = binfo[2 * b + 1];
   const uint nold = st.y + st.w;
-  const uint s0 = k1pre[nw.x], ns = k1pre[nw.x + nw.y] - s0;   // this bucket's survivors
-  threadgroup int* X = tgm + sgid * (kNN + 2 * kN);
-  threadgroup int* L = X + kNN;
-  threadgroup int* U = L + kN;
-  fr_bounds(bkey[b], L, U, Lloc, Uloc, Lq, Uq, locbase, kshift, kmask, lane);
-
-  if (local < nold) {                                   // a stored zone: dies to a strict cover
-    const uint a = (local < st.y) ? base_a[st.x + local] : delta_a[st.z + local - st.y];
-    if (simd_broadcast_first(alive[a]) == 0u) return;
-    gdbm_load(X, arena + ulong(zref[a]) * kNN, kN, lane);
-#if FR_LANE_CMP
-    for (uint base = 0; base < ns; base += 32) {
-      const uint t = base + lane;
-      bool kill = false;
-      if (t < ns) {
-        device const GZ* Y = bz + ulong(sval[surv[s0 + t]]) * kNN;
-        kill = gdbm_alu_le_1(X, Y, kN, L, U) && !gdbm_alu_le_1(Y, X, kN, L, U);
-      }
-      if (simd_any(kill)) { if (lane == 0) { alive[a] = 0u; atomic_fetch_add_explicit(&ctr[3], 1u, memory_order_relaxed); } return; }
-    }
-#else
-    for (uint t = 0; t < ns; ++t) {
-      device const GZ* Y = bz + ulong(sval[surv[s0 + t]]) * kNN;
-      if (gdbm_alu_le(X, Y, kN, L, U, lane) && !gdbm_alu_le(Y, X, kN, L, U, lane)) {
-        if (lane == 0) { alive[a] = 0u; atomic_fetch_add_explicit(&ctr[3], 1u, memory_order_relaxed); }
-        return;
-      }
-    }
-#endif
-    return;
-  }
-  const uint r = local - nold;                          // survivor r of this bucket
-  const uint pos = surv[s0 + r];
-  gdbm_load(X, bz + ulong(sval[pos]) * kNN, kN, lane);
-  bool drop = false;
-#if FR_LANE_CMP
-  for (uint base = 0; !drop && base < ns; base += 32) {
+  const uint s0 = k1pre[nw.x], ns = k1pre[nw.x + nw.y] - s0;
+  const bool stored = local < nold;
+  const uint a = stored ? fr_stored_entry(st, local, base_a, delta_a) : 0u;
+  const uint r = stored ? 0u : local - nold;
+  const uint pos = stored ? 0u : surv[s0 + r];
+  const BoundView L{Lb + ulong(b) * kN}, U{Ub + ulong(b) * kN};
+  threadgroup int* X = tgm + sgid * kNN;
+  gdbm_load(X, stored ? zone_at(AP, zref[a]) : bz + ulong(sval[pos]) * kNN, kN, lane);
+  bool dom = false;
+  for (uint base = 0; !dom && base < ns; base += 32) {
     const uint t = base + lane;
     bool d = false;
-    if (t < ns && t != r) {
+    if (t < ns) {
       device const GZ* Y = bz + ulong(sval[surv[s0 + t]]) * kNN;
-      d = gdbm_alu_le_1(X, Y, kN, L, U) && (t < r || !gdbm_alu_le_1(Y, X, kN, L, U));
+      if (stored) d = gdbm_alu_le_1(X, Y, kN, L, U) && !gdbm_alu_le_1(Y, X, kN, L, U);
+      else if (t != r) d = gdbm_alu_le_1(X, Y, kN, L, U) && (t < r || !gdbm_alu_le_1(Y, X, kN, L, U));
     }
-    drop = simd_any(d);
+    dom = simd_any(d);
   }
-#else
-  for (uint t = 0; !drop && t < ns; ++t) {
-    if (t == r) continue;
-    device const GZ* Y = bz + ulong(sval[surv[s0 + t]]) * kNN;
-    if (gdbm_alu_le(X, Y, kN, L, U, lane)) drop = (t < r) || !gdbm_alu_le(Y, X, kN, L, U, lane);
+  if (lane == 0) {
+    if (stored) { if (dom) fr_kill(a, alive, zref, zcnt, ztab, ztslot, pend, ctr); }
+    else keep[pos] = dom ? 0u : 1u;
   }
+}
+
+// ---- convex union -----------------------------------------------------------------------------------
+// The CPU engine's merge (NetPassed::add, step 4): each new zone, in order, absorbs any zone among
+// the FR_MERGE_SCAN newest live zones of its discrete state whose union with it is convex,
+// restarting the scan after every merge; it then stands as their hull. Merging changes what is
+// stored, never what is reachable: the hull is exactly the union. One SIMD-group per listed
+// bucket, its survivors in rank order. "Newest" here: this batch's earlier survivors, latest
+// first, then the delta's entries and the base's, each latest first.
+#ifndef FR_MERGE_SCAN
+#define FR_MERGE_SCAN 32
 #endif
-  if (lane == 0) keep[pos] = drop ? 0u : 1u;
+kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
+                     device const uint4* binfo   [[buffer(1)]],
+                     device const uint*  base_a  [[buffer(2)]],
+                     device const uint*  delta_a [[buffer(3)]],
+                     device const ArenaPages& AP [[buffer(4)]],
+                     device uint*        alive   [[buffer(5)]],
+                     device const uint*  sval    [[buffer(6)]],
+                     device GZ*          bz      [[buffer(7)]],
+                     device uint*        keep    [[buffer(8)]],
+                     device const uint*  k1pre   [[buffer(9)]],
+                     device const uint*  surv    [[buffer(10)]],
+                     device const uint*  zref    [[buffer(11)]],
+                     device atomic_uint* zcnt    [[buffer(12)]],
+                     device atomic_uint* ztab    [[buffer(13)]],
+                     device const uint*  ztslot  [[buffer(14)]],
+                     device uint*        pend    [[buffer(15)]],
+                     device atomic_uint* ctr     [[buffer(16)]],
+                     device uint*        hshw    [[buffer(17)]],
+                     threadgroup int*    tgm     [[threadgroup(0)]],
+                     uint tg [[threadgroup_position_in_grid]],
+                     uint sgid [[simdgroup_index_in_threadgroup]],
+                     uint lane [[thread_index_in_simdgroup]]) {
+  const uint k = tg * FR_SGS + sgid;
+  if (k >= atomic_load_explicit(&ctr[8], memory_order_relaxed)) return;
+  const uint b = ulist[k];
+  const uint4 st = binfo[2 * b], nw = binfo[2 * b + 1];
+  const uint s0 = k1pre[nw.x], ns = k1pre[nw.x + nw.y] - s0;
+  threadgroup int* X = tgm + sgid * (2 * kNN);
+  threadgroup int* H = X + kNN;
+  for (uint r = 0; r < ns; ++r) {
+    const uint pos = surv[s0 + r];
+    if (simd_broadcast_first(keep[pos]) == 0u) continue;   // dropped, or absorbed earlier
+    const uint w = sval[pos];
+    gdbm_load(X, bz + ulong(w) * kNN, kN, lane);
+    bool changed = false;
+    for (bool merged = true; merged;) {
+      merged = false;
+      uint seen = 0;
+      for (int r2 = int(r) - 1; r2 >= 0 && seen < FR_MERGE_SCAN && !merged; --r2) {
+        const uint p2 = surv[s0 + uint(r2)];
+        if (simd_broadcast_first(keep[p2]) == 0u) continue;
+        ++seen;
+        if (gdbm_try_union(X, bz + ulong(sval[p2]) * kNN, H, kN, lane)) {
+          merged = changed = true;
+          if (lane == 0) keep[p2] = 0u;
+        }
+      }
+      for (uint side = 0; side < 2 && !merged; ++side) {   // the delta, then the base
+        const uint first = side ? st.x : st.z, cnt = side ? st.y : st.w;
+        device const uint* run = side ? base_a : delta_a;
+        for (int t = int(cnt) - 1; t >= 0 && seen < FR_MERGE_SCAN && !merged; --t) {
+          const uint a = run[first + uint(t)];
+          if (simd_broadcast_first(alive[a]) == 0u) continue;
+          ++seen;
+          if (gdbm_try_union(X, zone_at(AP, zref[a]), H, kN, lane)) {
+            merged = changed = true;
+            if (lane == 0) fr_kill(a, alive, zref, zcnt, ztab, ztslot, pend, ctr);
+          }
+        }
+      }
+      simdgroup_barrier(mem_flags::mem_device);           // lane 0's flag writes, before rescanning
+    }
+    if (changed) {   // the hull replaces the candidate: store it, and hash it as stored
+      device GZ* out = bz + ulong(w) * kNN;
+      uint h = 0;
+      GDBM_FOR_E(e, lane, kNN) { const GZ sv = fr_stored(X[e]); out[e] = sv; h += fr_entry_hash(uint(e), int(sv)); }
+      h = fr_mix(simd_sum(h));
+      if (lane == 0) hshw[w] = h;
+    }
+  }
 }
 
 // keep := 0 for the candidates phase 1 dropped (phase 2 writes the survivors' own entries).
@@ -556,29 +789,6 @@ kernel void fr_keep_init(device const uint* keep1 [[buffer(0)]], device uint* ke
 constant uint kZEmpty = 0xffffffffu;
 constant uint kZTag = 0x80000000u;
 
-inline uint fr_mix(uint x) {
-  x ^= x >> 16; x *= 0x7feb352du;
-  x ^= x >> 15; x *= 0x846ca68bu;
-  return x ^ (x >> 16);
-}
-// Order-independent, so lanes fold shares and combine with a SIMD sum. Mirrored on the host
-// (zone_hash in frontier_metal.mm) for the initial zone; the two must agree bit for bit.
-inline uint fr_entry_hash(uint e, int v) { return fr_mix(e * 0x9e3779b9u ^ uint(v)); }
-
-kernel void fr_zhash(device const uint* keep [[buffer(0)]], device const uint* ctr [[buffer(1)]],
-                     device const uint* sval [[buffer(2)]], device const GZ* bz [[buffer(3)]],
-                     device uint* hsh [[buffer(4)]], constant uint& W [[buffer(5)]],
-                     uint tg [[threadgroup_position_in_grid]],
-                     uint sgid [[simdgroup_index_in_threadgroup]],
-                     uint lane [[thread_index_in_simdgroup]]) {
-  const uint j = tg * FR_SGS + sgid;
-  if (j >= W || j >= ctr[0] || !keep[j]) return;
-  device const GZ* Z = bz + ulong(sval[j]) * kNN;
-  uint h = 0;
-  for (int e = int(lane); e < kNN; e += 32) h += fr_entry_hash(uint(e), int(Z[e]));
-  h = fr_mix(simd_sum(h));
-  if (lane == 0) hsh[j] = h;
-}
 
 inline bool fr_zone_eq(device const GZ* a, device const GZ* b) {
   for (int e = 0; e < kNN; ++e) if (a[e] != b[e]) return false;
@@ -587,12 +797,12 @@ inline bool fr_zone_eq(device const GZ* a, device const GZ* b) {
 struct InternArgs { uint W; uint mask; };
 kernel void fr_intern(device const uint* keep [[buffer(0)]], device const uint* ctr [[buffer(1)]],
                       device const uint* sval [[buffer(2)]], device const GZ* bz [[buffer(3)]],
-                      device const GZ* arena [[buffer(4)]], device const uint* hsh [[buffer(5)]],
+                      device const ArenaPages& AP [[buffer(4)]], device const uint* hsh [[buffer(5)]],
                       device const uint* zhash [[buffer(6)]], device atomic_uint* ztab [[buffer(7)]],
                       device uint* rep [[buffer(8)]], device uint* zslot [[buffer(9)]],
                       constant InternArgs& A [[buffer(10)]], uint j [[thread_position_in_grid]]) {
   if (j >= A.W || j >= ctr[0] || !keep[j]) return;
-  const uint h = hsh[j];
+  const uint h = hsh[sval[j]];
   device const GZ* Z = bz + ulong(sval[j]) * kNN;
   for (uint s = h & A.mask;; s = (s + 1) & A.mask) {
     uint v = atomic_load_explicit(&ztab[s], memory_order_relaxed);
@@ -606,15 +816,22 @@ kernel void fr_intern(device const uint* keep [[buffer(0)]], device const uint* 
       }
       v = expected;
     }
+    if (v == kZTomb) continue;                        // a dead zone's slot: probe on
     // Occupied: by a zone stored earlier, or by one this batch is interning. Both are already in
     // memory -- the arena from earlier batches, the candidate buffer from the expand kernel.
     const bool mine = (v & kZTag) != 0u;
-    const uint hv = mine ? hsh[v & ~kZTag] : zhash[v];
-    if (hv == h && fr_zone_eq(Z, mine ? bz + ulong(sval[v & ~kZTag]) * kNN : arena + ulong(v) * kNN)) {
+    const uint hv = mine ? hsh[sval[v & ~kZTag]] : zhash[v];
+    if (hv == h && fr_zone_eq(Z, mine ? bz + ulong(sval[v & ~kZTag]) * kNN : zone_at(AP, v))) {
       rep[j] = v;
       return;
     }
   }
+}
+// wlist[r] = the candidate that is the r-th new zone, so zplace runs over new zones only.
+kernel void fr_winlist(device const uint* win [[buffer(0)]], device const uint* wpre [[buffer(1)]],
+                       device uint* wlist [[buffer(2)]], constant uint& W [[buffer(3)]],
+                       uint j [[thread_position_in_grid]]) {
+  if (j < W && win[j]) wlist[wpre[j]] = j;
 }
 // win[j] = 1 iff candidate j claimed a table slot, i.e. is the first copy of its zone.
 kernel void fr_zwin(device const uint* keep [[buffer(0)]], device const uint* ctr [[buffer(1)]],
@@ -623,21 +840,29 @@ kernel void fr_zwin(device const uint* keep [[buffer(0)]], device const uint* ct
   if (j >= W) return;
   win[j] = (j < ctr[0] && keep[j] && rep[j] == (kZTag | j)) ? 1u : 0u;
 }
-// One thread per stored entry of a new zone: candidate buffer -> arena slot zcount + wpre[j];
-// entry 0 also records the hash and resolves the table slot's tag.
-struct ZPlaceArgs { uint W; uint zcount; };
-kernel void fr_zplace(device const uint* win [[buffer(0)]], device const uint* wpre [[buffer(1)]],
+// One thread per stored entry of a new zone (rank r = gid / kNN, candidate wlist[r]). Its arena
+// slot is a recycled one while the free list lasts (taken from the top, rank r getting
+// freel[nfree - 1 - r]), else the next fresh one; entry 0 also records the zone's hash and table
+// slot and resolves the table's tag.
+struct ZPlaceArgs { uint W; uint zcount; uint nfree; };
+kernel void fr_zplace(device const uint* wlist [[buffer(0)]], device const uint* wpre [[buffer(1)]],
                       device const uint* sval [[buffer(2)]], device const GZ* bz [[buffer(3)]],
-                      device GZ* arena [[buffer(4)]], device const uint* hsh [[buffer(5)]],
+                      device const ArenaPages& AP [[buffer(4)]], device const uint* hsh [[buffer(5)]],
                       device uint* zhash [[buffer(6)]], device atomic_uint* ztab [[buffer(7)]],
                       device const uint* zslot [[buffer(8)]], constant ZPlaceArgs& A [[buffer(9)]],
+                      device const uint* freel [[buffer(10)]], device uint* zid [[buffer(11)]],
+                      device uint* ztslot [[buffer(12)]], device uint* zcnt [[buffer(13)]],
                       uint gid [[thread_position_in_grid]]) {
-  const uint j = gid / uint(kNN), e = gid - j * uint(kNN);
-  if (j >= A.W || !win[j]) return;
-  const uint z = A.zcount + wpre[j];
-  arena[ulong(z) * kNN + e] = bz[ulong(sval[j]) * kNN + e];
+  const uint r = gid / uint(kNN), e = gid - r * uint(kNN);
+  if (r >= wpre[A.W]) return;
+  const uint j = wlist[r];
+  const uint z = (r < A.nfree) ? freel[A.nfree - 1 - r] : A.zcount + (r - A.nfree);
+  zone_at(AP, z)[e] = bz[ulong(sval[j]) * kNN + e];
   if (e == 0) {
-    zhash[z] = hsh[j];
+    zid[j] = z;
+    zhash[z] = hsh[sval[j]];
+    ztslot[z] = zslot[j];
+    zcnt[z] = 0u;                                     // place_new counts the entries naming it
     atomic_store_explicit(&ztab[zslot[j]], z, memory_order_relaxed);
   }
 }
@@ -651,12 +876,15 @@ kernel void fr_place_new(device const uint* keep [[buffer(0)]], device const uin
                          device ulong* new_k [[buffer(4)]], device uint* new_a [[buffer(5)]],
                          device uint* alive [[buffer(6)]], device ulong* fnext_k [[buffer(7)]],
                          device uint* fnext_a [[buffer(8)]], constant PlaceArgs& A [[buffer(9)]],
-                         device const uint* rep [[buffer(10)]], device const uint* wpre [[buffer(11)]],
-                         device uint* zref [[buffer(12)]], uint j [[thread_position_in_grid]]) {
+                         device const uint* rep [[buffer(10)]], device const uint* zid [[buffer(11)]],
+                         device uint* zref [[buffer(12)]], device atomic_uint* zcnt [[buffer(13)]],
+                         uint j [[thread_position_in_grid]]) {
   if (j >= A.W || j >= ctr[0] || !keep[j]) return;
   const uint r = kpre[j], a = A.acount + r;
   const uint v = rep[j];
-  zref[a] = (v & kZTag) ? A.zcount + wpre[v & ~kZTag] : v;
+  const uint z = (v & kZTag) ? zid[v & ~kZTag] : v;
+  zref[a] = z;
+  atomic_fetch_add_explicit(&zcnt[z], 1u, memory_order_relaxed);
   new_k[r] = sk[j];
   new_a[r] = a;
   alive[a] = 1u;
@@ -671,15 +899,16 @@ kernel void fr_fill_u32(device uint* v [[buffer(0)]], constant uint2& A [[buffer
   if (i < A.x) v[i] = A.y;
 }
 kernel void fr_zrebuild(device const uint* zhash [[buffer(0)]], device atomic_uint* ztab [[buffer(1)]],
-                        constant InternArgs& A [[buffer(2)]], uint z [[thread_position_in_grid]]) {
-  if (z >= A.W) return;
+                        constant InternArgs& A [[buffer(2)]], device const uint* zcnt [[buffer(3)]],
+                        device uint* ztslot [[buffer(4)]], uint z [[thread_position_in_grid]]) {
+  if (z >= A.W || zcnt[z] == 0u) return;              // a free or queued slot holds no zone
   for (uint s = zhash[z] & A.mask;; s = (s + 1) & A.mask) {
     uint expected = kZEmpty;
     while (!atomic_compare_exchange_weak_explicit(&ztab[s], &expected, z, memory_order_relaxed,
                                                   memory_order_relaxed)) {
       if (expected != kZEmpty) break;               // taken: next slot
     }
-    if (expected == kZEmpty) return;
+    if (expected == kZEmpty) { ztslot[z] = s; return; }
   }
 }
 
@@ -732,30 +961,15 @@ kernel void fr_compact_frontier(device const ulong* ik [[buffer(0)]], device con
   ok[pre[i]] = ik[i];
   oa[pre[i]] = ia[i];
 }
-// Compaction, with the delta folded into the base so that the base holds every live entry:
-// entries are renumbered in base order, and the arena keeps only the zones a live entry names.
-kernel void fr_gc_mark(device const uint* base_a [[buffer(0)]], device const uint* zref [[buffer(1)]],
-                       device uint* zmark [[buffer(2)]], constant uint& n [[buffer(3)]],
-                       uint i [[thread_position_in_grid]]) {
-  if (i < n) zmark[zref[base_a[i]]] = 1u;
-}
-struct GcArgs { uint nzones; uint nbase; };
-kernel void fr_gc_zcopy(device const uint* zmark [[buffer(0)]], device const uint* zpre [[buffer(1)]],
-                        device const GZ* arena [[buffer(2)]], device GZ* arena2 [[buffer(3)]],
-                        device const uint* zhash [[buffer(4)]], device uint* zhash2 [[buffer(5)]],
-                        constant GcArgs& A [[buffer(6)]], uint gid [[thread_position_in_grid]]) {
-  const uint z = gid / uint(kNN), e = gid - z * uint(kNN);
-  if (z >= A.nzones || !zmark[z]) return;
-  arena2[ulong(zpre[z]) * kNN + e] = arena[ulong(z) * kNN + e];
-  if (e == 0) zhash2[zpre[z]] = zhash[z];
-}
+// Entry compaction, with the delta folded into the base so that the base holds every live entry:
+// entries are renumbered in base order and keep their zones; `remap` records where each went.
 kernel void fr_gc_entries(device uint* base_a [[buffer(0)]], device const uint* zref [[buffer(1)]],
-                          device uint* zref2 [[buffer(2)]], device const uint* zpre [[buffer(3)]],
-                          device uint* remap [[buffer(4)]], device uint* alive2 [[buffer(5)]],
-                          constant GcArgs& A [[buffer(6)]], uint i [[thread_position_in_grid]]) {
-  if (i >= A.nbase) return;
+                          device uint* zref2 [[buffer(2)]], device uint* remap [[buffer(3)]],
+                          device uint* alive2 [[buffer(4)]], constant uint& n [[buffer(5)]],
+                          uint i [[thread_position_in_grid]]) {
+  if (i >= n) return;
   const uint e = base_a[i];
-  zref2[i] = zpre[zref[e]];
+  zref2[i] = zref[e];
   remap[e] = i;
   base_a[i] = i;
   alive2[i] = 1u;
