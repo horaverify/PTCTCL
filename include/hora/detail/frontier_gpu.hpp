@@ -123,5 +123,9 @@ struct FrontierProblem {
 ///         caller should run the CPU engine instead
 int frontier_reach_metal(const FrontierProblem& p);
 
+/// @brief Run the same search on a CUDA GPU (src/cuda/).
+/// @return as frontier_reach_metal
+int frontier_reach_cuda(const FrontierProblem& p);
+
 }  // namespace detail
 }  // namespace hora

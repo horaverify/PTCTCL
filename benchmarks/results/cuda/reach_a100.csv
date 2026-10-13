@@ -1,0 +1,114 @@
+family,model,tool,rep,states,generated,seconds,status,verdict,query
+arbiter,arbiter4,cuda,1,48,144,0.457,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter4,cuda,2,48,144,0.392,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter4,omp16,1,48,144,0.035,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter4,omp16,2,48,144,0.043,OK,SAT,A[] not (C1.cs && C2.cs)
+csma,csma4,cuda,1,104,320,0.371,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma4,cuda,2,104,320,0.365,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma4,omp16,1,104,320,0.038,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma4,omp16,2,104,320,0.037,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+fischer,fischer4,cuda,1,268,708,0.356,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer4,cuda,2,268,708,0.357,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer4,omp16,1,268,708,0.038,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer4,omp16,2,268,708,0.037,OK,SAT,A[] not (P1.cs && P2.cs)
+grc,grc4,cuda,1,863,3056,0.360,OK,SAT,A[] true
+grc,grc4,cuda,2,863,3056,0.360,OK,SAT,A[] true
+grc,grc4,omp16,1,810,2863,0.042,OK,SAT,A[] true
+grc,grc4,omp16,2,818,2890,0.042,OK,SAT,A[] true
+phil,phil4,cuda,1,80,212,0.342,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil4,cuda,2,80,212,0.343,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil4,omp16,1,80,212,0.035,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil4,omp16,2,80,212,0.035,OK,SAT,A[] not (P0.Eat && P1.Eat)
+single,single4,cuda,1,56,224,0.360,OK,SAT,A[] x0 <= 6
+single,single4,cuda,2,56,224,0.361,OK,SAT,A[] x0 <= 6
+single,single4,omp16,1,57,228,0.036,OK,SAT,A[] x0 <= 6
+single,single4,omp16,2,57,228,0.036,OK,SAT,A[] x0 <= 6
+twolock,twolock4,cuda,1,332,868,0.357,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock4,cuda,2,332,868,0.353,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock4,omp16,1,332,868,0.044,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock4,omp16,2,332,868,0.047,OK,SAT,A[] not (P1.cs && P2.cs)
+viking,viking4,cuda,1,206,384,0.372,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking4,cuda,2,206,384,0.356,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking4,omp16,1,206,384,0.040,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking4,omp16,2,206,384,0.039,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+arbiter,arbiter5,cuda,1,112,400,0.348,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter5,cuda,2,112,400,0.352,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter5,omp16,1,112,400,0.037,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter5,omp16,2,112,400,0.036,OK,SAT,A[] not (C1.cs && C2.cs)
+csma,csma5,cuda,1,272,1000,0.348,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma5,cuda,2,272,1000,0.369,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma5,omp16,1,279,1028,0.040,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma5,omp16,2,280,1032,0.038,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+fischer,fischer5,cuda,1,977,2990,0.371,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer5,cuda,2,977,2990,0.356,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer5,omp16,1,977,2990,0.038,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer5,omp16,2,977,2990,0.040,OK,SAT,A[] not (P1.cs && P2.cs)
+grc,grc5,cuda,1,12596,57746,0.458,OK,SAT,A[] true
+grc,grc5,cuda,2,12596,57746,0.458,OK,SAT,A[] true
+grc,grc5,omp16,1,11852,54318,0.135,OK,SAT,A[] true
+grc,grc5,omp16,2,10923,49953,0.125,OK,SAT,A[] true
+phil,phil5,cuda,1,242,805,0.338,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil5,cuda,2,242,805,0.342,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil5,omp16,1,242,805,0.037,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil5,omp16,2,242,805,0.037,OK,SAT,A[] not (P0.Eat && P1.Eat)
+single,single5,cuda,1,335,1675,0.387,OK,SAT,A[] x0 <= 6
+single,single5,cuda,2,335,1675,0.394,OK,SAT,A[] x0 <= 6
+single,single5,omp16,1,391,1955,0.057,OK,SAT,A[] x0 <= 6
+single,single5,omp16,2,391,1955,0.056,OK,SAT,A[] x0 <= 6
+twolock,twolock5,cuda,1,1137,3470,0.343,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,cuda,2,1137,3470,0.376,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,omp16,1,1137,3470,0.042,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock5,omp16,2,1137,3470,0.043,OK,SAT,A[] not (P1.cs && P2.cs)
+arbiter,arbiter6,cuda,1,256,1056,0.365,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter6,cuda,2,256,1056,0.365,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter6,omp16,1,256,1056,0.038,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter6,omp16,2,256,1056,0.038,OK,SAT,A[] not (C1.cs && C2.cs)
+csma,csma6,cuda,1,688,2928,0.357,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma6,cuda,2,688,2928,0.383,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma6,omp16,1,688,2928,0.043,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma6,omp16,2,688,2928,0.042,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+fischer,fischer6,cuda,1,3458,12042,0.363,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer6,cuda,2,3458,12042,0.356,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer6,omp16,1,3458,12042,0.047,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer6,omp16,2,3458,12042,0.045,OK,SAT,A[] not (P1.cs && P2.cs)
+grc,grc6,cuda,1,280095,1541849,1.893,OK,SAT,A[] true
+grc,grc6,cuda,2,280095,1541849,1.868,OK,SAT,A[] true
+grc,grc6,omp16,1,277064,1529188,13.492,OK,SAT,A[] true
+grc,grc6,omp16,2,288204,1592025,14.076,OK,SAT,A[] true
+phil,phil6,cuda,1,732,2922,0.449,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil6,cuda,2,732,2922,0.428,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil6,omp16,1,732,2922,0.047,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil6,omp16,2,732,2922,0.045,OK,SAT,A[] not (P0.Eat && P1.Eat)
+single,single6,cuda,1,3266,19596,0.767,OK,SAT,A[] x0 <= 6
+single,single6,cuda,2,3266,19596,0.663,OK,SAT,A[] x0 <= 6
+single,single6,omp16,1,3676,22056,1.358,OK,SAT,A[] x0 <= 6
+single,single6,omp16,2,3676,22056,1.355,OK,SAT,A[] x0 <= 6
+twolock,twolock6,cuda,1,3842,13386,0.542,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,cuda,2,3842,13386,0.436,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,omp16,1,3842,13386,0.055,OK,SAT,A[] not (P1.cs && P2.cs)
+twolock,twolock6,omp16,2,3842,13386,0.051,OK,SAT,A[] not (P1.cs && P2.cs)
+viking,viking6,cuda,1,1374,3072,0.400,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking6,cuda,2,1374,3072,0.402,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking6,omp16,1,1374,3072,0.052,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+viking,viking6,omp16,2,1374,3072,0.050,OK,SAT,A[] not (Viking1.safe && Viking1.unsafe)
+arbiter,arbiter7,cuda,1,576,2688,0.382,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter7,cuda,2,576,2688,0.366,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter7,omp16,1,576,2688,0.046,OK,SAT,A[] not (C1.cs && C2.cs)
+arbiter,arbiter7,omp16,2,576,2688,0.042,OK,SAT,A[] not (C1.cs && C2.cs)
+csma,csma7,cuda,1,1696,8176,0.373,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma7,cuda,2,1696,8176,0.366,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma7,omp16,1,1714,8284,0.049,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+csma,csma7,omp16,2,1714,8284,0.049,OK,SAT,A[] not (S0.Send and S1.Send and Bus.Transmitting)
+fischer,fischer7,cuda,1,11951,46816,0.376,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer7,cuda,2,11951,46816,0.367,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer7,omp16,1,11951,46816,0.067,OK,SAT,A[] not (P1.cs && P2.cs)
+fischer,fischer7,omp16,2,11951,46816,0.066,OK,SAT,A[] not (P1.cs && P2.cs)
+grc,grc7,cuda,1,12860408,81802745,100.975,OK,SAT,A[] true
+grc,grc7,cuda,2,12860408,81802745,101.035,OK,SAT,A[] true
+grc,grc7,omp16,1,-,-,600.000,TIMEOUT,-,A[] true
+phil,phil7,cuda,1,2228,10353,0.566,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil7,cuda,2,2228,10353,0.507,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil7,omp16,1,2228,10353,0.054,OK,SAT,A[] not (P0.Eat && P1.Eat)
+phil,phil7,omp16,2,2228,10353,0.060,OK,SAT,A[] not (P0.Eat && P1.Eat)
+single,single7,cuda,1,42873,300111,4.851,OK,SAT,A[] x0 <= 6
+single,single7,cuda,2,42873,300111,4.658,OK,SAT,A[] x0 <= 6

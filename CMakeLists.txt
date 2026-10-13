@@ -10,6 +10,7 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(HORA_ENABLE_METAL "Enable the Metal GPU backend on macOS if available" ON)
+option(HORA_ENABLE_CUDA  "Enable the CUDA GPU backend if a toolkit is available" ON)
 option(HORA_BUILD_TESTS  "Build tests" ON)
 # `E[] psi` is decided by forward cycle detection over the D-subsumed graph.  -DHORA_LIVENESS_GFP=ON
 # selects the backward greatest fixpoint instead, which is the older route: it decides the same
@@ -60,6 +61,26 @@ if(HORA_ENABLE_METAL AND APPLE)
   endif()
 endif()
 
+# Optional CUDA backend (src/cuda/): the same frontier-batched engine as Metal, on NVIDIA GPUs.
+# Only the kernels are nvcc's (frontier_kernels.cu); the host engine is plain C++.
+set(HORA_HAVE_CUDA OFF)
+if(HORA_ENABLE_CUDA AND NOT APPLE)
+  include(CheckLanguage)
+  check_language(CUDA)
+  if(CMAKE_CUDA_COMPILER)
+    if(NOT CMAKE_CUDA_ARCHITECTURES)
+      set(CMAKE_CUDA_ARCHITECTURES 80)   # A100; override with -DCMAKE_CUDA_ARCHITECTURES=...
+    endif()
+    enable_language(CUDA)
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_FOUND)
+      set(HORA_HAVE_CUDA ON)
+      set(CMAKE_CUDA_STANDARD 17)
+      message(STATUS "HORA: CUDA backend ENABLED (${CMAKE_CUDA_COMPILER}, arch ${CMAKE_CUDA_ARCHITECTURES})")
+    endif()
+  endif()
+endif()
+
 # ---- HDBM: the difference-bound-matrix zone library, now standalone (its own repo). -----
 # Prefer an in-tree checkout (HDBM/); if it is absent, fetch it. HDBM exports target `hdbm`
 # and owns the zone algebra the CPU and Metal paths share.
@@ -106,6 +127,16 @@ if(HORA_HAVE_METAL)
       ${HORA_METAL_FRAMEWORK} ${HORA_FOUNDATION_FRAMEWORK})
   endif()
   target_compile_definitions(hora_core PUBLIC HORA_HAVE_METAL=1)
+endif()
+if(HORA_HAVE_CUDA)
+  file(GLOB HORA_CUDA_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/*.cu
+                                            ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/*.cpp)
+  target_sources(hora_core PRIVATE ${HORA_CUDA_SRC})
+  target_link_libraries(hora_core PUBLIC CUDA::cudart_static)
+  target_include_directories(hora_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+  target_compile_definitions(hora_core PUBLIC HORA_HAVE_CUDA=1)
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/frontier_kernels.cu
+                              PROPERTIES COMPILE_OPTIONS "-lineinfo")
 endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(hora_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter>)

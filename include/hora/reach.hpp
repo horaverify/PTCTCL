@@ -18,7 +18,7 @@ struct ReachStats {
   std::size_t expanded = 0;
 };
 
-enum class Backend { Seq, Omp, Metal };
+enum class Backend { Seq, Omp, Metal, Cuda };
 
 // E<> : is a state with location `target_loc` (target_loc < 0 => any location) and
 // satisfying the extra clock constraints `target` reachable? Zone-graph exploration

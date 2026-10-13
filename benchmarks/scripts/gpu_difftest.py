@@ -62,6 +62,7 @@ def main():
     ap.add_argument('--timeout', type=float, default=120)
     ap.add_argument('--cache', default=os.path.join(ROOT, 'benchmarks/results/gpu/cpu_reference.json'))
     ap.add_argument('--refresh-cpu', action='store_true', help='re-run the CPU side even if cached')
+    ap.add_argument('--gpu-backend', default='metal', help='metal | cuda')
     ap.add_argument('--gpu-env', action='append', default=[], help='VAR=value for the Metal runs')
     args = ap.parse_args()
 
@@ -77,13 +78,13 @@ def main():
             os.makedirs(os.path.dirname(args.cache), exist_ok=True)
             json.dump(cache, open(args.cache, 'w'), indent=1, sort_keys=True)
         env = dict(os.environ, **dict(kv.split('=', 1) for kv in args.gpu_env))
-        gpu = run(args.hora, 'metal', model, query, args.timeout, env)
+        gpu = run(args.hora, args.gpu_backend, model, query, args.timeout, env)
         name = os.path.basename(model)
         ct = 'TO' if 'timeout' in cpu else f"{cpu['time']:7.2f}s"
         gt = 'TO' if 'timeout' in gpu else f"{gpu['time']:7.2f}s"
         if 'timeout' in cpu or 'timeout' in gpu:
             agree = 'timeout' in gpu or 'timeout' in cpu
-            print(f'{name:16s} ----  cpu {ct:>8s}  metal {gt:>8s}  {gpu.get("error", "")}', flush=True)
+            print(f'{name:16s} ----  cpu {ct:>8s}  {args.gpu_backend} {gt:>8s}  {gpu.get("error", "")}', flush=True)
             if 'error' in gpu:
                 bad += 1
             continue
@@ -92,7 +93,7 @@ def main():
         sp = cpu['time'] / max(gpu['time'], 1e-3)
         states = ' '.join(f'{a}/{b}' for a, b in zip(cpu['explored'], gpu['explored']))
         print(f'{name:16s} {"OK  " if agree else "BAD "} {" ".join(v[:3] for v in cpu["verdicts"]):8s} '
-              f'cpu {ct}  metal {gt}  x{sp:5.2f}  states cpu/metal {states}  {gpu.get("error", "")}',
+              f'cpu {ct}  {args.gpu_backend} {gt}  x{sp:5.2f}  states cpu/metal {states}  {gpu.get("error", "")}',
               flush=True)
     print('disagreements/errors:', bad)
     return 1 if bad else 0

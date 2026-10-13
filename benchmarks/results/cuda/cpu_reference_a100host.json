@@ -1,0 +1,386 @@
+{
+ "benchmarks/models/xml/arbiter4.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "48"
+  ],
+  "generated": [
+   "144"
+  ],
+  "time": 0.040769100189208984,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter5.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "112"
+  ],
+  "generated": [
+   "400"
+  ],
+  "time": 0.04076242446899414,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter6.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "256"
+  ],
+  "generated": [
+   "1056"
+  ],
+  "time": 0.03873157501220703,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter7.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "576"
+  ],
+  "generated": [
+   "2688"
+  ],
+  "time": 0.050875186920166016,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter8.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "1280"
+  ],
+  "generated": [
+   "6656"
+  ],
+  "time": 0.03998827934265137,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma4.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "104"
+  ],
+  "generated": [
+   "320"
+  ],
+  "time": 0.04073166847229004,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma5.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "280"
+  ],
+  "generated": [
+   "1032"
+  ],
+  "time": 0.044765472412109375,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma6.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "688"
+  ],
+  "generated": [
+   "2928"
+  ],
+  "time": 0.04595613479614258,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma7.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "1712"
+  ],
+  "generated": [
+   "8272"
+  ],
+  "time": 0.04425406455993652,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma8.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "4096"
+  ],
+  "generated": [
+   "22016"
+  ],
+  "time": 0.04923391342163086,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer4.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "268"
+  ],
+  "generated": [
+   "708"
+  ],
+  "time": 0.04392361640930176,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer5.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "977"
+  ],
+  "generated": [
+   "2990"
+  ],
+  "time": 0.04056715965270996,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer6.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "3458"
+  ],
+  "generated": [
+   "12042"
+  ],
+  "time": 0.05106854438781738,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer7.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "11951"
+  ],
+  "generated": [
+   "46816"
+  ],
+  "time": 0.07425856590270996,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer8.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "40536"
+  ],
+  "generated": [
+   "177000"
+  ],
+  "time": 0.14303207397460938,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/grc4.xml|benchmarks/queries/reach/grc.q": {
+  "explored": [
+   "796"
+  ],
+  "generated": [
+   "2808"
+  ],
+  "time": 0.047731876373291016,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/grc5.xml|benchmarks/queries/reach/grc.q": {
+  "explored": [
+   "11071"
+  ],
+  "generated": [
+   "50773"
+  ],
+  "time": 0.1359555721282959,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/grc6.xml|benchmarks/queries/reach/grc.q": {
+  "explored": [
+   "275863"
+  ],
+  "generated": [
+   "1523247"
+  ],
+  "time": 13.616092681884766,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/grc7.xml|benchmarks/queries/reach/grc.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/grc8.xml|benchmarks/queries/reach/grc.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/phil4.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "80"
+  ],
+  "generated": [
+   "212"
+  ],
+  "time": 0.03786349296569824,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil5.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "242"
+  ],
+  "generated": [
+   "805"
+  ],
+  "time": 0.03820443153381348,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil6.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "732"
+  ],
+  "generated": [
+   "2922"
+  ],
+  "time": 0.04015469551086426,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil7.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "2228"
+  ],
+  "generated": [
+   "10353"
+  ],
+  "time": 0.04202675819396973,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil8.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "6947"
+  ],
+  "generated": [
+   "36650"
+  ],
+  "time": 0.05376791954040527,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single4.xml|benchmarks/queries/reach/single.q": {
+  "explored": [
+   "57"
+  ],
+  "generated": [
+   "228"
+  ],
+  "time": 0.03836631774902344,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single5.xml|benchmarks/queries/reach/single.q": {
+  "explored": [
+   "391"
+  ],
+  "generated": [
+   "1955"
+  ],
+  "time": 0.0573577880859375,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single6.xml|benchmarks/queries/reach/single.q": {
+  "explored": [
+   "3676"
+  ],
+  "generated": [
+   "22056"
+  ],
+  "time": 1.3468472957611084,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single7.xml|benchmarks/queries/reach/single.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/single8.xml|benchmarks/queries/reach/single.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/twolock4.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "332"
+  ],
+  "generated": [
+   "868"
+  ],
+  "time": 0.036719322204589844,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock5.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "1137"
+  ],
+  "generated": [
+   "3470"
+  ],
+  "time": 0.03927803039550781,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock6.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "3842"
+  ],
+  "generated": [
+   "13386"
+  ],
+  "time": 0.04613780975341797,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock7.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "12847"
+  ],
+  "generated": [
+   "50400"
+  ],
+  "time": 0.05748295783996582,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock8.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "42584"
+  ],
+  "generated": [
+   "186216"
+  ],
+  "time": 0.11527419090270996,
+  "verdicts": [
+   "satisfied"
+  ]
+ }
+}

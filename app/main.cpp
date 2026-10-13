@@ -44,7 +44,7 @@ int run(const char* model, const char* query, hora::Backend backend) {
   using namespace hora;
   try {
     const char* bn = backend == Backend::Seq ? "seq" : backend == Backend::Omp ? "omp"
-                   : "metal";
+                   : backend == Backend::Cuda ? "cuda" : "metal";
     std::vector<Query> queries = load_queries(query);
 
     if (network_process_count(model) > 1) {  // network of timed automata
@@ -252,7 +252,8 @@ int main(int argc, char** argv) {
     if (a == "--backend" && i + 1 < argc) {
       std::string b = argv[++i];
       backend = (b == "seq") ? hora::Backend::Seq
-              : (b == "metal") ? hora::Backend::Metal : hora::Backend::Omp;
+              : (b == "metal") ? hora::Backend::Metal
+              : (b == "cuda") ? hora::Backend::Cuda : hora::Backend::Omp;
     } else if (a == "--zones" && i + 1 < argc) {
       const std::string mode = argv[++i];
       if (mode == "packed") {
@@ -301,7 +302,7 @@ int main(int argc, char** argv) {
   if (nf == 2) return run(files[0], files[1], backend);
 
   std::cout << kVersion << " — Parallel Timed-CTL Model Checker (UPPAAL-style)\n"
-            << "usage: hora [--backend seq|omp|metal] [--stats]\n              [--zones dense|packed] [--exploration bfs|dfs]\n              [--criterion poly|guided|exact] <model.xml> <query.q>\n"
+            << "usage: hora [--backend seq|omp|metal|cuda] [--stats]\n              [--zones dense|packed] [--exploration bfs|dfs]\n              [--criterion poly|guided|exact] <model.xml> <query.q>\n"
             << "       E[] uses automatic worklist order by default; --exploration explicitly selects FIFO or DFS.\n"
             << "       --no-probe: skip the shared-lock subsumption pre-filter (ablation;\n"
             << "                   slower on every model measured -- see config.hpp)\n"

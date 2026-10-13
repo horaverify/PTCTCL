@@ -1363,13 +1363,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   if (use_sym) canonicalize(*sym, net, s0);
   canon_ints(s0.locs, s0.ints);
 
-#ifdef HORA_HAVE_METAL
-  // The frontier-batched GPU engine (src/metal/frontier_metal.mm). It covers the a_LU search over
+#if defined(HORA_HAVE_METAL) || defined(HORA_HAVE_CUDA)
+  // The frontier-batched GPU engine (src/metal/frontier_metal.mm, src/cuda/frontier_cuda.cpp). It covers the a_LU search over
   // a plain target: exact-zone and predicate targets, symmetry reduction and diagonal constraints
   // stay on the CPU, as does a key too wide for one word. It declines -- returning -1 -- when no
   // device is present, and the CPU engine below then runs instead.
   if constexpr (std::is_same_v<Key, NarrowKey>) {
-    if (backend == Backend::Metal && !force_exact && !use_sym && !has_diag) {
+    if ((backend == Backend::Metal || backend == Backend::Cuda) && !force_exact && !use_sym && !has_diag) {
       detail::FrontierProblem fp;
       fp.net = &net;
       fp.target = &target;
@@ -1397,7 +1397,13 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       fp.s0 = s0;
       fp.stats = stats;
       fp.cancel = cancel;
-      const int r = detail::frontier_reach_metal(fp);
+      int r = -1;
+#ifdef HORA_HAVE_METAL
+      if (backend == Backend::Metal) r = detail::frontier_reach_metal(fp);
+#endif
+#ifdef HORA_HAVE_CUDA
+      if (backend == Backend::Cuda) r = detail::frontier_reach_cuda(fp);
+#endif
       if (r >= 0) return r == 1;
     }
   }
