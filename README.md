@@ -28,6 +28,7 @@ OpenMP and sequential back ends are always available.
 
 ```sh
 ./build/hora --backend omp   model.xml query.q   # parallel CPU (default)
+./build/hora --backend metal model.xml query.q   # GPU (E<> and A[] queries; others run on the CPU)
 ./build/hora --backend seq   model.xml query.q   # sequential reference
 ./build/hora --zones packed  model.xml query.q   # smaller zone storage, slower probes
 ./build/hora                                     # full option list
@@ -112,6 +113,7 @@ src/
   reachability/          the forward zone-graph search, and deadlock
   liveness/              the online quotient, the D refinement, the backward fixpoint
   analysis/              bisimulation, symmetry
+  metal/                 the GPU engine: frontier-batched reachability on Metal
 
 tests/                 unit, property and differential tests, curated models
 benchmarks/            models, query suites, measurement drivers, recorded results

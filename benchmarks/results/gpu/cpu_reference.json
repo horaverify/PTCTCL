@@ -1,0 +1,728 @@
+{
+ "benchmarks/models/xml/arbiter4.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "48"
+  ],
+  "generated": [
+   "144"
+  ],
+  "time": 0.012089252471923828,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter5.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "112"
+  ],
+  "generated": [
+   "400"
+  ],
+  "time": 0.011249065399169922,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter6.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "256"
+  ],
+  "generated": [
+   "1056"
+  ],
+  "time": 0.011455059051513672,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter7.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "576"
+  ],
+  "generated": [
+   "2688"
+  ],
+  "time": 0.012543916702270508,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter8.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "1280"
+  ],
+  "generated": [
+   "6656"
+  ],
+  "time": 0.014010190963745117,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma4.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "104"
+  ],
+  "generated": [
+   "320"
+  ],
+  "time": 0.013740062713623047,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma5.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "279"
+  ],
+  "generated": [
+   "1028"
+  ],
+  "time": 0.013533830642700195,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma6.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "688"
+  ],
+  "generated": [
+   "2928"
+  ],
+  "time": 0.014042854309082031,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma7.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "1713"
+  ],
+  "generated": [
+   "8278"
+  ],
+  "time": 0.01601099967956543,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma8.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "4096"
+  ],
+  "generated": [
+   "22016"
+  ],
+  "time": 0.020858049392700195,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer4.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "268"
+  ],
+  "generated": [
+   "708"
+  ],
+  "time": 0.015177011489868164,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer5.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "977"
+  ],
+  "generated": [
+   "2990"
+  ],
+  "time": 0.01469278335571289,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer6.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "3458"
+  ],
+  "generated": [
+   "12042"
+  ],
+  "time": 0.017440080642700195,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer7.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "11951"
+  ],
+  "generated": [
+   "46816"
+  ],
+  "time": 0.026387929916381836,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer8.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "40536"
+  ],
+  "generated": [
+   "177000"
+  ],
+  "time": 0.06006121635437012,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/grc4.xml|benchmarks/queries/reach/grc.q": {
+  "explored": [
+   "821"
+  ],
+  "generated": [
+   "2902"
+  ],
+  "time": 0.014811038970947266,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/grc5.xml|benchmarks/queries/reach/grc.q": {
+  "explored": [
+   "11797"
+  ],
+  "generated": [
+   "54164"
+  ],
+  "time": 0.06254172325134277,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/grc6.xml|benchmarks/queries/reach/grc.q": {
+  "explored": [
+   "317878"
+  ],
+  "generated": [
+   "1756209"
+  ],
+  "time": 5.580394983291626,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/hddi10.xml|benchmarks/queries/reach/hddi.q": {
+  "explored": [
+   "7921"
+  ],
+  "generated": [
+   "10996"
+  ],
+  "time": 0.24762868881225586,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/hddi15.xml|benchmarks/queries/reach/hddi.q": {
+  "explored": [
+   "246346"
+  ],
+  "generated": [
+   "344658"
+  ],
+  "time": 53.449575901031494,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/hddi2.xml|benchmarks/queries/reach/hddi.q": {
+  "explored": [
+   "30"
+  ],
+  "generated": [
+   "38"
+  ],
+  "time": 0.013554811477661133,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/hddi20.xml|benchmarks/queries/reach/hddi.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/phil4.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "80"
+  ],
+  "generated": [
+   "212"
+  ],
+  "time": 0.012618064880371094,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil5.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "242"
+  ],
+  "generated": [
+   "805"
+  ],
+  "time": 0.01260685920715332,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil6.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "732"
+  ],
+  "generated": [
+   "2922"
+  ],
+  "time": 0.013695001602172852,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil7.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "2228"
+  ],
+  "generated": [
+   "10353"
+  ],
+  "time": 0.015102148056030273,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil8.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "6958"
+  ],
+  "generated": [
+   "36696"
+  ],
+  "time": 0.022655010223388672,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single4.xml|benchmarks/queries/reach/single.q": {
+  "explored": [
+   "57"
+  ],
+  "generated": [
+   "228"
+  ],
+  "time": 0.014480829238891602,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single5.xml|benchmarks/queries/reach/single.q": {
+  "explored": [
+   "391"
+  ],
+  "generated": [
+   "1955"
+  ],
+  "time": 0.021336793899536133,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single6.xml|benchmarks/queries/reach/single.q": {
+  "explored": [
+   "3676"
+  ],
+  "generated": [
+   "22056"
+  ],
+  "time": 0.5835340023040771,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/single7.xml|benchmarks/queries/reach/single.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/single8.xml|benchmarks/queries/reach/single.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/train0.xml|benchmarks/queries/reach/train.q": {
+  "explored": [
+   "91"
+  ],
+  "generated": [
+   null
+  ],
+  "time": 0.005637168884277344,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/train1.xml|benchmarks/queries/reach/train.q": {
+  "explored": [
+   "91"
+  ],
+  "generated": [
+   null
+  ],
+  "time": 0.004281044006347656,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock4.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "332"
+  ],
+  "generated": [
+   "868"
+  ],
+  "time": 0.01306009292602539,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock5.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "1137"
+  ],
+  "generated": [
+   "3470"
+  ],
+  "time": 0.014600038528442383,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock6.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "3842"
+  ],
+  "generated": [
+   "13386"
+  ],
+  "time": 0.01755809783935547,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock7.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "12847"
+  ],
+  "generated": [
+   "50400"
+  ],
+  "time": 0.028213024139404297,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock8.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "42584"
+  ],
+  "generated": [
+   "186216"
+  ],
+  "time": 0.06229519844055176,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/viking10.xml|benchmarks/queries/reach/viking.q": {
+  "explored": [
+   "45566"
+  ],
+  "generated": [
+   "122880"
+  ],
+  "time": 0.03998589515686035,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/viking12.xml|benchmarks/queries/reach/viking.q": {
+  "explored": [
+   "241662"
+  ],
+  "generated": [
+   "688128"
+  ],
+  "time": 0.11309099197387695,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/viking15.xml|benchmarks/queries/reach/viking.q": {
+  "explored": [
+   "2768894"
+  ],
+  "generated": [
+   "8355840"
+  ],
+  "time": 1.0669748783111572,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/viking17.xml|benchmarks/queries/reach/viking.q": {
+  "explored": [
+   "13631486"
+  ],
+  "generated": [
+   "42336256"
+  ],
+  "time": 5.636730194091797,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/viking20.xml|benchmarks/queries/reach/viking.q": {
+  "timeout": 60.0
+ },
+ "benchmarks/models/xml/viking4.xml|benchmarks/queries/reach/viking.q": {
+  "explored": [
+   "206"
+  ],
+  "generated": [
+   "384"
+  ],
+  "time": 0.015887975692749023,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/viking6.xml|benchmarks/queries/reach/viking.q": {
+  "explored": [
+   "1374"
+  ],
+  "generated": [
+   "3072"
+  ],
+  "time": 0.015965938568115234,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "tests/models/bcast.xml|tests/models/bcast.q": {
+  "explored": [
+   "1",
+   "2",
+   "2",
+   "2",
+   "2"
+  ],
+  "generated": [
+   "1",
+   "1",
+   "1",
+   "1",
+   null
+  ],
+  "time": 0.014536380767822266,
+  "verdicts": [
+   "satisfied",
+   "NOT satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "NOT satisfied"
+  ]
+ },
+ "tests/models/cyc.xml|tests/models/cyc.q": {
+  "explored": [
+   "0",
+   "2",
+   "2",
+   "2"
+  ],
+  "generated": [
+   "0",
+   null,
+   null,
+   null
+  ],
+  "time": 0.004851818084716797,
+  "verdicts": [
+   "satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "satisfied"
+  ]
+ },
+ "tests/models/handshake.xml|tests/models/handshake.q": {
+  "explored": [
+   "1",
+   "1",
+   "1",
+   "2",
+   "2"
+  ],
+  "generated": [
+   "1",
+   "1",
+   "1",
+   "1",
+   null
+  ],
+  "time": 0.013649940490722656,
+  "verdicts": [
+   "satisfied",
+   "satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "NOT satisfied"
+  ]
+ },
+ "tests/models/lamp.xml|tests/models/lamp.q": {
+  "explored": [
+   "1",
+   "1",
+   "1",
+   "2"
+  ],
+  "generated": [
+   "1",
+   "1",
+   "1",
+   "1"
+  ],
+  "time": 0.014451980590820312,
+  "verdicts": [
+   "satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "NOT satisfied"
+  ]
+ },
+ "tests/models/periodic.xml|tests/models/periodic.q": {
+  "explored": [
+   "2",
+   "3",
+   "2",
+   "1",
+   "3",
+   "3",
+   "2",
+   "3"
+  ],
+  "generated": [
+   "2",
+   "3",
+   "2",
+   "1",
+   "3",
+   "3",
+   "2",
+   null
+  ],
+  "time": 0.01964592933654785,
+  "verdicts": [
+   "satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "satisfied"
+  ]
+ },
+ "tests/models/race.xml|tests/models/race.q": {
+  "explored": [
+   "6",
+   "6",
+   "8",
+   "6",
+   "8",
+   "1"
+  ],
+  "generated": [
+   "5",
+   "5",
+   "7",
+   "5",
+   "7",
+   "0"
+  ],
+  "time": 0.008154153823852539,
+  "verdicts": [
+   "satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "satisfied",
+   "NOT satisfied"
+  ]
+ },
+ "tests/models/urgent.xml|tests/models/urgent.q": {
+  "explored": [
+   "2",
+   "4",
+   "5",
+   "5",
+   "2",
+   "5",
+   "4",
+   "5"
+  ],
+  "generated": [
+   "2",
+   "4",
+   "4",
+   "4",
+   "2",
+   "4",
+   "4",
+   null
+  ],
+  "time": 0.019246816635131836,
+  "verdicts": [
+   "satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "NOT satisfied"
+  ]
+ },
+ "tests/models/watchdog.xml|tests/models/watchdog.q": {
+  "explored": [
+   "1",
+   "2",
+   "0",
+   "1",
+   "2",
+   "3"
+  ],
+  "generated": [
+   "2",
+   "3",
+   "0",
+   "2",
+   "3",
+   "5"
+  ],
+  "time": 0.017462968826293945,
+  "verdicts": [
+   "satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "satisfied",
+   "NOT satisfied",
+   "satisfied"
+  ]
+ }
+}

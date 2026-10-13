@@ -21,6 +21,16 @@ target_link_libraries(hdbm_props PRIVATE hdbm)
 add_test(NAME hdbm_props COMMAND hdbm_props)
 set_tests_properties(hdbm_props PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 
+# The Metal GDBM ops against the CPU zone algebra, where the build has Metal.
+if(HORA_HAVE_METAL)
+  add_executable(gdbm_metal ${CMAKE_CURRENT_SOURCE_DIR}/../HDBM/test/gdbm_metal_test.mm)
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/../HDBM/test/gdbm_metal_test.mm
+                              PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  target_link_libraries(gdbm_metal PRIVATE hdbm ${HORA_METAL_FRAMEWORK} ${HORA_FOUNDATION_FRAMEWORK})
+  add_test(NAME gdbm_metal COMMAND gdbm_metal)
+  set_tests_properties(gdbm_metal PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
+endif()
+
 add_executable(hora_bisim bisim_tests.cpp)
 target_link_libraries(hora_bisim PRIVATE hora_core)
 add_test(NAME bisim COMMAND hora_bisim)

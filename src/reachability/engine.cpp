@@ -38,6 +38,7 @@
 #include <string>
 #include "hora/detail/liveness_engine.hpp"
 #include <unordered_map>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
@@ -48,6 +49,7 @@
 #include "hora/detail/zone_intern.hpp"
 #include "hora/detail/passed_set.hpp"
 #include "hora/detail/semantics.hpp"
+#include "hora/detail/frontier_gpu.hpp"
 #include "hdbm/mindbm.hpp"   // minimal-graph packed zone storage (UDBM mingraph port)
 
 #ifdef HORA_HAVE_OPENMP
@@ -1360,6 +1362,46 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   if (is_target(s0)) return true;
   if (use_sym) canonicalize(*sym, net, s0);
   canon_ints(s0.locs, s0.ints);
+
+#ifdef HORA_HAVE_METAL
+  // The frontier-batched GPU engine (src/metal/frontier_metal.mm). It covers the a_LU search over
+  // a plain target: exact-zone and predicate targets, symmetry reduction and diagonal constraints
+  // stay on the CPU, as does a key too wide for one word. It declines -- returning -1 -- when no
+  // device is present, and the CPU engine below then runs instead.
+  if constexpr (std::is_same_v<Key, NarrowKey>) {
+    if (backend == Backend::Metal && !force_exact && !use_sym && !has_diag) {
+      detail::FrontierProblem fp;
+      fp.net = &net;
+      fp.target = &target;
+      fp.keys.nprocs = net.nprocs();
+      fp.keys.shift = dkey.shift;
+      fp.keys.mask.assign(dkey.mask.begin(), dkey.mask.end());
+      for (const auto& v : net.intvars) fp.keys.lo.push_back(v.lo);
+      fp.key_bits = disc_key_bits(net);
+      fp.qmask = qmask;
+      // The per-state bounds of state_bounds, as tables: per-location maxima floored by the
+      // query's constants, or the global bounds when the model has no per-location ones.
+      if (net.lbound_loc.empty()) {
+        fp.Lq = L;
+        fp.Uq = U;
+      } else {
+        fp.Lloc = net.lbound_loc;
+        fp.Uloc = net.ubound_loc;
+        fp.Lq = Lq;
+        fp.Uq = Uq;
+      }
+      fp.Lx = L;
+      fp.Ux = U;
+      fp.adapt_ratio = kAdaptRatio;
+      fp.canon = [&](const LocVec& l, IntVec& i) { canon_ints(l, i); };
+      fp.s0 = s0;
+      fp.stats = stats;
+      fp.cancel = cancel;
+      const int r = detail::frontier_reach_metal(fp);
+      if (r >= 0) return r == 1;
+    }
+  }
+#endif
 
   // ======================================================================
   // Shared passed set: one stripe-locked table any worker may touch, locking only the stripe of
