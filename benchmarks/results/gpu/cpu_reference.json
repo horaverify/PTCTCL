@@ -1,4 +1,40 @@
 {
+ "benchmarks/models/xml/arbiter10.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "6144"
+  ],
+  "generated": [
+   "38400"
+  ],
+  "time": 0.049300193786621094,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter12.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "28672"
+  ],
+  "generated": [
+   "208896"
+  ],
+  "time": 0.1278679370880127,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/arbiter14.xml|benchmarks/queries/reach/arbiter.q": {
+  "explored": [
+   "131072"
+  ],
+  "generated": [
+   "1089536"
+  ],
+  "time": 0.3027479648590088,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
  "benchmarks/models/xml/arbiter4.xml|benchmarks/queries/reach/arbiter.q": {
   "explored": [
    "48"
@@ -59,6 +95,42 @@
    "satisfied"
   ]
  },
+ "benchmarks/models/xml/csma10.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "22784"
+  ],
+  "generated": [
+   "147200"
+  ],
+  "time": 0.12064504623413086,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma12.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "120832"
+  ],
+  "generated": [
+   "909312"
+  ],
+  "time": 0.6025750637054443,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/csma14.xml|benchmarks/queries/reach/csma.q": {
+  "explored": [
+   "618496"
+  ],
+  "generated": [
+   "5304320"
+  ],
+  "time": 3.810884714126587,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
  "benchmarks/models/xml/csma4.xml|benchmarks/queries/reach/csma.q": {
   "explored": [
    "104"
@@ -115,6 +187,42 @@
    "22016"
   ],
   "time": 0.020858049392700195,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer10.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "447598"
+  ],
+  "generated": [
+   "2372190"
+  ],
+  "time": 1.0906600952148438,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer12.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "4758404"
+  ],
+  "generated": [
+   "29809836"
+  ],
+  "time": 12.9997079372406,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/fischer14.xml|benchmarks/queries/reach/fischer.q": {
+  "explored": [
+   "49309338"
+  ],
+  "generated": [
+   "357357714"
+  ],
+  "time": 213.19350337982178,
   "verdicts": [
    "satisfied"
   ]
@@ -215,6 +323,9 @@
    "satisfied"
   ]
  },
+ "benchmarks/models/xml/grc7.xml|benchmarks/queries/reach/grc.q": {
+  "timeout": 300.0
+ },
  "benchmarks/models/xml/hddi10.xml|benchmarks/queries/reach/hddi.q": {
   "explored": [
    "7921"
@@ -253,6 +364,42 @@
  },
  "benchmarks/models/xml/hddi20.xml|benchmarks/queries/reach/hddi.q": {
   "timeout": 60.0
+ },
+ "benchmarks/models/xml/phil10.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "71657"
+  ],
+  "generated": [
+   "464551"
+  ],
+  "time": 0.10963702201843262,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil12.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "800030"
+  ],
+  "generated": [
+   "6096193"
+  ],
+  "time": 1.4305040836334229,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/phil14.xml|benchmarks/queries/reach/phil.q": {
+  "explored": [
+   "10622678"
+  ],
+  "generated": [
+   "91590612"
+  ],
+  "time": 37.115983963012695,
+  "verdicts": [
+   "satisfied"
+  ]
  },
  "benchmarks/models/xml/phil4.xml|benchmarks/queries/reach/phil.q": {
   "explored": [
@@ -351,7 +498,7 @@
   ]
  },
  "benchmarks/models/xml/single7.xml|benchmarks/queries/reach/single.q": {
-  "timeout": 60.0
+  "timeout": 120.0
  },
  "benchmarks/models/xml/single8.xml|benchmarks/queries/reach/single.q": {
   "timeout": 60.0
@@ -376,6 +523,30 @@
    null
   ],
   "time": 0.004281044006347656,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock10.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "457838"
+  ],
+  "generated": [
+   "2428510"
+  ],
+  "time": 0.8661699295043945,
+  "verdicts": [
+   "satisfied"
+  ]
+ },
+ "benchmarks/models/xml/twolock12.xml|benchmarks/queries/reach/twolock.q": {
+  "explored": [
+   "4807556"
+  ],
+  "generated": [
+   "30129324"
+  ],
+  "time": 19.217442750930786,
   "verdicts": [
    "satisfied"
   ]

@@ -8,6 +8,7 @@ A CPU run that timed out is cached as a timeout too, and is retried only with a 
   gpu_difftest.py --hora build/hora --cases cases.txt [--timeout 120]
                   [--cache benchmarks/results/gpu/cpu_reference.json] [--refresh-cpu]
   gpu_difftest.py --hora build/hora --families fischer,csma --sizes 4-8
+  gpu_difftest.py ... --gpu-env HORA_GPU_STRESS=1     (extra environment for the Metal runs)
 
 cases.txt holds one "<model.xml> <query.q>" per line. Exit status 1 on any verdict disagreement,
 crash or CPU fallback of the Metal run.
@@ -61,6 +62,7 @@ def main():
     ap.add_argument('--timeout', type=float, default=120)
     ap.add_argument('--cache', default=os.path.join(ROOT, 'benchmarks/results/gpu/cpu_reference.json'))
     ap.add_argument('--refresh-cpu', action='store_true', help='re-run the CPU side even if cached')
+    ap.add_argument('--gpu-env', action='append', default=[], help='VAR=value for the Metal runs')
     args = ap.parse_args()
 
     cache = json.load(open(args.cache)) if os.path.exists(args.cache) else {}
@@ -74,7 +76,8 @@ def main():
             cache[key] = cpu
             os.makedirs(os.path.dirname(args.cache), exist_ok=True)
             json.dump(cache, open(args.cache, 'w'), indent=1, sort_keys=True)
-        gpu = run(args.hora, 'metal', model, query, args.timeout)
+        env = dict(os.environ, **dict(kv.split('=', 1) for kv in args.gpu_env))
+        gpu = run(args.hora, 'metal', model, query, args.timeout, env)
         name = os.path.basename(model)
         ct = 'TO' if 'timeout' in cpu else f"{cpu['time']:7.2f}s"
         gt = 'TO' if 'timeout' in gpu else f"{gpu['time']:7.2f}s"
