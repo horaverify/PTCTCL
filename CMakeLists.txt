@@ -9,7 +9,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(HORA_ENABLE_CUDA  "Enable the CUDA GPU backend if a CUDA toolkit is found" ON)
 option(HORA_ENABLE_METAL "Enable the Metal GPU backend on macOS if available" ON)
 option(HORA_BUILD_TESTS  "Build tests" ON)
 # `E[] psi` is decided by forward cycle detection over the D-subsumed graph.  -DHORA_LIVENESS_GFP=ON
@@ -48,24 +47,7 @@ else()
   message(STATUS "HORA: OpenMP not found — network backend runs serially")
 endif()
 
-set(HORA_HAVE_CUDA OFF)
-if(HORA_ENABLE_CUDA)
-  include(CheckLanguage)
-  check_language(CUDA)
-  if(CMAKE_CUDA_COMPILER)
-    enable_language(CUDA)
-    set(CMAKE_CUDA_STANDARD 17)
-    if(NOT CMAKE_CUDA_ARCHITECTURES)
-      set(CMAKE_CUDA_ARCHITECTURES 70 80 90)
-    endif()
-    set(HORA_HAVE_CUDA ON)
-    message(STATUS "HORA: CUDA backend ENABLED (${CMAKE_CUDA_COMPILER})")
-  else()
-    message(STATUS "HORA: no CUDA toolkit — building CPU-only")
-  endif()
-endif()
-
-# Optional Metal backend (macOS only, auto-detected; independent of CUDA).
+# Optional Metal backend (macOS only, auto-detected).
 set(HORA_HAVE_METAL OFF)
 if(HORA_ENABLE_METAL AND APPLE)
   find_library(HORA_METAL_FRAMEWORK      Metal)
@@ -80,8 +62,7 @@ endif()
 
 # ---- HDBM: the difference-bound-matrix zone library, now standalone (its own repo). -----
 # Prefer an in-tree checkout (HDBM/); if it is absent, fetch it. HDBM exports target `hdbm`
-# and owns the hora/{dbm,dbm_ops,dbm_pool,constraint,fed}.hpp headers — the __host__
-# __device__ zone ops the CPU, CUDA and Metal paths all share.
+# and owns the zone algebra the CPU and Metal paths share.
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/HDBM/CMakeLists.txt)
   message(STATUS "HORA: using in-tree HDBM (${CMAKE_CURRENT_SOURCE_DIR}/HDBM)")
   add_subdirectory(HDBM)
@@ -115,14 +96,6 @@ target_link_libraries(hora_core PUBLIC hdbm)   # DBM zone algebra + its headers
 if(OpenMP_CXX_FOUND)
   target_link_libraries(hora_core PUBLIC OpenMP::OpenMP_CXX)
   target_compile_definitions(hora_core PUBLIC HORA_HAVE_OPENMP=1)
-endif()
-if(HORA_HAVE_CUDA)
-  file(GLOB HORA_CUDA_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/*.cu)
-  if(HORA_CUDA_SRC)
-    target_sources(hora_core PRIVATE ${HORA_CUDA_SRC})
-    set_target_properties(hora_core PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-  endif()
-  target_compile_definitions(hora_core PUBLIC HORA_HAVE_CUDA=1)
 endif()
 if(HORA_HAVE_METAL)
   file(GLOB HORA_METAL_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/metal/*.mm)

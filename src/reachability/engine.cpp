@@ -1,5 +1,5 @@
 /// @file src/reachability/engine.cpp
-/// @brief The forward zone-graph search: successors, the passed set, and the CPU/GPU drivers.
+/// @brief The forward zone-graph search: successors, the passed set, and the CPU drivers.
 ///
 /// One symbolic state is a (location vector, integer values, zone) triple. The passed set is
 /// keyed by the discrete part and holds an antichain of zones per key; which abstraction bounds
@@ -46,11 +46,9 @@
 #include "hora/detail/spin_rw.hpp"
 #include "hora/detail/sym_state.hpp"
 #include "hora/detail/zone_intern.hpp"
-#include "hora/detail/gpu_zone_intern.hpp"
 #include "hora/detail/passed_set.hpp"
 #include "hora/detail/semantics.hpp"
 #include "hdbm/mindbm.hpp"   // minimal-graph packed zone storage (UDBM mingraph port)
-#include "hora/gpu/network.hpp"
 
 #ifdef HORA_HAVE_OPENMP
 #include <omp.h>
@@ -63,7 +61,6 @@ using detail::SymState;
 using detail::LocVec;
 using detail::IntVec;
 using detail::ZoneIntern;
-using detail::GpuZoneIntern;
 using detail::NetPassed;
 using detail::NetPassedT;
 // The packed discrete key: NarrowKey for a network that fits one word, WideKey for one that does
@@ -122,11 +119,10 @@ static std::size_t linux_heap_bytes() {
 /// Only edges needing more than `var OP const` carry these; the common case is a null check, so
 /// simple models pay nothing for them.
 ///
-/// @warning Both have **external** linkage on purpose. The GPU expanders in @c src/metal and
-///          @c src/cuda must apply exactly these semantics, and duplicating them there is how a
-///          backend once diverged silently — a Metal expander that dropped the general update
-///          explored roughly half of viking's state space and still reported a verdict. One
-///          body, every backend. Declared in @ref hora/netreach.hpp.
+/// @warning Both have **external** linkage on purpose: every backend must apply exactly these
+///          semantics. Duplicating them is how a backend once diverged silently — an expander
+///          that dropped the general update explored roughly half of viking's state space and
+///          still reported a verdict. One body, every backend. Declared in @ref hora/netreach.hpp.
 /// @}
 
 /// @brief Evaluate @p e's general guard.
@@ -195,7 +191,7 @@ bool gen_apply(const Network& net, const NEdge& e, long* ints, std::size_t n) {
 ///       which this returns @c true must keep diagonals exact: inclusion covering with the
 ///       diagonal-preserving extrapolation, never a_LU.
 /// @note External linkage on purpose: the query router asks the same question before choosing an
-///       engine, and the GPU backends ask it through the @c netgpu alias below. One body.
+///       engine. One body.
 bool network_has_diagonal(const Network& net) {
   auto diag = [](const std::vector<Constraint>& cs) {
     for (const auto& c : cs) if (c.i > 0 && c.j > 0) return true;
@@ -207,10 +203,6 @@ bool network_has_diagonal(const Network& net) {
   }
   return false;
 }
-
-/// @brief Alias of ::hora::network_has_diagonal for the GPU expanders, which reach it through
-///        the @c netgpu declaration in @ref hora/gpu/encode.hpp. One body, two names.
-namespace netgpu { bool network_has_diagonal(const Network& net) { return hora::network_has_diagonal(net); } }
 
 namespace {
 
@@ -814,81 +806,6 @@ static void canonicalize(const std::vector<Automorphism>& G, const Network& net,
   }
 }
 
-#if defined(HORA_HAVE_METAL) || defined(HORA_HAVE_CUDA)
-/// @brief Host port of the GPU merge kernel, for one discrete-state bucket.
-///
-/// The GPU merge runs one thread per bucket, so a level made of few but very wide buckets stalls
-/// on a handful of slow lanes. This lets the flat driver merge such buckets across all CPU cores
-/// instead, which is what hora::set_adaptive_merge routes between.
-///
-/// @param[in,out] work_buf  zone storage; the bucket's existing antichain occupies
-///                          `work_buf[work_off_b .. work_off_b + exist_cnt_b)`
-/// @param work_off_b  offset of this bucket within @p work_buf
-/// @param exist_cnt_b number of zones already in the bucket's antichain
-/// @param oz          expand output, read in place rather than gathered
-/// @param new_idx_b   indices into @p oz of the candidate zones for this bucket
-/// @param new_cnt_b   length of @p new_idx_b
-/// @param L           per-clock lower bounds for the covering test
-/// @param U           per-clock upper bounds for the covering test
-/// @param dim         zone dimension, so each matrix is `dim * dim`
-/// @param has_diag    whether the network has diagonal constraints, selecting the covering test
-/// @param[out] WI     per-survivor "is new" flags: 0 for a pre-existing zone, 1 for an appended one
-/// @return the number of zones surviving in the bucket
-///
-/// @post The surviving antichain is written back in place at @p work_off_b, and no surviving
-///       zone covers another.
-/// @note Must agree with the GPU kernel zone for zone; the routing decision is a scheduling
-///       choice, so the two paths have to be interchangeable.
-static int flat_merge_bucket(gz_t* work_buf, int work_off_b, int exist_cnt_b,
-                             const gz_t* oz, const int* new_idx_b, int new_cnt_b,
-                             const std::int32_t* L, const std::int32_t* U,
-                             int dim, bool has_diag, int* WI) {
-  const int d2 = dim * dim;
-  // The pool keeps narrow entries; the algebra stays raw_t. dbm_includes / dbm_is_alu_le /
-  // dbm_try_union are templated on their read-only operand's entry type (dbm_ops.hpp), so `zw`
-  // can point straight into the pool -- no widening pass per bucket.
-  gz_t* W = work_buf + static_cast<std::size_t>(work_off_b) * d2;
-  raw_t zn[kDbmMaxDim * kDbmMaxDim];
-  int cur = exist_cnt_b;                              // WI[0..cur) already 0 (existing zones)
-  for (int t = 0; t < new_cnt_b; ++t) {
-    const gz_t* src = oz + static_cast<std::size_t>(new_idx_b[t]) * d2;
-    for (int k = 0; k < d2; ++k) zn[k] = gz_load(src[k]);   // widen out of the narrow pool
-    bool subsumed = false;                            // zn subsumed by a stored zone?
-    for (int i = 0; i < cur; ++i) {
-      const gz_t* zw = W + static_cast<std::size_t>(i) * d2;
-      if (has_diag ? dbm_includes(zw, zn, dim) : dbm_is_alu_le(zn, zw, dim, L, U)) { subsumed = true; break; }
-    }
-    if (subsumed) continue;
-    int w = 0;                                        // drop stored zones subsumed by zn
-    for (int i = 0; i < cur; ++i) {
-      const gz_t* zw = W + static_cast<std::size_t>(i) * d2;
-      const bool killed = has_diag ? dbm_includes(zn, zw, dim) : dbm_is_alu_le(zw, zn, dim, L, U);
-      if (!killed) {
-        if (w != i) { std::memcpy(W + static_cast<std::size_t>(w)*d2, zw, d2*sizeof(gz_t)); WI[w] = WI[i]; }
-        ++w;
-      }
-    }
-    cur = w;
-    bool merged = true;                               // convex-union absorb (zn becomes the hull)
-    while (merged) {
-      merged = false;
-      for (int kk = 0; kk < cur; ++kk)
-        if (dbm_try_union(zn, W + static_cast<std::size_t>(kk)*d2, dim)) {
-          for (int i = kk; i < cur - 1; ++i) {
-            std::memcpy(W + static_cast<std::size_t>(i)*d2, W + static_cast<std::size_t>(i+1)*d2, d2*sizeof(gz_t));
-            WI[i] = WI[i+1];
-          }
-          --cur; merged = true; break;
-        }
-    }
-    gz_t* dst = W + static_cast<std::size_t>(cur)*d2;
-    for (int k = 0; k < d2; ++k) zput(dst, k, zn[k]);
-    WI[cur] = -1; ++cur;
-  }
-  return cur;
-}
-#endif
-
 /// @brief Report that the network's discrete state does not fit the packed key, and throw.
 ///
 /// @param net         the network under analysis
@@ -1088,107 +1005,6 @@ struct StripeLayout {
   }
 };
 
-#if defined(HORA_HAVE_METAL) || defined(HORA_HAVE_CUDA)
-
-// ---- flat GPU driver helpers ----------------------------------------------------------
-
-/// @brief Per-level map from packed discrete key to bucket id, for the flat GPU driver.
-///
-/// An open-addressing table with a generation stamp, so the whole run reuses one allocation and
-/// clearing between levels is O(1) rather than proportional to the table. A node-based map would
-/// instead allocate once per distinct key and rebuild every level, which is significant because
-/// this index is rebuilt on each of many BFS levels.
-///
-/// @invariant Capacity is always a power of two, so probing masks rather than divides.
-/// @invariant An entry is live exactly when its stamp equals the current generation; entries
-///            from earlier levels are therefore invisible without being erased.
-template <class Key>
-struct DkIndexT {
-  std::vector<Key> key;              ///< probe slots; meaningful only where stamp == gen
-  std::vector<int> val;              ///< bucket id assigned to the corresponding key
-  std::vector<std::uint32_t> stamp;  ///< generation that last wrote the slot
-  std::uint32_t gen = 0;             ///< current generation; bumped once per level
-  std::size_t mask = 0, fill = 0, limit = 0;  ///< capacity-1, live entries, and the grow threshold
-
-  /// @brief splitmix64 finaliser, to spread keys whose low bits are highly structured.
-  static std::uint64_t mix(std::uint64_t k) {
-    k ^= k >> 30; k *= 0xbf58476d1ce4e5b9ULL;
-    k ^= k >> 27; k *= 0x94d049bb133111ebULL;
-    return k ^ (k >> 31);
-  }
-  /// @brief Reallocate to @p cap slots and reset to an empty first generation.
-  /// @param cap new capacity; must be a power of two
-  /// @post The table is empty and its load limit is 75% of @p cap.
-  void resize_to(std::size_t cap) {
-    key.assign(cap, 0); val.assign(cap, 0); stamp.assign(cap, 0);
-    mask = cap - 1; gen = 1; fill = 0; limit = cap - cap / 4;   // 75% load factor
-  }
-  /// @brief Start a new level, logically clearing the table.
-  ///
-  /// @param expect expected number of distinct keys, taken from the previous level because BFS
-  ///               level widths change smoothly; an underestimate costs a rehash, not
-  ///               correctness
-  /// @post All entries from earlier levels are unreachable.
-  /// @note When the generation counter wraps, the stamps are cleared explicitly so that a stale
-  ///       slot cannot be mistaken for a live one.
-  void begin_level(std::size_t expect) {
-    std::size_t cap = 1024;
-    while (cap - cap / 4 < expect + 1) cap <<= 1;
-    if (cap > key.size()) { resize_to(cap); return; }
-    mask = key.size() - 1; limit = key.size() - key.size() / 4; fill = 0;
-    if (++gen == 0) { std::fill(stamp.begin(), stamp.end(), 0); gen = 1; }
-  }
-  /// @brief Double the capacity, reinserting the current generation's live entries.
-  /// @post Existing key-to-id assignments are preserved.
-  void grow() {
-    const std::vector<Key> ok = key;
-    const std::vector<int> ov = val;
-    const std::vector<std::uint32_t> os = stamp;
-    const std::uint32_t og = gen;
-    resize_to(key.size() * 2);
-    for (std::size_t i = 0; i < ok.size(); ++i)
-      if (os[i] == og) { (void)find_or_add(ok[i], ov[i]); }
-  }
-  /// @brief Look up @p k, inserting it if absent.
-  /// @param k    the packed discrete key
-  /// @param next id to assign if @p k is not present
-  /// @return the id of @p k, which equals @p next exactly when the key was newly inserted — the
-  ///         caller detects insertion by that comparison
-  int find_or_add(Key k, int next) {
-    if (fill >= limit) grow();
-    std::size_t i = mix(static_cast<std::uint64_t>(key_mix(k))) & mask;
-    for (;;) {
-      if (stamp[i] != gen) { stamp[i] = gen; key[i] = k; val[i] = next; ++fill; return next; }
-      if (key[i] == k) return val[i];
-      i = (i + 1) & mask;
-    }
-  }
-};
-
-/// @brief Drop the first @p nfr states of the current level, keeping the remainder.
-///
-/// Used by the chunked frontier driver once a batch has been expanded.
-///
-/// @param[in,out] l   location components, @p np_ entries per state
-/// @param[in,out] iv  integer components, @p niw_ entries per state
-/// @param[in,out] z   interned zone indices, one per state
-/// @param nfr  number of leading states to remove
-/// @param np_  location entries per state
-/// @param niw_ integer entries per state
-///
-/// @pre Each array holds at least @p nfr states' worth of entries.
-/// @post The arrays hold the surviving states, still in order.
-/// @note Erasing from the front shifts the remainder, so a level split into many batches pays
-///       that shift once per batch. Chunk sizes are large enough that this is not the dominant
-///       cost, but it does bound how small a useful chunk can be.
-static void drop_batch(std::vector<int>& l, std::vector<long>& iv, std::vector<int>& z,
-                       int nfr, int np_, int niw_, int) {
-  l.erase(l.begin(), l.begin() + static_cast<std::size_t>(nfr) * np_);
-  iv.erase(iv.begin(), iv.begin() + static_cast<std::size_t>(nfr) * niw_);
-  z.erase(z.begin(), z.begin() + static_cast<std::size_t>(nfr));
-}
-#endif
-
 /// @brief Mark-and-sweep the zone interner, reclaiming zones nothing references any more.
 ///
 /// Zones become garbage when the passed set subsumes or merges out the node that held them.
@@ -1343,7 +1159,7 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
 ///
 /// @param net       the network under analysis
 /// @param target    the query's target, needed for its clock constants — which floor the a_LU
-///                  bounds and build @c qmask — and for the GPU driver's flat target test
+///                  bounds and build @c qmask
 /// @param is_target what makes a symbolic state a witness. A predicate rather than a
 ///                  hora::NetTarget so that a target may inspect the *zone*, which deadlock
 ///                  must
@@ -1360,9 +1176,6 @@ static bool initial_symbolic_state(const Network& net, const std::vector<char>& 
 ///          location-reachability abstraction and may drop concrete valuations, so a
 ///          valuation-sensitive target such as deadlock would be unsound without it. It also
 ///          changes how finiteness is obtained; see the extrapolation mode below.
-/// @warning A caller passing a predicate target must pass a default-constructed @p target and
-///          keep the GPU path off: an empty hora::NetTarget matches every state, so the GPU
-///          driver's flat test would report a witness immediately.
 /// @warning Because cancellation and exhaustion both return @c false, the result of a search the
 ///          caller cancelled carries no information and must not be consulted.
 ///
@@ -1530,34 +1343,10 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     }
   };
 
-  // Decided after the GPU factory below: a GPU backend that falls back to the CPU path, because
-  // the network is out of scope or no device is present, must still use every core. Testing for
-  // Backend::Omp alone would silently run such a fallback single-threaded.
   bool parallel = false;
   int nthreads = 1;
-
-  // GPU network backend (Metal or CUDA): the flat GPU-resident driver below runs the whole
-  // level loop on the GPU (expand + per-bucket subsumption/convex-union merge). make_net_gpu_*
-  // returns null for out-of-scope networks (diagonal constraints) or no device, so we fall back
-  // to the CPU path transparently.
-  std::unique_ptr<NetGpuExpander> gpu;
-  bool use_gpu = false;
-  // Two families of query stay on the CPU engine. force_exact callers pass a default NetTarget,
-  // which the GPU's flat target test treats as matching everything, and the GPU merge selects its
-  // subsumption from has_diag alone, so it cannot honour force_exact at all. Symmetry reduction
-  // rewrites each successor to its orbit representative on the host, and the GPU drivers have no
-  // such step. The condition is repeated per backend rather than wrapped around the block because
-  // the two #ifdefs are independent and a wrapping brace would not pair.
-#ifdef HORA_HAVE_METAL
-  if (!force_exact && !use_sym && backend == Backend::Metal) gpu = make_net_gpu_metal(net, qmask);
-#endif
-#ifdef HORA_HAVE_CUDA
-  if (!force_exact && !use_sym && backend == Backend::Cuda) gpu = make_net_gpu_cuda(net, qmask);
-#endif
-  use_gpu = (gpu != nullptr);
 #ifdef HORA_HAVE_OPENMP
-  // The CPU path runs multi-threaded for --backend omp AND for a GPU backend that fell back.
-  parallel = (backend == Backend::Omp) || (!use_gpu && backend != Backend::Seq);
+  parallel = (backend != Backend::Seq);
   if (parallel) nthreads = omp_get_max_threads();
 #endif
 
@@ -1571,427 +1360,6 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
   if (is_target(s0)) return true;
   if (use_sym) canonicalize(*sym, net, s0);
   canon_ints(s0.locs, s0.ints);
-
-#if defined(HORA_HAVE_METAL) || defined(HORA_HAVE_CUDA)
-  // ---- Flat GPU-resident driver (Metal / CUDA) -------------------------------------------
-  // State stays in flat zone arrays across levels: no round-trip through SymState and no
-  // per-level rebuild of a map of DBM copies. The GPU performs the expansion and the per-bucket
-  // subsumption and convex-union merge; the host only groups by discrete key, which is integer
-  // hashing, and marshals flat zone spans.
-  if (use_gpu) {
-    // The GPU factories decline any network with more than 64 processes or 32 integer variables,
-    // so within this block the fixed-size `dl`/`di` decode buffers below cannot overflow.
-    // Structure-of-arrays work pool for the split GPU merge: the host gather and rebuild
-    // transpose into and out of this layout, and the AoS CPU-merge fallback is disabled because
-    // it cannot read it. Declared inside this block because every reader is GPU-only.
-    const int np = net.nprocs(), ni = static_cast<int>(net.intvars.size()), dim = net.nclocks + 1, d2 = dim * dim;
-    // The passed set holds zone indices into a shared dense pool rather than a private dense copy
-    // per (discrete state, zone). With --gpu-intern the pool deduplicates, which is a large win
-    // wherever few distinct zones are reachable; without it the pool simply appends through the
-    // same indexed access path, so the flag isolates deduplication from every other difference.
-    //
-    // The arena narrows to 16-bit entries when the model's constants make overflow impossible.
-    // The bound is 2*M + 1 for the largest clock constant M anywhere in the model or the query;
-    // the margin applied below is deliberately generous. See hora::detail::GpuZoneIntern.
-    std::int32_t maxc = 0;
-    for (int c = 0; c <= net.nclocks; ++c) {
-      if (L[c] != kAluNegInf) maxc = std::max(maxc, L[c]);
-      if (U[c] != kAluNegInf) maxc = std::max(maxc, U[c]);
-    }
-    for (const auto& p_ : net.procs) {
-      for (const auto& l : p_.locations) for (const auto& c : l.invariant) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
-      for (const auto& e : p_.edges) for (const auto& c : e.clock_guard) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
-    }
-    for (const auto& c : target.clock_cond) maxc = std::max(maxc, std::abs(raw_bound(c.bound)));
-    // Narrow (int16) arena entries are safe while (2M+1)<<1 stays well inside int16 for the
-    // largest clock constant M anywhere in the model or the query; the margin is deliberately
-    // generous.
-    constexpr std::int32_t kNarrowZoneMaxConst = 4000;
-    const bool narrow_zones = (maxc < kNarrowZoneMaxConst);
-    GpuZoneIntern zi(d2, narrow_zones);
-    zi.set_mode(detail::options().gpu_intern ? GpuZoneIntern::Mode::Dedup : GpuZoneIntern::Mode::Append);
-    std::unordered_map<Key, std::vector<int>, typename KeyHashFor<Key>::type> passed;  // dk -> zones
-    std::vector<int> fl(s0.locs.begin(), s0.locs.end());
-    std::vector<long> fi(s0.ints.begin(), s0.ints.end());
-    std::vector<int> fz(1, zi.intern(s0.zone.data().data()));
-    passed[dkey.encode(s0.locs, s0.ints)].assign(1, fz[0]);
-    double gpu_rate = -1, cpu_rate = -1;   // adaptive merge routing: work-units (sum bucket^2) per ms
-    auto _now = [] { return std::chrono::steady_clock::now(); };
-    auto _ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
-      return std::chrono::duration<double, std::milli>(b - a).count();
-    };
-    DkIndexT<Key> bidx;
-    // Seeds only: both are replaced by measurement after the first level. prev_nb sizes the
-    // next level's key index, fanout the next batch.
-    constexpr std::size_t kInitialBucketEstimate = 1024;
-    constexpr double kInitialFanout = 4.0;
-    std::size_t prev_nb = kInitialBucketEstimate;
-    double fanout = kInitialFanout;   // running MAX of successors per frontier state
-
-    {   // let the expand kernel pack the discrete key itself (see net_gpu.hpp)
-      std::vector<int> ilo(net.intvars.size());
-      for (std::size_t v = 0; v < net.intvars.size(); ++v) ilo[v] = static_cast<int>(net.intvars[v].lo);
-      gpu->set_key_layout(dkey.shift, ilo);
-    }
-    // Orbit of the target: with symmetry every state is stored as its orbit representative, so a
-    // target that is not itself symmetric has to be tested against every image of the property.
-    // Each image's required locations are a fixed bit pattern in the packed key, so the test stays
-    // |G| integer compares against the key (and only a key that matches pays for decoding ints).
-    struct OrbitTest { Key mask, val; const NetTarget* t; };
-    std::vector<OrbitTest> tgt_tests;
-    {
-      const std::vector<NetTarget>* src = orbit && !orbit->empty() ? orbit : nullptr;
-      const std::size_t n = src ? src->size() : 1;
-      for (std::size_t i = 0; i < n; ++i) {
-        const NetTarget& t = src ? (*src)[i] : target;
-        // `false` contributes no test at all. An empty `tgt_tests` is exactly "matches nothing",
-        // so the unsatisfiable target costs zero per state and the search runs to exhaustion --
-        // which is the point: `E<> false` / `A[] true` must explore the whole state space.
-        if (t.never) continue;
-        OrbitTest ot{0, 0, &t};
-        for (const auto& lr : t.loc_req) {
-          ot.mask |= dkey.mask[lr.first] << dkey.shift[lr.first];
-          ot.val  |= static_cast<Key>(static_cast<unsigned>(lr.second)) << dkey.shift[lr.first];
-        }
-        tgt_tests.push_back(ot);
-      }
-    }
-    const int niw = ni ? ni : 1;   // ints stride (kept >=1 so the vector is never zero-sized)
-    // --chunking: expand the level in bounded batches so the GPU pools are sized to a batch
-    // rather than to the widest BFS level (which is what makes peak memory blow up: the expand
-    // output pool is nwork * dim^2 words, and nwork is ~12x the frontier on fischer).
-    //
-    // The batch boundary must NOT move states between BFS levels. `fl` holds what is left of the
-    // current level and `nf*` accumulates the next one; a batch is taken from the front of `fl`
-    // and its survivors go to `nf*`, which only becomes the frontier once `fl` is exhausted.
-    // Appending the un-expanded tail to the survivors and swapping would mix level k and level
-    // k+1 states into one frontier, losing strict BFS and inflating the explored-state count.
-    //
-    // A stored zone is a 31-bit index into the zone interner plus one flag bit meaning "added
-    // during the level currently being expanded". That flag is what the next frontier is read off
-    // at level end, and packing it into the index costs no extra memory.
-    static constexpr int kNewBit = 1 << 30;
-    std::vector<Key> touched;   // buckets changed during the current level
-    // Per-batch scratch, hoisted out of the loop. Each of these is sized by the batch, and with
-    // --chunking a level is many batches, so allocating them per batch churns the allocator badly
-    // enough to cancel the peak-memory saving chunking exists to deliver. Reused buffers keep
-    // their capacity instead.
-    std::vector<Key> bdk;
-    std::vector<int> bcnt, w_bucket, work_off, exist_cnt, new_off, new_cnt, new_idx, cursor;
-    std::vector<int> fr_off, fr_cnt, host_isnew_v, host_count, out_work_off, out_count;
-    std::vector<std::int32_t> Lm, Um;
-    std::vector<std::vector<int>*> pzp;
-    std::vector<std::size_t> foff;
-    std::vector<int>   cfl; std::vector<long>  cfi; std::vector<raw_t> cfz;
-    for (;;) {
-      if (fl.empty()) {                       // current level exhausted: advance
-        // Collect the next frontier: every zone still flagged "added during this level" in a
-        // bucket the level touched. Doing this at level end rather than per batch is what keeps
-        // batching exact, since a zone a later batch absorbed has had its flag cleared with it.
-        std::sort(touched.begin(), touched.end());
-        touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
-        std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<int>().swap(fz);
-        zi.flush_released();          // the frontier that could have named these is gone now
-        foff.assign(touched.size() + 1, 0);
-        for (std::size_t t = 0; t < touched.size(); ++t) {
-          std::size_t c = 0;
-          for (int idx : passed.find(touched[t])->second) if (idx & kNewBit) ++c;
-          foff[t + 1] = foff[t] + c;
-        }
-        const std::size_t ftot = foff.back();
-        if (ftot == 0) break;
-        fl.resize(ftot * np); fi.resize(ftot * niw); fz.resize(ftot);
-#ifdef HORA_HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic, 64)
-#endif
-        for (long t = 0; t < static_cast<long>(touched.size()); ++t) {
-          int dl[64]; long di[32];
-          dkey.decode(touched[t], dl, di);
-          std::size_t f = foff[t];
-          auto& pz = passed.find(touched[t])->second;   // present: inserted earlier this level
-          for (std::size_t i = 0; i < pz.size(); ++i) {
-            if (!(pz[i] & kNewBit)) continue;
-            pz[i] &= ~kNewBit;                                   // consumed
-            for (int p = 0; p < np; ++p) fl[f * np + p] = dl[p];
-            for (int v = 0; v < ni; ++v) fi[f * niw + v] = di[v];
-            fz[f] = pz[i];       // the zone stays in the arena; the frontier names it
-            ++f;
-          }
-        }
-        touched.clear();
-      }
-      const int total = static_cast<int>(fz.size());
-      // Batch size: either the fixed --chunking N, or the largest batch whose GPU pools fit the
-      // budget.
-      int nfr = total;
-      if (detail::options().chunking) {
-        if (detail::options().chunk_states > 0) {
-          nfr = std::min(total, detail::options().chunk_states);
-        } else {
-          // Three words per successor per matrix entry: the expand output zones, the merge work
-          // pool, and the frontier and staging arrays. The fan-out is the running maximum rather
-          // than an average, because under-predicting it lets a batch overshoot the budget, and
-          // such an overshoot is exactly the peak the budget exists to bound.
-          const double per_state = fanout * static_cast<double>(d2) * sizeof(raw_t) * 3.0;
-          const double cap = static_cast<double>(detail::chunk_budget_bytes()) / std::max(1.0, per_state);
-          nfr = static_cast<int>(std::min<double>(total, std::max(4096.0, cap)));
-        }
-      }
-      const bool whole = (nfr == total);
-      if (stats) stats->explored += nfr;
-      const int* ev = nullptr; const int* ol = nullptr; const int* oi = nullptr; const gz_t* oz = nullptr;
-      const std::uint64_t* odk = nullptr;   // device-packed discrete keys (null => pack host-side)
-      std::size_t nwork;
-      {
-        // Materialise only this batch's zones, widened out of the arena. The frontier itself
-        // holds arena indices rather than dense matrices, because the zones are already in the
-        // passed set and a level-wide dense copy would store every one of them twice.
-        gz_t* fzbuf = nullptr;
-        gpu->stage_frontier(static_cast<std::size_t>(nfr), d2, fzbuf);
-#ifdef HORA_HAVE_OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-        for (long i = 0; i < static_cast<long>(nfr); ++i)   // arena is already narrow: a memcpy
-          zi.load_gz(fz[static_cast<std::size_t>(i)], fzbuf + static_cast<std::size_t>(i) * d2);
-        cfz.clear();                              // "already staged" (see net_gpu.hpp)
-        if (whole) {
-          nwork = gpu->expand(nfr, fl, fi, cfz, ev, ol, oi, oz, odk);
-        } else {
-          cfl.assign(fl.begin(), fl.begin() + static_cast<std::size_t>(nfr) * np);
-          cfi.assign(fi.begin(), fi.begin() + static_cast<std::size_t>(nfr) * niw);
-          nwork = gpu->expand(nfr, cfl, cfi, cfz, ev, ol, oi, oz, odk);
-        }
-      }
-      if (nfr > 0) fanout = std::max(fanout, static_cast<double>(nwork) / nfr);
-      if (nwork == 0) {
-        // this batch produced nothing: drop it and continue with what is left of the level
-        drop_batch(fl, fi, fz, nfr, np, niw, d2);
-        continue;
-      }
-      // The GPU now holds its own copy of the frontier in a persistent device buffer, so the host
-      // copies are dead until the end-of-level swap. Releasing them here rather than later
-      // matters because they would otherwise sit alongside the next frontier during the rebuild,
-      // a full extra copy at exactly the moment memory peaks. Only safe when the whole level was
-      // expanded; when batching, the tail is still needed.
-      if (whole) { std::vector<int>().swap(fl); std::vector<long>().swap(fi); std::vector<int>().swap(fz); }
-      else drop_batch(fl, fi, fz, nfr, np, niw, d2);   // batch consumed; keep the rest of the level
-      // Group the valid successors by discrete key, reading straight from the GPU buffers and
-      // testing the target on the fly. The layout is flat (CSR): a per-work-item bucket id and a
-      // per-bucket count, followed by a prefix sum. A vector-of-vectors would instead allocate one
-      // small vector per bucket per level, whose fragmentation dominates resident memory.
-      //
-      // This loop is serial by measurement rather than by omission: it is bound by streaming the
-      // expand output out of unified memory while the GPU competes for the same bandwidth, not by
-      // the hashing, so parallelising the hashing moves little. See docs/design.md 8.10.
-      bidx.begin_level(prev_nb);
-      bdk.clear(); bcnt.clear();
-      w_bucket.assign(nwork, -1);                         // work item -> bucket id (-1 = not a successor)
-      for (std::size_t w = 0; w < nwork; ++w) {
-        if (!ev[w]) continue;
-        if (stats) ++stats->generated;
-        Key dk;
-        if (odk) {
-          dk = static_cast<Key>(odk[w]);
-        } else {                                          // backend without device-side packing
-          const int* wl = ol + w * np;
-          const int* wi = oi + w * ni;
-          dk = 0;
-          for (int p = 0; p < np; ++p) dk |= static_cast<Key>(static_cast<unsigned>(wl[p])) << dkey.shift[p];
-          for (int v = 0; v < ni; ++v) dk |= static_cast<Key>(wi[v] - net.intvars[v].lo) << dkey.shift[np + v];
-        }
-        // Target test straight off the key: the required locations are a fixed bit pattern in it,
-        // so the common (non-target) case is two integer ops instead of a walk over nprocs
-        // locations. Only a key that already matches pays for decoding the integers.
-        for (const auto& ot : tgt_tests) {
-          if ((dk & ot.mask) != ot.val) continue;
-          int dl2[64]; long di2[32];
-          dkey.decode(dk, dl2, di2);
-          bool tgt = true;
-          for (const auto& a : ot.t->int_cond) {
-            const long x = di2[a.var]; bool r;
-            switch (a.op) { case IntOp::Eq: r = x==a.val; break; case IntOp::Ne: r = x!=a.val; break;
-              case IntOp::Lt: r = x<a.val; break; case IntOp::Le: r = x<=a.val; break;
-              case IntOp::Gt: r = x>a.val; break; default: r = x>=a.val; }
-            if (!r) { tgt = false; break; }
-          }
-          if (!tgt) continue;
-          Dbm td(net.nclocks);
-          for (int k = 0; k < d2; ++k) td.data()[k] = gz_load(oz[w * d2 + k]);
-          if (apply_all(td, ot.t->clock_cond)) return true;
-        }
-        const int bi = bidx.find_or_add(dk, static_cast<int>(bdk.size()));
-        if (bi == static_cast<int>(bdk.size())) { bdk.push_back(dk); bcnt.push_back(0); }
-        w_bucket[w] = bi; ++bcnt[bi];
-      }
-      const int nb = static_cast<int>(bdk.size());
-      prev_nb = static_cast<std::size_t>(nb);
-      work_off.resize(nb); exist_cnt.resize(nb); new_off.resize(nb); new_cnt.resize(nb);
-      Lm.resize(static_cast<std::size_t>(nb) * dim); Um.resize(static_cast<std::size_t>(nb) * dim);
-      // Counts and prefix sums. New zones are never copied: the merge reads them in place from
-      // the expand output by work-item index, so only the index list is flattened.
-      std::size_t ntot = 0, wtot = 0;  // total new zones; total work-pool zones (exist+new)
-      for (int b = 0; b < nb; ++b) {
-        new_cnt[b] = bcnt[b];
-        auto pit = passed.find(bdk[b]);
-        exist_cnt[b] = (pit == passed.end()) ? 0 : static_cast<int>(pit->second.size());
-        new_off[b] = static_cast<int>(ntot); ntot += new_cnt[b];
-        work_off[b] = static_cast<int>(wtot); wtot += exist_cnt[b] + new_cnt[b];
-      }
-      // Scatter the work-item indices into the flat CSR array. Ascending w preserves the
-      // per-bucket ordering the merge relies on, which matters because the convex union is
-      // order-sensitive.
-      new_idx.resize(ntot);
-      {
-        cursor = new_off;
-        for (std::size_t w = 0; w < nwork; ++w) {
-          const int bi = w_bucket[w];
-          if (bi >= 0) new_idx[cursor[bi]++] = static_cast<int>(w);
-        }
-      }
-      gz_t* work_buf = nullptr; int* work_isnew = nullptr;
-      gpu->stage_merge(wtot, d2, work_buf, work_isnew);
-      // Gather only the existing antichains into the unified-memory work buffer; successor zones
-      // stay in the expand output and are read in place by the merge kernel.
-#ifdef HORA_HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic, 32)
-#endif
-      for (int b = 0; b < nb; ++b) {
-        auto pit = passed.find(bdk[b]);
-        if (pit != passed.end()) {
-          gz_t* dst = work_buf + static_cast<std::size_t>(work_off[b]) * d2;
-          for (int i = 0; i < exist_cnt[b]; ++i)
-            zi.load_gz(pit->second[i] & ~kNewBit, dst + static_cast<std::size_t>(i) * d2);
-          // Seed each already-stored zone's tag with its passed-set index, kNewBit included. The
-          // merge carries a kept zone's tag through its compaction and writes -1 for zones it
-          // creates, so the rebuild can distinguish "this output slot is stored zone j" from
-          // "this output slot is new", and a kept zone then needs neither copy nor re-intern.
-          // Carrying kNewBit is required, not incidental: a zone added by an earlier batch of
-          // this same level is still a frontier state, and dropping the flag would lose it.
-          int* wi = work_isnew + work_off[b];
-          for (int i = 0; i < exist_cnt[b]; ++i) wi[i] = pit->second[i];
-        }
-        int dl[64]; long di[32];
-        std::vector<std::int32_t> L2, U2;
-        std::vector<raw_t> Lr_, Ur_;   // unused: the GPU merge implements a_LU only
-        dkey.decode(bdk[b], dl, di);
-        state_bounds(dl, L2, U2, Lr_, Ur_);
-        for (int c = 0; c < dim; ++c) { Lm[static_cast<std::size_t>(b) * dim + c] = L2[c]; Um[static_cast<std::size_t>(b) * dim + c] = U2[c]; }
-      }
-      out_work_off.clear(); out_count.clear();
-      const gz_t* out_zones = nullptr;
-      const int* out_isnew = nullptr;
-      // Merge routing. In naive mode the GPU one-thread-per-bucket merge always runs. In adaptive
-      // mode each path's throughput — work, taken as the sum of squared bucket sizes, per
-      // millisecond — is calibrated on early levels, and each later level is routed to the
-      // predicted-faster path. This recovers merge-heavy models, where one thread per bucket is
-      // the wrong shape, without affecting models on which the GPU already wins.
-      long long sum2 = 0;
-      for (int b = 0; b < nb; ++b) { const long long s = exist_cnt[b] + new_cnt[b]; sum2 += s*s; }
-      bool cpu_merge = false;
-      if (detail::options().adaptive_merge) {
-        if (cpu_rate < 0) cpu_merge = true;         // calibrate the CPU path first: it is never catastrophic
-        else if (gpu_rate < 0) cpu_merge = false;   // then calibrate the GPU path
-        else cpu_merge = (cpu_rate >= gpu_rate);    // route to the higher-throughput path
-      }
-      const auto _tm = _now();
-      if (cpu_merge) {
-        host_count.clear();
-        host_isnew_v.assign(wtot, -1);         // zones this merge creates keep the -1 sentinel
-        for (int b = 0; b < nb; ++b) {         // existing zones carry their passed index (see gather)
-          auto pit = passed.find(bdk[b]);
-          if (pit == passed.end()) continue;
-          for (int i = 0; i < exist_cnt[b]; ++i)
-            host_isnew_v[static_cast<std::size_t>(work_off[b]) + i] = pit->second[i];
-        }
-        host_count.assign(nb, 0);
-#ifdef HORA_HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic, 8)
-#endif
-        for (int b = 0; b < nb; ++b)
-          host_count[b] = flat_merge_bucket(work_buf, work_off[b], exist_cnt[b], oz,
-                                            new_idx.data() + new_off[b], new_cnt[b],
-                                            Lm.data() + static_cast<std::size_t>(b)*dim,
-                                            Um.data() + static_cast<std::size_t>(b)*dim,
-                                            dim, has_diag, host_isnew_v.data() + work_off[b]);
-        out_work_off = work_off; out_count = std::move(host_count);
-        out_zones = work_buf; out_isnew = host_isnew_v.data();
-      } else {
-        gpu->merge(nb, dim, has_diag, work_off, exist_cnt, new_idx, new_off, new_cnt, Lm, Um,
-                   out_work_off, out_count, out_zones, out_isnew);
-      }
-      const double _dtm = _ms(_tm, _now());
-      if (detail::options().adaptive_merge && sum2 > 0 && _dtm > 0.5) {   // update throughput calibration (skip trivial levels)
-        const double rate = static_cast<double>(sum2) / _dtm;
-        if (cpu_merge) cpu_rate = (cpu_rate < 0) ? rate : 0.5 * cpu_rate + 0.5 * rate;
-        else           gpu_rate = (gpu_rate < 0) ? rate : 0.5 * gpu_rate + 0.5 * rate;
-      }
-      // Rebuild the passed set and assemble the flat next frontier: count the per-bucket
-      // survivors, prefix-sum the counts, pre-create the passed nodes, then fill in parallel.
-      //
-      // The count and the offset prefix-sum stay fused and serial. Buckets hold only a handful of
-      // zones on average, so the scan is memory-bound and the per-bucket parallel overhead, plus
-      // false sharing on fr_cnt, costs more than the scan itself.
-      fr_off.resize(nb); fr_cnt.resize(nb);
-      std::size_t frtot = 0;
-      for (int b = 0; b < nb; ++b) {
-        int c = 0;
-        for (int i = 0; i < out_count[b]; ++i) {
-          const int tag = out_isnew[static_cast<std::size_t>(out_work_off[b]) + i];
-          if (tag < 0 || (tag & kNewBit)) ++c;
-        }
-        fr_cnt[b] = c; fr_off[b] = static_cast<int>(frtot); frtot += c;
-      }
-      // A bucket with no survivor had all its new zones subsumed, so its antichain is unchanged
-      // and `passed[dk]` is already correct; its rebuild copy is skipped entirely. Only changed
-      // buckets are cleared and refilled, and their element pointers stay stable across later
-      // inserts.
-      pzp.assign(nb, nullptr);
-      for (int b = 0; b < nb; ++b) if (fr_cnt[b] > 0) { pzp[b] = &passed[bdk[b]]; touched.push_back(bdk[b]); }
-#ifdef HORA_HAVE_OPENMP
-#pragma omp parallel for schedule(dynamic, 32)
-#endif
-      for (int b = 0; b < nb; ++b) {
-        if (fr_cnt[b] == 0) continue;   // unchanged bucket — nothing to do
-        int dl[64]; long di[32];
-        dkey.decode(bdk[b], dl, di);
-        auto& pz = *pzp[b];
-        // This bucket's slots before the merge; those the merge drops return to the arena free
-        // list below. Thread-local rather than a fixed-size array because antichains can reach
-        // several hundred zones, and a fixed bound would silently leak every slot past it.
-        thread_local std::vector<int> oldv;
-        oldv.clear();
-        for (int idx : pz) oldv.push_back(idx & ~kNewBit);
-        pz.resize(static_cast<std::size_t>(out_count[b]));
-        int fpos = 0;
-        std::vector<raw_t> tmp(d2);        // one merged zone, reused across this bucket
-        for (int i = 0; i < out_count[b]; ++i) {
-          const std::size_t slot = static_cast<std::size_t>(out_work_off[b]) + i;
-          const int tag = out_isnew[slot];
-          if (tag >= 0) { pz[i] = tag; continue; }   // kept: already stored, already interned
-          raw_t* pzi = tmp.data();
-          for (int k = 0; k < d2; ++k) pzi[k] = zget(out_zones + slot * d2, k);
-          // The high bit of the stored index records "added during the current level". The frontier
-          // is read off these flags once the level is finished (see the level-advance step), NOT
-          // here -- because a later batch of the same level can still absorb this zone into a
-          // convex union, and emitting it now would put a state in the frontier that the level's
-          // own merge went on to delete.
-          pz[i] = zi.intern(pzi) | kNewBit;
-        }
-        // Slots the merge dropped (subsumed, or absorbed into a convex union) are garbage now.
-        // Antichains are small, so a linear membership test beats any bookkeeping.
-        for (int o : oldv) {
-          bool reused = false;
-          for (int i = 0; i < out_count[b] && !reused; ++i) reused = (pz[i] & ~kNewBit) == o;
-          if (!reused) zi.release(o);
-        }
-        (void)dl; (void)di; (void)fpos;
-      }
-#ifdef __APPLE__
-#endif
-    }
-    return false;
-  }
-#endif
 
   // ======================================================================
   // Shared passed set: one stripe-locked table any worker may touch, locking only the stripe of
@@ -2223,10 +1591,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
 /// to the same multiply. A wider network used to be rejected by ::throw_disc_key_too_wide; it now
 /// runs on ::WideKey instead, which costs a two-word key in the passed set, the frontier and the
 /// touched sets, and changes nothing else about the search.
-///
-/// @note The wide instantiation stays on the CPU. The GPU drivers pack a 64-bit key of their own
-///       in device code, so widening them is a separate exercise; a wide network is measured with
-///       the OMP backend even where a GPU is present.
+
 template <class TargetFn>
 static bool reach_engine_auto(const Network& net, const NetTarget& target, TargetFn&& is_target,
                               bool force_exact, Backend backend, ReachStats* stats,
@@ -2362,8 +1727,7 @@ static bool use_loc_lu() {
 /// @see docs/design.md §3 for the full argument and the measured comparison against exact zones.
 bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
                         const std::atomic<bool>* cancel) {
-  // The GPU drivers cannot express this target. deadlock_reachable never asks for a GPU backend,
-  // so the CPU engine is selected regardless of force_exact.
+  // A predicate target that reads the zone: always the CPU engine.
   const Backend b = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
   const auto is_dl = [&](const SymState& s) { return state_has_deadlock(net, s); };
 

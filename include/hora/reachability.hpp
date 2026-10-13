@@ -56,8 +56,7 @@ bool gen_apply(const Network& net, const NEdge& e, long* ints, std::size_t n);
 /// @param backend which engine performs the search; all backends yield the same verdict
 /// @param[out] stats optional exploration counters; may be null
 /// @return @c true if some reachable symbolic state matches @p target
-/// @note hora::Backend::Cuda and hora::Backend::Metal require a build configured with that
-///       backend and a suitable device.
+/// @note hora::Backend::Metal requires a Metal-enabled build and a device.
 bool reachable_net(const Network& net, const NetTarget& target, Backend backend = Backend::Seq,
                    ReachStats* stats = nullptr);
 

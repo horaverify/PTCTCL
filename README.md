@@ -23,7 +23,7 @@ cmake --build build -j
 ./build/hora model.xml query.q
 ```
 
-CUDA and Metal back ends are detected automatically and are optional; without either, the
+The Metal back end is detected automatically and is optional; without it, the
 OpenMP and sequential back ends are always available.
 
 ```sh
@@ -103,7 +103,6 @@ include/hora/          public headers
   config.hpp             every process-global engine switch
   bisimulation.hpp       timed (bi)simulation between two automata
   symmetry.hpp           process-symmetry reduction
-  gpu/                   CUDA and Metal drivers
   detail/                private to the engine
 
 src/
@@ -113,7 +112,6 @@ src/
   reachability/          the forward zone-graph search, and deadlock
   liveness/              the online quotient, the D refinement, the backward fixpoint
   analysis/              bisimulation, symmetry
-  cuda/  metal/          GPU back ends
 
 tests/                 unit, property and differential tests, curated models
 benchmarks/            models, query suites, measurement drivers, recorded results

@@ -15,60 +15,6 @@
 
 namespace hora {
 
-/// @brief Select how the GPU backends schedule the passed-list merge.
-///
-/// In the default *naive* mode the merge always runs as one GPU thread per discrete-state
-/// bucket. In *adaptive* mode the flat driver calibrates GPU against multi-core CPU merge
-/// throughput on the early BFS levels and routes each later level to the predicted-faster path,
-/// which recovers models with few but very wide antichains, where one thread per bucket is the
-/// wrong shape.
-///
-/// @param on @c true to enable adaptive routing, @c false for the naive schedule
-/// @note No effect on the CPU-only backends (hora::Backend::Seq, hora::Backend::Omp).
-/// @note Routing changes only the schedule, never the merge result, so the verdict is unaffected.
-void set_adaptive_merge(bool on);
-
-/// @brief Report whether adaptive GPU merge routing is enabled.
-/// @return the value last passed to ::set_adaptive_merge (default @c false)
-bool adaptive_merge();
-
-/// @brief Deduplicate zones in the GPU passed set.
-///
-/// The GPU driver stores zones densely because its merge kernels consume dense matrices, which
-/// costs one full matrix per (discrete state, zone). Interning collapses repeats to a single
-/// stored matrix plus a 4-byte index per survivor, so the per-level rebuild copies indices
-/// instead of matrices. This is a large win where few distinct zones are reachable and neutral
-/// where nearly every zone is distinct, hence opt-in.
-///
-/// @param on @c true to intern GPU-side zones
-/// @note Trades a hash lookup per zone for memory; it does not change which states are stored.
-/// @see hora::detail::GpuZoneIntern
-void set_gpu_intern(bool on);
-
-/// @brief Expand each BFS level in bounded batches instead of in one shot.
-///
-/// With chunking off, a level is expanded whole, so the unified-memory pools must be sized to
-/// the widest level and peak memory scales with level width. With it on, the pools are sized to
-/// one batch and peak memory becomes independent of level width, raising the model size that
-/// fits in RAM.
-///
-/// @param on     @c true to process the frontier in batches
-/// @param states frontier states per batch; @c 0 sizes each batch from the memory budget set by
-///               ::set_chunk_budget
-/// @note Sound: the frontier is a worklist, so batching only reorders the work. It can shift
-///       order-sensitive convex-union counts, never the verdict.
-void set_chunking(bool on, int states = 0);
-
-/// @brief Set the GPU pool budget used to size an automatic chunk.
-/// @param bytes GPU pool bytes per batch; @c 0 selects the built-in default
-/// @note Only consulted when chunking is on and ::set_chunking was given `states == 0`.
-void set_chunk_budget(std::size_t bytes);
-
-/// @brief Report whether frontier chunking is enabled.
-/// @return the value last passed to ::set_chunking (default @c false)
-bool chunking();
-
-
 /// @brief Explore one representative per orbit of the network's automorphism group.
 ///
 /// @param on @c true to enable process-symmetry reduction

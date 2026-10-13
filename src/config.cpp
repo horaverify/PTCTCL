@@ -74,36 +74,11 @@ EngineOptions& options() {
   return o;
 }
 
-std::size_t chunk_budget_bytes() {
-  const EngineOptions& o = options();
-  if (o.chunk_budget) return o.chunk_budget;
-  std::size_t ram = 0;
-#ifdef __APPLE__
-  std::size_t len = sizeof(ram);
-  if (sysctlbyname("hw.memsize", &ram, &len, nullptr, 0) != 0) ram = 0;
-#endif
-#ifdef __linux__
-  const long pg = sysconf(_SC_PHYS_PAGES), ps = sysconf(_SC_PAGESIZE);
-  if (pg > 0 && ps > 0) ram = static_cast<std::size_t>(pg) * static_cast<std::size_t>(ps);
-#endif
-  if (!ram) ram = std::size_t(16) << 30;
-  return std::min<std::size_t>(ram / 16, std::size_t(1) << 30);
-}
-
 }  // namespace detail
 
 // ------------------------------------------------------- public API declared in netreach.hpp
-void set_adaptive_merge(bool on) { detail::options().adaptive_merge = on; }
-bool adaptive_merge() { return detail::options().adaptive_merge; }
-void set_gpu_intern(bool on) { detail::options().gpu_intern = on; }
-void set_chunking(bool on, int states) {
-  detail::options().chunking = on;
-  detail::options().chunk_states = states > 0 ? states : 0;
-}
-void set_chunk_budget(std::size_t bytes) { detail::options().chunk_budget = bytes; }
 void set_memo(bool on) { detail::options().memo = on; }
 bool memo_on() { return detail::options().memo; }
-bool chunking() { return detail::options().chunking; }
 void set_symmetry(bool on) { detail::options().symmetry = on; }
 bool symmetry_on() { return detail::options().symmetry; }
 

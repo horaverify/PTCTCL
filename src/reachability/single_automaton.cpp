@@ -21,9 +21,6 @@
 #include <unordered_set>
 #include <utility>
 
-#include "hora/gpu/cuda.hpp"
-#include "hora/gpu/metal.hpp"
-
 #ifdef HORA_HAVE_OPENMP
 #include <omp.h>
 #endif
@@ -331,32 +328,6 @@ bool reachable(const TimedAutomaton& ta, int target_loc, const std::vector<Const
   }
 
   const int nloc = static_cast<int>(W.locations.size());
-
-  // GPU backends: run zone exploration over the (now diagonal-free) automaton W. Since
-  // the target may be a *set* of split locations (original target_loc × diagonal-bit
-  // combos), pass a per-location accept mask; the GPU then checks accept[loc] plus the
-  // clock target on the zone — so diagonal models work on the GPU via the same split.
-  if (backend == Backend::Cuda || backend == Backend::Metal) {
-    std::vector<char> accept(nloc, 0);
-    for (int loc = 0; loc < nloc; ++loc) {
-      if (target_loc >= 0 && loc / nb != target_loc) continue;
-      bool ok = true;
-      for (int bit : tgt_diag_bits) if (!((loc % nb) & (1 << bit))) { ok = false; break; }
-      accept[loc] = ok ? 1 : 0;
-    }
-    if (backend == Backend::Cuda) {
-#ifdef HORA_HAVE_CUDA
-      return reachable_cuda(W, accept, tgt_clocks, L, U, stats);
-#else
-      throw std::runtime_error("CUDA backend not available in this build");
-#endif
-    }
-#ifdef HORA_HAVE_METAL
-    return reachable_metal(W, accept, tgt_clocks, L, U, stats);
-#else
-    throw std::runtime_error("Metal backend not available in this build");
-#endif
-  }
 
   std::vector<std::vector<Dbm>> pz(nloc);
   std::vector<std::unordered_set<std::string>> pk(nloc);

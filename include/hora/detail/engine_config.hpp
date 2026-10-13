@@ -55,11 +55,6 @@ constexpr std::size_t kMergeScan = 32;
 
 /// @brief Options the CLI sets before a run. Plain data; see `netreach.hpp` for the setters.
 struct EngineOptions {
-  bool adaptive_merge = false;   ///< widen when antichains fill up
-  bool gpu_intern = false;       ///< intern zones on the device
-  bool chunking = true;          ///< expand a BFS level in batches sized to a byte budget
-  int chunk_states = 0;          ///< 0 = derive the batch size from the budget
-  std::size_t chunk_budget = 0;  ///< GPU pool bytes per batch; 0 = auto
   bool symmetry = false;         ///< process-symmetry reduction (changes WHICH states are stored)
   bool narrow_ranges = false;    ///< pack dk from inferred integer ranges, not declared ones
   bool slice = false;            ///< canonicalise dead integer cells before the discrete key
@@ -92,9 +87,6 @@ struct EngineOptions {
 
 /// @brief The process-wide options block.
 EngineOptions& options();
-
-/// @brief GPU pool bytes allowed for one batch, resolving the `auto` default.
-std::size_t chunk_budget_bytes();
 
 }  // namespace detail
 }  // namespace hora

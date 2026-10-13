@@ -18,13 +18,12 @@ struct ReachStats {
   std::size_t expanded = 0;
 };
 
-enum class Backend { Seq, Omp, Cuda, Metal };
+enum class Backend { Seq, Omp, Metal };
 
 // E<> : is a state with location `target_loc` (target_loc < 0 => any location) and
 // satisfying the extra clock constraints `target` reachable? Zone-graph exploration
 // with passed-list inclusion (subsumption) + max-extrapolation for termination.
-// `backend` selects seq / OpenMP level-sync frontier / CUDA — all give identical
-// verdicts (Cuda requires a CUDA-enabled build + GPU).
+// `backend` selects seq / OpenMP level-sync frontier — both give identical verdicts.
 bool reachable(const TimedAutomaton& ta, int target_loc,
                const std::vector<Constraint>& target = {}, ReachStats* stats = nullptr,
                Backend backend = Backend::Seq);

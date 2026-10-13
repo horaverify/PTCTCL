@@ -46,11 +46,9 @@
 #include "hora/detail/spin_rw.hpp"
 #include "hora/detail/sym_state.hpp"
 #include "hora/detail/zone_intern.hpp"
-#include "hora/detail/gpu_zone_intern.hpp"
 #include "hora/detail/passed_set.hpp"
 #include "hora/detail/semantics.hpp"
 #include "hdbm/mindbm.hpp"   // minimal-graph packed zone storage (UDBM mingraph port)
-#include "hora/gpu/network.hpp"
 #ifdef HORA_HAVE_OPENMP
 #include <omp.h>
 #endif
