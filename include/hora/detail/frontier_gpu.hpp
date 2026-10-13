@@ -56,7 +56,10 @@ struct KeyLayout {
 ///
 /// A recipe is everything the zone half of a transition needs: the clock guards of every
 /// participant (and a broadcast receiver's abstain condition), the clocks reset, the successor's
-/// packed discrete key, and two facts decided on the host.
+/// packed discrete key, and what the successor's discrete state alone decides -- whether time may
+/// pass there, whether it meets the target's discrete part, its combined invariant, and which
+/// clocks are dead there. Those last two depend only on the target locations, so the host derives
+/// them once per transition instead of the GPU re-deriving them per process for every zone.
 struct RecipeTable {
   static constexpr std::uint32_t kFrozen = 1;      ///< target committed or urgent: no delay
   static constexpr std::uint32_t kTargetDisc = 2;  ///< successor's discrete part meets the target
@@ -67,11 +70,14 @@ struct RecipeTable {
   std::vector<std::int32_t>  g;          ///< (i, j, raw bound) triples
   std::vector<std::uint32_t> r_off{0};   ///< recipe r's resets: r[r_off[r] .. r_off[r+1])
   std::vector<std::int32_t>  r;          ///< reset clocks
+  std::vector<std::uint32_t> v_off{0};   ///< recipe r's target invariant: triples v_off[r] .. v_off[r+1]
+  std::vector<std::int32_t>  v;          ///< (i, j, raw bound) triples, as ::all_invariants lists them
+  std::vector<std::uint64_t> dead;       ///< clocks ::reset_inactive resets at the target (bit c)
 
   std::size_t size() const { return key.size(); }
   void clear() {
-    key.clear(); flags.clear(); g.clear(); r.clear();
-    g_off.assign(1, 0); r_off.assign(1, 0);
+    key.clear(); flags.clear(); g.clear(); r.clear(); v.clear(); dead.clear();
+    g_off.assign(1, 0); r_off.assign(1, 0); v_off.assign(1, 0);
   }
 };
 
@@ -83,9 +89,11 @@ struct RecipeTable {
 ///
 /// @param canon  the engine's discrete slicing, applied to the successor's integers before the
 ///               key is packed and after the target and frozen tests read them, as on the CPU
+/// @param query_clocks  clocks the query reads (bit c), which ::reset_inactive never resets
 void append_recipes(const Network& net, const KeyLayout& kl, const NetTarget& target,
                     const std::function<void(const LocVec&, IntVec&)>& canon,
-                    const LocVec& locs, const IntVec& ints, RecipeTable& out);
+                    std::uint64_t query_clocks, const LocVec& locs, const IntVec& ints,
+                    RecipeTable& out);
 
 /// @brief Everything the frontier engine needs from the reachability engine, computed there.
 struct FrontierProblem {

@@ -17,9 +17,11 @@ struct RecipeSink {
   const KeyLayout& kl;
   const NetTarget& target;
   const std::function<void(const LocVec&, IntVec&)>& canon;
+  std::uint64_t query_clocks;
   RecipeTable& out;
   LocVec locs;
   IntVec ints;
+  std::vector<Constraint> inv;   // reused for each recipe's combined invariant
 
   void guards(const std::vector<Constraint>& cs) {
     for (const auto& c : cs) { out.g.push_back(c.i); out.g.push_back(c.j); out.g.push_back(c.bound); }
@@ -35,6 +37,24 @@ struct RecipeSink {
     bool hit = !target.never;
     for (const auto& lr : target.loc_req) hit = hit && locs[lr.first] == lr.second;
     if (hit && int_ok(target.int_cond, ints)) flags |= RecipeTable::kTargetDisc;
+    // The target's combined invariant and dead clocks, exactly as close_succ_zone and
+    // reset_inactive derive them on the CPU, from the target locations.
+    all_invariants(net, locs, inv);
+    for (const auto& c : inv) { out.v.push_back(c.i); out.v.push_back(c.j); out.v.push_back(c.bound); }
+    out.v_off.push_back(static_cast<std::uint32_t>(out.v.size() / 3));
+    std::uint64_t dead = 0;
+    if (!net.active.empty()) {
+      std::uint64_t live = query_clocks;
+      for (int p = 0; p < net.nprocs(); ++p) {
+        if (!net.active_mask.empty()) { live |= net.active_mask[p][locs[p]]; continue; }
+        for (int c = 1; c <= net.nclocks && c < 64; ++c)
+          if (net.active[p][locs[p]][c]) live |= std::uint64_t(1) << c;
+      }
+      const std::uint64_t clocks = (net.nclocks >= 63) ? ~std::uint64_t(1)
+                                                        : ((std::uint64_t(1) << net.nclocks) - 1) << 1;
+      dead = ~live & clocks;
+    }
+    out.dead.push_back(dead);
     if (canon) canon(locs, ints);
     out.key.push_back(kl.encode(locs, ints));
     out.flags.push_back(flags);
@@ -47,13 +67,14 @@ struct RecipeSink {
 
 void append_recipes(const Network& net, const KeyLayout& kl, const NetTarget& target,
                     const std::function<void(const LocVec&, IntVec&)>& canon,
-                    const LocVec& s_locs, const IntVec& s_ints, RecipeTable& out) {
+                    std::uint64_t query_clocks, const LocVec& s_locs, const IntVec& s_ints,
+                    RecipeTable& out) {
   // Plain locals, not thread_local: LocVec and IntVec draw on HDBM's per-thread pool, and a
   // thread_local container outlives that pool at thread exit and frees into it after it is gone.
   SymState s;   // build_broadcast_parts reads a SymState
   s.locs = s_locs;
   s.ints = s_ints;
-  RecipeSink k{net, kl, target, canon, out, {}, {}};
+  RecipeSink k{net, kl, target, canon, query_clocks, out, {}, {}, {}};
   bool src_committed, src_urgent;
   frozen_flags(net, s.locs, s.ints, &src_committed, &src_urgent);
   const auto committed_at = [&](int p) { return net.procs[p].locations[s.locs[p]].committed; };

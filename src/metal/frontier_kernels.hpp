@@ -5,7 +5,7 @@
 /// operations they call, and specialised per model through preprocessor macros:
 ///
 ///   PT_DIM   zone dimension (clocks + 1)        PT_NP    processes
-///   GZ       stored-zone entry type (short/int) FR_SGS   SIMD-groups per threadgroup
+///   GZ       stored-zone entry type (char/short/int)
 ///
 /// One level of the search, for one batch of the frontier (see frontier_metal.mm):
 ///
@@ -40,15 +40,17 @@ inline const char* frontier_kernels_source() {
 #ifndef GZ
 #define GZ short
 #endif
-#ifndef FR_SGS
-#define FR_SGS 4
-#endif
+// A kernel that runs one SIMD-group per item reads the number of SIMD-groups in its threadgroup
+// from [[simdgroups_per_threadgroup]]: the host sizes each launch from that pipeline's own limits
+// (FrontierMetal::launch_sgs), so the count differs between kernels and is not a constant here.
 
 
 #define kN    (PT_DIM)
 #define kNN   (PT_DIM * PT_DIM)
 #define kNP   (PT_NP)
-#define kTile 1024u                             // radix-sort and scan tile: 256 threads x 4
+// The scan and the radix sort work in tiles of four elements a thread. They run at whatever
+// threadgroup size the host found the pipeline supports -- a power of two from 32 to 256 -- so the
+// tile is 4 * [[threads_per_threadgroup]], never a constant.
 
 // ---- the zone arena: fixed-size pages, reached through a table of their GPU addresses ----------
 // Growing the arena adds a page; no zone ever moves, so no old and new copy of the store exist at
@@ -96,14 +98,15 @@ inline int loc_of(ulong key, device const int* kshift, device const ulong* kmask
   return int((key >> kshift[p]) & kmask[p]);
 }
 
-// Exclusive scan of one value per thread across a 256-thread threadgroup.
-inline uint tg_scan256(uint v, uint lane, uint sgid, threadgroup uint* sg, thread uint& total) {
+// Exclusive scan of one value per thread across the threadgroup, whatever its size: prefix sums
+// within each SIMD-group, then over the SIMD-group totals (nsg of them, at most 32) in `sg`.
+inline uint tg_scan(uint v, uint lane, uint sgid, uint nsg, threadgroup uint* sg, thread uint& total) {
   const uint pre = simd_prefix_exclusive_sum(v);
   const uint s = simd_sum(v);
   if (lane == 0) sg[sgid] = s;
   threadgroup_barrier(mem_flags::mem_threadgroup);
   uint off = 0, tot = 0;
-  for (uint i = 0; i < 8; ++i) { const uint x = sg[i]; off += (i < sgid) ? x : 0; tot += x; }
+  for (uint i = 0; i < nsg; ++i) { const uint x = sg[i]; off += (i < sgid) ? x : 0; tot += x; }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   total = tot;
   return pre + off;
@@ -113,30 +116,24 @@ inline uint tg_scan256(uint v, uint lane, uint sgid, threadgroup uint* sg, threa
 struct ExpandArgs {
   uint  nwork;
   int   has_tclock;   // the target constrains clocks: test tdbm on every target-matching successor
-  ulong qmask;        // clocks the query reads; never reset as inactive
-  ulong clockbits;    // bits 1..nclocks
   ulong sentinel;     // sort key of a disabled transition: above every discrete key
   int   extrap;       // apply Extra_LU+ (global bounds Lx, Ux) to every successor
   int   pad;
 };
 
-// Conjoin the invariants of every process's location in `key`.
-inline bool fr_invariants(threadgroup int* D, ulong key, device const int* kshift,
-                          device const ulong* kmask, device const int* locbase,
-                          device const int* inv_off, device const int* inv, uint lane) {
-  for (int p = 0; p < kNP; ++p) {
-    const int gl = locbase[p] + loc_of(key, kshift, kmask, p);
-    for (int c = inv_off[gl]; c < inv_off[gl + 1]; ++c)
-      if (!gdbm_constrain(D, kN, inv[3 * c], inv[3 * c + 1], inv[3 * c + 2], lane)) return false;
-  }
+// Conjoin the constraint triples c[from .. to).
+inline bool fr_constrain_all(threadgroup int* D, device const int* c, uint from, uint to, uint lane) {
+  for (uint k = from; k < to; ++k)
+    if (!gdbm_constrain(D, kN, c[3 * k], c[3 * k + 1], c[3 * k + 2], lane)) return false;
   return true;
 }
 
 // One SIMD-group per work item w = (frontier zone wf[w], transition wr[w]). Mirrors the CPU
 // successor pipeline exactly: every guard, every reset, the target invariant, delay unless the
-// target is committed or urgent (decided on the host, flag bit 0), the invariant again, and the
-// active-clock reduction. Writes the successor zone to its own slot, so the output order is the
-// work order and the search is deterministic.
+// target is committed or urgent, the invariant again, and the active-clock reduction. What
+// depends only on the target's discrete state -- frozen (flag bit 0), the invariant (rv), the dead
+// clocks (rdead) -- the host derived once per transition. Writes the successor zone to its own
+// slot, so the output order is the work order and the search is deterministic.
 kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
                       device const uint*  wr      [[buffer(1)]],
                       device const uint*  fz      [[buffer(2)]],
@@ -147,12 +144,9 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
                       device const int*   rg      [[buffer(7)]],
                       device const uint*  rr_off  [[buffer(8)]],
                       device const int*   rr      [[buffer(9)]],
-                      device const int*   locbase [[buffer(10)]],
-                      device const int*   inv_off [[buffer(11)]],
-                      device const int*   inv     [[buffer(12)]],
-                      device const ulong* actm    [[buffer(13)]],
-                      device const int*   kshift  [[buffer(14)]],
-                      device const ulong* kmask   [[buffer(15)]],
+                      device const uint*  rv_off  [[buffer(10)]],
+                      device const int*   rv      [[buffer(11)]],
+                      device const ulong* rdead   [[buffer(12)]],
                       device const int*   tdbm    [[buffer(16)]],
                       device GZ*          bz      [[buffer(17)]],
                       device ulong*       skey    [[buffer(18)]],
@@ -165,9 +159,10 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
                       device uint*        hshw    [[buffer(25)]],
                       threadgroup int*    tgm     [[threadgroup(0)]],
                       uint tg [[threadgroup_position_in_grid]],
+                      uint sgs  [[simdgroups_per_threadgroup]],
                       uint sgid [[simdgroup_index_in_threadgroup]],
                       uint lane [[thread_index_in_simdgroup]]) {
-  const uint w = tg * FR_SGS + sgid;
+  const uint w = tg * sgs + sgid;
   if (w >= A.nwork) return;
   threadgroup int* D = tgm + sgid * (kNN + kN);   // the zone, then a row of scratch
   const uint r = wr[w];
@@ -176,19 +171,17 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
   bool ok = true;
   for (uint g = rg_off[r]; ok && g < rg_off[r + 1]; ++g)
     ok = gdbm_constrain(D, kN, rg[3 * g], rg[3 * g + 1], rg[3 * g + 2], lane);
+  const uint v0 = rv_off[r], v1 = rv_off[r + 1];
   if (ok) {
     for (uint k = rr_off[r]; k < rr_off[r + 1]; ++k) gdbm_reset(D, kN, rr[k], lane);
-    ok = fr_invariants(D, key, kshift, kmask, locbase, inv_off, inv, lane);
+    ok = fr_constrain_all(D, rv, v0, v1, lane);
   }
   if (ok && !(rflags[r] & 1u)) {
     gdbm_up(D, kN, lane);
-    ok = fr_invariants(D, key, kshift, kmask, locbase, inv_off, inv, lane);
+    ok = fr_constrain_all(D, rv, v0, v1, lane);
   }
   if (ok) {
-    ulong live = A.qmask;
-    for (int p = 0; p < kNP; ++p) live |= actm[locbase[p] + loc_of(key, kshift, kmask, p)];
-    ulong dead = ~live & A.clockbits;
-    while (dead) { const int c = int(ctz(dead)); dead &= dead - 1; gdbm_reset(D, kN, c, lane); }
+    for (ulong dead = rdead[r]; dead; dead &= dead - 1) gdbm_reset(D, kN, int(ctz(dead)), lane);
     if (A.extrap) gdbm_extrapolate_lu_plus(D, kN, Lx, Ux, D + kNN, lane);
     // The target is tested on every successor BEFORE coverage can prune it, and on the exact zone,
     // before the store's entry width can reject it.
@@ -215,70 +208,82 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
 }
 
 // ---- exclusive scan -------------------------------------------------------------------------
-struct ScanArgs { uint n_in, n_out; };
-// out[i] = sum of in[0..i) within this 1024-element block; sums[block] = block total. Values at
-// i >= n_in read as 0, so a scan of n values over n + 1 outputs leaves the total at out[n].
+struct ScanArgs { uint n_in, n_out, tile; };
+// out[i] = sum of in[0..i) within this block of A.tile = 4 * threads elements; sums[block] = the
+// block total. Values at i >= n_in read as 0, so a scan of n values over n + 1 outputs leaves the
+// total at out[n].
 kernel void fr_scan_block(device const uint* in [[buffer(0)]], device uint* out [[buffer(1)]],
                           device uint* sums [[buffer(2)]], constant ScanArgs& A [[buffer(3)]],
                           uint tid [[thread_index_in_threadgroup]],
                           uint blk [[threadgroup_position_in_grid]],
                           uint lane [[thread_index_in_simdgroup]],
-                          uint sgid [[simdgroup_index_in_threadgroup]]) {
-  threadgroup uint sg[8];
-  const uint base = blk * kTile + tid * 4;
+                          uint sgid [[simdgroup_index_in_threadgroup]],
+                          uint nsg [[simdgroups_per_threadgroup]]) {
+  threadgroup uint sg[32];
+  const uint base = blk * A.tile + tid * 4;
   uint v[4], s = 0;
   for (uint q = 0; q < 4; ++q) { const uint i = base + q; v[q] = (i < A.n_in) ? in[i] : 0u; s += v[q]; }
   uint tot;
-  uint run = tg_scan256(s, lane, sgid, sg, tot);
+  uint run = tg_scan(s, lane, sgid, nsg, sg, tot);
   for (uint q = 0; q < 4; ++q) { const uint i = base + q; if (i < A.n_out) out[i] = run; run += v[q]; }
   if (tid == 0) sums[blk] = tot;
 }
 kernel void fr_scan_add(device uint* out [[buffer(0)]], device const uint* sums [[buffer(1)]],
                         constant ScanArgs& A [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-  if (i < A.n_out) out[i] += sums[i / kTile];
+  if (i < A.n_out) out[i] += sums[i / A.tile];
 }
 
 // ---- radix sort: stable LSD, 8 bits a pass ----------------------------------------------------
+// A tile is 4 * T elements for a threadgroup of T threads, T a power of two from 32 to 256 (so the
+// 256 digits split evenly over the threads). Histogram and scatter run at the same T.
 struct RsArgs { uint n, ntiles, shift; };
 kernel void fr_rs_hist(device const ulong* kin [[buffer(0)]], device uint* ghist [[buffer(1)]],
                        constant RsArgs& A [[buffer(2)]],
                        uint tid [[thread_index_in_threadgroup]],
-                       uint tile [[threadgroup_position_in_grid]]) {
+                       uint tile [[threadgroup_position_in_grid]],
+                       uint tpt [[threads_per_threadgroup]]) {
   threadgroup atomic_uint h[256];
-  atomic_store_explicit(&h[tid], 0u, memory_order_relaxed);
+  for (uint d = tid; d < 256; d += tpt) atomic_store_explicit(&h[d], 0u, memory_order_relaxed);
   threadgroup_barrier(mem_flags::mem_threadgroup);
+  const uint base = tile * tpt * 4;
   for (uint q = 0; q < 4; ++q) {
-    const uint i = tile * kTile + q * 256 + tid;
+    const uint i = base + q * tpt + tid;
     if (i < A.n) atomic_fetch_add_explicit(&h[uint((kin[i] >> A.shift) & 255ul)], 1u, memory_order_relaxed);
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  ghist[tid * A.ntiles + tile] = atomic_load_explicit(&h[tid], memory_order_relaxed);
+  for (uint d = tid; d < 256; d += tpt)
+    ghist[d * A.ntiles + tile] = atomic_load_explicit(&h[d], memory_order_relaxed);
 }
 // Sort the tile locally by the digit (eight stable 1-bit splits), then write each element at
 // its digit's global offset for this tile plus its rank among the tile's elements of that digit.
+// The tile's keys and values, twice over (the splits ping-pong), live in threadgroup memory the
+// host sizes from T: kbuf holds 2 * 4T ulongs, vbuf 2 * 4T uints.
 kernel void fr_rs_scatter(device const ulong* kin [[buffer(0)]], device const uint* vin [[buffer(1)]],
                           device ulong* kout [[buffer(2)]], device uint* vout [[buffer(3)]],
                           device const uint* gpre [[buffer(4)]], constant RsArgs& A [[buffer(5)]],
+                          threadgroup ulong* kbuf [[threadgroup(0)]],
+                          threadgroup uint* vbuf [[threadgroup(1)]],
                           uint tid [[thread_index_in_threadgroup]],
                           uint tile [[threadgroup_position_in_grid]],
                           uint lane [[thread_index_in_simdgroup]],
-                          uint sgid [[simdgroup_index_in_threadgroup]]) {
-  threadgroup ulong k0[kTile], k1[kTile];
-  threadgroup uint v0[kTile], v1[kTile];
-  threadgroup uint sg[8];
+                          uint sgid [[simdgroup_index_in_threadgroup]],
+                          uint tpt [[threads_per_threadgroup]],
+                          uint nsg [[simdgroups_per_threadgroup]]) {
+  threadgroup uint sg[32];
   threadgroup uint dstart[256];
   threadgroup atomic_uint h[256];
-  const uint base = tile * kTile;
-  const uint cnt = min(kTile, A.n - base);
+  const uint T4 = tpt * 4;
+  const uint base = tile * T4;
+  const uint cnt = min(T4, A.n - base);
+  threadgroup ulong* ks = kbuf;      threadgroup ulong* kd = kbuf + T4;
+  threadgroup uint*  vs = vbuf;      threadgroup uint*  vd = vbuf + T4;
   for (uint q = 0; q < 4; ++q) {               // coalesced load; padding sorts last (digit 255)
-    const uint i = q * 256 + tid;
-    k0[i] = (i < cnt) ? kin[base + i] : ~0ul;
-    v0[i] = (i < cnt) ? vin[base + i] : 0u;
+    const uint i = q * tpt + tid;
+    ks[i] = (i < cnt) ? kin[base + i] : ~0ul;
+    vs[i] = (i < cnt) ? vin[base + i] : 0u;
   }
-  atomic_store_explicit(&h[tid], 0u, memory_order_relaxed);
+  for (uint d = tid; d < 256; d += tpt) atomic_store_explicit(&h[d], 0u, memory_order_relaxed);
   threadgroup_barrier(mem_flags::mem_threadgroup);
-  threadgroup ulong* ks = k0; threadgroup ulong* kd = k1;
-  threadgroup uint* vs = v0; threadgroup uint* vd = v1;
   for (uint b = 0; b < 8; ++b) {
     ulong kk[4]; uint vv[4]; uint bit[4]; uint zeros = 0;
     for (uint q = 0; q < 4; ++q) {
@@ -288,7 +293,7 @@ kernel void fr_rs_scatter(device const ulong* kin [[buffer(0)]], device const ui
       zeros += 1u - bit[q];
     }
     uint Z;
-    uint zb = tg_scan256(zeros, lane, sgid, sg, Z);    // zeros before this thread's items
+    uint zb = tg_scan(zeros, lane, sgid, nsg, sg, Z);  // zeros before this thread's items
     for (uint q = 0; q < 4; ++q) {
       const uint i = tid * 4 + q;
       const uint dst = bit[q] ? (Z + (i - zb)) : zb;
@@ -304,11 +309,20 @@ kernel void fr_rs_scatter(device const ulong* kin [[buffer(0)]], device const ui
     if (i < cnt) atomic_fetch_add_explicit(&h[uint((ks[i] >> A.shift) & 255ul)], 1u, memory_order_relaxed);
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
+  // Digit starts within the tile: thread t takes digits [t * dpt, (t + 1) * dpt).
+  const uint dpt = 256 / tpt;
+  uint mine = 0;
+  for (uint k = 0; k < dpt; ++k) mine += atomic_load_explicit(&h[tid * dpt + k], memory_order_relaxed);
   uint tot;
-  dstart[tid] = tg_scan256(atomic_load_explicit(&h[tid], memory_order_relaxed), lane, sgid, sg, tot);
+  uint run = tg_scan(mine, lane, sgid, nsg, sg, tot);
+  for (uint k = 0; k < dpt; ++k) {
+    const uint d = tid * dpt + k;
+    dstart[d] = run;
+    run += atomic_load_explicit(&h[d], memory_order_relaxed);
+  }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   for (uint q = 0; q < 4; ++q) {
-    const uint i = q * 256 + tid;
+    const uint i = q * tpt + tid;
     if (i >= cnt) continue;
     const uint d = uint((ks[i] >> A.shift) & 255ul);
     const uint pos = gpre[d * A.ntiles + tile] + (i - dstart[d]);
@@ -494,9 +508,10 @@ kernel void fr_reduce_stored_big(device const uint*  hpre    [[buffer(0)]],
                                  device const uint*  big1    [[buffer(14)]],
                                  threadgroup int*    tgm     [[threadgroup(0)]],
                                  uint tg [[threadgroup_position_in_grid]],
+                                 uint sgs  [[simdgroups_per_threadgroup]],
                                  uint sgid [[simdgroup_index_in_threadgroup]],
                                  uint lane [[thread_index_in_simdgroup]]) {
-  const uint k = tg * FR_SGS + sgid;
+  const uint k = tg * sgs + sgid;
   if (k >= ctr[6]) return;
   const uint i = big1[k];
   const uint b = hpre[i] + head[i] - 1;
@@ -551,7 +566,7 @@ inline void fr_kill(uint a, device uint* alive, device const uint* zref, device 
   atomic_fetch_add_explicit(&ctr[3], 1u, memory_order_relaxed);
   const uint z = zref[a];
   if (atomic_fetch_sub_explicit(&zcnt[z], 1u, memory_order_relaxed) == 1u) {
-    atomic_store_explicit(&ztab[ztslot[z]], kZTomb, memory_order_relaxed);
+    if (ztslot[z] != 0xffffffffu) atomic_store_explicit(&ztab[ztslot[z]], kZTomb, memory_order_relaxed);
     pend[atomic_fetch_add_explicit(&ctr[5], 1u, memory_order_relaxed)] = z;
   }
 }
@@ -655,9 +670,10 @@ kernel void fr_reduce_pairs_big(device const uint*  rowoff  [[buffer(0)]],
                                 device const uint*  nbig    [[buffer(22)]],
                                 threadgroup int*    tgm     [[threadgroup(0)]],
                                 uint tg [[threadgroup_position_in_grid]],
+                                uint sgs  [[simdgroups_per_threadgroup]],
                                 uint sgid [[simdgroup_index_in_threadgroup]],
                                 uint lane [[thread_index_in_simdgroup]]) {
-  const uint k = tg * FR_SGS + sgid;
+  const uint k = tg * sgs + sgid;
   if (k >= nbig[7]) return;
   const uint row = big2[k];
   const uint b = segment_of(rowoff, hpre[A.W], row);
@@ -719,9 +735,10 @@ kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
                      device uint*        hshw    [[buffer(17)]],
                      threadgroup int*    tgm     [[threadgroup(0)]],
                      uint tg [[threadgroup_position_in_grid]],
+                     uint sgs  [[simdgroups_per_threadgroup]],
                      uint sgid [[simdgroup_index_in_threadgroup]],
                      uint lane [[thread_index_in_simdgroup]]) {
-  const uint k = tg * FR_SGS + sgid;
+  const uint k = tg * sgs + sgid;
   if (k >= atomic_load_explicit(&ctr[8], memory_order_relaxed)) return;
   const uint b = ulist[k];
   const uint4 st = binfo[2 * b], nw = binfo[2 * b + 1];
@@ -788,6 +805,12 @@ kernel void fr_keep_init(device const uint* keep1 [[buffer(0)]], device uint* ke
 // give each zone that claimed a slot its arena slot, copy it, and resolve the tag.
 constant uint kZEmpty = 0xffffffffu;
 constant uint kZTag = 0x80000000u;
+// A probe sequence is at most the table long, and a slot's claim is retried a bounded number of
+// times. The host keeps the table at most half full, so neither bound is reached unless that
+// invariant is broken; if it is, the error counter ctr[9] says so and the host abandons the GPU
+// search, instead of a thread spinning on a full table.
+constant uint kNoSlot = 0xffffffffu;
+#define FR_CAS_TRIES 4096
 
 
 inline bool fr_zone_eq(device const GZ* a, device const GZ* b) {
@@ -795,18 +818,28 @@ inline bool fr_zone_eq(device const GZ* a, device const GZ* b) {
   return true;
 }
 struct InternArgs { uint W; uint mask; };
+// An interning that found neither its zone nor a free slot (see kNoSlot): the candidate stands as
+// its own zone, outside the table, and ctr[9] marks the batch unusable.
+inline void fr_intern_fail(uint j, device atomic_uint* ctr_err, device uint* rep, device uint* zslot) {
+  atomic_fetch_add_explicit(ctr_err, 1u, memory_order_relaxed);
+  rep[j] = kZTag | j;
+  zslot[j] = kNoSlot;
+}
 kernel void fr_intern(device const uint* keep [[buffer(0)]], device const uint* ctr [[buffer(1)]],
                       device const uint* sval [[buffer(2)]], device const GZ* bz [[buffer(3)]],
                       device const ArenaPages& AP [[buffer(4)]], device const uint* hsh [[buffer(5)]],
                       device const uint* zhash [[buffer(6)]], device atomic_uint* ztab [[buffer(7)]],
                       device uint* rep [[buffer(8)]], device uint* zslot [[buffer(9)]],
-                      constant InternArgs& A [[buffer(10)]], uint j [[thread_position_in_grid]]) {
+                      constant InternArgs& A [[buffer(10)]], device atomic_uint* ctr_err [[buffer(11)]],
+                      uint j [[thread_position_in_grid]]) {
   if (j >= A.W || j >= ctr[0] || !keep[j]) return;
   const uint h = hsh[sval[j]];
   device const GZ* Z = bz + ulong(sval[j]) * kNN;
-  for (uint s = h & A.mask;; s = (s + 1) & A.mask) {
+  uint s = h & A.mask;
+  for (uint probe = 0; probe <= A.mask; ++probe, s = (s + 1) & A.mask) {
     uint v = atomic_load_explicit(&ztab[s], memory_order_relaxed);
-    while (v == kZEmpty) {                            // claim it, or learn who did
+    for (uint tries = 0; v == kZEmpty; ++tries) {     // claim it, or learn who did
+      if (tries == FR_CAS_TRIES) { fr_intern_fail(j, ctr_err, rep, zslot); return; }
       uint expected = kZEmpty;
       if (atomic_compare_exchange_weak_explicit(&ztab[s], &expected, kZTag | j,
                                                 memory_order_relaxed, memory_order_relaxed)) {
@@ -826,6 +859,7 @@ kernel void fr_intern(device const uint* keep [[buffer(0)]], device const uint* 
       return;
     }
   }
+  fr_intern_fail(j, ctr_err, rep, zslot);
 }
 // wlist[r] = the candidate that is the r-th new zone, so zplace runs over new zones only.
 kernel void fr_winlist(device const uint* win [[buffer(0)]], device const uint* wpre [[buffer(1)]],
@@ -863,7 +897,7 @@ kernel void fr_zplace(device const uint* wlist [[buffer(0)]], device const uint*
     zhash[z] = hsh[sval[j]];
     ztslot[z] = zslot[j];
     zcnt[z] = 0u;                                     // place_new counts the entries naming it
-    atomic_store_explicit(&ztab[zslot[j]], z, memory_order_relaxed);
+    if (zslot[j] != kNoSlot) atomic_store_explicit(&ztab[zslot[j]], z, memory_order_relaxed);
   }
 }
 
@@ -900,16 +934,20 @@ kernel void fr_fill_u32(device uint* v [[buffer(0)]], constant uint2& A [[buffer
 }
 kernel void fr_zrebuild(device const uint* zhash [[buffer(0)]], device atomic_uint* ztab [[buffer(1)]],
                         constant InternArgs& A [[buffer(2)]], device const uint* zcnt [[buffer(3)]],
-                        device uint* ztslot [[buffer(4)]], uint z [[thread_position_in_grid]]) {
+                        device uint* ztslot [[buffer(4)]], device atomic_uint* ctr_err [[buffer(5)]],
+                        uint z [[thread_position_in_grid]]) {
   if (z >= A.W || zcnt[z] == 0u) return;              // a free or queued slot holds no zone
-  for (uint s = zhash[z] & A.mask;; s = (s + 1) & A.mask) {
+  uint s = zhash[z] & A.mask;
+  for (uint probe = 0; probe <= A.mask; ++probe, s = (s + 1) & A.mask) {
     uint expected = kZEmpty;
-    while (!atomic_compare_exchange_weak_explicit(&ztab[s], &expected, z, memory_order_relaxed,
-                                                  memory_order_relaxed)) {
+    for (uint tries = 0; tries < FR_CAS_TRIES; ++tries) {
+      if (atomic_compare_exchange_weak_explicit(&ztab[s], &expected, z, memory_order_relaxed,
+                                                memory_order_relaxed)) { ztslot[z] = s; return; }
       if (expected != kZEmpty) break;               // taken: next slot
     }
-    if (expected == kZEmpty) { ztslot[z] = s; return; }
   }
+  ztslot[z] = kNoSlot;                                // a broken invariant: see kNoSlot
+  atomic_fetch_add_explicit(ctr_err, 1u, memory_order_relaxed);
 }
 
 // ---- merging sorted runs ----------------------------------------------------------------------------

@@ -52,7 +52,6 @@ namespace {
 
 constexpr int kMaxDim = 64;                   // clocks <= 63: one bit each in a 64-bit mask
 constexpr std::uint32_t kNoHit = UINT32_MAX;
-constexpr std::uint32_t kTile = 1024;         // must match the kernels' kTile
 constexpr std::size_t kMaxPages = 4096;       // must match the kernels' FR_MAX_PAGES
 constexpr std::size_t kPageBytes = std::size_t(256) << 20;
 // A level is cut into about this many chunks, of at least kMinChunkSlots frontier zones each, so
@@ -67,9 +66,13 @@ constexpr std::int32_t kByteMaxConst = 30;
 constexpr std::int32_t kShortMaxConst = 4000;
 struct Overflow {};   // a zone did not fit the store's entries
 
+// The GPU search cannot continue within its memory budget. Reported to the user as an error, the
+// way the benchmarks record a MEMOUT: the engine never asks the system for more than the budget.
+struct OutOfMemory : std::runtime_error { using std::runtime_error::runtime_error; };
+
 // Counters the kernels keep, in ctr_.
 enum Ctr { kValid = 0, kHit = 1, kNewKeys = 2, kKilled = 3, kWide = 4, kFreed = 5, kBig1 = 6, kBig2 = 7,
-           kUnion = 8 };
+           kUnion = 8, kErr = 9 };
 
 using Clock = std::chrono::steady_clock;
 inline double ms_since(Clock::time_point t) {
@@ -108,6 +111,14 @@ class FrontierMetal {
     dev_ = MTLCreateSystemDefaultDevice();
     if (!dev_) return false;
     q_ = [dev_ newCommandQueue];
+    // Memory budget: everything this engine allocates -- zone store, passed set, frontier, batch
+    // buffers, transition tables -- is counted against it (see alloc), and the engine never asks
+    // for more. It is Metal's recommended working set for this device, and at most three quarters
+    // of RAM: GPU buffers are the machine's own memory here. HORA_GPU_MEM_GB lowers it.
+    const std::size_t ram = static_cast<std::size_t>([NSProcessInfo processInfo].physicalMemory);
+    mem_cap_ = std::min<std::size_t>(static_cast<std::size_t>(dev_.recommendedMaxWorkingSetSize), ram / 4 * 3);
+    if (const char* m = std::getenv("HORA_GPU_MEM_GB"))
+      mem_cap_ = std::min<std::size_t>(mem_cap_, static_cast<std::size_t>(std::atof(m) * double(1ull << 30)));
 
     // Largest constant anywhere: decides the stored entry width.
     std::int32_t maxc = 0;
@@ -130,11 +141,9 @@ class FrontierMetal {
     while (page_shift_ < 24 && (std::size_t(2) << page_shift_) * nn_ * gz_ <= kPageBytes) ++page_shift_;
     page_zones_ = std::size_t(1) << page_shift_;
 
-    // SIMD-groups per threadgroup: as many as fit a 16 KB slice of threadgroup memory, so two
-    // threadgroups can share a core.
-    const int per_sg = 2 * nn_ * 4;   // the largest per-SIMD-group need: the union's zone and hull
-    sgs_ = std::max(1, std::min(8, 16384 / per_sg));
-    if (per_sg > 32768) return false;
+    // One SIMD-group of the union kernel holds a zone and its hull on chip; past this the model is
+    // too wide for the GPU engine (dim <= 64 always fits 32 KB).
+    if (2 * nn_ * 4 > 32768) return false;
 
     // The reduction tests coverage a pair per lane: a row alone where its bucket is small, the
     // whole SIMD-group on one row otherwise, every lane against a different zone (FR_SOLO is the
@@ -153,7 +162,7 @@ class FrontierMetal {
     NSError* err = nil;
     MTLCompileOptions* o = [[MTLCompileOptions alloc] init];
     o.preprocessorMacros = @{
-      @"PT_DIM" : @(n_), @"PT_NP" : @(np_), @"FR_SGS" : @(sgs_),
+      @"PT_DIM" : @(n_), @"PT_NP" : @(np_),
       @"GZ" : gz_ == 1 ? @"char" : gz_ == 2 ? @"short" : @"int",
       @"FR_SOLO" : @(solo_), @"FR_PAGE_SHIFT" : @(page_shift_),
       @"FR_MERGE_SCAN" : @(int(detail::kMergeScan)),
@@ -174,24 +183,31 @@ class FrontierMetal {
       FR_CHECK(f != nil, std::string("missing kernel ") + name);
       id<MTLComputePipelineState> ps = [dev_ newComputePipelineStateWithFunction:f error:&err];
       FR_CHECK(ps != nil, std::string("pipeline failed: ") + name);
+      // The kernels are written for 32-lane SIMD-groups, which every Apple GPU has.
+      FR_CHECK(ps.threadExecutionWidth == 32 && ps.maxTotalThreadsPerThreadgroup >= 32,
+               std::string("unexpected SIMD width or thread limit for ") + name);
       pso_[name] = ps;
     }
+    // Launch sizes come from each pipeline's own limits (launch_tpt / launch_sgs), never a
+    // constant: a pipeline's thread limit shrinks with the registers its kernel uses, and a
+    // launch above it is undefined behaviour in the driver. The sort and the scan need a power of
+    // two threads; the sort's tile also has to fit threadgroup memory (96 bytes a thread).
+    sort_t_ = std::min(launch_pow2("fr_rs_hist"), launch_pow2("fr_rs_scatter"));
+    {
+      const NSUInteger room = dev_.maxThreadgroupMemoryLength -
+                              pso_.at("fr_rs_scatter").staticThreadgroupMemoryLength;
+      while (sort_t_ > 32 && 96 * sort_t_ > room) sort_t_ /= 2;
+    }
+    scan_t_ = launch_pow2("fr_scan_block");
 
     // Static model tables.
     std::vector<int> locbase(np_ + 1, 0);
     for (int p = 0; p < np_; ++p) locbase[p + 1] = locbase[p] + int(net_.procs[p].locations.size());
     const int nloc = locbase[np_];
-    std::vector<int> inv_off(nloc + 1, 0), inv;
-    std::vector<std::uint64_t> actm(nloc, ~0ull);
     std::vector<int> Lloc(std::size_t(nloc) * n_, kAluNegInf), Uloc(std::size_t(nloc) * n_, kAluNegInf);
     for (int p = 0; p < np_; ++p)
       for (int l = 0; l < int(net_.procs[p].locations.size()); ++l) {
         const int gl = locbase[p] + l;
-        for (const auto& c : net_.procs[p].locations[l].invariant) {
-          inv.push_back(c.i); inv.push_back(c.j); inv.push_back(c.bound);
-        }
-        inv_off[gl + 1] = int(inv.size() / 3);
-        if (!net_.active.empty()) actm[gl] = net_.active_mask[p][l];
         for (int c = 0; c < n_; ++c) {
           if (!P_.Lloc.empty()) Lloc[std::size_t(gl) * n_ + c] = P_.Lloc[p][l][c];
           if (!P_.Uloc.empty()) Uloc[std::size_t(gl) * n_ + c] = P_.Uloc[p][l][c];
@@ -210,7 +226,7 @@ class FrontierMetal {
       if (!apply_all(t, P_.target->clock_cond)) { for (int i = 0; i < n_; ++i) tdbm[i * n_ + i] = -1; }
       else std::copy(t.data().begin(), t.data().end(), tdbm.begin());
     }
-    put(locbase_, locbase); put(inv_off_, inv_off); put(inv_, inv); put(actm_, actm);
+    put(locbase_, locbase);
     put(Lloc_, Lloc); put(Uloc_, Uloc); put(Lq_, Lq); put(Uq_, Uq);
     put(kshift_, kshift); put(kmask_, kmask); put(tdbm_, tdbm);
     put(Lx_, std::vector<int>(P_.Lx.begin(), P_.Lx.end()));
@@ -226,9 +242,9 @@ class FrontierMetal {
     passes_ = (key_bits_ + 1 + 7) / 8;
 
     // Batch budget: the per-work-item buffers of one batch (candidate zone, two sort buffers,
-    // grouping and reduction arrays, the work table) stay within an eighth of memory, capped.
-    const std::size_t ram = static_cast<std::size_t>([NSProcessInfo processInfo].physicalMemory);
-    const std::size_t budget = std::min<std::size_t>(ram / 8, std::size_t(2) << 30);
+    // grouping and reduction arrays, the work table) take at most a quarter of the memory budget,
+    // and at most 2 GB; the passed set and zone store have the rest.
+    const std::size_t budget = std::min<std::size_t>(mem_cap_ / 4, std::size_t(2) << 30);
     const std::size_t per_item = std::size_t(nn_) * gz_ + std::size_t(2 * n_) * bound_bytes_ + 140;
     wmax_ = std::max<std::size_t>(1024, budget / per_item);
     wmax_ = std::min<std::size_t>(wmax_, std::size_t(UINT32_MAX / 2));
@@ -236,7 +252,7 @@ class FrontierMetal {
     nthreads_ = omp_get_max_threads();
 #endif
     // One sums buffer per scan level, sized once: scan() recurses with references into this
-    // vector, so it must never reallocate. Eight levels of 1024-way blocks cover any length.
+    // vector, so it must never reallocate. Eight levels cover any length (a block is >= 128).
     scan_sums_.resize(8);
     trace_ = std::getenv("HORA_GPU_TRACE") != nullptr;
     // HORA_GPU_PROFILE: every kernel in its own command buffer, timed; a table at the end.
@@ -248,9 +264,10 @@ class FrontierMetal {
     if (stress_) wmax_ = 256;
     if (trace_)
       std::fprintf(stderr, "[gpu] %s | dim %d, %d procs, key %d bits, %s zones (%zu a page), "
-                   "%d SIMD-groups/tg, batch <= %zu items, solo rows <= %d zones\n", dev_.name.UTF8String,
-                   n_, np_, key_bits_, gz_ == 1 ? "8-bit" : gz_ == 2 ? "16-bit" : "32-bit", page_zones_,
-                   sgs_, wmax_, solo_);
+                   "batch <= %zu items, memory budget %.1f GB, sort/scan %lu/%lu threads\n",
+                   dev_.name.UTF8String, n_, np_, key_bits_,
+                   gz_ == 1 ? "8-bit" : gz_ == 2 ? "16-bit" : "32-bit", page_zones_, wmax_,
+                   double(mem_cap_) / double(1ull << 30), (unsigned long)sort_t_, (unsigned long)scan_t_);
     return true;
   }
 
@@ -258,7 +275,7 @@ class FrontierMetal {
   // The recipe and work tables of one chunk of a level. Two of them alternate, so the host can
   // enumerate chunk k+1 into one while the GPU reads chunk k from the other.
   struct Chunk {
-    Buf rkey, rflags, rg_off, rg, rr_off, rr, wf, wr;
+    Buf rkey, rflags, rg_off, rg, rr_off, rr, rv_off, rv, rdead, wf, wr;
     std::size_t W = 0;
   };
 
@@ -273,6 +290,8 @@ class FrontierMetal {
     reserve(zref_, 1024 * 4, false); zref_.as<std::uint32_t>()[0] = 0;
     reserve(freel_, 1024 * 4, false); reserve(pend_, 1024 * 4, false);
     zcount_ = 1;
+    reserve(ctr_, 64, false);            // the table build reports into ctr_[kErr]
+    std::memset(ctr_.b.contents, 0, 64);
     ensure_table(1024);
     reserve(alive_, 1024 * 4, false); alive_.as<std::uint32_t>()[0] = 1;
     reserve(base_k_, 1024 * 8, false); reserve(base_a_, 1024 * 4, false);
@@ -281,8 +300,6 @@ class FrontierMetal {
     reserve(fk_, 1024 * 8, false); reserve(fa_, 1024 * 4, false);
     fk_.as<std::uint64_t>()[0] = k0; fa_.as<std::uint32_t>()[0] = 0;
     acount_ = 1; nbase_ = 1; ndelta_ = 0; nf_ = 1;
-    reserve(ctr_, 64, false);
-    std::memset(ctr_.b.contents, 0, 64);
     reserve(ind_, 12 * 8, false);
 
     while (nf_ > 0) {
@@ -368,15 +385,17 @@ class FrontierMetal {
       P_.keys.decode(fk[runs_[r]], locs, ints);
       RecipeTable& t = tables_[tid];
       const std::size_t before = t.size();
-      append_recipes(net_, P_.keys, *P_.target, P_.canon, locs, ints, t);
+      append_recipes(net_, P_.keys, *P_.target, P_.canon, qbits_, locs, ints, t);
       run_tid_[r] = tid; run_lbeg_[r] = std::uint32_t(before); run_cnt_[r] = std::uint32_t(t.size() - before);
     }
     // Concatenate the per-thread tables straight into the chunk's shared recipe buffers.
-    std::vector<std::size_t> rb0(nthreads_ + 1, 0), gb(nthreads_ + 1, 0), xb(nthreads_ + 1, 0);
+    std::vector<std::size_t> rb0(nthreads_ + 1, 0), gb(nthreads_ + 1, 0), xb(nthreads_ + 1, 0),
+        vb(nthreads_ + 1, 0);
     for (int t = 0; t < nthreads_; ++t) {
       rb0[t + 1] = rb0[t] + tables_[t].size();
       gb[t + 1] = gb[t] + tables_[t].g.size() / 3;
       xb[t + 1] = xb[t] + tables_[t].r.size();
+      vb[t + 1] = vb[t] + tables_[t].v.size() / 3;
     }
     const std::size_t R = rb0[nthreads_];
     reserve(ch.rkey, std::max<std::size_t>(1, R) * 8, false);
@@ -385,6 +404,9 @@ class FrontierMetal {
     reserve(ch.rr_off, (R + 1) * 4, false);
     reserve(ch.rg, std::max<std::size_t>(1, gb[nthreads_]) * 12, false);
     reserve(ch.rr, std::max<std::size_t>(1, xb[nthreads_]) * 4, false);
+    reserve(ch.rv_off, (R + 1) * 4, false);
+    reserve(ch.rv, std::max<std::size_t>(1, vb[nthreads_]) * 12, false);
+    reserve(ch.rdead, std::max<std::size_t>(1, R) * 8, false);
 #ifdef HORA_HAVE_OPENMP
 #pragma omp parallel for schedule(static, 1) num_threads(nthreads_)
 #endif
@@ -393,18 +415,23 @@ class FrontierMetal {
       if (T.size()) {
         std::memcpy(ch.rkey.as<std::uint64_t>() + rb0[t], T.key.data(), T.size() * 8);
         std::memcpy(ch.rflags.as<std::uint32_t>() + rb0[t], T.flags.data(), T.size() * 4);
+        std::memcpy(ch.rdead.as<std::uint64_t>() + rb0[t], T.dead.data(), T.size() * 8);
       }
       if (!T.g.empty()) std::memcpy(ch.rg.as<std::int32_t>() + gb[t] * 3, T.g.data(), T.g.size() * 4);
       if (!T.r.empty()) std::memcpy(ch.rr.as<std::int32_t>() + xb[t], T.r.data(), T.r.size() * 4);
+      if (!T.v.empty()) std::memcpy(ch.rv.as<std::int32_t>() + vb[t] * 3, T.v.data(), T.v.size() * 4);
       std::uint32_t* go = ch.rg_off.as<std::uint32_t>();
       std::uint32_t* ro = ch.rr_off.as<std::uint32_t>();
+      std::uint32_t* vo = ch.rv_off.as<std::uint32_t>();
       for (std::size_t r = 0; r < T.size(); ++r) {
         go[rb0[t] + r] = std::uint32_t(gb[t] + T.g_off[r]);
         ro[rb0[t] + r] = std::uint32_t(xb[t] + T.r_off[r]);
+        vo[rb0[t] + r] = std::uint32_t(vb[t] + T.v_off[r]);
       }
     }
     ch.rg_off.as<std::uint32_t>()[R] = std::uint32_t(gb[nthreads_]);
     ch.rr_off.as<std::uint32_t>()[R] = std::uint32_t(xb[nthreads_]);
+    ch.rv_off.as<std::uint32_t>()[R] = std::uint32_t(vb[nthreads_]);
     // Work items, run by run: a prefix sum over the runs, then a parallel fill.
     std::vector<std::size_t> woff(rb - ra + 1, 0);
     for (std::size_t r = ra; r < rb; ++r) {
@@ -460,27 +487,28 @@ class FrontierMetal {
     reserve(win_, W * 4, false); reserve(wpre_, (W + 1) * 4, false); reserve(zid_, W * 4, false);
     reserve(wlist_, W * 4, false);
     ensure_table(W);
-    const std::uint32_t ntiles = std::uint32_t((W + kTile - 1) / kTile);
+    const std::uint32_t stile = std::uint32_t(4 * sort_t_);
+    const std::uint32_t ntiles = std::uint32_t((W + stile - 1) / stile);
     reserve(ghist_, std::size_t(ntiles) * 256 * 4, false);
     std::uint32_t* ctr = ctr_.as<std::uint32_t>();
     ctr[kValid] = 0; ctr[kHit] = kNoHit; ctr[kNewKeys] = 0; ctr[kKilled] = 0; ctr[kWide] = 0;
-    ctr[kBig1] = 0; ctr[kBig2] = 0; ctr[kUnion] = 0;
+    ctr[kBig1] = 0; ctr[kBig2] = 0; ctr[kUnion] = 0; ctr[kErr] = 0;
     freed_before_ = ctr[kFreed];   // cumulative over the level
 
     begin();
     // ---- expand ----
-    struct { std::uint32_t nwork; std::int32_t has_tclock; std::uint64_t qmask, clockbits, sentinel;
+    struct { std::uint32_t nwork; std::int32_t has_tclock; std::uint64_t sentinel;
              std::int32_t extrap, pad; }
-        ea{Wu, has_tclock_ ? 1 : 0, qbits_, clockbits_, sentinel_, extrap_ ? 1 : 0, 0};
+        ea{Wu, has_tclock_ ? 1 : 0, sentinel_, extrap_ ? 1 : 0, 0};
     use("fr_expand");
     bind({&ch.wf, &ch.wr, &fa_, &ptab_, &ch.rkey, &ch.rflags, &ch.rg_off, &ch.rg, &ch.rr_off,
-          &ch.rr, &locbase_, &inv_off_, &inv_, &actm_, &kshift_, &kmask_, &tdbm_, &bz_, &sk0_,
+          &ch.rr, &ch.rv_off, &ch.rv, &ch.rdead, nullptr, nullptr, nullptr, &tdbm_, &bz_, &sk0_,
           &sv0_, &ctr_});
     [enc_ setBuffer:ch.wf.b offset:w0 * 4 atIndex:0];
     [enc_ setBuffer:ch.wr.b offset:w0 * 4 atIndex:1];
     [enc_ setBytes:&ea length:sizeof(ea) atIndex:21];
     set(22, Lx_); set(23, Ux_); set(24, zref_); set(25, hsh_);
-    dispatch_sg(W, (nn_ + n_) * 4);
+    dispatch_sg(W, launch_sgs("fr_expand", (nn_ + n_) * 4), (nn_ + n_) * 4);
     // ---- sort by discrete key ----
     Buf* sk = &sk0_; Buf* sv = &sv0_;
     for (int pass = 0; pass < passes_; ++pass) {
@@ -490,12 +518,14 @@ class FrontierMetal {
       use("fr_rs_hist");
       bind({sk, &ghist_});
       [enc_ setBytes:&ra length:sizeof(ra) atIndex:2];
-      [enc_ dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+      [enc_ dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(sort_t_, 1, 1)];
       scan(ghist_, ghist_, ntiles * 256, ntiles * 256);
       use("fr_rs_scatter");
       bind({sk, sv, dk, dv, &ghist_});
       [enc_ setBytes:&ra length:sizeof(ra) atIndex:5];
-      [enc_ dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+      [enc_ setThreadgroupMemoryLength:2 * stile * 8 atIndex:0];   // keys, twice over
+      [enc_ setThreadgroupMemoryLength:2 * stile * 4 atIndex:1];   // values, twice over
+      [enc_ dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(sort_t_, 1, 1)];
       sk = dk; sv = dv;
     }
     // ---- group into buckets, and find each bucket's stored zones ----
@@ -513,25 +543,27 @@ class FrontierMetal {
     bind({&bkey_, &bstart_, &hpre_, &ctr_, &base_k_, &delta_k_, &binfo_, &rowcnt_});
     [enc_ setBytes:&ga length:sizeof(ga) atIndex:8];
     dispatch_threads(W);
-    indirect(hpre_, W, std::uint32_t(n_), 256, 3);
+    const std::uint32_t tbb = launch_tpt("fr_bucket_bounds");
+    indirect(hpre_, W, std::uint32_t(n_), tbb, 3);
     use("fr_bucket_bounds");
     bind({&bkey_, &hpre_, &Lloc_, &Uloc_, &Lq_, &Uq_, &locbase_, &kshift_, &kmask_, &Lb_, &Ub_});
     [enc_ setBytes:&Wu length:4 atIndex:11];
-    [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:3 * 12
-                           threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    dispatch_indirect(3, tbb);
     // ---- reduce, phase 1: each candidate against its bucket's stored zones ----
     struct { std::uint32_t W; } rd{Wu};
     const int tg_red = nn_ * 4;
-    indirect(ctr_, kValid, 1, 256, 0);
+    const std::uint32_t trs = launch_tpt("fr_reduce_stored");
+    indirect(ctr_, kValid, 1, trs, 0);
     use("fr_reduce_stored");
     bind({&hpre_, &head_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
           &keep1_, &ctr_, &zref_, &big1_, &ctr_});
-    dispatch_indirect(0, 256);
-    indirect(ctr_, kBig1, 1, sgs_, 4);
+    dispatch_indirect(0, trs);
+    const std::uint32_t sg1 = launch_sgs("fr_reduce_stored_big", tg_red);
+    indirect(ctr_, kBig1, 1, sg1, 4);
     use("fr_reduce_stored_big");
     bind({&hpre_, &head_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
           &keep1_, &ctr_, &zref_, &big1_});
-    dispatch_sg_indirect(4, tg_red);
+    dispatch_sg_indirect(4, sg1, tg_red);
     scan(keep1_, k1pre_, Wu, Wu + 1);
     use("fr_survivors");
     bind({&keep1_, &k1pre_, &surv_, &ctr_});
@@ -545,26 +577,30 @@ class FrontierMetal {
     dispatch_threads(W);
     scan(rowcnt_, rowoff_, Wu, Wu + 1);
     // ---- reduce, phase 2: survivors all-pairs, and stored zones against survivors ----
-    indirect(rowoff_, W, 1, 256, 1);
+    const std::uint32_t trp = launch_tpt("fr_reduce_pairs");
+    indirect(rowoff_, W, 1, trp, 1);
     use("fr_reduce_pairs");
     bind({&rowoff_, &hpre_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
           &keep_, &k1pre_, &surv_, nullptr, &ctr_, &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &big2_});
     [enc_ setBytes:&rd length:sizeof(rd) atIndex:14];
-    dispatch_indirect(1, 256);
-    indirect(ctr_, kBig2, 1, sgs_, 4);
+    dispatch_indirect(1, trp);
+    const std::uint32_t sg2 = launch_sgs("fr_reduce_pairs_big", tg_red);
+    indirect(ctr_, kBig2, 1, sg2, 4);
     use("fr_reduce_pairs_big");
     bind({&rowoff_, &hpre_, &binfo_, &Lb_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &Ub_,
           &keep_, &k1pre_, &surv_, nullptr, &ctr_, &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &big2_,
           &ctr_});
     [enc_ setBytes:&rd length:sizeof(rd) atIndex:14];
-    dispatch_sg_indirect(4, tg_red);
+    dispatch_sg_indirect(4, sg2, tg_red);
     // ---- convex union, as the CPU engine merges ----
     if (union_) {
-      indirect(ctr_, kUnion, 1, sgs_, 5);
+      const int tg_un = 2 * nn_ * 4;   // the zone and its hull
+      const std::uint32_t sgu = launch_sgs("fr_union", tg_un);
+      indirect(ctr_, kUnion, 1, sgu, 5);
       use("fr_union");
       bind({&ulist_, &binfo_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &keep_, &k1pre_, &surv_,
             &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &ctr_, &hsh_});
-      dispatch_sg_indirect(5, 2 * nn_ * 4);
+      dispatch_sg_indirect(5, sgu, tg_un);
     }
     // ---- intern the survivors' zones ----
     scan(keep_, kpre_, Wu, Wu + 1);
@@ -572,6 +608,7 @@ class FrontierMetal {
     use("fr_intern");
     bind({&keep_, &ctr_, sv, &bz_, &ptab_, &hsh_, &zhash_, &ztab_, &rep_, &zslot_});
     [enc_ setBytes:&ia length:sizeof(ia) atIndex:10];
+    [enc_ setBuffer:ctr_.b offset:kErr * 4 atIndex:11];
     dispatch_threads(W);
     use("fr_zwin");
     bind({&keep_, &ctr_, &rep_, &win_});
@@ -583,13 +620,13 @@ class FrontierMetal {
     [enc_ setBytes:&Wu length:4 atIndex:3];
     dispatch_threads(W);
     struct { std::uint32_t W, zcount, nfree; } za{Wu, std::uint32_t(zcount_), std::uint32_t(nfree_)};
-    indirect(wpre_, W, std::uint32_t(nn_), 256, 2);
+    const std::uint32_t tzp = launch_tpt("fr_zplace");
+    indirect(wpre_, W, std::uint32_t(nn_), tzp, 2);
     use("fr_zplace");
     bind({&wlist_, &wpre_, sv, &bz_, &ptab_, &hsh_, &zhash_, &ztab_, &zslot_, nullptr, &freel_, &zid_,
           &ztslot_, &zcnt_});
     [enc_ setBytes:&za length:sizeof(za) atIndex:9];
-    [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:2 * 12
-                           threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    dispatch_indirect(2, tzp);
     // ---- place the survivors, and merge them into the delta ----
     struct { std::uint32_t W, acount, fbase, zcount; }
         pa{Wu, std::uint32_t(acount_), std::uint32_t(nfn_), std::uint32_t(zcount_)};
@@ -612,6 +649,7 @@ class FrontierMetal {
     if (P_.stats) P_.stats->generated += nvalid;
     if (hit != kNoHit) return true;
     if (ctr[kWide]) throw Overflow{};
+    FR_CHECK(ctr[kErr] == 0, "zone table invariant broken (a full table)");
     const std::uint32_t kept = kpre_.as<std::uint32_t>()[W];
     const std::uint32_t fresh = wpre_.as<std::uint32_t>()[W];   // zones not already stored
     lvl_rows_ += rowoff_.as<std::uint32_t>()[W];
@@ -708,7 +746,7 @@ class FrontierMetal {
     wait(submit());
     std::swap(zref_, zref2_); std::swap(alive_, alive2_);
     acount_ = n;
-    for (Buf* b : {&zref2_, &alive2_, &remap_}) { [b->b setPurgeableState:MTLPurgeableStateEmpty]; b->b = nil; }
+    for (Buf* b : {&zref2_, &alive2_, &remap_}) release(*b);
   }
 
   // ---------------------------------------------------------------- the zone store
@@ -716,8 +754,11 @@ class FrontierMetal {
   void ensure_zones(std::size_t nz) {
     while (pages_.size() * page_zones_ < nz) {
       FR_CHECK(pages_.size() < kMaxPages, "zone arena exceeds its page table");
-      id<MTLBuffer> b = [dev_ newBufferWithLength:page_zones_ * nn_ * gz_ options:MTLResourceStorageModeShared];
-      FR_CHECK(b != nil, "out of GPU memory (arena page)");
+      const std::size_t bytes = page_zones_ * nn_ * gz_;
+      charge_mem(bytes, "a zone page");
+      id<MTLBuffer> b = [dev_ newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+      if (!b) throw OutOfMemory("out of GPU memory: the system refused a " + mb(bytes) + " zone page");
+      mem_used_ += bytes;
       ptab_.as<std::uint64_t>()[pages_.size()] = b.gpuAddress;
       pages_.push_back(b);
     }
@@ -740,11 +781,14 @@ class FrontierMetal {
     begin();
     fill(ztab_, zcap_, 0xffffffffu);
     struct { std::uint32_t W, mask; } ia{std::uint32_t(zcount_), std::uint32_t(zcap_ - 1)};
+    ctr_.as<std::uint32_t>()[kErr] = 0;
     use("fr_zrebuild");
     bind({&zhash_, &ztab_, nullptr, &zcnt_, &ztslot_});
     [enc_ setBytes:&ia length:sizeof(ia) atIndex:2];
+    [enc_ setBuffer:ctr_.b offset:kErr * 4 atIndex:5];
     dispatch_threads(zcount_);
     wait(submit());
+    FR_CHECK(ctr_.as<std::uint32_t>()[kErr] == 0, "zone table rebuild found the table full");
     ntomb_ = 0;
   }
   // The kernels' zone hash, on the host, for zone `z` (fr_entry_hash).
@@ -833,18 +877,44 @@ class FrontierMetal {
     for (const Buf* b : bufs) { if (b) [enc_ setBuffer:b->b offset:0 atIndex:i]; ++i; }
   }
   void set(NSUInteger index, const Buf& b) { [enc_ setBuffer:b.b offset:0 atIndex:index]; }
+  // ---- launch geometry, from each pipeline's own limits
+  // Threads a threadgroup of `name` may have: at most 256, within the pipeline's limit (which
+  // falls as its kernel's register use grows), in whole SIMD-groups.
+  std::uint32_t launch_tpt(const char* name) const {
+    const NSUInteger m = std::min<NSUInteger>(256, pso_.at(name).maxTotalThreadsPerThreadgroup);
+    return std::uint32_t(m & ~NSUInteger(31));   // >= 32: checked when the pipelines are made
+  }
+  // The largest power of two within launch_tpt (for the sort and the scan).
+  std::uint32_t launch_pow2(const char* name) const {
+    std::uint32_t t = 32;
+    while (2 * t <= launch_tpt(name)) t *= 2;
+    return t;
+  }
+  // SIMD-groups a threadgroup of `name` runs, each with `bytes` of threadgroup memory: at most 8,
+  // within the thread limit and the threadgroup memory left beside the kernel's static arrays.
+  std::uint32_t launch_sgs(const char* name, int bytes) const {
+    const id<MTLComputePipelineState> ps = pso_.at(name);
+    const NSUInteger room = dev_.maxThreadgroupMemoryLength - ps.staticThreadgroupMemoryLength;
+    std::uint32_t k = std::min<std::uint32_t>(8, launch_tpt(name) / 32);
+    while (k > 1 && tg_len(k, bytes) > room) --k;
+    FR_CHECK(tg_len(k, bytes) <= room, std::string("threadgroup memory too small for ") + name);
+    return k;
+  }
+  static NSUInteger tg_len(std::uint32_t sgs, int bytes) {
+    return (NSUInteger(sgs) * NSUInteger(bytes) + 15) & ~NSUInteger(15);
+  }
   void dispatch_threads(std::size_t n) {
     if (n == 0) return;
     const NSUInteger tg = std::min<NSUInteger>(256, cur_.maxTotalThreadsPerThreadgroup);
     [enc_ dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
   }
-  // One SIMD-group per item, `tg_per_sg` bytes of threadgroup memory each.
-  void dispatch_sg(std::size_t items, int tg_per_sg) {
+  // One SIMD-group per item, `sgs` SIMD-groups a threadgroup (launch_sgs), `bytes` of
+  // threadgroup memory each.
+  void dispatch_sg(std::size_t items, std::uint32_t sgs, int bytes) {
     if (items == 0) return;
-    const NSUInteger len = (NSUInteger(sgs_) * tg_per_sg + 15) & ~NSUInteger(15);
-    [enc_ setThreadgroupMemoryLength:len atIndex:0];
-    const std::size_t groups = (items + sgs_ - 1) / sgs_;
-    [enc_ dispatchThreadgroups:MTLSizeMake(groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(sgs_ * 32, 1, 1)];
+    [enc_ setThreadgroupMemoryLength:tg_len(sgs, bytes) atIndex:0];
+    const std::size_t groups = (items + sgs - 1) / sgs;
+    [enc_ dispatchThreadgroups:MTLSizeMake(groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(sgs * 32, 1, 1)];
   }
   // Indirect dispatch: slot `slot` of ind_ := threadgroups covering src[index] * mul items at
   // per_tg items a threadgroup, computed on the device.
@@ -861,23 +931,25 @@ class FrontierMetal {
     [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:slot * 12
                            threadsPerThreadgroup:MTLSizeMake(per_tg, 1, 1)];
   }
-  void dispatch_sg_indirect(std::uint32_t slot, int tg_per_sg) {
-    const NSUInteger len = (NSUInteger(sgs_) * tg_per_sg + 15) & ~NSUInteger(15);
-    [enc_ setThreadgroupMemoryLength:len atIndex:0];
+  // The SIMD-group form: `sgs` must be the per_tg the slot was computed with.
+  void dispatch_sg_indirect(std::uint32_t slot, std::uint32_t sgs, int bytes) {
+    [enc_ setThreadgroupMemoryLength:tg_len(sgs, bytes) atIndex:0];
     [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:slot * 12
-                           threadsPerThreadgroup:MTLSizeMake(sgs_ * 32, 1, 1)];
+                           threadsPerThreadgroup:MTLSizeMake(sgs * 32, 1, 1)];
   }
   // Exclusive scan of in[0 .. n_in) into out[0 .. n_out); in-place is allowed.
   void scan(const Buf& in, const Buf& out, std::uint32_t n_in, std::uint32_t n_out,
             std::size_t level = 0) {
     if (n_out == 0) return;
-    const std::uint32_t nblk = (n_out + kTile - 1) / kTile;
+    FR_CHECK(level < scan_sums_.size(), "scan nests too deep");
+    const std::uint32_t tile = 4 * scan_t_;   // four elements a thread
+    const std::uint32_t nblk = (n_out + tile - 1) / tile;
     reserve(scan_sums_[level], std::size_t(nblk) * 4, false);
-    struct { std::uint32_t n_in, n_out; } sa{n_in, n_out};
+    struct { std::uint32_t n_in, n_out, tile; } sa{n_in, n_out, tile};
     use("fr_scan_block");
     bind({&in, &out, &scan_sums_[level]});
     [enc_ setBytes:&sa length:sizeof(sa) atIndex:3];
-    [enc_ dispatchThreadgroups:MTLSizeMake(nblk, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc_ dispatchThreadgroups:MTLSizeMake(nblk, 1, 1) threadsPerThreadgroup:MTLSizeMake(scan_t_, 1, 1)];
     if (nblk > 1) {
       scan(scan_sums_[level], scan_sums_[level], nblk, nblk, level + 1);
       use("fr_scan_add");
@@ -922,16 +994,40 @@ class FrontierMetal {
   }
 
   // ---------------------------------------------------------------- buffers
+  // Grow `b` to at least `bytes` (half again its size when the budget allows), keeping its
+  // contents when `keep`. A kept buffer's old and new copies coexist during the copy and both
+  // count; an unkept one is released first.
   void reserve(Buf& b, std::size_t bytes, bool keep) {
     bytes = std::max<std::size_t>(bytes, 16);
     if (b.b && b.bytes() >= bytes) return;
-    const std::size_t want = std::max(bytes, b.bytes() + b.bytes() / 2);
+    if (!keep) release(b);
+    const std::size_t limit = static_cast<std::size_t>(dev_.maxBufferLength);
+    if (bytes > limit)
+      throw OutOfMemory("out of GPU memory: a " + mb(bytes) + " buffer exceeds the device's " +
+                        mb(limit) + " limit");
+    std::size_t want = std::min(limit, std::max(bytes, b.bytes() + b.bytes() / 2));
+    if (mem_used_ + want > mem_cap_) want = bytes;
+    charge_mem(want, "a buffer");
     id<MTLBuffer> nb = [dev_ newBufferWithLength:want options:MTLResourceStorageModeShared];
-    FR_CHECK(nb != nil, "out of GPU memory (" + std::to_string(want >> 20) + " MB buffer)");
-    if (keep && b.b) std::memcpy(nb.contents, b.b.contents, b.bytes());
-    if (b.b) [b.b setPurgeableState:MTLPurgeableStateEmpty];
+    if (!nb) throw OutOfMemory("out of GPU memory: the system refused a " + mb(want) + " buffer");
+    mem_used_ += want;
+    if (b.b) std::memcpy(nb.contents, b.b.contents, b.bytes());
+    release(b);
     b.b = nb;
   }
+  void release(Buf& b) {
+    if (!b.b) return;
+    mem_used_ -= b.bytes();
+    [b.b setPurgeableState:MTLPurgeableStateEmpty];
+    b.b = nil;
+  }
+  // Fails the search when `bytes` more would pass the memory budget.
+  void charge_mem(std::size_t bytes, const char* what) const {
+    if (mem_used_ + bytes <= mem_cap_) return;
+    throw OutOfMemory("out of GPU memory: " + std::string(what) + " of " + mb(bytes) + " would pass the " +
+                      mb(mem_cap_) + " budget (" + mb(mem_used_) + " in use; HORA_GPU_MEM_GB sets it)");
+  }
+  static std::string mb(std::size_t bytes) { return std::to_string((bytes + (1u << 20) - 1) >> 20) + " MB"; }
   template <class T>
   void put(Buf& b, const std::vector<T>& v) {
     reserve(b, std::max<std::size_t>(1, v.size()) * sizeof(T), false);
@@ -940,7 +1036,9 @@ class FrontierMetal {
 
   const FrontierProblem& P_;
   const Network& net_;
-  int n_ = 0, nn_ = 0, np_ = 0, sgs_ = 1, gz_ = 2, passes_ = 1, key_bits_ = 0, nthreads_ = 1;
+  int n_ = 0, nn_ = 0, np_ = 0, gz_ = 2, passes_ = 1, key_bits_ = 0, nthreads_ = 1;
+  std::uint32_t sort_t_ = 256, scan_t_ = 256;   // threads a threadgroup of the sort and the scan
+  std::size_t mem_cap_ = 0, mem_used_ = 0;      // the memory budget, and what is allocated
   bool has_tclock_ = false;
   int solo_ = 8, bound_bytes_ = 2;
   bool union_ = true;
@@ -962,7 +1060,7 @@ class FrontierMetal {
   std::map<std::string, std::pair<double, std::size_t>> prof_;   // kernel -> (GPU ms, dispatches)
 
   // model tables
-  Buf locbase_, inv_off_, inv_, actm_, Lloc_, Uloc_, Lq_, Uq_, kshift_, kmask_, tdbm_, Lx_, Ux_;
+  Buf locbase_, Lloc_, Uloc_, Lq_, Uq_, kshift_, kmask_, tdbm_, Lx_, Ux_;
   // the zone store: a paged arena, and per zone its hash, table slot and reference count
   std::vector<id<MTLResource>> pages_;
   Buf ptab_;
@@ -1012,15 +1110,14 @@ int frontier_reach_metal(const FrontierProblem& p) {
         // A zone did not fit the stored entries: start over one width up. Nothing of the
         // abandoned attempt survives, including its statistics.
         const int got = m.bits();
-        if (got >= 32) return -1;
+        if (got >= 32) throw std::runtime_error("Metal frontier: a zone exceeds 32-bit entries");
         bits = got * 2;
         if (p.stats) *p.stats = before;
         if (std::getenv("HORA_GPU_TRACE"))
           std::fprintf(stderr, "[gpu] a zone exceeds %d-bit entries: restarting with %d-bit\n", got, bits);
-      } catch (const std::exception& e) {
-        std::fprintf(stderr, "warning: %s; falling back to the CPU engine\n", e.what());
-        return -1;
       }
+      // Any other failure -- out of memory, a failed command buffer -- propagates to the caller
+      // as an error: the GPU engine does not hand a search it started to the CPU.
     }
   }
 }
