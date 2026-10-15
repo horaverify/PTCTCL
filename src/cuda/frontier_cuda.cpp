@@ -82,7 +82,7 @@ struct DlState {
 struct OutOfMemory : std::runtime_error { using std::runtime_error::runtime_error; };
 
 enum Ctr { kValid = 0, kHit = 1, kNewKeys = 2, kKilled = 3, kWide = 4, kFreed = 5, kBig1 = 6, kBig2 = 7,
-           kUnion = 8, kErr = 9, kSumKept = 16, kSumFresh = 17, kSumRows = 18, kSumBuckets = 19, kNCtr = 20 };
+           kUnion = 8, kErr = 9, kExpanded = 10, kSumKept = 16, kSumFresh = 17, kSumRows = 18, kSumBuckets = 19, kNCtr = 20 };
 
 using Clock = std::chrono::steady_clock;
 inline double ms_since(Clock::time_point t) {
@@ -101,6 +101,7 @@ inline double ms_since(Clock::time_point t) {
 struct Buf {
   void* p = nullptr;
   std::size_t cap = 0;
+  bool managed = false;   // unified memory: the host-side narrow-level path reads and writes it directly
   template <class T> T* as() const { return static_cast<T*>(p); }
   std::size_t bytes() const { return cap; }
 };
@@ -140,7 +141,15 @@ class FrontierCuda {
 
   int run() {
     if (!setup()) return -1;
-    return search();
+    int r;
+    try {
+      r = search();
+    } catch (const OutOfMemory&) {
+      if (mem_report_) report_memory("out of memory");
+      throw;
+    }
+    if (mem_report_) report_memory("end of search");
+    return r;
   }
 
  private:
@@ -163,6 +172,11 @@ class FrontierCuda {
     int ndev = 0;
     if (cudaGetDeviceCount(&ndev) != cudaSuccess || ndev < 1) { cudaGetLastError(); return false; }
     CK(cudaSetDevice(0));
+    // Bookkeeping the narrow-level host path touches lives in unified memory (see host_level).
+    for (Buf* b : {&zhash_, &ztslot_, &zcnt_, &ztab_, &freel_, &pend_, &zref_, &zref2_, &alive_, &alive2_,
+                   &base_k_, &base_a_, &base2_k_, &base2_a_, &delta_k_, &delta_a_, &delta2_k_, &delta2_a_,
+                   &fnk_, &fna_, &fk_, &fa_})
+      b->managed = true;
     cudaDeviceProp prop{};
     CK(cudaGetDeviceProperties(&prop, 0));
     dev_name_ = prop.name;
@@ -207,6 +221,7 @@ class FrontierCuda {
     solo_ = 8;
     union_ = !(std::getenv("HORA_GPU_UNION") && std::string(std::getenv("HORA_GPU_UNION")) == "0");
     if (const char* v = std::getenv("HORA_GPU_SOLO")) solo_ = std::atoi(v);
+    union_par_ = !(std::getenv("HORA_GPU_UNION_PAR") && std::string(std::getenv("HORA_GPU_UNION_PAR")) == "0");
     antichain_ = std::getenv("HORA_GPU_ANTICHAIN") && std::string(std::getenv("HORA_GPU_ANTICHAIN")) == "1";
 
     cu::Dims dims{n_, nn_, np_, page_shift_, int(detail::kMergeScan), P_.gsim ? 1 : 0};
@@ -242,6 +257,8 @@ class FrontierCuda {
       if (!apply_all(t, P_.target->clock_cond)) { for (int i = 0; i < n_; ++i) tdbm[i * n_ + i] = -1; }
       else std::copy(t.data().begin(), t.data().end(), tdbm.begin());
     }
+    hLloc_ = Lloc; hUloc_ = Uloc; hLq_ = Lq; hUq_ = Uq; hlocbase_ = locbase; hkshift_ = kshift;
+    hkmask_ = kmask; htdbm_ = tdbm;
     put(locbase_, locbase);
     put(Lloc_, Lloc); put(Uloc_, Uloc); put(Lq_, Lq); put(Uq_, Uq);
     put(kshift_, kshift); put(kmask_, kmask); put(tdbm_, tdbm);
@@ -270,6 +287,8 @@ class FrontierCuda {
 #endif
     scan_sums_.resize(8);
     trace_ = std::getenv("HORA_GPU_TRACE") != nullptr;
+    mem_report_ = trace_ || std::getenv("HORA_GPU_MEM") != nullptr;
+    if (const char* h = std::getenv("HORA_GPU_HOST_LEVEL")) host_max_ = std::size_t(std::atoll(h));
     stress_ = std::getenv("HORA_GPU_STRESS") != nullptr;
     if (stress_) wmax_ = 256;
     if (trace_)
@@ -308,7 +327,6 @@ class FrontierCuda {
     while (nf_ > 0) {
       if (P_.cancel && P_.cancel->load(std::memory_order_relaxed)) return 0;
       if (P_.deadlock && deadlock_level()) return 1;
-      if (P_.stats) P_.stats->explored += nf_;
       nf_prev_ = nf_;
       t_enum_ = t_wait_ = 0;
       lvl_w_ = lvl_valid_ = lvl_kept_ = lvl_rows_ = lvl_buckets_ = 0;
@@ -326,7 +344,20 @@ class FrontierCuda {
       std::vector<std::size_t> cuts{0};
       for (std::size_t r = 0; r < nr; ++r)
         if (runs_[r + 1] - runs_[cuts.back()] >= chunk_slots || r + 1 == nr) cuts.push_back(r + 1);
-      prepare(cuts[0], cuts[1], chunks_[0]);
+      // A narrow level runs on the CPU (see host_level): its recipes are enumerated in one go and
+      // the estimated covering work decides; a level that turns out wide runs on the GPU as one
+      // chunk, already enumerated.
+      if (host_max_ && nf_ <= kHostFrontier) {
+        cuts.assign({0, nr});
+        prepare(0, nr, chunks_[0]);
+        if (host_cost(chunks_[0]) <= host_max_) {
+          if (host_level(chunks_[0])) return 1;
+          cuts.assign({0});   // the GPU loop below has nothing to do
+          ++lvl_host_;
+        }
+      } else {
+        prepare(cuts[0], cuts[1], chunks_[0]);
+      }
       for (std::size_t c = 0; c + 1 < cuts.size(); ++c) {
         Chunk& ch = chunks_[c & 1];
         const bool more = c + 2 < cuts.size();
@@ -395,7 +426,7 @@ class FrontierCuda {
 
     // The frontier zones at keys that can be stuck at all.
     std::vector<std::uint32_t> ent(nf_);
-    if (nf_) CK(cudaMemcpy(ent.data(), fa_.p, nf_ * 4, cudaMemcpyDeviceToHost));
+    if (nf_) CK(cudaMemcpy(ent.data(), fa_.p, nf_ * 4, cudaMemcpyDefault));
     std::vector<std::uint32_t> pick;     // frontier slots to test
     for (std::size_t i = 0; i < nf_; ++i) {
       const auto it = dl_->seeded.find(fk[i]);
@@ -414,7 +445,7 @@ class FrontierCuda {
       h2d(dsel_.p, sel.data(), m * 4);
       cu::gather_zones(gz_, reinterpret_cast<cu::Pages>(ptab_.p), zref_.as<std::uint32_t>(), dsel_.as<std::uint32_t>(), std::uint32_t(m), dzone_.p, stream_);
       raw.resize(m * zbytes);
-      CK(cudaMemcpyAsync(raw.data(), dzone_.p, m * zbytes, cudaMemcpyDeviceToHost, stream_));
+      CK(cudaMemcpyAsync(raw.data(), dzone_.p, m * zbytes, cudaMemcpyDefault, stream_));
       wait();
       std::atomic<bool> found{false};
 #ifdef HORA_HAVE_OPENMP
@@ -559,7 +590,7 @@ class FrontierCuda {
     const std::size_t sort_need = cu::sort_pairs(nullptr, 0, nullptr, nullptr, nullptr, nullptr, Wu,
                                                  key_bits_ + 1, stream_);
     reserve(sort_tmp_, sort_need, false);
-    std::uint32_t init[10] = {0, kNoHit, 0, 0, 0, std::uint32_t(freed_mirror_), 0, 0, 0, 0};
+    std::uint32_t init[11] = {0, kNoHit, 0, 0, 0, std::uint32_t(freed_mirror_), 0, 0, 0, 0, 0};
     h2d_async(ctr_.p, init, sizeof(init));
     freed_before_ = std::uint32_t(freed_mirror_);
 
@@ -589,6 +620,8 @@ class FrontierCuda {
       e.Lx = Lx_.as<int>();
       e.Ux = Ux_.as<int>();
       e.zref = zref_.as<std::uint32_t>();
+      e.alive = alive_.as<std::uint32_t>();
+      e.prev_slot = w0 ? ch.wf.h.as<std::uint32_t>()[w0 - 1] : UINT32_MAX;
       e.hshw = hsh_.as<std::uint32_t>();
       e.nwork = Wu;
       e.has_tclock = has_tclock_ ? 1 : 0;
@@ -664,7 +697,8 @@ class FrontierCuda {
         CK(cudaMemsetAsync(chg_.p, 0, (std::size_t(Wu) + 1) * 4, stream_));
         R.chg = chg_.as<std::uint32_t>();
       }
-      cu::merge_union(gz, R, sgs_union_, stream_);
+      if (union_par_) cu::merge_union_par(gz, R, std::max<std::uint32_t>(1, std::min<std::uint32_t>(sgs_union_, 8)), stream_);
+      else cu::merge_union(gz, R, sgs_union_, stream_);
       if (antichain_) cu::antichain(gz, R, stream_);
     }
     // ---- intern the survivors' zones ----
@@ -720,7 +754,7 @@ class FrontierCuda {
           delta2_k_, delta2_a_);
     cu::summary(ctr_.as<std::uint32_t>(), kpre_.as<std::uint32_t>(), wpre_.as<std::uint32_t>(),
                 rowoff_.as<std::uint32_t>(), hpre_.as<std::uint32_t>(), Wu, stream_);
-    CK(cudaMemcpyAsync(hc_, ctr_.p, kNCtr * 4, cudaMemcpyDeviceToHost, stream_));
+    CK(cudaMemcpyAsync(hc_, ctr_.p, kNCtr * 4, cudaMemcpyDefault, stream_));
     CK(cudaGetLastError());
   }
 
@@ -728,7 +762,7 @@ class FrontierCuda {
   bool finish_batch(std::size_t) {
     const std::uint32_t nvalid = hc_[kValid], hit = hc_[kHit];
     lvl_valid_ += nvalid;
-    if (P_.stats) P_.stats->generated += nvalid;
+    if (P_.stats) { P_.stats->generated += nvalid; P_.stats->explored += hc_[kExpanded]; }
     if (hit != kNoHit) return true;
     if (hc_[kWide]) throw Overflow{};
     FR_CHECK(hc_[kErr] == 0, "zone table invariant broken (a full table)");
@@ -753,6 +787,292 @@ class FrontierCuda {
     return false;
   }
 
+  // ---------------------------------------------------------------- narrow levels on the CPU
+  // A level whose covering work is small costs more in GPU round trips than in work: `single` runs
+  // thousands of levels of a handful of zones. Such a level is processed here, on the same
+  // structures (they live in unified memory), by inserting its successors one at a time in rank
+  // order -- the CPU engine's canonical order. Everything the GPU path maintains (entries,
+  // reference counts, the zone table, the free list, the sorted delta, the next frontier) is
+  // maintained the same way, so levels alternate freely between the two. HORA_GPU_HOST_LEVEL: the
+  // largest estimated number of covering tests a level may need to run here (0: never).
+
+  // Entries (live or dead) of `key` in the base and the delta: the cost estimate's group size.
+  std::size_t stored_in(std::uint64_t key) const {
+    auto cnt = [&](const Buf& kb, std::size_t n) {
+      const std::uint64_t* k = kb.as<std::uint64_t>();
+      return std::size_t(std::upper_bound(k, k + n, key) - std::lower_bound(k, k + n, key));
+    };
+    return cnt(base_k_, nbase_) + cnt(delta_k_, ndelta_);
+  }
+  // Covering tests the level would run sequentially: one per stored zone of each successor's group.
+  std::size_t host_cost(const Chunk& ch) const {
+    const std::uint32_t* wr = ch.wr.h.as<std::uint32_t>();
+    const std::uint64_t* rk = ch.rkey.h.as<std::uint64_t>();
+    std::unordered_map<std::uint64_t, std::size_t> group;
+    std::size_t cost = 0;
+    for (std::size_t w = 0; w < ch.W; ++w) {
+      const std::uint64_t k = rk[wr[w]];
+      auto it = group.find(k);
+      if (it == group.end()) it = group.emplace(k, stored_in(k) + 1).first;
+      cost += it->second;
+      if (cost > host_max_) break;
+    }
+    return cost;
+  }
+  void* zone_ptr(std::size_t z) const {
+    return static_cast<char*>(pages_[z >> page_shift_]) + (z & (page_zones_ - 1)) * nn_ * gz_;
+  }
+  // A zone in the store's form, widened to raw bounds.
+  void load_raw(const void* p, raw_t* d) const {
+    for (int e = 0; e < nn_; ++e)
+      d[e] = gz_ == 1 ? zget(static_cast<const sraw_t*>(p), e)
+           : gz_ == 2 ? zget(static_cast<const nraw_t*>(p), e)
+                      : static_cast<const raw_t*>(p)[e];
+  }
+  // Raw bounds into the store's form; Overflow when an entry does not fit (as the kernels flag).
+  void store_raw(const raw_t* d, void* p) const {
+    for (int k = 0; k < nn_; ++k) {
+      const bool fits = d[k] >= kInf || (gz_ == 1 ? (d[k] > -127 && d[k] < kSInf)
+                                         : gz_ == 2 ? (d[k] > -32767 && d[k] < kNInf) : true);
+      if (!fits) throw Overflow{};
+    }
+    for (int k = 0; k < nn_; ++k) {
+      if (gz_ == 1) zput(static_cast<sraw_t*>(p), k, d[k]);
+      else if (gz_ == 2) zput(static_cast<nraw_t*>(p), k, d[k]);
+      else static_cast<raw_t*>(p)[k] = d[k];
+    }
+  }
+  bool try_union_with(raw_t* x, const void* y) const {
+    if (gz_ == 1) return dbm_try_union(x, static_cast<const sraw_t*>(y), n_);
+    if (gz_ == 2) return dbm_try_union(x, static_cast<const nraw_t*>(y), n_);
+    return dbm_try_union(x, static_cast<const raw_t*>(y), n_);
+  }
+  // The kernels' fr_entry_hash over a zone in the store's form (see store_zone).
+  std::uint32_t hash_stored(const void* p) const {
+    std::uint32_t h = 0;
+    for (int e = 0; e < nn_; ++e) {
+      const std::int32_t v = gz_ == 1 ? std::int32_t(static_cast<const std::int8_t*>(p)[e])
+                           : gz_ == 2 ? std::int32_t(static_cast<const std::int16_t*>(p)[e])
+                                      : static_cast<const std::int32_t*>(p)[e];
+      h += mix32(std::uint32_t(e) * 0x9e3779b9u ^ std::uint32_t(v));
+    }
+    return mix32(h);
+  }
+  // The covering's bounds at a discrete key, as bucket_bounds computes them.
+  void key_bounds(std::uint64_t key, std::vector<std::int32_t>& L, std::vector<std::int32_t>& U) const {
+    const bool g = P_.gsim;
+    L.assign(hLq_.begin(), hLq_.begin() + n_);
+    U.assign(hUq_.begin(), hUq_.begin() + n_);
+    for (int p = 0; p < np_; ++p) {
+      const int gl = hlocbase_[p] + int((key >> hkshift_[p]) & hkmask_[p]);
+      for (int c = 0; c < n_; ++c) {
+        const int lr = hLloc_[std::size_t(gl) * n_ + c], ur = hUloc_[std::size_t(gl) * n_ + c];
+        if (g) {   // raw bounds: maximum over the defined ones, kGNone skipped
+          if (lr != int(kGNone) && (L[c] == int(kGNone) || lr > L[c])) L[c] = lr;
+          if (ur != int(kGNone) && (U[c] == int(kGNone) || ur > U[c])) U[c] = ur;
+        } else {
+          L[c] = std::max(L[c], lr);
+          U[c] = std::max(U[c], ur);
+        }
+      }
+    }
+    L[0] = U[0] = g ? int(kZeroLe) : 0;
+  }
+  bool alu(const void* z, const void* zp, const std::int32_t* L, const std::int32_t* U) const {
+    if (P_.gsim) {   // the coverage the kernels use: G-simulation under --sim g
+      if (gz_ == 1) return dbm_is_g_le(static_cast<const sraw_t*>(z), static_cast<const sraw_t*>(zp), n_, L, U);
+      if (gz_ == 2) return dbm_is_g_le(static_cast<const nraw_t*>(z), static_cast<const nraw_t*>(zp), n_, L, U);
+      return dbm_is_g_le(static_cast<const raw_t*>(z), static_cast<const raw_t*>(zp), n_, L, U);
+    }
+    if (gz_ == 1) return dbm_is_alu_le(static_cast<const sraw_t*>(z), static_cast<const sraw_t*>(zp), n_, L, U);
+    if (gz_ == 2) return dbm_is_alu_le(static_cast<const nraw_t*>(z), static_cast<const nraw_t*>(zp), n_, L, U);
+    return dbm_is_alu_le(static_cast<const raw_t*>(z), static_cast<const raw_t*>(zp), n_, L, U);
+  }
+  // fr_kill, on the host.
+  void host_kill(std::uint32_t a) {
+    std::uint32_t* al = alive_.as<std::uint32_t>();
+    std::uint32_t* zc = zcnt_.as<std::uint32_t>();
+    al[a] = 0u;
+    --nlive_;
+    const std::uint32_t z = zref_.as<std::uint32_t>()[a];
+    if (--zc[z] == 0u) {
+      const std::uint32_t slot = ztslot_.as<std::uint32_t>()[z];
+      if (slot != 0xffffffffu) ztab_.as<std::uint32_t>()[slot] = 0xfffffffeu;   // tombstone
+      pend_.as<std::uint32_t>()[freed_mirror_++] = z;   // reusable at the level's end
+      ++ntomb_;
+    }
+  }
+  // fr_intern + fr_zplace, on the host: the zone id of the stored-form zone `xs`.
+  std::uint32_t host_intern(const void* xs) {
+    const std::uint32_t h = hash_stored(xs);
+    std::uint32_t* zt = ztab_.as<std::uint32_t>();
+    const std::uint32_t mask = std::uint32_t(zcap_ - 1);
+    std::uint32_t s = h & mask;
+    for (std::uint32_t probe = 0; probe <= mask; ++probe, s = (s + 1) & mask) {
+      const std::uint32_t v = zt[s];
+      if (v == 0xffffffffu) {   // empty: the zone is new
+        const std::uint32_t z = nfree_ ? freel_.as<std::uint32_t>()[--nfree_] : std::uint32_t(zcount_++);
+        std::memcpy(zone_ptr(z), xs, std::size_t(nn_) * gz_);
+        zhash_.as<std::uint32_t>()[z] = h;
+        ztslot_.as<std::uint32_t>()[z] = s;
+        zcnt_.as<std::uint32_t>()[z] = 0u;
+        zt[s] = z;
+        return z;
+      }
+      if (v == 0xfffffffeu) continue;   // a dead zone's slot
+      if (zhash_.as<std::uint32_t>()[v] == h && std::memcmp(zone_ptr(v), xs, std::size_t(nn_) * gz_) == 0)
+        return v;
+    }
+    FR_CHECK(false, "zone table full on the host path");
+    return 0;
+  }
+  // One level on the CPU. Returns true when a target state is reached.
+  bool host_level(Chunk& ch) {
+    wait();   // the stream is idle before the host touches unified memory
+    const std::size_t W = ch.W;
+    // Room for W new zones and entries, as encode_batch reserves for a batch.
+    ensure_zones(zcount_ + W);
+    for (Buf* b : {&zhash_, &ztslot_, &zcnt_, &pend_}) reserve(*b, (zcount_ + W) * 4, true);
+    reserve(zref_, (acount_ + W) * 4, true);
+    reserve(alive_, (acount_ + W) * 4, true);
+    reserve(fnk_, (nfn_ + W) * 8, true);
+    reserve(fna_, (nfn_ + W) * 4, true);
+    reserve(delta2_k_, (ndelta_ + W) * 8, false);
+    reserve(delta2_a_, (ndelta_ + W) * 4, false);
+    ensure_table(W);
+    const std::uint32_t* wf = ch.wf.h.as<std::uint32_t>();
+    const std::uint32_t* wr = ch.wr.h.as<std::uint32_t>();
+    const std::uint64_t* rk = ch.rkey.h.as<std::uint64_t>();
+    const std::uint32_t* rfl = ch.rflags.h.as<std::uint32_t>();
+    const std::uint32_t* go = ch.rg_off.h.as<std::uint32_t>();
+    const std::int32_t* rg = ch.rg.h.as<std::int32_t>();
+    const std::uint32_t* ro = ch.rr_off.h.as<std::uint32_t>();
+    const std::int32_t* rr = ch.rr.h.as<std::int32_t>();
+    const std::uint32_t* vo = ch.rv_off.h.as<std::uint32_t>();
+    const std::int32_t* rv = ch.rv.h.as<std::int32_t>();
+    const std::uint64_t* rd = ch.rdead.h.as<std::uint64_t>();
+    const std::uint32_t* fa = fa_.as<std::uint32_t>();
+    const raw_t* tdbm = reinterpret_cast<const raw_t*>(htdbm_.data());
+    const std::size_t zbytes = std::size_t(nn_) * gz_;
+    std::vector<raw_t> d(nn_);
+    std::vector<unsigned char> xs(zbytes);
+    // This level's new entries, per discrete state, oldest first, and in insertion order overall.
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> fresh;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> added;
+    std::unordered_map<std::uint64_t, std::pair<std::vector<std::int32_t>, std::vector<std::int32_t>>> bounds;
+    std::size_t generated = 0, expanded = 0;
+    std::uint32_t last_slot = 0xffffffffu;
+    for (std::size_t w = 0; w < W; ++w) {
+      const std::uint32_t slot = wf[w], entry = fa[slot];
+      if (!alive_.as<std::uint32_t>()[entry]) continue;   // covered earlier in this round
+      if (slot != last_slot) { ++expanded; last_slot = slot; }
+      const std::uint32_t r = wr[w];
+      load_raw(zone_ptr(zref_.as<std::uint32_t>()[entry]), d.data());
+      bool ok = true;
+      for (std::uint32_t g = go[r]; ok && g < go[r + 1]; ++g)
+        ok = dbm_constrain(d.data(), n_, rg[3 * g], rg[3 * g + 1], rg[3 * g + 2]);
+      if (ok) {
+        for (std::uint32_t k = ro[r]; k < ro[r + 1]; ++k) dbm_reset(d.data(), n_, rr[k]);
+        for (std::uint32_t k = vo[r]; ok && k < vo[r + 1]; ++k)
+          ok = dbm_constrain(d.data(), n_, rv[3 * k], rv[3 * k + 1], rv[3 * k + 2]);
+      }
+      if (ok && !(rfl[r] & 1u)) {
+        dbm_delay(d.data(), n_);
+        for (std::uint32_t k = vo[r]; ok && k < vo[r + 1]; ++k)
+          ok = dbm_constrain(d.data(), n_, rv[3 * k], rv[3 * k + 1], rv[3 * k + 2]);
+      }
+      if (!ok) continue;
+      for (std::uint64_t dead = rd[r]; dead; dead &= dead - 1) dbm_reset(d.data(), n_, __builtin_ctzll(dead));
+      if (extrap_) dbm_extrapolate_lu_plus(d.data(), n_, P_.Lx.data(), P_.Ux.data());
+      ++generated;
+      // The target, on every successor, before coverage may discard it.
+      if ((rfl[r] & 2u) && (!has_tclock_ || dbm_intersects(d.data(), tdbm, n_))) {
+        if (P_.stats) { P_.stats->generated += generated; P_.stats->explored += expanded; }
+        return true;
+      }
+      store_raw(d.data(), xs.data());
+      const std::uint64_t key = rk[r];
+      auto bit = bounds.find(key);
+      if (bit == bounds.end()) {
+        std::vector<std::int32_t> L, U;
+        key_bounds(key, L, U);
+        bit = bounds.emplace(key, std::make_pair(std::move(L), std::move(U))).first;
+      }
+      const std::int32_t* L = bit->second.first.data();
+      const std::int32_t* U = bit->second.second.data();
+      // The group's entries, newest first: this level's, then the delta's, then the base's.
+      std::vector<std::uint32_t>& mine = fresh[key];
+      std::vector<std::uint32_t> group(mine.rbegin(), mine.rend());
+      for (int side = 0; side < 2; ++side) {
+        const std::uint64_t* k = (side ? base_k_ : delta_k_).as<std::uint64_t>();
+        const std::uint32_t* a = (side ? base_a_ : delta_a_).as<std::uint32_t>();
+        const std::size_t n = side ? nbase_ : ndelta_;
+        const std::size_t lo = std::size_t(std::lower_bound(k, k + n, key) - k);
+        const std::size_t hi = std::size_t(std::upper_bound(k, k + n, key) - k);
+        for (std::size_t i = hi; i > lo; --i) group.push_back(a[i - 1]);
+      }
+      const std::uint32_t* al = alive_.as<std::uint32_t>();
+      const std::uint32_t* zr = zref_.as<std::uint32_t>();
+      // Covered by a live zone of the group: dropped (an equal zone already stored wins).
+      bool covered = false;
+      for (std::uint32_t a : group)
+        if (al[a] && alu(xs.data(), zone_ptr(zr[a]), L, U)) { covered = true; break; }
+      if (covered) continue;
+      const bool new_key = group.empty();
+      // Live zones it covers leave.
+      for (std::uint32_t a : group)
+        if (al[a] && alu(zone_ptr(zr[a]), xs.data(), L, U)) host_kill(a);
+      // Convex union with the newest live zones of the group, restarting after every merge.
+      if (union_) {
+        for (bool merged = true; merged;) {
+          merged = false;
+          std::size_t seen = 0;
+          for (std::uint32_t a : group) {
+            if (!al[a]) continue;
+            if (++seen > std::size_t(detail::kMergeScan)) break;
+            if (try_union_with(d.data(), zone_ptr(zr[a]))) { host_kill(a); merged = true; break; }
+          }
+        }
+        store_raw(d.data(), xs.data());
+      }
+      const std::uint32_t z = host_intern(xs.data());
+      const std::uint32_t a = std::uint32_t(acount_++);
+      zref_.as<std::uint32_t>()[a] = z;
+      ++zcnt_.as<std::uint32_t>()[z];
+      alive_.as<std::uint32_t>()[a] = 1u;
+      mine.push_back(a);
+      added.emplace_back(key, a);
+      ++nlive_;
+      if (new_key && mine.size() == 1) ++ndisc_;
+    }
+    // Commit: the new entries, sorted by key (stable), into the delta and the next frontier.
+    std::stable_sort(added.begin(), added.end(),
+                     [](const auto& x, const auto& y) { return x.first < y.first; });
+    {
+      const std::uint64_t* dk = delta_k_.as<std::uint64_t>();
+      const std::uint32_t* da = delta_a_.as<std::uint32_t>();
+      std::uint64_t* ok = delta2_k_.as<std::uint64_t>();
+      std::uint32_t* oa = delta2_a_.as<std::uint32_t>();
+      std::size_t i = 0, j = 0, o = 0;
+      while (i < ndelta_ || j < added.size()) {   // the delta's entries first among equal keys
+        if (j == added.size() || (i < ndelta_ && dk[i] <= added[j].first)) { ok[o] = dk[i]; oa[o] = da[i]; ++i; }
+        else { ok[o] = added[j].first; oa[o] = added[j].second; ++j; }
+        ++o;
+      }
+      std::swap(delta_k_, delta2_k_); std::swap(delta_a_, delta2_a_);
+      ndelta_ = o;
+    }
+    std::uint64_t* nk = fnk_.as<std::uint64_t>();
+    std::uint32_t* na = fna_.as<std::uint32_t>();
+    for (std::size_t i = 0; i < added.size(); ++i) { nk[nfn_ + i] = added[i].first; na[nfn_ + i] = added[i].second; }
+    nfn_ += added.size();
+    lvl_valid_ += generated;
+    lvl_kept_ += added.size();
+    if (P_.stats) { P_.stats->generated += generated; P_.stats->explored += expanded; }
+    if (ndelta_ > std::max<std::size_t>(nbase_ / 4, 1u << 16) || (stress_ && ndelta_)) fold();
+    return false;
+  }
+
   // base := merge(live base, live delta); delta := empty.
   void fold() {
     reserve(fl_a_, (nbase_ + 1) * 4, false); reserve(fl_ap_, (nbase_ + 1) * 4, false);
@@ -768,8 +1088,8 @@ class FrontierCuda {
     merge(base_k_, base_a_, nbase_, delta_k_, delta_a_, nbuf_.as<std::uint32_t>(), ndelta_,
           fl_ap_.as<std::uint32_t>(), fl_bp_.as<std::uint32_t>(), base2_k_, base2_a_);
     std::uint32_t tot[2] = {0, 0};
-    CK(cudaMemcpyAsync(&tot[0], fl_ap_.as<std::uint32_t>() + nbase_, 4, cudaMemcpyDeviceToHost, stream_));
-    CK(cudaMemcpyAsync(&tot[1], fl_bp_.as<std::uint32_t>() + ndelta_, 4, cudaMemcpyDeviceToHost, stream_));
+    CK(cudaMemcpyAsync(&tot[0], fl_ap_.as<std::uint32_t>() + nbase_, 4, cudaMemcpyDefault, stream_));
+    CK(cudaMemcpyAsync(&tot[1], fl_bp_.as<std::uint32_t>() + ndelta_, 4, cudaMemcpyDefault, stream_));
     wait();
     const std::size_t n = std::size_t(tot[0]) + tot[1];
     std::swap(base_k_, base2_k_); std::swap(base_a_, base2_a_);
@@ -788,22 +1108,22 @@ class FrontierCuda {
       cu::compact_frontier(fnk_.as<std::uint64_t>(), fna_.as<std::uint32_t>(), fl_a_.as<std::uint32_t>(),
                            fl_ap_.as<std::uint32_t>(), fk_.as<std::uint64_t>(), fa_.as<std::uint32_t>(),
                            std::uint32_t(nfn_), stream_);
-      CK(cudaMemcpyAsync(&nlive_next, fl_ap_.as<std::uint32_t>() + nfn_, 4, cudaMemcpyDeviceToHost, stream_));
+      CK(cudaMemcpyAsync(&nlive_next, fl_ap_.as<std::uint32_t>() + nfn_, 4, cudaMemcpyDefault, stream_));
       wait();
     }
     nf_ = nlive_next;
     if (nf_ > 0) {
       fk_h_.resize(nf_);
-      CK(cudaMemcpy(fk_h_.data(), fk_.p, nf_ * 8, cudaMemcpyDeviceToHost));
+      CK(cudaMemcpy(fk_h_.data(), fk_.p, nf_ * 8, cudaMemcpyDefault));
     }
     // The zones this level freed become reusable now.
     const std::size_t npend = freed_mirror_;
     if (npend) {
       reserve(freel_, (nfree_ + npend) * 4, true);
-      CK(cudaMemcpy(freel_.as<std::uint32_t>() + nfree_, pend_.p, npend * 4, cudaMemcpyDeviceToDevice));
+      CK(cudaMemcpy(freel_.as<std::uint32_t>() + nfree_, pend_.p, npend * 4, cudaMemcpyDefault));
       nfree_ += npend;
       const std::uint32_t z = 0;
-      CK(cudaMemcpy(ctr_.as<std::uint32_t>() + kFreed, &z, 4, cudaMemcpyHostToDevice));
+      CK(cudaMemcpy(ctr_.as<std::uint32_t>() + kFreed, &z, 4, cudaMemcpyDefault));
       freed_mirror_ = 0;
     }
     if ((acount_ > (std::size_t(1) << 20) && acount_ > 3 * (nbase_ + ndelta_)) ||
@@ -834,13 +1154,14 @@ class FrontierCuda {
       const std::size_t bytes = page_zones_ * nn_ * gz_;
       charge_mem(bytes, "a zone page");
       void* pg = nullptr;
-      if (cudaMalloc(&pg, bytes) != cudaSuccess) {
+      if (dev_alloc(&pg, bytes, true) != cudaSuccess) {
         cudaGetLastError();
         throw OutOfMemory("out of GPU memory: the system refused a " + mb(bytes) + " zone page");
       }
       mem_used_ += bytes;
+      mem_peak_ = std::max(mem_peak_, mem_used_);
       const std::uint64_t addr = reinterpret_cast<std::uint64_t>(pg);
-      CK(cudaMemcpy(ptab_.as<std::uint64_t>() + pages_.size(), &addr, 8, cudaMemcpyHostToDevice));
+      CK(cudaMemcpy(ptab_.as<std::uint64_t>() + pages_.size(), &addr, 8, cudaMemcpyDefault));
       pages_.push_back(pg);
     }
   }
@@ -855,12 +1176,12 @@ class FrontierCuda {
     reserve(ztab_, zcap_ * 4, false);
     cu::fill_u32(ztab_.as<std::uint32_t>(), std::uint32_t(zcap_), 0xffffffffu, stream_);
     const std::uint32_t z = 0;
-    CK(cudaMemcpyAsync(ctr_.as<std::uint32_t>() + kErr, &z, 4, cudaMemcpyHostToDevice, stream_));
+    CK(cudaMemcpyAsync(ctr_.as<std::uint32_t>() + kErr, &z, 4, cudaMemcpyDefault, stream_));
     cu::zrebuild(zhash_.as<std::uint32_t>(), ztab_.as<std::uint32_t>(), std::uint32_t(zcount_),
                  std::uint32_t(zcap_ - 1), zcnt_.as<std::uint32_t>(), ztslot_.as<std::uint32_t>(),
                  ctr_.as<std::uint32_t>() + kErr, stream_);
     std::uint32_t err = 0;
-    CK(cudaMemcpyAsync(&err, ctr_.as<std::uint32_t>() + kErr, 4, cudaMemcpyDeviceToHost, stream_));
+    CK(cudaMemcpyAsync(&err, ctr_.as<std::uint32_t>() + kErr, 4, cudaMemcpyDefault, stream_));
     wait();
     FR_CHECK(err == 0, "zone table rebuild found the table full");
     ntomb_ = 0;
@@ -885,7 +1206,7 @@ class FrontierCuda {
       h += mix32(std::uint32_t(k) * 0x9e3779b9u ^ std::uint32_t(v));
     }
     char* dst = static_cast<char*>(pages_[z >> page_shift_]) + (z & (page_zones_ - 1)) * nn_ * gz_;
-    CK(cudaMemcpy(dst, bytes.data(), bytes.size(), cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(dst, bytes.data(), bytes.size(), cudaMemcpyDefault));
     return mix32(h);
   }
 
@@ -894,9 +1215,9 @@ class FrontierCuda {
     CK(cudaStreamSynchronize(stream_));
     CK(cudaGetLastError());
   }
-  void h2d(void* dst, const void* src, std::size_t n) { CK(cudaMemcpy(dst, src, n, cudaMemcpyHostToDevice)); }
+  void h2d(void* dst, const void* src, std::size_t n) { CK(cudaMemcpy(dst, src, n, cudaMemcpyDefault)); }
   void h2d_async(void* dst, const void* src, std::size_t n) {
-    CK(cudaMemcpyAsync(dst, src, n, cudaMemcpyHostToDevice, stream_));
+    CK(cudaMemcpyAsync(dst, src, n, cudaMemcpyDefault, stream_));
   }
   // Staging for an upload: reserve the pinned side and the device side to `bytes`.
   void stage(Mirror& m, std::size_t bytes) {
@@ -904,7 +1225,7 @@ class FrontierCuda {
     reserve(m.d, bytes, false);
     m.used = bytes;
   }
-  void upload(Mirror& m) { CK(cudaMemcpyAsync(m.d.p, m.h.p, m.used, cudaMemcpyHostToDevice, stream_)); }
+  void upload(Mirror& m) { CK(cudaMemcpyAsync(m.d.p, m.h.p, m.used, cudaMemcpyDefault, stream_)); }
 
   // Exclusive scan of in[0 .. n_in) into out[0 .. n_out); in-place is allowed.
   void scan(const Buf& in, const Buf& out, std::uint32_t n_in, std::uint32_t n_out, std::size_t level = 0) {
@@ -952,15 +1273,49 @@ class FrontierCuda {
     want = (want + 15) & ~std::size_t(15);
     charge_mem(want, "a buffer");
     void* nb = nullptr;
-    if (cudaMalloc(&nb, want) != cudaSuccess) {
+    if (dev_alloc(&nb, want, b.managed) != cudaSuccess) {
       cudaGetLastError();
       throw OutOfMemory("out of GPU memory: the system refused a " + mb(want) + " buffer");
     }
     mem_used_ += want;
-    if (b.p) CK(cudaMemcpyAsync(nb, b.p, b.cap, cudaMemcpyDeviceToDevice, stream_));
+    mem_peak_ = std::max(mem_peak_, mem_used_);
+    if (b.p) CK(cudaMemcpyAsync(nb, b.p, b.cap, cudaMemcpyDefault, stream_));
     if (b.p) { CK(cudaStreamSynchronize(stream_)); mem_used_ -= b.cap; cudaFree(b.p); }
     b.p = nb;
     b.cap = want;
+  }
+  // Where the device memory is: the zone arena, the passed set, the entries, the zone table, and
+  // the per-batch work buffers. Printed when a search ends (HORA_GPU_MEM=1, or HORA_GPU_TRACE) and
+  // when it runs out of memory.
+  void report_memory(const char* when) const {
+    auto sum = [](std::initializer_list<const Buf*> l) {
+      std::size_t t = 0;
+      for (const Buf* b : l) t += b->cap;
+      return t;
+    };
+    const std::size_t arena = pages_.size() * page_zones_ * std::size_t(nn_) * gz_;
+    const std::size_t pset = sum({&base_k_, &base_a_, &base2_k_, &base2_a_, &delta_k_, &delta_a_, &delta2_k_,
+                                  &delta2_a_, &fk_, &fa_, &fnk_, &fna_});
+    const std::size_t ent = sum({&zref_, &zref2_, &alive_, &alive2_, &remap_});
+    const std::size_t ztab = sum({&zhash_, &ztslot_, &zcnt_, &ztab_, &freel_, &pend_});
+    std::size_t known = arena + pset + ent + ztab;
+    std::fprintf(stderr,
+                 "[gpu] memory (%s): peak %.1f MB, now %.1f MB (zones %.1f in %zu pages of %zu zones, "
+                 "passed set %.1f, entries %.1f, zone table %.1f, batch buffers %.1f) | %zu entries, "
+                 "%zu zones stored, %d-bit entries, %zu host-level levels\n",
+                 when, double(mem_peak_) / 1048576.0, double(mem_used_) / 1048576.0, double(arena) / 1048576.0,
+                 pages_.size(), page_zones_, double(pset) / 1048576.0, double(ent) / 1048576.0,
+                 double(ztab) / 1048576.0, double(mem_used_ > known ? mem_used_ - known : 0) / 1048576.0,
+                 acount_, zcount_ - nfree_, gz_ * 8, lvl_host_);
+  }
+
+  // Device memory; `managed` buffers are unified memory kept resident on the device, so kernels
+  // run at device speed and the host's narrow-level path can read and write them in place.
+  cudaError_t dev_alloc(void** p, std::size_t bytes, bool managed) const {
+    if (!managed) return cudaMalloc(p, bytes);
+    const cudaError_t e = cudaMallocManaged(p, bytes);
+    if (e == cudaSuccess) cudaMemAdvise(*p, bytes, cudaMemAdviseSetPreferredLocation, 0);
+    return e;
   }
   void release(Buf& b) {
     if (!b.p) return;
@@ -978,7 +1333,7 @@ class FrontierCuda {
   template <class T>
   void put(Buf& b, const std::vector<T>& v) {
     reserve(b, std::max<std::size_t>(1, v.size()) * sizeof(T), false);
-    if (!v.empty()) CK(cudaMemcpy(b.p, v.data(), v.size() * sizeof(T), cudaMemcpyHostToDevice));
+    if (!v.empty()) CK(cudaMemcpy(b.p, v.data(), v.size() * sizeof(T), cudaMemcpyDefault));
   }
   std::vector<Buf*> all_bufs_() {
     return {&locbase_, &Lloc_, &Uloc_, &Lq_, &Uq_, &kshift_, &kmask_, &tdbm_, &Lx_, &Ux_, &ptab_, &zhash_,
@@ -994,10 +1349,18 @@ class FrontierCuda {
   const Network& net_;
   int n_ = 0, nn_ = 0, np_ = 0, gz_ = 2, key_bits_ = 0, nthreads_ = 1;
   std::uint32_t sgs_expand_ = 8, sgs_red_ = 8, sgs_union_ = 8;
-  std::size_t mem_cap_ = 0, mem_used_ = 0;
+  std::size_t mem_cap_ = 0, mem_used_ = 0, mem_peak_ = 0;
+  bool mem_report_ = false;
   bool has_tclock_ = false;
   int solo_ = 8;
   bool union_ = true;
+  bool union_par_ = true;          ///< HORA_GPU_UNION_PAR=0: one warp per discrete state in the merge
+  // Narrow levels on the CPU: the largest estimated covering work (tests) a level may need to run
+  // there, and the largest frontier considered at all.
+  std::size_t host_max_ = 20000, lvl_host_ = 0;
+  static constexpr std::size_t kHostFrontier = 4096;
+  std::vector<int> hLloc_, hUloc_, hLq_, hUq_, hlocbase_, hkshift_, htdbm_;
+  std::vector<std::uint64_t> hkmask_;
   bool antichain_ = false;         ///< HORA_GPU_ANTICHAIN=1: re-establish the antichain after merging
   Buf chg_;
   int min_bits_ = 8;

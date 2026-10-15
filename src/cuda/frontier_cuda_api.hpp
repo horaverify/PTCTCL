@@ -46,8 +46,9 @@ struct ExpandP {
   u32* ctr;
   const int *Lx, *Ux;
   const u32* zref;
+  const u32* alive;        // entry liveness: a frontier zone that died this round is not expanded
   u32* hshw;
-  u32 nwork;
+  u32 nwork, prev_slot;    // prev_slot: the frontier slot of the work item before this batch's first
   int has_tclock, extrap;
   u64 sentinel;
 };
@@ -102,6 +103,8 @@ void rows2(const ReduceP& p, cudaStream_t s);
 void reduce_pairs(int gz, const ReduceP& p, cudaStream_t s);
 void reduce_pairs_big(int gz, const ReduceP& p, u32 sgs, cudaStream_t s);
 void merge_union(int gz, const ReduceP& p, u32 sgs, cudaStream_t s);
+/// The same merge with a block per discrete state, the scan spread over its warps (same result).
+void merge_union_par(int gz, const ReduceP& p, u32 sgs, cudaStream_t s);
 /// After merge_union: drop every zone of a changed hull's bucket that the hull now covers, so the
 /// bucket is an antichain of the covering relation again.
 void antichain(int gz, const ReduceP& p, cudaStream_t s);

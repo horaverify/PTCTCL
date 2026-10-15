@@ -321,7 +321,17 @@ FR_KERNEL void fr_expand(ExpandP A) {
   int* D = tgm + sgid * (nn + n);
   const u32 r = A.wr[w];
   const u64 key = A.rkey[r];
-  gdbm_load(D, zone_ptr<GZ>(A.AP, A.zref[A.fz[A.wf[w]]]), n, lane);
+  // A frontier zone that died during this round -- a zone inserted in it covers it, or absorbed it
+  // into a hull -- is not expanded: the zone that did that is in the next frontier, and its
+  // successors cover these. The first work item of each live frontier zone counts it as explored.
+  const u32 slot = A.wf[w], entry = A.fz[slot];
+  const bool live = A.alive[entry] != 0u;
+  if (lane == 0 && live && slot != (w > 0 ? A.wf[w - 1] : A.prev_slot)) atomicAdd(&A.ctr[10], 1u);
+  if (!live) {
+    if (lane == 0) { A.skey[w] = A.sentinel; A.sval[w] = w; }
+    return;
+  }
+  gdbm_load(D, zone_ptr<GZ>(A.AP, A.zref[entry]), n, lane);
   bool ok = true;
   for (u32 g = A.rg_off[r]; ok && g < A.rg_off[r + 1]; ++g)
     ok = gdbm_constrain(D, n, A.rg[3 * g], A.rg[3 * g + 1], A.rg[3 * g + 2], lane);
@@ -708,6 +718,107 @@ FR_KERNEL void fr_union(ReduceP P) {
   }
 }
 
+// The same merge, one block per discrete state: the scan over the newest live zones -- the part
+// that dominates when a few discrete states hold large groups -- is spread over the block's warps.
+// Each candidate still absorbs, in order, the *first* zone of the scan whose union with it is
+// convex and then restarts, so the result is the one fr_union produces.
+template <class PB>
+__device__ bool gdbm_union_hull(const int* A, const PB* B, int* H, int n, u32 lane) {
+  bool gap = false;
+  for (int i = int(lane) + 1; i < n; i += GDBM_G) {
+    const int ai0 = A[i * n], bi0 = gdbm_ld(B, i * n);
+    gap = gap || (ai0 < GDBM_INF && gdbm_add(ai0, gdbm_ld(B, i)) < 0) ||
+                 (bi0 < GDBM_INF && gdbm_add(bi0, A[i]) < 0);
+  }
+  if (gdbm_any(gap)) return false;
+  GDBM_FOR_E(e, lane, n * n) { const int a = A[e], b = gdbm_ld(B, e); H[e] = a > b ? a : b; }
+  gdbm_sync();
+  return gdbm_union_facets(A, B, H, n, lane) && gdbm_union_facets(B, A, H, n, lane);
+}
+template <class GZ>
+FR_KERNEL void fr_union_par(ReduceP P) {
+  const uint4* binfo = static_cast<const uint4*>(P.binfo);
+  GZ* bz = static_cast<GZ*>(P.bz);
+  const u32 nwarps = blockDim.x >> 5, wid = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  const int n = cD.n, nn = cD.nn;
+  const u32 scan_lim = u32(cD.merge_scan) < 32u ? u32(cD.merge_scan) : 32u;
+  int* X = tgm;                       // the candidate
+  int* H = tgm + nn + wid * nn;       // this warp's hull scratch
+  __shared__ u32 s_tgt[32];           // scan targets: bit 31 set = a stored entry, else a survivor index
+  __shared__ u32 s_nt;
+  __shared__ int s_win;
+  const u32 cnt = *(volatile u32*)&P.ctr[8];
+  for (u32 k = blockIdx.x; k < cnt; k += gridDim.x) {
+    const u32 b = P.ulist[k];
+    const uint4 st = binfo[2 * b], nw = binfo[2 * b + 1];
+    const u32 s0 = P.k1pre[nw.x], ns = P.k1pre[nw.x + nw.y] - s0;
+    for (u32 r = 0; r < ns; ++r) {
+      const u32 pos = P.surv[s0 + r];
+      if (P.keep[pos] == 0u) continue;
+      const u32 w = P.sval[pos];
+      if (wid == 0) gdbm_load(X, bz + u64(w) * nn, n, lane);
+      bool changed = false;
+      for (;;) {
+        __syncthreads();   // X is complete; last round's kills are visible
+        if (threadIdx.x == 0) {
+          u32 nt = 0;
+          for (int r2 = int(r) - 1; r2 >= 0 && nt < scan_lim; --r2)
+            if (P.keep[P.surv[s0 + u32(r2)]] != 0u) s_tgt[nt++] = u32(r2);
+          for (u32 side = 0; side < 2; ++side) {   // the delta, then the base
+            const u32 first = side ? st.x : st.z, c = side ? st.y : st.w;
+            const u32* run = side ? P.base_a : P.delta_a;
+            for (int t = int(c) - 1; t >= 0 && nt < scan_lim; --t) {
+              const u32 a = run[first + u32(t)];
+              if (P.alive[a] != 0u) s_tgt[nt++] = a | 0x80000000u;
+            }
+          }
+          s_nt = nt;
+          s_win = INT_MAX;
+        }
+        __syncthreads();
+        for (u32 t = wid; t < s_nt; t += nwarps) {
+          if (__shfl_sync(FULL, int(t) > s_win, 0)) continue;   // an earlier target already won (warp-uniform)
+          const u32 tg = s_tgt[t];
+          const bool ok = (tg & 0x80000000u)
+              ? gdbm_union_hull(X, zone_ptr<GZ>(P.AP, P.zref[tg & 0x7fffffffu]), H, n, lane)
+              : gdbm_union_hull(X, bz + u64(P.sval[P.surv[s0 + tg]]) * nn, H, n, lane);
+          if (ok && lane == 0) atomicMin(&s_win, int(t));
+          __syncwarp();
+        }
+        __syncthreads();
+        const int win = s_win;
+        if (win == INT_MAX) break;
+        changed = true;
+        if (wid == 0) {   // the winning union, again, in place: X := the hull
+          const u32 tg = s_tgt[win];
+          if (tg & 0x80000000u) {
+            gdbm_try_union(X, zone_ptr<GZ>(P.AP, P.zref[tg & 0x7fffffffu]), H, n, lane);
+            if (lane == 0) fr_kill(P, tg & 0x7fffffffu);
+          } else {
+            gdbm_try_union(X, bz + u64(P.sval[P.surv[s0 + tg]]) * nn, H, n, lane);
+            if (lane == 0) P.keep[P.surv[s0 + tg]] = 0u;
+          }
+          __syncwarp();
+        }
+      }
+      if (changed && wid == 0) {   // the hull replaces the candidate: store it, and hash it as stored
+        if (lane == 0 && P.chg) P.chg[pos] = 1u;
+        GZ* out = bz + u64(w) * nn;
+        u32 h = 0;
+        GDBM_FOR_E(e, lane, nn) {
+          const GZ sv = gdbm_narrow<GZ>(X[e]);
+          out[e] = sv;
+          h += fr_entry_hash(u32(e), int(sv));
+        }
+        h = fr_mix(simd_sum(h));
+        if (lane == 0) P.hshw[w] = h;
+        __syncwarp();
+      }
+      __syncthreads();
+    }
+  }
+}
+
 // ---- re-establishing the antichain after a merge -------------------------------------------------------
 // A union hull is a larger zone than the candidate that was tested against the passed set, so it may
 // cover zones the reduction kept: later survivors of its bucket, and stored zones the merge scan
@@ -950,6 +1061,7 @@ void init_gz() {
   allow_smem(fr_reduce_stored_big<GZ>);
   allow_smem(fr_reduce_pairs_big<GZ>);
   allow_smem(fr_union<GZ>);
+  allow_smem(fr_union_par<GZ>);
 }
 
 #define DISPATCH_GZ(gz, call)                                   \
@@ -1048,6 +1160,12 @@ void antichain(int gz, const ReduceP& p, cudaStream_t s) {
 void merge_union(int gz, const ReduceP& p, u32 sgs, cudaStream_t s) {
   const std::size_t smem = std::size_t(sgs) * 2 * g_dims.nn * 4;
   DISPATCH_GZ(gz, (fr_union<GZT><<<warp_blocks(p.W, sgs), sgs * 32, smem, s>>>(p)));
+}
+
+void merge_union_par(int gz, const ReduceP& p, u32 sgs, cudaStream_t s) {
+  const std::size_t smem = std::size_t(1 + sgs) * g_dims.nn * 4;
+  const u32 grid = p.W < 1 ? 1u : (p.W > 4096u ? 4096u : p.W);
+  DISPATCH_GZ(gz, (fr_union_par<GZT><<<grid, sgs * 32, smem, s>>>(p)));
 }
 
 void intern(int gz, const InternP& p, cudaStream_t s) {
