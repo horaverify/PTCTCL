@@ -26,6 +26,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <cstdio>
@@ -34,6 +35,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifdef HORA_HAVE_OPENMP
@@ -63,6 +65,19 @@ constexpr std::size_t kMinChunkSlots = 16384;
 constexpr std::int32_t kByteMaxConst = 30;
 constexpr std::int32_t kShortMaxConst = 4000;
 struct Overflow {};
+// A deadlock search whose D refinement just grew: the stored covers were made under smaller bounds.
+struct Restart {};
+// A deadlock seed carried a diagonal atom, which a clock bound cannot express: take the a_M route.
+struct Collapse {};
+
+/// State a deadlock search keeps across its restarts: the keys already seeded and what the
+/// refinement has accumulated. Bounds only ever grow, so the search restarts finitely often.
+struct DlState {
+  std::unordered_map<std::uint64_t, char> seeded;   ///< key -> may some valuation be stuck there
+  std::vector<std::int32_t> bump;                   ///< per clock; kAluNegInf = no atom
+  bool collapsed = false;                           ///< a_M bounds instead of the D refinement
+  bool grew = false;                                ///< set within one run
+};
 
 struct OutOfMemory : std::runtime_error { using std::runtime_error::runtime_error; };
 
@@ -111,7 +126,8 @@ struct Pin {
 
 class FrontierCuda {
  public:
-  FrontierCuda(const FrontierProblem& p, int min_bits) : P_(p), net_(*p.net), min_bits_(min_bits) {}
+  FrontierCuda(const FrontierProblem& p, int min_bits, DlState* dl = nullptr)
+      : P_(p), net_(*p.net), min_bits_(min_bits), dl_(dl) {}
   ~FrontierCuda() {
     for (Buf* b : all_bufs_()) release(*b);
     for (void* pg : pages_) cudaFree(pg);
@@ -161,11 +177,20 @@ class FrontierCuda {
 
     // Largest constant anywhere: decides the stored entry width.
     std::int32_t maxc = 0;
-    auto see = [&](std::int32_t v) { if (v != kAluNegInf) maxc = std::max(maxc, std::abs(v)); };
-    for (const auto& pl : P_.Lloc) for (const auto& l : pl) for (auto v : l) see(v);
-    for (const auto& pl : P_.Uloc) for (const auto& l : pl) for (auto v : l) see(v);
-    for (auto v : P_.Lq) see(v);
-    for (auto v : P_.Uq) see(v);
+    const bool graw = P_.gsim;
+    // The covering's bounds: integer a_LU constants, or the G-simulation's raw bounds.
+    const auto& LL = graw ? P_.Lgloc : P_.Lloc;
+    const auto& UL = graw ? P_.Ugloc : P_.Uloc;
+    const auto& LQ = graw ? P_.Lgq : P_.Lq;
+    const auto& UQ = graw ? P_.Ugq : P_.Uq;
+    auto see = [&](std::int32_t v) {
+      if (v == kAluNegInf || v == kGNone) return;
+      maxc = std::max(maxc, std::abs(graw ? raw_bound(v) : v));
+    };
+    for (const auto& pl : LL) for (const auto& l : pl) for (auto v : l) see(v);
+    for (const auto& pl : UL) for (const auto& l : pl) for (auto v : l) see(v);
+    for (auto v : LQ) see(v);
+    for (auto v : UQ) see(v);
     for (const auto& pr : net_.procs) {
       for (const auto& l : pr.locations) for (const auto& c : l.invariant) see(raw_bound(c.bound));
       for (const auto& e : pr.edges) for (const auto& c : e.clock_guard) see(raw_bound(c.bound));
@@ -182,8 +207,9 @@ class FrontierCuda {
     solo_ = 8;
     union_ = !(std::getenv("HORA_GPU_UNION") && std::string(std::getenv("HORA_GPU_UNION")) == "0");
     if (const char* v = std::getenv("HORA_GPU_SOLO")) solo_ = std::atoi(v);
+    antichain_ = std::getenv("HORA_GPU_ANTICHAIN") && std::string(std::getenv("HORA_GPU_ANTICHAIN")) == "1";
 
-    cu::Dims dims{n_, nn_, np_, page_shift_, int(detail::kMergeScan)};
+    cu::Dims dims{n_, nn_, np_, page_shift_, int(detail::kMergeScan), P_.gsim ? 1 : 0};
     cu::init_kernels(0, 0);
     cu::set_dims(dims);
     sgs_expand_ = cu::max_sgs(std::size_t(nn_ + n_) * 4);
@@ -195,18 +221,19 @@ class FrontierCuda {
     std::vector<int> locbase(np_ + 1, 0);
     for (int p = 0; p < np_; ++p) locbase[p + 1] = locbase[p] + int(net_.procs[p].locations.size());
     const int nloc = locbase[np_];
-    std::vector<int> Lloc(std::size_t(nloc) * n_, kAluNegInf), Uloc(std::size_t(nloc) * n_, kAluNegInf);
+    const int none = P_.gsim ? int(kGNone) : int(kAluNegInf);
+    std::vector<int> Lloc(std::size_t(nloc) * n_, none), Uloc(std::size_t(nloc) * n_, none);
     for (int p = 0; p < np_; ++p)
       for (int l = 0; l < int(net_.procs[p].locations.size()); ++l) {
         const int gl = locbase[p] + l;
         for (int c = 0; c < n_; ++c) {
-          if (!P_.Lloc.empty()) Lloc[std::size_t(gl) * n_ + c] = P_.Lloc[p][l][c];
-          if (!P_.Uloc.empty()) Uloc[std::size_t(gl) * n_ + c] = P_.Uloc[p][l][c];
+          if (!LL.empty()) Lloc[std::size_t(gl) * n_ + c] = LL[p][l][c];
+          if (!UL.empty()) Uloc[std::size_t(gl) * n_ + c] = UL[p][l][c];
         }
       }
     std::vector<int> kshift(P_.keys.shift.begin(), P_.keys.shift.end());
     std::vector<std::uint64_t> kmask(P_.keys.mask.begin(), P_.keys.mask.end());
-    std::vector<int> Lq(P_.Lq.begin(), P_.Lq.end()), Uq(P_.Uq.begin(), P_.Uq.end());
+    std::vector<int> Lq(LQ.begin(), LQ.end()), Uq(UQ.begin(), UQ.end());
 
     has_tclock_ = !P_.target->clock_cond.empty();
     std::vector<int> tdbm(nn_, 0);
@@ -280,6 +307,7 @@ class FrontierCuda {
 
     while (nf_ > 0) {
       if (P_.cancel && P_.cancel->load(std::memory_order_relaxed)) return 0;
+      if (P_.deadlock && deadlock_level()) return 1;
       if (P_.stats) P_.stats->explored += nf_;
       nf_prev_ = nf_;
       t_enum_ = t_wait_ = 0;
@@ -316,7 +344,8 @@ class FrontierCuda {
       }
       const auto t_end = Clock::now();
       end_level();
-      if (!extrap_ && ndisc_ && double(nlive_) >= P_.adapt_ratio * double(ndisc_)) {
+      // Extra_LU+ can invent and destroy a deadlock, so a deadlock search never widens.
+      if (!extrap_ && !P_.deadlock && ndisc_ && double(nlive_) >= P_.adapt_ratio * double(ndisc_)) {
         extrap_ = true;
         if (trace_) std::fprintf(stderr, "[gpu] Extra_LU+ on: %zu zones over %zu discrete states\n",
                                  nlive_, ndisc_);
@@ -330,6 +359,86 @@ class FrontierCuda {
       ++level_;
     }
     return 0;
+  }
+
+  // ---------------------------------------------------------------- deadlock
+  // Test the frontier -- the zones stored at the last level, not yet expanded -- for a deadlocked
+  // valuation, and grow the D refinement over its newly seen discrete keys. True on a deadlock.
+  // Throws Restart when the refinement grew (every stored cover was made under smaller bounds) and
+  // Collapse when it needs a diagonal atom.
+  bool deadlock_level() {
+    const DeadlockHooks& H = *P_.deadlock;
+    const std::uint64_t* fk = fk_h_.data();
+    std::vector<std::uint64_t> fresh;
+    for (std::size_t i = 0; i < nf_; ++i)
+      if ((i == 0 || fk[i] != fk[i - 1]) && !dl_->seeded.count(fk[i])) {
+        dl_->seeded.emplace(fk[i], 1);   // placeholder: also dedupes a key that recurs in this level
+        fresh.push_back(fk[i]);
+      }
+    if (!fresh.empty()) {
+      std::vector<DeadlockSeed> res(fresh.size());
+#ifdef HORA_HAVE_OPENMP
+#pragma omp parallel for schedule(dynamic, 16) num_threads(nthreads_)
+#endif
+      for (long i = 0; i < long(fresh.size()); ++i) res[i] = H.seed(fresh[i]);
+      for (std::size_t i = 0; i < fresh.size(); ++i) {
+        dl_->seeded[fresh[i]] = res[i].may_deadlock ? 1 : 0;
+        if (dl_->collapsed) continue;               // a_M needs no atoms
+        if (res[i].diagonal) throw Collapse{};
+        for (const auto& b : res[i].bumps)
+          if (b.first > 0 && b.first < int(dl_->bump.size()) && b.second > dl_->bump[b.first]) {
+            dl_->bump[b.first] = b.second;
+            dl_->grew = true;
+          }
+      }
+    }
+
+    // The frontier zones at keys that can be stuck at all.
+    std::vector<std::uint32_t> ent(nf_);
+    if (nf_) CK(cudaMemcpy(ent.data(), fa_.p, nf_ * 4, cudaMemcpyDeviceToHost));
+    std::vector<std::uint32_t> pick;     // frontier slots to test
+    for (std::size_t i = 0; i < nf_; ++i) {
+      const auto it = dl_->seeded.find(fk[i]);
+      if (it != dl_->seeded.end() && it->second) pick.push_back(std::uint32_t(i));
+    }
+    const std::size_t zbytes = std::size_t(nn_) * gz_;
+    const std::size_t cz = std::max<std::size_t>(1, (std::size_t(128) << 20) / zbytes);
+    std::vector<std::uint32_t> sel;
+    std::vector<unsigned char> raw;
+    for (std::size_t c0 = 0; c0 < pick.size(); c0 += cz) {
+      const std::size_t c1 = std::min(pick.size(), c0 + cz), m = c1 - c0;
+      sel.resize(m);
+      for (std::size_t j = 0; j < m; ++j) sel[j] = ent[pick[c0 + j]];
+      reserve(dsel_, m * 4, false);
+      reserve(dzone_, m * zbytes, false);
+      h2d(dsel_.p, sel.data(), m * 4);
+      cu::gather_zones(gz_, reinterpret_cast<cu::Pages>(ptab_.p), zref_.as<std::uint32_t>(), dsel_.as<std::uint32_t>(), std::uint32_t(m), dzone_.p, stream_);
+      raw.resize(m * zbytes);
+      CK(cudaMemcpyAsync(raw.data(), dzone_.p, m * zbytes, cudaMemcpyDeviceToHost, stream_));
+      wait();
+      std::atomic<bool> found{false};
+#ifdef HORA_HAVE_OPENMP
+#pragma omp parallel num_threads(nthreads_)
+#endif
+      {
+        std::vector<std::int32_t> z(nn_);
+#ifdef HORA_HAVE_OPENMP
+#pragma omp for schedule(dynamic, 8)
+#endif
+        for (long j = 0; j < long(m); ++j) {
+          if (found.load(std::memory_order_relaxed)) continue;
+          const unsigned char* src = raw.data() + std::size_t(j) * zbytes;
+          for (int k = 0; k < nn_; ++k)
+            z[k] = gz_ == 1 ? zget(reinterpret_cast<const sraw_t*>(src), k)
+                 : gz_ == 2 ? zget(reinterpret_cast<const nraw_t*>(src), k)
+                            : zget(reinterpret_cast<const raw_t*>(src), k);
+          if (H.has_deadlock(fk[pick[c0 + j]], z.data())) found.store(true, std::memory_order_relaxed);
+        }
+      }
+      if (found.load()) return true;
+    }
+    if (dl_->grew) throw Restart{};
+    return false;
   }
 
   // Enumerate the recipes of runs [ra, rb) of the frontier into `ch`, and its work items: every
@@ -534,6 +643,7 @@ class FrontierCuda {
     R.ulist = ulist_.as<std::uint32_t>();
     R.hshw = hsh_.as<std::uint32_t>();
     R.rowcnt = rowcnt_.as<std::uint32_t>();
+    R.chg = nullptr;
     R.W = Wu;
     R.solo = solo_;
     cu::reduce_stored(gz, R, stream_);
@@ -547,7 +657,16 @@ class FrontierCuda {
     cu::reduce_pairs(gz, R, stream_);
     cu::reduce_pairs_big(gz, R, sgs_red_, stream_);
     // ---- convex union, as the CPU engine merges ----
-    if (union_) cu::merge_union(gz, R, sgs_union_, stream_);
+    if (union_) {
+      if (antichain_) {
+        // Which candidates a union replaced; the pass after it re-establishes the antichain.
+        reserve(chg_, (std::size_t(Wu) + 1) * 4, false);
+        CK(cudaMemsetAsync(chg_.p, 0, (std::size_t(Wu) + 1) * 4, stream_));
+        R.chg = chg_.as<std::uint32_t>();
+      }
+      cu::merge_union(gz, R, sgs_union_, stream_);
+      if (antichain_) cu::antichain(gz, R, stream_);
+    }
     // ---- intern the survivors' zones ----
     scan(keep_, kpre_, Wu, Wu + 1);
     {
@@ -868,7 +987,7 @@ class FrontierCuda {
             &fna_, &Lb_, &Ub_, &big1_, &big2_, &ulist_, &bz_, &sk0_, &sk1_, &sv0_, &sv1_, &head_, &hpre_,
             &bstart_, &bkey_, &binfo_, &rowcnt_, &rowoff_, &keep_, &kpre_, &keep1_, &k1pre_, &surv_, &new_k_,
             &new_a_, &ctr_, &nbuf_, &hsh_, &rep_, &zslot_, &win_, &wpre_, &zid_, &wlist_, &fl_a_, &fl_ap_,
-            &fl_b_, &fl_bp_, &sort_tmp_};
+            &fl_b_, &fl_bp_, &sort_tmp_, &dsel_, &dzone_, &chg_};
   }
 
   const FrontierProblem& P_;
@@ -879,7 +998,11 @@ class FrontierCuda {
   bool has_tclock_ = false;
   int solo_ = 8;
   bool union_ = true;
+  bool antichain_ = false;         ///< HORA_GPU_ANTICHAIN=1: re-establish the antichain after merging
+  Buf chg_;
   int min_bits_ = 8;
+  DlState* dl_ = nullptr;          ///< non-null for a deadlock search
+  Buf dsel_, dzone_;               ///< the zones deadlock_level reads back
   std::uint64_t clockbits_ = 0, qbits_ = 0, sentinel_ = 0;
   std::size_t wmax_ = 0;
   bool trace_ = false, stress_ = false;
@@ -923,16 +1046,40 @@ class FrontierCuda {
 }  // namespace
 
 int frontier_reach_cuda(const FrontierProblem& p) {
-  // G-simulation is not ported to CUDA yet: decline (the CPU engine runs) rather than search with
-  // a_LU, which would change the state space the user asked for.
-  if (p.gsim) {
-    std::fprintf(stderr, "warning: the CUDA engine has no G-simulation yet (--sim g); running the CPU engine\n");
-    return -1;
-  }
   const ReachStats before = p.stats ? *p.stats : ReachStats{};
   int bits = 8;
+  DlState dl;
+  if (p.deadlock) dl.bump.assign(p.Lq.size(), kAluNegInf);
+  FrontierProblem q;
   for (;;) {
-    FrontierCuda m(p, bits);
+    // A deadlock search runs under the bounds its refinement has grown to, or under a_M's.
+    q = p;
+    if (p.deadlock) {
+      auto collapse = [](std::vector<std::int32_t>& lo, std::vector<std::int32_t>& hi) {
+        for (std::size_t c = 0; c < lo.size() && c < hi.size(); ++c) lo[c] = hi[c] = std::max(lo[c], hi[c]);
+      };
+      // The bounds the covering reads: raw under the G-simulation, integer constants under a_LU.
+      auto& qLloc = p.gsim ? q.Lgloc : q.Lloc;
+      auto& qUloc = p.gsim ? q.Ugloc : q.Uloc;
+      auto& qLq = p.gsim ? q.Lgq : q.Lq;
+      auto& qUq = p.gsim ? q.Ugq : q.Uq;
+      if (dl.collapsed) {
+        collapse(qLq, qUq);
+        collapse(q.Lx, q.Ux);
+        for (std::size_t pr = 0; pr < qLloc.size(); ++pr)
+          for (std::size_t l = 0; l < qLloc[pr].size(); ++l) collapse(qLloc[pr][l], qUloc[pr][l]);
+      } else {
+        for (std::size_t c = 1; c < dl.bump.size() && c < qLq.size(); ++c)
+          if (dl.bump[c] != kAluNegInf) {
+            // A raised constant is a non-strict raw bound under the G-simulation: the safe side.
+            const std::int32_t b = p.gsim ? le(dl.bump[c]) : dl.bump[c];
+            qLq[c] = std::max(qLq[c], b);
+            qUq[c] = std::max(qUq[c], b);
+          }
+      }
+      dl.grew = false;
+    }
+    FrontierCuda m(q, bits, p.deadlock ? &dl : nullptr);
     try {
       return m.run();
     } catch (const Overflow&) {
@@ -942,6 +1089,14 @@ int frontier_reach_cuda(const FrontierProblem& p) {
       if (p.stats) *p.stats = before;
       if (std::getenv("HORA_GPU_TRACE"))
         std::fprintf(stderr, "[gpu] a zone exceeds %d-bit entries: restarting with %d-bit\n", got, bits);
+    } catch (const Restart&) {
+      if (p.stats) *p.stats = before;
+      if (std::getenv("HORA_GPU_TRACE")) std::fprintf(stderr, "[gpu] deadlock refinement grew: restarting\n");
+    } catch (const Collapse&) {
+      dl.collapsed = true;
+      if (p.stats) *p.stats = before;
+      if (std::getenv("HORA_GPU_TRACE"))
+        std::fprintf(stderr, "[gpu] diagonal deadlock atom: restarting under a_M bounds\n");
     }
   }
 }

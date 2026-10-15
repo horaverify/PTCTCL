@@ -95,6 +95,24 @@ void append_recipes(const Network& net, const KeyLayout& kl, const NetTarget& ta
                     std::uint64_t query_clocks, const LocVec& locs, const IntVec& ints,
                     RecipeTable& out);
 
+/// @brief What `E<> deadlock` asks of the frontier engine beyond a plain target.
+///
+/// A deadlock is a property of a valuation, not of a symbolic state's discrete half, so the GPU
+/// cannot decide it in the expand kernel. The engine instead reads each level's new zones back
+/// and hands them to ::has_deadlock on the host, exactly as the CPU engine tests every stored
+/// state. Soundness of the verdict "none" needs the covering to preserve deadlock; that is the
+/// D refinement, discovered while the search runs: ::seed is asked for every newly seen discrete
+/// key, its bounds are raised on the clocks it names, and the search restarts when they grew.
+struct DeadlockHooks {
+  /// Does the stored zone (dim*dim raw bounds, row-major, widened) of discrete key @p key contain
+  /// a deadlocked valuation? Called concurrently.
+  std::function<bool(std::uint64_t key, const std::int32_t* zone)> has_deadlock;
+  /// The D seed of a discrete key. Called concurrently for distinct keys.
+  std::function<DeadlockSeed(std::uint64_t key)> seed;
+  /// Whether the exact test can be skipped at @p key (its universe seed proved no deadlock).
+  std::function<bool(std::uint64_t key)> never_deadlocks;
+};
+
 /// @brief Everything the frontier engine needs from the reachability engine, computed there.
 struct FrontierProblem {
   const Network* net = nullptr;
@@ -122,6 +140,8 @@ struct FrontierProblem {
   SymState s0;                            ///< the initial state, sliced
   ReachStats* stats = nullptr;
   const std::atomic<bool>* cancel = nullptr;
+  /// Non-null for a deadlock query; see ::DeadlockHooks. The target is then the unsatisfiable one.
+  const DeadlockHooks* deadlock = nullptr;
 };
 
 /// @brief Run the search on the Metal GPU.

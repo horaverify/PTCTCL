@@ -265,4 +265,77 @@ bool detail::state_has_deadlock(const Network& net, const SymState& s,
   return !d.empty();
 }
 
+detail::DeadlockSeed detail::deadlock_seed(const Network& net, const LocVec& locs,
+                                            const IntVec& ints) {
+  DeadlockSeed out;
+  const int nc = net.nclocks;
+  SymState u;
+  u.locs = locs;
+  u.ints = ints;
+  bool fc, fu;
+  frozen_flags(net, u.locs, u.ints, &fc, &fu);
+  std::vector<Constraint> ci;
+  all_invariants(net, u.locs, ci);
+
+  u.zone = Dbm::universe(nc);
+  Dbm inv = Dbm::universe(nc);
+  if (!fc && !fu) inv.delay();
+  if (!apply_all(inv, ci)) return out;
+
+  Federation stuck, esc;
+  if (!state_has_deadlock(net, u, &stuck, &esc)) return out;
+  out.may_deadlock = true;
+
+  Federation kept;
+  kept.reserve(esc.size());
+  for (const Dbm& w : esc) {
+    Dbm t = w;
+    t.intersect(inv);
+    if (t.empty()) continue;
+    kept.push_back(w);
+  }
+  if (kept.empty()) return out;                 // Dead(q) == Inv(q): no distinguishing atom
+  esc.swap(kept);
+
+  const int dim = nc + 1;
+  std::vector<std::uint32_t> mbits(mindbm_bits2words(std::uint32_t(dim) * std::uint32_t(dim)));
+  std::vector<int> mfirst(dim), mnext(dim);
+  // Atoms of one federation: how many diagonal ones, and the non-diagonal ones as (clock, bound).
+  auto extract = [&](const Federation& f, std::size_t* ndiag,
+                     std::vector<std::pair<int, std::int32_t>>& nond) {
+    for (const Dbm& d : f) {
+      if (d.empty()) continue;
+      mindbm_analyze(d.data().data(), dim, mbits.data(), mfirst.data(), mnext.data());
+      for (int i = 0; i < dim; ++i)
+        for (int j = 0; j < dim; ++j) {
+          if (i == j) continue;
+          const std::uint32_t idx = std::uint32_t(i) * std::uint32_t(dim) + std::uint32_t(j);
+          if (!((mbits[idx >> 5] >> (idx & 31)) & 1u)) continue;
+          const raw_t r = d.get(i, j);
+          if (r >= kInf) continue;
+          if (i == 0 && r >= kZeroLe) continue;
+          if (inv.get(i, j) <= r) continue;
+          if (raw_add(inv.get(j, i), r) < kZeroLe) continue;
+          if (i > 0 && j > 0) { ++*ndiag; continue; }
+          const int c = i == 0 ? j : i;
+          const std::int32_t b = i == 0 ? -raw_bound(r) : raw_bound(r);
+          bool seen = false;
+          for (auto& x : nond)
+            if (x.first == c) { x.second = std::max(x.second, b); seen = true; break; }
+          if (!seen) nond.push_back({c, b});
+        }
+    }
+  };
+  std::size_t esc_diag = 0, res_diag = 0;
+  std::vector<std::pair<int, std::int32_t>> esc_nond, res_nond;
+  extract(stuck, &res_diag, res_nond);
+  extract(esc, &esc_diag, esc_nond);
+  // The escape arrangement and the residue carve out the same boundary, so either set of atoms
+  // keeps the covering deadlock-preserving. Take one without a diagonal when there is one.
+  if (esc_diag == 0) out.bumps = std::move(esc_nond);
+  else if (res_diag == 0) out.bumps = std::move(res_nond);
+  else out.diagonal = true;
+  return out;
+}
+
 }  // namespace hora

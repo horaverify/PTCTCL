@@ -20,7 +20,7 @@ using u64 = std::uint64_t;
 using Pages = unsigned char* const*;   // device array of the arena pages' addresses
 
 /// Model-wide constants, installed once per engine into the device's constant memory.
-struct Dims { int n, nn, np, page_shift, merge_scan; };
+struct Dims { int n, nn, np, page_shift, merge_scan, gmode; };   // gmode: G-simulation covers, raw bounds
 void set_dims(const Dims& d);
 
 /// Warps per block for a kernel giving each warp @p bytes_per_warp of shared memory.
@@ -90,6 +90,7 @@ struct ReduceP {
   u32* ulist;
   u32* hshw;
   u32* rowcnt;
+  u32* chg;                // per candidate: its zone was replaced by a union hull
   u32 W;
   int solo;
 };
@@ -101,6 +102,9 @@ void rows2(const ReduceP& p, cudaStream_t s);
 void reduce_pairs(int gz, const ReduceP& p, cudaStream_t s);
 void reduce_pairs_big(int gz, const ReduceP& p, u32 sgs, cudaStream_t s);
 void merge_union(int gz, const ReduceP& p, u32 sgs, cudaStream_t s);
+/// After merge_union: drop every zone of a changed hull's bucket that the hull now covers, so the
+/// bucket is an antichain of the covering relation again.
+void antichain(int gz, const ReduceP& p, cudaStream_t s);
 
 struct InternP {
   const u32 *keep, *ctr, *sval;
@@ -141,6 +145,8 @@ void compact_frontier(const u64* ik, const u32* ia, const u32* flag, const u32* 
                       cudaStream_t s);
 void gc_entries(u32* base_a, const u32* zref, u32* zref2, u32* remap, u32* alive2, u32 n, cudaStream_t s);
 void remap(u32* a, const u32* remap, u32 n, cudaStream_t s);
+/// Copy the stored zones of entries idx[0..n) -- through zref -- to out, nn entries of gz bytes each.
+void gather_zones(int gz, Pages AP, const u32* zref, const u32* idx, u32 n, void* out, cudaStream_t s);
 void summary(u32* ctr, const u32* kpre, const u32* wpre, const u32* rowoff, const u32* hpre, u32 W,
              cudaStream_t s);
 

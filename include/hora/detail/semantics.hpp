@@ -587,5 +587,10 @@ close_succ_zone(const Network& net, const LocVec& tgt_locs, const IntVec& tgt_in
 bool state_has_deadlock(const Network& net, const SymState& s,
                         Federation* stuck = nullptr, Federation* escapes = nullptr);
 
+/// @brief Seed the D refinement at the discrete key (@p locs, @p ints), over the whole universe.
+/// @note Mirrors LivenessEngine::online_seed_key for `A[] not deadlock` (deadlock_scan_), where
+///       neither time-open shortcut applies: delaying for ever does not enable an action.
+DeadlockSeed deadlock_seed(const Network& net, const LocVec& locs, const IntVec& ints);
+
 }  // namespace detail
 }  // namespace hora

@@ -3,6 +3,8 @@
 #pragma once
 
 
+#include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "hora/zone.hpp"
@@ -22,6 +24,18 @@ struct SymState {
   LocVec locs;
   IntVec ints;
   Dbm zone;
+};
+
+
+/// @brief What the deadlock-preserving D refinement asks of one discrete key.
+///
+/// The universe seed of LivenessEngine::online_seed_key, as a pure function of the key so that an
+/// engine other than the online construction -- the frontier-batched GPU search -- can read it.
+struct DeadlockSeed {
+  bool may_deadlock = false;   ///< some valuation of `Inv(q)` can be stuck here
+  bool diagonal = false;       ///< a distinguishing atom is diagonal: not expressible as a bound
+  /// Non-diagonal atoms as (clock, constant): the clock's L and U bounds must reach the constant.
+  std::vector<std::pair<int, std::int32_t>> bumps;
 };
 
 }  // namespace detail

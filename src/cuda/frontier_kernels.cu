@@ -238,6 +238,33 @@ __device__ bool gdbm_alu_le_1(const PZ* Z, const PZP* Zp, int n, const int* L, c
   return true;
 }
 
+// Z is simulated by Zp under the diagonal-free G-simulation, by one lane (hdbm::dbm_is_g_le): a_LU
+// with the guards' strictness kept. Lg / Ug are raw bounds, kGNone where a clock has none, and
+// Lg[0] = Ug[0] = (<=, 0).
+constexpr int GDBM_GNONE = INT_MIN;
+template <class PZ, class PZP>
+__device__ bool gdbm_g_le_1(const PZ* Z, const PZP* Zp, int n, const int* Lg, const int* Ug) {
+  for (int x = 0; x < n; ++x) {
+    if (Ug[x] == GDBM_GNONE) continue;
+    const int z0x = gdbm_ld(Z, x);
+    if (gdbm_add(z0x, Ug[x]) < GDBM_ZERO_LE) continue;
+    for (int y = 0; y < n; ++y) {
+      if (y == x || Lg[y] == GDBM_GNONE) continue;
+      const int ly = Lg[y];
+      const int negL = gdbm_strict(ly) ? gdbm_lt(-gdbm_bound(ly)) : gdbm_le(-gdbm_bound(ly));
+      const int zpyx = gdbm_ld(Zp, y * n + x);
+      if (zpyx < gdbm_ld(Z, y * n + x) && gdbm_add(zpyx, negL) < z0x) return false;
+    }
+  }
+  return true;
+}
+// The covering relation of the search: a_LU, or the G-simulation when the model-wide mode says so.
+// Lb / Ub then hold raw bounds (see fr_bucket_bounds) instead of integer constants.
+template <class PZ, class PZP>
+__device__ __forceinline__ bool fr_cover_le(const PZ* Z, const PZP* Zp, int n, const int* L, const int* U) {
+  return cD.gmode ? gdbm_g_le_1(Z, Zp, n, L, U) : gdbm_alu_le_1(Z, Zp, n, L, U);
+}
+
 // ---- frontier kernels -----------------------------------------------------------------------------
 #define FR_TPB 256
 #define FR_KERNEL __global__ __launch_bounds__(FR_TPB)
@@ -409,7 +436,7 @@ FR_KERNEL void fr_bucket_bounds(const u64* bkey, const u32* hpre, const int* Llo
       l = max(l, Lloc[gl * n + c]);
       u = max(u, Uloc[gl * n + c]);
     }
-    if (c == 0) l = u = 0;
+    if (c == 0) l = u = cD.gmode ? GDBM_ZERO_LE : 0;
     Lb[u64(b) * n + c] = l;
     Ub[u64(b) * n + c] = u;
   }
@@ -445,7 +472,7 @@ FR_KERNEL void fr_reduce_stored(ReduceP P) {
         const int* U = P.Ub + u64(b) * n;
         for (u32 t = 0; !drop && t < nold; ++t) {
           const u32 a = fr_stored_entry(st, t, P.base_a, P.delta_a);
-          drop = P.alive[a] != 0u && gdbm_alu_le_1(X, zone_ptr<GZ>(P.AP, P.zref[a]), n, L, U);
+          drop = P.alive[a] != 0u && fr_cover_le(X, zone_ptr<GZ>(P.AP, P.zref[a]), n, L, U);
         }
       }
       P.keep1[i] = drop ? 0u : 1u;
@@ -476,7 +503,7 @@ FR_KERNEL void fr_reduce_stored_big(ReduceP P) {
       bool d = false;
       if (t < nold) {
         const u32 a = fr_stored_entry(st, t, P.base_a, P.delta_a);
-        d = P.alive[a] != 0u && gdbm_alu_le_1(X, zone_ptr<GZ>(P.AP, P.zref[a]), n, L, U);
+        d = P.alive[a] != 0u && fr_cover_le(X, zone_ptr<GZ>(P.AP, P.zref[a]), n, L, U);
       }
       drop = simd_any(d);
     }
@@ -525,9 +552,9 @@ __device__ void fr_kill(const ReduceP& P, u32 a) {
 template <class GZ>
 __device__ __forceinline__ bool fr_row_dominated(bool stored, u32 r, const GZ* X, const GZ* Y, u32 t,
                                                  int n, const int* L, const int* U) {
-  if (stored) return gdbm_alu_le_1(X, Y, n, L, U) && !gdbm_alu_le_1(Y, X, n, L, U);
+  if (stored) return fr_cover_le(X, Y, n, L, U) && !fr_cover_le(Y, X, n, L, U);
   if (t == r) return false;
-  return gdbm_alu_le_1(X, Y, n, L, U) && (t < r || !gdbm_alu_le_1(Y, X, n, L, U));
+  return fr_cover_le(X, Y, n, L, U) && (t < r || !fr_cover_le(Y, X, n, L, U));
 }
 
 // Phase 2: rows are a bucket's stored zones, then its survivors; columns its survivors.
@@ -600,8 +627,8 @@ FR_KERNEL void fr_reduce_pairs_big(ReduceP P) {
       bool d = false;
       if (t < ns) {
         const GZ* Y = bz + u64(P.sval[P.surv[s0 + t]]) * nn;
-        if (stored) d = gdbm_alu_le_1(X, Y, n, L, U) && !gdbm_alu_le_1(Y, X, n, L, U);
-        else if (t != r) d = gdbm_alu_le_1(X, Y, n, L, U) && (t < r || !gdbm_alu_le_1(Y, X, n, L, U));
+        if (stored) d = fr_cover_le(X, Y, n, L, U) && !fr_cover_le(Y, X, n, L, U);
+        else if (t != r) d = fr_cover_le(X, Y, n, L, U) && (t < r || !fr_cover_le(Y, X, n, L, U));
       }
       dom = simd_any(d);
     }
@@ -664,6 +691,7 @@ FR_KERNEL void fr_union(ReduceP P) {
         __syncwarp();   // lane 0's flag writes, before rescanning
       }
       if (changed) {   // the hull replaces the candidate: store it, and hash it as stored
+        if (lane == 0 && P.chg) P.chg[pos] = 1u;
         GZ* out = bz + u64(w) * nn;
         u32 h = 0;
         GDBM_FOR_E(e, lane, nn) {
@@ -677,6 +705,51 @@ FR_KERNEL void fr_union(ReduceP P) {
       }
     }
     __syncwarp();
+  }
+}
+
+// ---- re-establishing the antichain after a merge -------------------------------------------------------
+// A union hull is a larger zone than the candidate that was tested against the passed set, so it may
+// cover zones the reduction kept: later survivors of its bucket, and stored zones the merge scan
+// (bounded by merge_scan) never reached. One thread per bucket, scanning all of it with the
+// single-lane covering test; a zone the hull covers is dropped. Pairs equivalent under the covering
+// keep the earlier survivor, as the pairwise reduction does.
+template <class GZ>
+FR_KERNEL void fr_antichain(ReduceP P) {
+  const uint4* binfo = static_cast<const uint4*>(P.binfo);
+  GZ* bz = static_cast<GZ*>(P.bz);
+  const int n = cD.n, nn = cD.nn;
+  const u32 cnt = *(volatile u32*)&P.ctr[8];
+  for (u32 k = blockIdx.x * blockDim.x + threadIdx.x; k < cnt; k += gridDim.x * blockDim.x) {
+    const u32 b = P.ulist[k];
+    const uint4 st = binfo[2 * b], nw = binfo[2 * b + 1];
+    const u32 s0 = P.k1pre[nw.x], ns = P.k1pre[nw.x + nw.y] - s0;
+    const int* L = P.Lb + u64(b) * n;
+    const int* U = P.Ub + u64(b) * n;
+    for (u32 r = 0; r < ns; ++r) {
+      const u32 pos = P.surv[s0 + r];
+      if (!P.chg[pos] || P.keep[pos] == 0u) continue;
+      const GZ* X = bz + u64(P.sval[pos]) * nn;
+      for (u32 r2 = 0; r2 < ns; ++r2) {         // the other new survivors
+        if (r2 == r) continue;
+        const u32 p2 = P.surv[s0 + r2];
+        if (P.keep[p2] == 0u) continue;
+        const GZ* Y = bz + u64(P.sval[p2]) * nn;
+        if (!fr_cover_le(Y, X, n, L, U)) continue;
+        if (r < r2 || !fr_cover_le(X, Y, n, L, U)) P.keep[p2] = 0u;
+        else { P.keep[pos] = 0u; break; }       // equivalent to an earlier survivor
+      }
+      if (P.keep[pos] == 0u) continue;
+      for (u32 side = 0; side < 2; ++side) {    // the stored zones: delta, then base
+        const u32 first = side ? st.x : st.z, c = side ? st.y : st.w;
+        const u32* run = side ? P.base_a : P.delta_a;
+        for (u32 t = 0; t < c; ++t) {
+          const u32 a = run[first + t];
+          if (P.alive[a] == 0u) continue;
+          if (fr_cover_le(zone_ptr<GZ>(P.AP, P.zref[a]), X, n, L, U)) fr_kill(P, a);
+        }
+      }
+    }
   }
 }
 
@@ -834,6 +907,14 @@ FR_KERNEL void fr_remap(u32* a, const u32* remap, u32 n) {
   const u32 i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) a[i] = remap[a[i]];
 }
+template <class GZ>
+FR_KERNEL void fr_gather_zones(Pages AP, const u32* zref, const u32* idx, u32 n, GZ* out) {
+  const u64 total = u64(n) * u64(cD.nn);
+  for (u64 t = u64(blockIdx.x) * blockDim.x + threadIdx.x; t < total; t += u64(gridDim.x) * blockDim.x) {
+    const u32 i = u32(t / u64(cD.nn)), e = u32(t % u64(cD.nn));
+    out[t] = zone_ptr<GZ>(AP, zref[idx[i]])[e];
+  }
+}
 FR_KERNEL void fr_summary(u32* ctr, const u32* kpre, const u32* wpre, const u32* rowoff, const u32* hpre, u32 W) {
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     ctr[16] = kpre[W]; ctr[17] = wpre[W]; ctr[18] = rowoff[W]; ctr[19] = hpre[W];
@@ -961,6 +1042,9 @@ void reduce_pairs_big(int gz, const ReduceP& p, u32 sgs, cudaStream_t s) {
   const std::size_t smem = std::size_t(sgs) * g_dims.nn * 4;
   DISPATCH_GZ(gz, (fr_reduce_pairs_big<GZT><<<warp_blocks(p.W, sgs), sgs * 32, smem, s>>>(p)));
 }
+void antichain(int gz, const ReduceP& p, cudaStream_t s) {
+  DISPATCH_GZ(gz, (fr_antichain<GZT><<<blocks(1u << 16), FR_TPB, 0, s>>>(p)));
+}
 void merge_union(int gz, const ReduceP& p, u32 sgs, cudaStream_t s) {
   const std::size_t smem = std::size_t(sgs) * 2 * g_dims.nn * 4;
   DISPATCH_GZ(gz, (fr_union<GZT><<<warp_blocks(p.W, sgs), sgs * 32, smem, s>>>(p)));
@@ -1010,6 +1094,11 @@ void gc_entries(u32* base_a, const u32* zref, u32* zref2, u32* remap_, u32* aliv
 }
 void remap(u32* a, const u32* remap_, u32 n, cudaStream_t s) {
   if (n) fr_remap<<<blocks(n), FR_TPB, 0, s>>>(a, remap_, n);
+}
+void gather_zones(int gz, Pages AP, const u32* zref, const u32* idx, u32 n, void* out, cudaStream_t s) {
+  if (!n) return;
+  DISPATCH_GZ(gz, (fr_gather_zones<GZT><<<stride_blocks(u64(n) * 64), FR_TPB, 0, s>>>(
+                      AP, zref, idx, n, static_cast<GZT*>(out))));
 }
 void summary(u32* ctr, const u32* kpre, const u32* wpre, const u32* rowoff, const u32* hpre, u32 W,
              cudaStream_t s) {

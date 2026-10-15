@@ -1227,7 +1227,8 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
                          bool force_exact, Backend backend, ReachStats* stats,
                          const std::vector<Automorphism>* sym = nullptr,
                          const std::vector<NetTarget>* orbit = nullptr,
-                         const std::atomic<bool>* cancel = nullptr) {
+                         const std::atomic<bool>* cancel = nullptr,
+                         const detail::DeadlockHooks* dlh = nullptr, bool* declined = nullptr) {
   const bool use_sym = sym && sym->size() > 1;
   std::vector<std::int32_t> L = net.lbound, U = net.ubound;
   extend_bounds(L, U, target.clock_cond);
@@ -1393,7 +1394,11 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       fp.Lx = L;
       fp.Ux = U;
       // G-simulation, as state_bounds builds it: per-location raw bounds and the query's floors.
-      if (detail::options().gsim && !net.uraw_loc.empty()) {
+      // Asked for by --sim g, and by default for a CUDA deadlock search, where it is coarser than
+      // a_LU at the same soundness; HORA_GPU_SIM=lu|g overrides either.
+      const char* simenv = std::getenv("HORA_GPU_SIM");
+      const bool want_g = simenv ? std::string(simenv) == "g" : (detail::options().gsim || dlh);
+      if (want_g && !net.uraw_loc.empty()) {
         fp.gsim = true;
         fp.Lgloc = net.lraw_loc;
         fp.Ugloc = net.uraw_loc;
@@ -1409,6 +1414,7 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       fp.s0 = s0;
       fp.stats = stats;
       fp.cancel = cancel;
+      fp.deadlock = dlh;
       int r = -1;
 #ifdef HORA_HAVE_METAL
       if (backend == Backend::Metal) r = detail::frontier_reach_metal(fp);
@@ -1420,6 +1426,12 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
     }
   }
 #endif
+  // A deadlock query handed to the GPU path is decided there or not at all: the plain target it
+  // carries is the unsatisfiable one, which the CPU engine below would answer `false` to.
+  if (dlh) {
+    if (declined) *declined = true;
+    return false;
+  }
 
   // ======================================================================
   // Shared passed set: one stripe-locked table any worker may touch, locking only the stripe of
@@ -1657,13 +1669,14 @@ static bool reach_engine_auto(const Network& net, const NetTarget& target, Targe
                               bool force_exact, Backend backend, ReachStats* stats,
                               const std::vector<Automorphism>* sym = nullptr,
                               const std::vector<NetTarget>* orbit = nullptr,
-                              const std::atomic<bool>* cancel = nullptr) {
+                              const std::atomic<bool>* cancel = nullptr,
+                              const detail::DeadlockHooks* dlh = nullptr, bool* declined = nullptr) {
   if (disc_key_bits(net) <= key_budget<NarrowKey>())
     return reach_engine<NarrowKey>(net, target, std::forward<TargetFn>(is_target), force_exact,
-                                   backend, stats, sym, orbit, cancel);
+                                   backend, stats, sym, orbit, cancel, dlh, declined);
   const Backend cpu = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
   return reach_engine<WideKey>(net, target, std::forward<TargetFn>(is_target), force_exact, cpu,
-                               stats, sym, orbit, cancel);
+                               stats, sym, orbit, cancel, dlh, declined);
 }
 
 bool reachable_net(const Network& net, const NetTarget& target, Backend backend,
@@ -1787,9 +1800,42 @@ static bool use_loc_lu() {
 /// @see docs/design.md §3 for the full argument and the measured comparison against exact zones.
 bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
                         const std::atomic<bool>* cancel) {
-  // A predicate target that reads the zone: always the CPU engine.
+  // A predicate target that reads the zone: the CPU engine -- except on CUDA, below, where the
+  // frontier engine reads each level's zones back and runs the same exact test on the host.
   const Backend b = (backend == Backend::Seq) ? Backend::Seq : Backend::Omp;
   const auto is_dl = [&](const SymState& s) { return state_has_deadlock(net, s); };
+
+#ifdef HORA_HAVE_CUDA
+  if (backend == Backend::Cuda && !network_has_diagonal(net) && !gsim_on() &&
+      disc_key_bits(net) <= key_budget<NarrowKey>()) {
+    const char* dm = std::getenv("HORA_DL_MODE");
+    if (!dm || *dm == 'd') {
+      NetTarget never;     // the search stops on a deadlock, which only the hooks can see
+      never.never = true;
+      detail::DeadlockHooks hooks;
+      const DiscKeyCodecT<NarrowKey> codec(net);
+      hooks.has_deadlock = [&](std::uint64_t key, const std::int32_t* zone) {
+        SymState s;
+        s.locs.resize(net.nprocs());
+        s.ints.resize(net.intvars.size());
+        codec.decode(static_cast<NarrowKey>(key), s.locs.data(), s.ints.data());
+        s.zone = Dbm(net.nclocks);
+        std::copy(zone, zone + s.zone.data().size(), s.zone.data().begin());
+        return state_has_deadlock(net, s);
+      };
+      hooks.seed = [&](std::uint64_t key) {
+        LocVec l(net.nprocs());
+        IntVec i(net.intvars.size());
+        codec.decode(static_cast<NarrowKey>(key), l.data(), i.data());
+        return detail::deadlock_seed(net, l, i);
+      };
+      bool declined = false;
+      const bool hit = reach_engine_auto(net, never, is_dl, /*force_exact=*/false, backend, stats,
+                                         nullptr, nullptr, cancel, &hooks, &declined);
+      if (!declined) return hit;
+    }
+  }
+#endif
 
   // Diagonals make every LU-family abstraction unsound, and the G-bound arrays carry raw encoded
   // bounds with their own sentinel, so collapsing those correctly is a separate exercise. Both

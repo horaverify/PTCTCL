@@ -16,7 +16,7 @@ import argparse, csv, os, re, subprocess, sys, time
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 VERD = re.compile(r'-- Formula is (satisfied|NOT satisfied|UNSUPPORTED)'
                   r'[^\[\n]*(?:\[explored (\d+) symbolic states(?:, generated (\d+))?)?')
-FIELDS = ['family', 'model', 'tool', 'rep', 'states', 'generated', 'seconds', 'status', 'verdict', 'query']
+FIELDS = ['family', 'model', 'tool', 'rep', 'states', 'generated', 'seconds', 'status', 'verdict', 'gpu_mb', 'query']
 
 
 def size_of(m):
@@ -36,17 +36,32 @@ def run(hora, tool, model, query, timeout, queryset):
         args[1:1] = ['--backend', 'omp']
         env['OMP_NUM_THREADS'] = tool[3:] or '16'
     t = time.time()
-    try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
-        return dict(seconds=timeout, status='TIMEOUT', states='-', generated='-', verdict='-')
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    peak = 0                       # peak GPU memory of this process, MiB, polled from nvidia-smi
+    while True:
+        try:
+            out, err = proc.communicate(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if time.time() - t > timeout:
+                proc.kill(); proc.communicate()
+                return dict(seconds=timeout, status='TIMEOUT', states='-', generated='-', verdict='-',
+                            gpu_mb=peak or '-')
+            q = subprocess.run(['nvidia-smi', '--query-compute-apps=pid,used_memory',
+                                '--format=csv,noheader,nounits'], capture_output=True, text=True)
+            for ln in q.stdout.splitlines():
+                f = [x.strip() for x in ln.split(',')]
+                if len(f) == 2 and f[0] == str(proc.pid) and f[1].isdigit():
+                    peak = max(peak, int(f[1]))
     dt = time.time() - t
+    p = subprocess.CompletedProcess(args, proc.returncode, out, err)
+    gm = peak or '-'
     ms = list(VERD.finditer(p.stdout))
     if p.returncode not in (0, 2) or not ms or 'falling back' in p.stderr:
-        return dict(seconds=dt, status='ERR', states='-', generated='-', verdict='-',
+        return dict(seconds=dt, status='ERR', states='-', generated='-', verdict='-', gpu_mb=gm,
                     err=(p.stderr.strip()[-200:]))
     m = ms[0]
-    return dict(seconds=dt, status='OK', states=m.group(2) or '-', generated=m.group(3) or '-',
+    return dict(seconds=dt, status='OK', states=m.group(2) or '-', generated=m.group(3) or '-', gpu_mb=gm,
                 verdict={'satisfied': 'SAT', 'NOT satisfied': 'UNSAT'}.get(m.group(1), m.group(1)))
 
 
@@ -100,7 +115,7 @@ def main():
                 else:
                     r = run(a.hora, tool, os.path.join(xml, model + '.xml'), q, a.timeout, a.queries)
                     row = dict(family=fam, model=model, tool=tool, rep=rep, query=qtext,
-                               **{k: r[k] for k in ('states', 'generated', 'seconds', 'status', 'verdict')})
+                               **{k: r[k] for k in ('states', 'generated', 'seconds', 'status', 'verdict', 'gpu_mb')})
                     if r['status'] == 'OK':
                         v = verdicts.setdefault(model, r['verdict'])
                         if v != r['verdict']:
@@ -109,7 +124,7 @@ def main():
                     w.writerow(row)
                     out.flush()
                     print(f"{model:12s} {tool:7s} rep{rep} {row['status']:8s} {row['seconds']:>9s}s "
-                          f"states {row['states']} {row['verdict']} {r.get('err', '')}", flush=True)
+                          f"states {row['states']} {row['verdict']} gpu {row['gpu_mb']}MiB {r.get('err', '')}", flush=True)
                     r = row
                 if r['status'] == 'OK':
                     verdicts.setdefault(model, r['verdict'])
