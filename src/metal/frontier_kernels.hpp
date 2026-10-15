@@ -776,6 +776,32 @@ kernel void fr_reduce_pairs_big(device const uint*  rowoff  [[buffer(0)]],
 #ifndef FR_HULL_COVER
 #define FR_HULL_COVER 0   // the test against earlier hulls (HORA_GPU_HULL_COVER=1): off by default
 #endif
+// The union test without its commit: is A u B convex? H is left holding the hull (entrywise max)
+// either way. gdbm_try_union with the final A := H left to the caller, so that several
+// SIMD-groups can test candidates against one shared A at once.
+template <typename PB>
+inline bool fr_union_test(threadgroup int* A, PB B, threadgroup int* H, int n, uint lane) {
+  bool gap = false;
+  for (int b = 1; b < n; b += GDBM_G) {        // uniform trip count: see GDBM_FOR_E
+    const int i = b + int(lane);
+    if (i >= n) continue;
+    const int ai0 = A[i * n], bi0 = gdbm_ld(B, i * n);
+    gap = gap || (ai0 < GDBM_INF && gdbm_add(ai0, gdbm_ld(B, i)) < 0) ||
+                 (bi0 < GDBM_INF && gdbm_add(bi0, A[i]) < 0);
+  }
+  if (gdbm_any(gap)) return false;
+  GDBM_FOR_E(e, lane, n * n) { const int a = A[e], b = gdbm_ld(B, e); H[e] = a > b ? a : b; }
+  gdbm_sync();
+  return gdbm_union_facets(A, B, H, n, lane) && gdbm_union_facets(B, A, H, n, lane);
+}
+// One threadgroup per listed bucket, its SIMD-groups testing union candidates in parallel. For each
+// survivor in rank order: the window -- the FR_MERGE_SCAN newest live zones of the bucket (this
+// batch's earlier survivors, latest first, then the delta's and the base's entries, each latest
+// first), built by thread 0 -- is tested sgs candidates at a time, one per SIMD-group; the first
+// candidate in window order that merges wins, exactly the one the sequential scan would take; the
+// zone becomes that group's hull, the candidate is absorbed, and the window is rebuilt. Thread 0
+// alone writes keep and alive, and threadgroup barriers with mem_device order every write another
+// thread reads (the hulls in bz, read by later survivors' tests).
 kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
                      device const uint4* binfo   [[buffer(1)]],
                      device const uint*  base_a  [[buffer(2)]],
@@ -797,97 +823,129 @@ kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
                      device const FR_BOUND* Lb   [[buffer(18)]],
                      device const FR_BOUND* Ub   [[buffer(19)]],
                      threadgroup int*    tgm     [[threadgroup(0)]],
-                     uint tg [[threadgroup_position_in_grid]],
+                     uint tg   [[threadgroup_position_in_grid]],
                      uint sgs  [[simdgroups_per_threadgroup]],
                      uint sgid [[simdgroup_index_in_threadgroup]],
-                     uint lane [[thread_index_in_simdgroup]]) {
-  const uint k = tg * sgs + sgid;
-  if (k >= atomic_load_explicit(&ctr[8], memory_order_relaxed)) return;
-  const uint b = ulist[k];
+                     uint lane [[thread_index_in_simdgroup]],
+                     uint tid  [[thread_index_in_threadgroup]],
+                     uint tpt  [[threads_per_threadgroup]]) {
+  if (tg >= atomic_load_explicit(&ctr[8], memory_order_relaxed)) return;   // uniform: whole group
+  const uint b = ulist[tg];
   const uint4 st = binfo[2 * b], nw = binfo[2 * b + 1];
   const uint s0 = k1pre[nw.x], ns = k1pre[nw.x + nw.y] - s0;
-  threadgroup int* X = tgm + sgid * (2 * kNN);
-  threadgroup int* H = X + kNN;
+  // Threadgroup memory: X, one hull scratch per SIMD-group, the window, and control words.
+  threadgroup int* X = tgm;
+  threadgroup int* Hs = X + kNN;
+  threadgroup uint* win = reinterpret_cast<threadgroup uint*>(Hs + sgs * kNN);   // FR_MERGE_SCAN
+  threadgroup atomic_uint* ctl = reinterpret_cast<threadgroup atomic_uint*>(win + FR_MERGE_SCAN);
+  threadgroup uint* ctlu = reinterpret_cast<threadgroup uint*>(win + FR_MERGE_SCAN);
+  threadgroup uint* hpart = ctlu + 4;                                             // sgs words
+  // ctl[0] window length, [1] first winning index, [2] this survivor is live, [3] covered
   const BoundView L{Lb + ulong(b) * kN}, U{Ub + ulong(b) * kN};
+  const uint kNone = 0xffffffffu;
   for (uint r = 0; r < ns; ++r) {
     const uint pos = surv[s0 + r];
-    if (simd_broadcast_first(keep[pos]) == 0u) continue;   // dropped, or absorbed earlier
     const uint w = sval[pos];
-    // Covered by a hull an earlier survivor became? One earlier survivor a lane.
-    device const GZ* Z = bz + ulong(w) * kNN;
-    bool covered = false;
-    for (uint base = 0; FR_HULL_COVER && base < r && !covered; base += 32u) {
-      const uint r2 = base + lane;
-      bool c = false;
-      if (r2 < r) {
+    if (tid == 0) { ctlu[2] = keep[pos]; ctlu[3] = 0u; }
+    threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+    if (ctlu[2] == 0u) { threadgroup_barrier(mem_flags::mem_threadgroup); continue; }   // dropped or absorbed
+    // Optional canonical-order test against the hulls earlier survivors became (keep == 2).
+    if (FR_HULL_COVER && r > 0) {
+      device const GZ* Z = bz + ulong(w) * kNN;
+      for (uint r2 = tid; r2 < r; r2 += tpt) {
         const uint p2 = surv[s0 + r2];
-        c = keep[p2] == 2u && fr_le(Z, bz + ulong(sval[p2]) * kNN, L, U);
+        if (keep[p2] == 2u && fr_le(Z, bz + ulong(sval[p2]) * kNN, L, U))
+          atomic_store_explicit(&ctl[3], 1u, memory_order_relaxed);
       }
-      covered = simd_any(c);
+      threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+      if (ctlu[3] != 0u) {
+        if (tid == 0) keep[pos] = 0u;
+        threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+        continue;
+      }
     }
-    if (covered) {
-      if (lane == 0) keep[pos] = 0u;
-      simdgroup_barrier(mem_flags::mem_device);
-      continue;
-    }
-    gdbm_load(X, bz + ulong(w) * kNN, kN, lane);
+    for (uint e = tid; e < uint(kNN); e += tpt) X[e] = gdbm_ld(bz + ulong(w) * kNN, int(e));
+    threadgroup_barrier(mem_flags::mem_threadgroup);
     bool changed = false;
-    // Every merge removes a zone of the bucket, so there are at most as many rounds as zones.
-    // Past that the absorbed zones are not being seen as gone: stop and report (ctr[11]) rather
-    // than spin -- a kernel that never ends takes the whole GPU, and the machine, with it.
-    const uint max_rounds = ns + st.y + st.w + 2u;
-    uint rounds = 0;
-    for (bool merged = true; merged;) {
-      if (++rounds > max_rounds) {
-        if (lane == 0) atomic_fetch_add_explicit(&ctr[11], 1u, memory_order_relaxed);
+    const uint max_rounds = ns + st.y + st.w + 2u;   // every merge removes a zone of the bucket
+    for (uint rounds = 0;; ++rounds) {
+      if (rounds > max_rounds) {
+        if (tid == 0) atomic_fetch_add_explicit(&ctr[11], 1u, memory_order_relaxed);
         break;
       }
-      merged = false;
-      uint seen = 0;
-      for (int r2 = int(r) - 1; r2 >= 0 && seen < FR_MERGE_SCAN && !merged; --r2) {
-        const uint p2 = surv[s0 + uint(r2)];
-        if (simd_broadcast_first(keep[p2]) == 0u) continue;
-        ++seen;
-        if (gdbm_try_union(X, bz + ulong(sval[p2]) * kNN, H, kN, lane)) {
-          merged = changed = true;
-          if (lane == 0) keep[p2] = 0u;
+      // The window, newest first: survivor candidates as 0x80000000 | position, stored as entry.
+      if (tid == 0) {
+        uint nwin = 0;
+        for (int r2 = int(r) - 1; r2 >= 0 && nwin < FR_MERGE_SCAN; --r2) {
+          const uint p2 = surv[s0 + uint(r2)];
+          if (keep[p2] != 0u) win[nwin++] = 0x80000000u | p2;
         }
+        for (uint side = 0; side < 2 && nwin < FR_MERGE_SCAN; ++side) {   // the delta, then the base
+          const uint first = side ? st.x : st.z, cnt = side ? st.y : st.w;
+          device const uint* run = side ? base_a : delta_a;
+          for (int t = int(cnt) - 1; t >= 0 && nwin < FR_MERGE_SCAN; --t) {
+            const uint a = run[first + uint(t)];
+            if (alive[a] != 0u) win[nwin++] = a;
+          }
+        }
+        ctlu[0] = nwin;
+        ctlu[1] = kNone;
       }
-      for (uint side = 0; side < 2 && !merged; ++side) {   // the delta, then the base
-        const uint first = side ? st.x : st.z, cnt = side ? st.y : st.w;
-        device const uint* run = side ? base_a : delta_a;
-        for (int t = int(cnt) - 1; t >= 0 && seen < FR_MERGE_SCAN && !merged; --t) {
-          const uint a = run[first + uint(t)];
-          if (simd_broadcast_first(alive[a]) == 0u) continue;
-          ++seen;
-          const bool u = gdbm_try_union(X, zone_at(AP, zref[a]), H, kN, lane);
-          // The lanes must agree (see GDBM_FOR_E in gdbm.hpp): a split answer kills the zone on
-          // one lane and writes the hull on none. Reported as an error (ctr[13]), never acted on.
-          if (simd_any(u) != simd_all(u)) {
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      const uint nwin = ctlu[0];
+      // Up to sgs candidates at a time, one per SIMD-group; the first in window order that merges.
+      uint found = kNone;
+      for (uint c = 0; c < nwin; c += sgs) {
+        const uint i = c + sgid;
+        if (i < nwin) {
+          const uint id = win[i];
+          const bool surv_cand = (id & 0x80000000u) != 0u;
+          device const GZ* Y = surv_cand ? bz + ulong(sval[id & 0x7fffffffu]) * kNN : zone_at(AP, zref[id]);
+          const bool u = fr_union_test(X, Y, Hs + sgid * kNN, kN, lane);
+          if (simd_any(u) != simd_all(u)) {   // see GDBM_FOR_E in gdbm.hpp: an error, never acted on
             if (lane == 0) atomic_fetch_add_explicit(&ctr[13], 1u, memory_order_relaxed);
-            continue;
-          }
-          if (u) {
-            merged = changed = true;
-            if (lane == 0) fr_kill(a, alive, zref, zcnt, ztab, ztslot, pend, ctr);
+          } else if (u && lane == 0) {
+            atomic_fetch_min_explicit(&ctl[1], i, memory_order_relaxed);
           }
         }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        found = ctlu[1];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (found != kNone) break;
       }
-      simdgroup_barrier(mem_flags::mem_device);           // lane 0's flag writes, before rescanning
+      if (found == kNone) break;
+      // Merge: X := the winner's hull; the candidate is absorbed.
+      threadgroup const int* Hw = Hs + (found % sgs) * kNN;
+      for (uint e = tid; e < uint(kNN); e += tpt) X[e] = Hw[e];
+      if (tid == 0) {
+        const uint id = win[found];
+        if (id & 0x80000000u) keep[id & 0x7fffffffu] = 0u;
+        else fr_kill(id, alive, zref, zcnt, ztab, ztslot, pend, ctr);
+      }
+      changed = true;
+      threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
     }
     if (changed) {   // the hull replaces the candidate: store it, and hash it as stored
       device GZ* out = bz + ulong(w) * kNN;
       uint h = 0;
-      GDBM_FOR_E(e, lane, kNN) { const GZ sv = fr_stored(X[e]); out[e] = sv; h += fr_entry_hash(uint(e), int(sv)); }
-      h = fr_mix(simd_sum(h));
-      if (lane == 0) { hshw[w] = h; keep[pos] = 2u; }
-      simdgroup_barrier(mem_flags::mem_device);           // the hull, before later survivors read it
+      for (uint e = tid; e < uint(kNN); e += tpt) { const GZ sv = fr_stored(X[e]); out[e] = sv; h += fr_entry_hash(e, int(sv)); }
+      h = simd_sum(h);
+      if (lane == 0) hpart[sgid] = h;
+      threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+      if (tid == 0) {
+        uint t = 0;
+        for (uint g = 0; g < sgs; ++g) t += hpart[g];
+        hshw[w] = fr_mix(t);
+        keep[pos] = 2u;
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
     }
   }
-  for (uint r = lane; r < ns; r += 32u) {                  // keep is a 0/1 flag again
-    const uint pos = surv[s0 + r];
-    if (keep[pos] == 2u) keep[pos] = 1u;
-  }
+  if (tid == 0)
+    for (uint r = 0; r < ns; ++r) {          // keep is a 0/1 flag again
+      const uint pos = surv[s0 + r];
+      if (keep[pos] == 2u) keep[pos] = 1u;
+    }
 }
 
 // keep := 0 for the candidates phase 1 dropped (phase 2 writes the survivors' own entries).

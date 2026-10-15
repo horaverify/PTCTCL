@@ -635,13 +635,16 @@ class FrontierMetal {
     dispatch_sg_indirect(4, sg2, tg_red);
     // ---- convex union, as the CPU engine merges ----
     if (union_) {
-      const int tg_un = 2 * nn_ * 4;   // the zone and its hull
-      const std::uint32_t sgu = launch_sgs("fr_union", tg_un);
-      indirect(ctr_, kUnion, 1, sgu, 5);
+      // One threadgroup per listed bucket, its SIMD-groups testing union candidates in parallel
+      // (see fr_union): the zone, a hull scratch per SIMD-group, the window and control words.
+      const std::uint32_t sgu = union_sgs();
+      indirect(ctr_, kUnion, 1, 1, 5);
       use("fr_union");
       bind({&ulist_, &binfo_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &keep_, &k1pre_, &surv_,
             &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &ctr_, &hsh_, &Lb_, &Ub_});
-      dispatch_sg_indirect(5, sgu, tg_un);
+      [enc_ setThreadgroupMemoryLength:union_tg_bytes(sgu) atIndex:0];
+      [enc_ dispatchThreadgroupsWithIndirectBuffer:ind_.b indirectBufferOffset:5 * 12
+                             threadsPerThreadgroup:MTLSizeMake(sgu * 32, 1, 1)];
     }
     // ---- intern the survivors' zones ----
     scan(keep_, kpre_, Wu, Wu + 1);
@@ -710,7 +713,7 @@ class FrontierMetal {
     zcount_ += fresh - recycled;
     nfn_ += kept;
     if (check_) check_after();
-    if (ndelta_ > std::max<std::size_t>(nbase_ / 4, 1u << 16) || (stress_ && ndelta_)) fold();
+    if (fold_due()) fold();
     return false;
   }
 
@@ -951,10 +954,19 @@ class FrontierMetal {
     lvl_valid_ += generated;
     lvl_kept_ += added.size();
     if (P_.stats) { P_.stats->generated += generated; P_.stats->explored += expanded; }
-    if (ndelta_ > std::max<std::size_t>(nbase_ / 4, 1u << 16) || (stress_ && ndelta_)) fold();
+    if (fold_due()) fold();
     return false;
   }
 
+  // A fold when the delta outgrows a quarter of the base -- or when dead entries are most of what
+  // base and delta hold: every scan over a discrete state's entries (phase 1, phase 2, the merge
+  // window) steps over its dead ones, and a model with few discrete states (`single` has one)
+  // keeps its whole history in one group otherwise. A fold keeps only the live entries.
+  bool fold_due() const {
+    if (stress_ && ndelta_) return true;
+    if (ndelta_ > std::max<std::size_t>(nbase_ / 4, 1u << 16)) return true;
+    return ndelta_ && nbase_ + ndelta_ > 2 * nlive_ + 4096;
+  }
   // base := merge(live base, live delta); delta := empty.
   void fold() {
     reserve(fl_a_, (nbase_ + 1) * 4, false); reserve(fl_ap_, (nbase_ + 1) * 4, false);
@@ -1346,6 +1358,20 @@ class FrontierMetal {
     std::uint32_t k = std::min<std::uint32_t>(8, launch_tpt(name) / 32);
     while (k > 1 && tg_len(k, bytes) > room) --k;
     FR_CHECK(tg_len(k, bytes) <= room, std::string("threadgroup memory too small for ") + name);
+    return k;
+  }
+  // fr_union's threadgroup memory for `sgs` SIMD-groups: the zone, a hull per SIMD-group, the
+  // window (FR_MERGE_SCAN ids), four control words and a hash partial per SIMD-group.
+  NSUInteger union_tg_bytes(std::uint32_t sgs) const {
+    const std::size_t words = std::size_t(nn_) * (1 + sgs) + std::size_t(detail::kMergeScan) + 4 + sgs;
+    return (NSUInteger(words * 4) + 15) & ~NSUInteger(15);
+  }
+  std::uint32_t union_sgs() const {
+    const id<MTLComputePipelineState> ps = pso_.at("fr_union");
+    const NSUInteger room = dev_.maxThreadgroupMemoryLength - ps.staticThreadgroupMemoryLength;
+    std::uint32_t k = std::min<std::uint32_t>(8, launch_tpt("fr_union") / 32);
+    while (k > 1 && union_tg_bytes(k) > room) --k;
+    FR_CHECK(union_tg_bytes(k) <= room, "threadgroup memory too small for fr_union");
     return k;
   }
   static NSUInteger tg_len(std::uint32_t sgs, int bytes) {
