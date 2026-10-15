@@ -268,6 +268,7 @@ class FrontierMetal {
     // vector, so it must never reallocate. Eight levels cover any length (a block is >= 128).
     scan_sums_.resize(8);
     trace_ = std::getenv("HORA_GPU_TRACE") != nullptr;
+    if (const char* s = std::getenv("HORA_GPU_HOST_LEVEL")) host_max_ = std::size_t(std::atoll(s));
     if (const char* s = std::getenv("HORA_GPU_WAIT_S")) wait_limit_ms_ = std::atof(s) * 1000;
     check_ = std::getenv("HORA_GPU_CHECK") != nullptr;
     // HORA_GPU_PROFILE: every kernel in its own command buffer, timed; a table at the end.
@@ -344,7 +345,22 @@ class FrontierMetal {
       std::vector<std::size_t> cuts{0};             // chunk c = runs [cuts[c], cuts[c + 1])
       for (std::size_t r = 0; r < nr; ++r)
         if (runs_[r + 1] - runs_[cuts.back()] >= chunk_slots || r + 1 == nr) cuts.push_back(r + 1);
-      prepare(cuts[0], cuts[1], chunks_[0]);
+      // A narrow level runs on the CPU (see host_level): its recipes are enumerated in one go and
+      // the estimated covering work decides; a level that turns out wide runs on the GPU as one
+      // chunk, already enumerated.
+      bool host = false;
+      if (host_max_ && nf_ <= kHostFrontier) {
+        cuts.assign({0, nr});
+        prepare(0, nr, chunks_[0]);
+        host = host_cost(chunks_[0]) <= host_max_;
+        if (host) {
+          if (host_level(chunks_[0])) return 1;
+          cuts.assign({0});   // the GPU loop below has nothing to do
+          ++lvl_host_;
+        }
+      } else {
+        prepare(cuts[0], cuts[1], chunks_[0]);
+      }
       for (std::size_t c = 0; c + 1 < cuts.size(); ++c) {
         Chunk& ch = chunks_[c & 1];
         const bool more = c + 2 < cuts.size();
@@ -698,6 +714,247 @@ class FrontierMetal {
     return false;
   }
 
+  // ---------------------------------------------------------------- narrow levels on the CPU
+  // A level whose covering work is small costs more in GPU round trips than in work: `single`
+  // runs thousands of levels of a handful of zones. Such a level is processed here, on the same
+  // shared-memory structures, by inserting its successors one at a time in rank order -- the CPU
+  // engine's canonical order. Everything the GPU path maintains (entries, reference counts, the
+  // zone table, the free list, the sorted delta, the next frontier) is maintained the same way, so
+  // levels alternate freely between the two. HORA_GPU_HOST_LEVEL: the largest estimated number of
+  // covering tests a level may need to run here (0: never).
+
+  // Entries (live or dead) of `key` in the base and the delta: the cost estimate's group size.
+  std::size_t stored_in(std::uint64_t key) const {
+    auto cnt = [&](const Buf& kb, std::size_t n) {
+      const std::uint64_t* k = kb.as<std::uint64_t>();
+      return std::size_t(std::upper_bound(k, k + n, key) - std::lower_bound(k, k + n, key));
+    };
+    return cnt(base_k_, nbase_) + cnt(delta_k_, ndelta_);
+  }
+  // Covering tests the level would run sequentially: one per stored zone of each successor's group.
+  std::size_t host_cost(const Chunk& ch) const {
+    const std::uint32_t* wr = ch.wr.as<std::uint32_t>();
+    const std::uint64_t* rk = ch.rkey.as<std::uint64_t>();
+    std::unordered_map<std::uint64_t, std::size_t> group;
+    std::size_t cost = 0;
+    for (std::size_t w = 0; w < ch.W; ++w) {
+      const std::uint64_t k = rk[wr[w]];
+      auto it = group.find(k);
+      if (it == group.end()) it = group.emplace(k, stored_in(k) + 1).first;
+      cost += it->second;
+    }
+    return cost;
+  }
+  // A zone in the store's form, widened to raw bounds.
+  void load_raw(const void* p, raw_t* d) const {
+    for (int e = 0; e < nn_; ++e)
+      d[e] = gz_ == 1 ? zget(static_cast<const sraw_t*>(p), e)
+           : gz_ == 2 ? zget(static_cast<const nraw_t*>(p), e)
+                      : static_cast<const raw_t*>(p)[e];
+  }
+  // Raw bounds into the store's form; Overflow when an entry does not fit (as the kernels flag).
+  void store_raw(const raw_t* d, void* p) const {
+    for (int k = 0; k < nn_; ++k) {
+      const bool fits = d[k] >= kInf || (gz_ == 1 ? (d[k] > -127 && d[k] < kSInf)
+                                         : gz_ == 2 ? (d[k] > -32767 && d[k] < kNInf) : true);
+      if (!fits) throw Overflow{};
+    }
+    for (int k = 0; k < nn_; ++k) {
+      if (gz_ == 1) zput(static_cast<sraw_t*>(p), k, d[k]);
+      else if (gz_ == 2) zput(static_cast<nraw_t*>(p), k, d[k]);
+      else static_cast<raw_t*>(p)[k] = d[k];
+    }
+  }
+  bool try_union_with(raw_t* x, const void* y) const {
+    if (gz_ == 1) return dbm_try_union(x, static_cast<const sraw_t*>(y), n_);
+    if (gz_ == 2) return dbm_try_union(x, static_cast<const nraw_t*>(y), n_);
+    return dbm_try_union(x, static_cast<const raw_t*>(y), n_);
+  }
+  // fr_kill, on the host.
+  void host_kill(std::uint32_t a) {
+    std::uint32_t* al = alive_.as<std::uint32_t>();
+    std::uint32_t* zc = zcnt_.as<std::uint32_t>();
+    al[a] = 0u;
+    --nlive_;
+    const std::uint32_t z = zref_.as<std::uint32_t>()[a];
+    if (--zc[z] == 0u) {
+      const std::uint32_t slot = ztslot_.as<std::uint32_t>()[z];
+      if (slot != 0xffffffffu) ztab_.as<std::uint32_t>()[slot] = 0xfffffffeu;   // tombstone
+      std::uint32_t* ctr = ctr_.as<std::uint32_t>();
+      pend_.as<std::uint32_t>()[ctr[kFreed]++] = z;   // reusable at the level's end
+      ++ntomb_;
+    }
+  }
+  // fr_intern + fr_zplace, on the host: the zone id of the stored-form zone `xs`.
+  std::uint32_t host_intern(const void* xs) {
+    const std::uint32_t h = hash_stored(xs);
+    std::uint32_t* zt = ztab_.as<std::uint32_t>();
+    const std::uint32_t mask = std::uint32_t(zcap_ - 1);
+    std::uint32_t s = h & mask;
+    for (std::uint32_t probe = 0; probe <= mask; ++probe, s = (s + 1) & mask) {
+      const std::uint32_t v = zt[s];
+      if (v == 0xffffffffu) {   // empty: the zone is new
+        const std::uint32_t z = nfree_ ? freel_.as<std::uint32_t>()[--nfree_] : std::uint32_t(zcount_++);
+        std::memcpy(zone_ptr(z), xs, std::size_t(nn_) * gz_);
+        zhash_.as<std::uint32_t>()[z] = h;
+        ztslot_.as<std::uint32_t>()[z] = s;
+        zcnt_.as<std::uint32_t>()[z] = 0u;
+        zt[s] = z;
+        return z;
+      }
+      if (v == 0xfffffffeu) continue;   // a dead zone's slot
+      if (zhash_.as<std::uint32_t>()[v] == h && std::memcmp(zone_ptr(v), xs, std::size_t(nn_) * gz_) == 0)
+        return v;
+    }
+    FR_CHECK(false, "zone table full on the host path");
+    return 0;
+  }
+  // One level on the CPU. Returns true when a target state is reached.
+  bool host_level(Chunk& ch) {
+    const std::size_t W = ch.W;
+    // Room for W new zones and entries, as encode_batch reserves for a batch.
+    ensure_zones(zcount_ + W);
+    for (Buf* b : {&zhash_, &ztslot_, &zcnt_, &pend_}) reserve(*b, (zcount_ + W) * 4, true);
+    reserve(zref_, (acount_ + W) * 4, true);
+    reserve(alive_, (acount_ + W) * 4, true);
+    reserve(fnk_, (nfn_ + W) * 8, true);
+    reserve(fna_, (nfn_ + W) * 4, true);
+    reserve(delta2_k_, (ndelta_ + W) * 8, false);
+    reserve(delta2_a_, (ndelta_ + W) * 4, false);
+    ensure_table(W);
+    const std::uint32_t* wf = ch.wf.as<std::uint32_t>();
+    const std::uint32_t* wr = ch.wr.as<std::uint32_t>();
+    const std::uint64_t* rk = ch.rkey.as<std::uint64_t>();
+    const std::uint32_t* rfl = ch.rflags.as<std::uint32_t>();
+    const std::uint32_t* go = ch.rg_off.as<std::uint32_t>();
+    const std::int32_t* rg = ch.rg.as<std::int32_t>();
+    const std::uint32_t* ro = ch.rr_off.as<std::uint32_t>();
+    const std::int32_t* rr = ch.rr.as<std::int32_t>();
+    const std::uint32_t* vo = ch.rv_off.as<std::uint32_t>();
+    const std::int32_t* rv = ch.rv.as<std::int32_t>();
+    const std::uint64_t* rd = ch.rdead.as<std::uint64_t>();
+    const std::uint32_t* fa = fa_.as<std::uint32_t>();
+    const raw_t* tdbm = tdbm_.as<raw_t>();
+    const std::size_t zbytes = std::size_t(nn_) * gz_;
+    std::vector<raw_t> d(nn_);
+    std::vector<unsigned char> xs(zbytes);
+    // This level's new entries, per discrete state, oldest first, and in insertion order overall.
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> fresh;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> added;
+    std::unordered_map<std::uint64_t, std::pair<std::vector<std::int32_t>, std::vector<std::int32_t>>> bounds;
+    std::size_t generated = 0, expanded = 0;
+    std::uint32_t last_slot = 0xffffffffu;
+    for (std::size_t w = 0; w < W; ++w) {
+      const std::uint32_t slot = wf[w], entry = fa[slot];
+      if (!alive_.as<std::uint32_t>()[entry]) continue;   // covered earlier in this round
+      if (slot != last_slot) { ++expanded; last_slot = slot; }
+      const std::uint32_t r = wr[w];
+      load_raw(zone_ptr(zref_.as<std::uint32_t>()[entry]), d.data());
+      bool ok = true;
+      for (std::uint32_t g = go[r]; ok && g < go[r + 1]; ++g)
+        ok = dbm_constrain(d.data(), n_, rg[3 * g], rg[3 * g + 1], rg[3 * g + 2]);
+      if (ok) {
+        for (std::uint32_t k = ro[r]; k < ro[r + 1]; ++k) dbm_reset(d.data(), n_, rr[k]);
+        for (std::uint32_t k = vo[r]; ok && k < vo[r + 1]; ++k)
+          ok = dbm_constrain(d.data(), n_, rv[3 * k], rv[3 * k + 1], rv[3 * k + 2]);
+      }
+      if (ok && !(rfl[r] & 1u)) {
+        dbm_delay(d.data(), n_);
+        for (std::uint32_t k = vo[r]; ok && k < vo[r + 1]; ++k)
+          ok = dbm_constrain(d.data(), n_, rv[3 * k], rv[3 * k + 1], rv[3 * k + 2]);
+      }
+      if (!ok) continue;
+      for (std::uint64_t dead = rd[r]; dead; dead &= dead - 1) dbm_reset(d.data(), n_, __builtin_ctzll(dead));
+      if (extrap_) dbm_extrapolate_lu_plus(d.data(), n_, P_.Lx.data(), P_.Ux.data());
+      ++generated;
+      // The target, on every successor, before coverage may discard it.
+      if ((rfl[r] & 2u) && (!has_tclock_ || dbm_intersects(d.data(), tdbm, n_))) {
+        if (P_.stats) { P_.stats->generated += generated; P_.stats->explored += expanded; }
+        return true;
+      }
+      store_raw(d.data(), xs.data());
+      const std::uint64_t key = rk[r];
+      auto bit = bounds.find(key);
+      if (bit == bounds.end()) {
+        std::vector<std::int32_t> L, U;
+        key_bounds(key, L, U);
+        bit = bounds.emplace(key, std::make_pair(std::move(L), std::move(U))).first;
+      }
+      const std::int32_t* L = bit->second.first.data();
+      const std::int32_t* U = bit->second.second.data();
+      // The group's entries, newest first: this level's, then the delta's, then the base's.
+      std::vector<std::uint32_t>& mine = fresh[key];
+      std::vector<std::uint32_t> group(mine.rbegin(), mine.rend());
+      for (int side = 0; side < 2; ++side) {
+        const std::uint64_t* k = (side ? base_k_ : delta_k_).as<std::uint64_t>();
+        const std::uint32_t* a = (side ? base_a_ : delta_a_).as<std::uint32_t>();
+        const std::size_t n = side ? nbase_ : ndelta_;
+        const std::size_t lo = std::size_t(std::lower_bound(k, k + n, key) - k);
+        const std::size_t hi = std::size_t(std::upper_bound(k, k + n, key) - k);
+        for (std::size_t i = hi; i > lo; --i) group.push_back(a[i - 1]);
+      }
+      const std::uint32_t* al = alive_.as<std::uint32_t>();
+      const std::uint32_t* zr = zref_.as<std::uint32_t>();
+      // Covered by a live zone of the group: dropped (an equal zone already stored wins).
+      bool covered = false;
+      for (std::uint32_t a : group)
+        if (al[a] && alu(xs.data(), zone_ptr(zr[a]), L, U)) { covered = true; break; }
+      if (covered) continue;
+      const bool new_key = group.empty();
+      // Live zones it covers leave.
+      for (std::uint32_t a : group)
+        if (al[a] && alu(zone_ptr(zr[a]), xs.data(), L, U)) host_kill(a);
+      // Convex union with the newest live zones of the group, restarting after every merge.
+      if (union_) {
+        for (bool merged = true; merged;) {
+          merged = false;
+          std::size_t seen = 0;
+          for (std::uint32_t a : group) {
+            if (!al[a]) continue;
+            if (++seen > std::size_t(detail::kMergeScan)) break;
+            if (try_union_with(d.data(), zone_ptr(zr[a]))) { host_kill(a); merged = true; break; }
+          }
+        }
+        store_raw(d.data(), xs.data());
+      }
+      const std::uint32_t z = host_intern(xs.data());
+      const std::uint32_t a = std::uint32_t(acount_++);
+      zref_.as<std::uint32_t>()[a] = z;
+      ++zcnt_.as<std::uint32_t>()[z];
+      alive_.as<std::uint32_t>()[a] = 1u;
+      mine.push_back(a);
+      added.emplace_back(key, a);
+      ++nlive_;
+      if (new_key && mine.size() == 1) ++ndisc_;
+    }
+    // Commit: the new entries, sorted by key (stable), into the delta and the next frontier.
+    std::stable_sort(added.begin(), added.end(),
+                     [](const auto& x, const auto& y) { return x.first < y.first; });
+    {
+      const std::uint64_t* dk = delta_k_.as<std::uint64_t>();
+      const std::uint32_t* da = delta_a_.as<std::uint32_t>();
+      std::uint64_t* ok = delta2_k_.as<std::uint64_t>();
+      std::uint32_t* oa = delta2_a_.as<std::uint32_t>();
+      std::size_t i = 0, j = 0, o = 0;
+      while (i < ndelta_ || j < added.size()) {   // the delta's entries first among equal keys
+        if (j == added.size() || (i < ndelta_ && dk[i] <= added[j].first)) { ok[o] = dk[i]; oa[o] = da[i]; ++i; }
+        else { ok[o] = added[j].first; oa[o] = added[j].second; ++j; }
+        ++o;
+      }
+      std::swap(delta_k_, delta2_k_); std::swap(delta_a_, delta2_a_);
+      ndelta_ = o;
+    }
+    std::uint64_t* nk = fnk_.as<std::uint64_t>();
+    std::uint32_t* na = fna_.as<std::uint32_t>();
+    for (std::size_t i = 0; i < added.size(); ++i) { nk[nfn_ + i] = added[i].first; na[nfn_ + i] = added[i].second; }
+    nfn_ += added.size();
+    lvl_valid_ += generated;
+    lvl_kept_ += added.size();
+    if (P_.stats) { P_.stats->generated += generated; P_.stats->explored += expanded; }
+    if (ndelta_ > std::max<std::size_t>(nbase_ / 4, 1u << 16) || (stress_ && ndelta_)) fold();
+    return false;
+  }
+
   // base := merge(live base, live delta); delta := empty.
   void fold() {
     reserve(fl_a_, (nbase_ + 1) * 4, false); reserve(fl_ap_, (nbase_ + 1) * 4, false);
@@ -976,9 +1233,9 @@ class FrontierMetal {
     x ^= x >> 15; x *= 0x846ca68bu;
     return x ^ (x >> 16);
   }
-  std::uint32_t zone_hash(std::size_t z) const {
+  std::uint32_t zone_hash(std::size_t z) const { return hash_stored(zone_ptr(z)); }
+  std::uint32_t hash_stored(const void* p) const {
     std::uint32_t h = 0;
-    const void* p = zone_ptr(z);
     for (int e = 0; e < nn_; ++e) {
       const std::int32_t v = gz_ == 1 ? std::int32_t(static_cast<const std::int8_t*>(p)[e])
                            : gz_ == 2 ? std::int32_t(static_cast<const std::int16_t*>(p)[e])
@@ -1233,6 +1490,10 @@ class FrontierMetal {
   bool has_tclock_ = false;
   int solo_ = 8, bound_bytes_ = 2;
   bool gsim_ = false;   // coverage is the G-simulation (--sim g)
+  // Narrow levels on the CPU: the largest estimated covering work (tests) a level may need to run
+  // there, and the largest frontier considered at all.
+  std::size_t host_max_ = 20000, lvl_host_ = 0;
+  static constexpr std::size_t kHostFrontier = 4096;
   bool union_ = true;
   int min_bits_ = 8;
   std::uint64_t clockbits_ = 0, qbits_ = 0, sentinel_ = 0;
