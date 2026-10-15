@@ -1061,7 +1061,8 @@ void init_gz() {
   allow_smem(fr_reduce_stored_big<GZ>);
   allow_smem(fr_reduce_pairs_big<GZ>);
   allow_smem(fr_union<GZ>);
-  allow_smem(fr_union_par<GZ>);
+  // static shared memory (the scan targets) counts against the same per-block limit
+  cudaFuncSetAttribute(fr_union_par<GZ>, cudaFuncAttributeMaxDynamicSharedMemorySize, g_smem_optin - 1024);
 }
 
 #define DISPATCH_GZ(gz, call)                                   \

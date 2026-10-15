@@ -1314,7 +1314,8 @@ class FrontierCuda {
   cudaError_t dev_alloc(void** p, std::size_t bytes, bool managed) const {
     if (!managed) return cudaMalloc(p, bytes);
     const cudaError_t e = cudaMallocManaged(p, bytes);
-    if (e == cudaSuccess) cudaMemAdvise(*p, bytes, cudaMemAdviseSetPreferredLocation, 0);
+    if (e == cudaSuccess && cudaMemAdvise(*p, bytes, cudaMemAdviseSetPreferredLocation, 0) != cudaSuccess)
+      cudaGetLastError();   // a hint only
     return e;
   }
   void release(Buf& b) {
