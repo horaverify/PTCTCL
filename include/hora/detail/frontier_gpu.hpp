@@ -110,6 +110,13 @@ struct FrontierProblem {
   /// Global bounds for Extra_LU+, which the engine switches on -- as the CPU engine does -- once
   /// the passed set holds kAdaptRatio zones per discrete state.
   std::vector<std::int32_t> Lx, Ux;
+  /// G-simulation (`--sim g`): coverage is the Gastin-Mukherjee-Srivathsan simulation instead of
+  /// a_LU. Per (process, location) raw bounds carrying their strictness (kGNone where a clock has
+  /// none), combined per state by raw maximum, and the query's floors as raw bounds -- exactly the
+  /// CPU engine's state_bounds. Empty unless `gsim`.
+  bool gsim = false;
+  std::vector<std::vector<std::vector<std::int32_t>>> Lgloc, Ugloc;
+  std::vector<std::int32_t> Lgq, Ugq;
   double adapt_ratio = 4.0;
   std::function<void(const LocVec&, IntVec&)> canon;
   SymState s0;                            ///< the initial state, sliced

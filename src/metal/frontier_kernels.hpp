@@ -421,11 +421,24 @@ kernel void fr_bucket_setup(device const ulong* bkey [[buffer(0)]], device const
 #ifndef FR_BOUND
 #define FR_BOUND short
 #endif
+#ifndef FR_GSIM
+#define FR_GSIM 0   // 1: coverage is the G-simulation (--sim g); Lb/Ub then hold raw bounds
+#endif
 constant int kBoundNone = (sizeof(FR_BOUND) == 2) ? -32768 : (-2147483647 - 1);
+#if FR_GSIM
+// Raw bounds (v << 1 | weak) with GDBM_GNONE for "no bound": read as stored (FR_BOUND is int).
+struct BoundView {
+  device const FR_BOUND* p;
+  int operator[](int i) const { return int(p[i]); }
+};
+#define fr_le(Z, Zp, L, U) gdbm_g_le_1(Z, Zp, kN, L, U)
+#else
 struct BoundView {
   device const FR_BOUND* p;
   int operator[](int i) const { const int v = int(p[i]); return v == kBoundNone ? GDBM_ALU_NEG_INF : v; }
 };
+#define fr_le(Z, Zp, L, U) gdbm_alu_le_1(Z, Zp, kN, L, U)
+#endif
 kernel void fr_bucket_bounds(device const ulong* bkey [[buffer(0)]], device const uint* hpre [[buffer(1)]],
                              device const int* Lloc [[buffer(2)]], device const int* Uloc [[buffer(3)]],
                              device const int* Lq [[buffer(4)]], device const int* Uq [[buffer(5)]],
@@ -437,6 +450,19 @@ kernel void fr_bucket_bounds(device const ulong* bkey [[buffer(0)]], device cons
   if (b >= hpre[W]) return;
   const ulong key = bkey[b];
   int l = Lq[c], u = Uq[c];
+#if FR_GSIM
+  // The G bounds: raw maximum over the processes' locations, GDBM_GNONE ("no bound") skipped,
+  // floored by the query's raw bounds; the reference clock is (<=, 0) -- the CPU's state_bounds.
+  for (int p = 0; p < kNP; ++p) {
+    const int gl = locbase[p] + loc_of(key, kshift, kmask, p);
+    const int lr = Lloc[gl * kN + c], ur = Uloc[gl * kN + c];
+    if (lr != GDBM_GNONE && (l == GDBM_GNONE || lr > l)) l = lr;
+    if (ur != GDBM_GNONE && (u == GDBM_GNONE || ur > u)) u = ur;
+  }
+  if (c == 0) l = u = GDBM_ZERO_LE;
+  Lb[ulong(b) * kN + c] = FR_BOUND(l);
+  Ub[ulong(b) * kN + c] = FR_BOUND(u);
+#else
   for (int p = 0; p < kNP; ++p) {
     const int gl = locbase[p] + loc_of(key, kshift, kmask, p);
     l = max(l, Lloc[gl * kN + c]);
@@ -445,6 +471,7 @@ kernel void fr_bucket_bounds(device const ulong* bkey [[buffer(0)]], device cons
   if (c == 0) l = u = 0;
   Lb[ulong(b) * kN + c] = FR_BOUND(l == GDBM_ALU_NEG_INF ? kBoundNone : l);
   Ub[ulong(b) * kN + c] = FR_BOUND(u == GDBM_ALU_NEG_INF ? kBoundNone : u);
+#endif
 }
 
 // cap2: big2's capacity. Phase 2 has a row per survivor AND per stored zone of each bucket, so
@@ -504,7 +531,7 @@ kernel void fr_reduce_stored(device const uint*  hpre    [[buffer(0)]],
       const BoundView L{Lb + ulong(b) * kN}, U{Ub + ulong(b) * kN};
       for (uint t = 0; !drop && t < nold; ++t) {
         const uint a = fr_stored_entry(st, t, base_a, delta_a);
-        drop = alive[a] != 0u && gdbm_alu_le_1(X, zone_at(AP, zref[a]), kN, L, U);
+        drop = alive[a] != 0u && fr_le(X, zone_at(AP, zref[a]), L, U);
       }
     }
     keep1[i] = drop ? 0u : 1u;
@@ -547,7 +574,7 @@ kernel void fr_reduce_stored_big(device const uint*  hpre    [[buffer(0)]],
     bool d = false;
     if (t < nold) {
       const uint a = fr_stored_entry(st, t, base_a, delta_a);
-      d = alive[a] != 0u && gdbm_alu_le_1(X, zone_at(AP, zref[a]), kN, L, U);
+      d = alive[a] != 0u && fr_le(X, zone_at(AP, zref[a]), L, U);
     }
     drop = simd_any(d);
   }
@@ -601,9 +628,9 @@ struct Phase2Row {
 };
 inline bool fr_row_dominated(thread const Phase2Row& R, device const GZ* X, device const GZ* Y,
                              uint t, BoundView L, BoundView U) {
-  if (R.stored) return gdbm_alu_le_1(X, Y, kN, L, U) && !gdbm_alu_le_1(Y, X, kN, L, U);
+  if (R.stored) return fr_le(X, Y, L, U) && !fr_le(Y, X, L, U);
   if (t == R.r) return false;
-  return gdbm_alu_le_1(X, Y, kN, L, U) && (t < R.r || !gdbm_alu_le_1(Y, X, kN, L, U));
+  return fr_le(X, Y, L, U) && (t < R.r || !fr_le(Y, X, L, U));
 }
 kernel void fr_reduce_pairs(device const uint*  rowoff  [[buffer(0)]],
                             device const uint*  hpre    [[buffer(1)]],
@@ -719,8 +746,8 @@ kernel void fr_reduce_pairs_big(device const uint*  rowoff  [[buffer(0)]],
     bool d = false;
     if (t < ns) {
       device const GZ* Y = bz + ulong(sval[surv[s0 + t]]) * kNN;
-      if (stored) d = gdbm_alu_le_1(X, Y, kN, L, U) && !gdbm_alu_le_1(Y, X, kN, L, U);
-      else if (t != r) d = gdbm_alu_le_1(X, Y, kN, L, U) && (t < r || !gdbm_alu_le_1(Y, X, kN, L, U));
+      if (stored) d = fr_le(X, Y, L, U) && !fr_le(Y, X, L, U);
+      else if (t != r) d = fr_le(X, Y, L, U) && (t < r || !fr_le(Y, X, L, U));
     }
     dom = simd_any(d);
   }
@@ -794,7 +821,7 @@ kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
       bool c = false;
       if (r2 < r) {
         const uint p2 = surv[s0 + r2];
-        c = keep[p2] == 2u && gdbm_alu_le_1(Z, bz + ulong(sval[p2]) * kNN, kN, L, U);
+        c = keep[p2] == 2u && fr_le(Z, bz + ulong(sval[p2]) * kNN, L, U);
       }
       covered = simd_any(c);
     }

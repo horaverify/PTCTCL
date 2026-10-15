@@ -159,7 +159,10 @@ class FrontierMetal {
     // Convex union is on, as on the CPU; HORA_GPU_UNION=0 turns it off, for measuring.
     union_ = !(std::getenv("HORA_GPU_UNION") && std::string(std::getenv("HORA_GPU_UNION")) == "0");
     if (const char* v = std::getenv("HORA_GPU_SOLO")) solo_ = std::atoi(v);
-    bound_bytes_ = maxc < 32767 ? 2 : 4;   // the a_LU bounds per bucket, stored narrow
+    gsim_ = P_.gsim;
+    // The bounds per bucket: a_LU's stored narrow when the constants allow; the G-simulation's are
+    // raw encoded bounds with an INT_MIN sentinel, so int.
+    bound_bytes_ = gsim_ ? 4 : maxc < 32767 ? 2 : 4;
     NSError* err = nil;
     MTLCompileOptions* o = [[MTLCompileOptions alloc] init];
     o.preprocessorMacros = @{
@@ -169,6 +172,7 @@ class FrontierMetal {
       @"FR_MERGE_SCAN" : @(int(detail::kMergeScan)),
       @"FR_HULL_COVER" : @(std::getenv("HORA_GPU_HULL_COVER") ? std::atoi(std::getenv("HORA_GPU_HULL_COVER")) : 0),
       @"FR_BOUND" : bound_bytes_ == 2 ? @"short" : @"int",
+      @"FR_GSIM" : @(gsim_ ? 1 : 0),
     };
     std::string src = std::string(hdbm::metal::gdbm_source()) + metal::frontier_kernels_source();
     id<MTLLibrary> lib = [dev_ newLibraryWithSource:[NSString stringWithUTF8String:src.c_str()]
@@ -206,18 +210,24 @@ class FrontierMetal {
     std::vector<int> locbase(np_ + 1, 0);
     for (int p = 0; p < np_; ++p) locbase[p + 1] = locbase[p] + int(net_.procs[p].locations.size());
     const int nloc = locbase[np_];
-    std::vector<int> Lloc(std::size_t(nloc) * n_, kAluNegInf), Uloc(std::size_t(nloc) * n_, kAluNegInf);
+    // Per (process, location) bounds: a_LU's constants, or under G-simulation its raw bounds
+    // (kGNone where a clock has none). The kernels combine them per discrete state.
+    const int none = gsim_ ? int(kGNone) : kAluNegInf;
+    const auto& Lsrc = gsim_ ? P_.Lgloc : P_.Lloc;
+    const auto& Usrc = gsim_ ? P_.Ugloc : P_.Uloc;
+    std::vector<int> Lloc(std::size_t(nloc) * n_, none), Uloc(std::size_t(nloc) * n_, none);
     for (int p = 0; p < np_; ++p)
       for (int l = 0; l < int(net_.procs[p].locations.size()); ++l) {
         const int gl = locbase[p] + l;
         for (int c = 0; c < n_; ++c) {
-          if (!P_.Lloc.empty()) Lloc[std::size_t(gl) * n_ + c] = P_.Lloc[p][l][c];
-          if (!P_.Uloc.empty()) Uloc[std::size_t(gl) * n_ + c] = P_.Uloc[p][l][c];
+          if (!Lsrc.empty()) Lloc[std::size_t(gl) * n_ + c] = Lsrc[p][l][c];
+          if (!Usrc.empty()) Uloc[std::size_t(gl) * n_ + c] = Usrc[p][l][c];
         }
       }
     std::vector<int> kshift(P_.keys.shift.begin(), P_.keys.shift.end());
     std::vector<std::uint64_t> kmask(P_.keys.mask.begin(), P_.keys.mask.end());
-    std::vector<int> Lq(P_.Lq.begin(), P_.Lq.end()), Uq(P_.Uq.begin(), P_.Uq.end());
+    std::vector<int> Lq(gsim_ ? P_.Lgq.begin() : P_.Lq.begin(), gsim_ ? P_.Lgq.end() : P_.Lq.end());
+    std::vector<int> Uq(gsim_ ? P_.Ugq.begin() : P_.Uq.begin(), gsim_ ? P_.Ugq.end() : P_.Uq.end());
 
     // The target's clock part as a closed DBM; an unsatisfiable one is an empty DBM, which the
     // intersection test then never meets.
@@ -831,13 +841,24 @@ class FrontierMetal {
     for (int p = 0; p < np_; ++p) {
       const int gl = lb[p] + int((key >> ks[p]) & km[p]);
       for (int c = 0; c < n_; ++c) {
-        L[c] = std::max(L[c], Ll[std::size_t(gl) * n_ + c]);
-        U[c] = std::max(U[c], Ul[std::size_t(gl) * n_ + c]);
+        const int lr = Ll[std::size_t(gl) * n_ + c], ur = Ul[std::size_t(gl) * n_ + c];
+        if (gsim_) {   // raw bounds: maximum over the defined ones, kGNone skipped
+          if (lr != int(kGNone) && (L[c] == int(kGNone) || lr > L[c])) L[c] = lr;
+          if (ur != int(kGNone) && (U[c] == int(kGNone) || ur > U[c])) U[c] = ur;
+        } else {
+          L[c] = std::max(L[c], lr);
+          U[c] = std::max(U[c], ur);
+        }
       }
     }
-    L[0] = U[0] = 0;
+    L[0] = U[0] = gsim_ ? int(kZeroLe) : 0;
   }
   bool alu(const void* z, const void* zp, const std::int32_t* L, const std::int32_t* U) const {
+    if (gsim_) {   // the coverage the kernels use: G-simulation under --sim g
+      if (gz_ == 1) return dbm_is_g_le(static_cast<const sraw_t*>(z), static_cast<const sraw_t*>(zp), n_, L, U);
+      if (gz_ == 2) return dbm_is_g_le(static_cast<const nraw_t*>(z), static_cast<const nraw_t*>(zp), n_, L, U);
+      return dbm_is_g_le(static_cast<const raw_t*>(z), static_cast<const raw_t*>(zp), n_, L, U);
+    }
     if (gz_ == 1) return dbm_is_alu_le(static_cast<const sraw_t*>(z), static_cast<const sraw_t*>(zp), n_, L, U);
     if (gz_ == 2) return dbm_is_alu_le(static_cast<const nraw_t*>(z), static_cast<const nraw_t*>(zp), n_, L, U);
     return dbm_is_alu_le(static_cast<const raw_t*>(z), static_cast<const raw_t*>(zp), n_, L, U);
@@ -1211,6 +1232,7 @@ class FrontierMetal {
   std::size_t mem_cap_ = 0, mem_used_ = 0;      // the memory budget, and what is allocated
   bool has_tclock_ = false;
   int solo_ = 8, bound_bytes_ = 2;
+  bool gsim_ = false;   // coverage is the G-simulation (--sim g)
   bool union_ = true;
   int min_bits_ = 8;
   std::uint64_t clockbits_ = 0, qbits_ = 0, sentinel_ = 0;

@@ -923,6 +923,12 @@ class FrontierCuda {
 }  // namespace
 
 int frontier_reach_cuda(const FrontierProblem& p) {
+  // G-simulation is not ported to CUDA yet: decline (the CPU engine runs) rather than search with
+  // a_LU, which would change the state space the user asked for.
+  if (p.gsim) {
+    std::fprintf(stderr, "warning: the CUDA engine has no G-simulation yet (--sim g); running the CPU engine\n");
+    return -1;
+  }
   const ReachStats before = p.stats ? *p.stats : ReachStats{};
   int bits = 8;
   for (;;) {

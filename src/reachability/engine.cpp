@@ -1392,6 +1392,18 @@ static bool reach_engine(const Network& net, const NetTarget& target, TargetFn&&
       }
       fp.Lx = L;
       fp.Ux = U;
+      // G-simulation, as state_bounds builds it: per-location raw bounds and the query's floors.
+      if (detail::options().gsim && !net.uraw_loc.empty()) {
+        fp.gsim = true;
+        fp.Lgloc = net.lraw_loc;
+        fp.Ugloc = net.uraw_loc;
+        fp.Lgq.assign(net.nclocks + 1, kGNone);
+        fp.Ugq.assign(net.nclocks + 1, kGNone);
+        for (int c = 1; c <= net.nclocks; ++c) {
+          if (Uq[c] != kAluNegInf) fp.Ugq[c] = le(Uq[c]);
+          if (Lq[c] != kAluNegInf) fp.Lgq[c] = le(-Lq[c]);
+        }
+      }
       fp.adapt_ratio = kAdaptRatio;
       fp.canon = [&](const LocVec& l, IntVec& i) { canon_ints(l, i); };
       fp.s0 = s0;
