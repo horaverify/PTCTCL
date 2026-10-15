@@ -32,6 +32,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -72,7 +73,7 @@ struct OutOfMemory : std::runtime_error { using std::runtime_error::runtime_erro
 
 // Counters the kernels keep, in ctr_.
 enum Ctr { kValid = 0, kHit = 1, kNewKeys = 2, kKilled = 3, kWide = 4, kFreed = 5, kBig1 = 6, kBig2 = 7,
-           kUnion = 8, kErr = 9 };
+           kUnion = 8, kErr = 9, kExpanded = 10, kMergeCap = 11, kLaneSplit = 13 };
 
 using Clock = std::chrono::steady_clock;
 inline double ms_since(Clock::time_point t) {
@@ -166,6 +167,7 @@ class FrontierMetal {
       @"GZ" : gz_ == 1 ? @"char" : gz_ == 2 ? @"short" : @"int",
       @"FR_SOLO" : @(solo_), @"FR_PAGE_SHIFT" : @(page_shift_),
       @"FR_MERGE_SCAN" : @(int(detail::kMergeScan)),
+      @"FR_HULL_COVER" : @(std::getenv("HORA_GPU_HULL_COVER") ? std::atoi(std::getenv("HORA_GPU_HULL_COVER")) : 0),
       @"FR_BOUND" : bound_bytes_ == 2 ? @"short" : @"int",
     };
     std::string src = std::string(hdbm::metal::gdbm_source()) + metal::frontier_kernels_source();
@@ -231,7 +233,8 @@ class FrontierMetal {
     put(kshift_, kshift); put(kmask_, kmask); put(tdbm_, tdbm);
     put(Lx_, std::vector<int>(P_.Lx.begin(), P_.Lx.end()));
     put(Ux_, std::vector<int>(P_.Ux.begin(), P_.Ux.end()));
-    reserve(ptab_, kMaxPages * 8, false);
+    reserve(ptab_, (kMaxPages + 1) * 8, false);   // [0] = pages allocated, then their addresses
+    std::memset(ptab_.b.contents, 0, (kMaxPages + 1) * 8);
 
     for (int c = 1; c <= net_.nclocks; ++c) {
       clockbits_ |= 1ull << c;
@@ -255,6 +258,8 @@ class FrontierMetal {
     // vector, so it must never reallocate. Eight levels cover any length (a block is >= 128).
     scan_sums_.resize(8);
     trace_ = std::getenv("HORA_GPU_TRACE") != nullptr;
+    if (const char* s = std::getenv("HORA_GPU_WAIT_S")) wait_limit_ms_ = std::atof(s) * 1000;
+    check_ = std::getenv("HORA_GPU_CHECK") != nullptr;
     // HORA_GPU_PROFILE: every kernel in its own command buffer, timed; a table at the end.
     profile_ = std::getenv("HORA_GPU_PROFILE") != nullptr;
     // HORA_GPU_STRESS: drive every rarely-taken path on every level -- sub-batches, many chunks,
@@ -304,7 +309,8 @@ class FrontierMetal {
 
     while (nf_ > 0) {
       if (P_.cancel && P_.cancel->load(std::memory_order_relaxed)) return 0;
-      if (P_.stats) P_.stats->explored += nf_;
+      // Explored zones are counted as they are expanded (finish_batch): a frontier zone that a
+      // zone inserted earlier in its round covers is skipped, not expanded.
       nf_prev_ = nf_;
       t_enum_ = t_wait_ = 0;
       lvl_w_ = lvl_valid_ = lvl_kept_ = lvl_rows_ = lvl_buckets_ = 0;
@@ -461,6 +467,7 @@ class FrontierMetal {
   // the excess threads exiting at once. finish_batch() reads the outcome.
   id<MTLCommandBuffer> encode_batch(Chunk& ch, std::size_t w0, std::size_t W) {
     const std::uint32_t Wu = std::uint32_t(W);
+    if (check_) check_before();
     reserve(bz_, W * nn_ * gz_, false);
     for (Buf* b : {&sk0_, &sk1_}) reserve(*b, W * 8, false);
     for (Buf* b : {&sv0_, &sv1_}) reserve(*b, W * 4, false);
@@ -468,7 +475,10 @@ class FrontierMetal {
     reserve(bstart_, W * 4, false); reserve(bkey_, W * 8, false); reserve(binfo_, W * 32, false);
     reserve(rowcnt_, W * 4, false); reserve(rowoff_, (W + 1) * 4, false);
     reserve(Lb_, W * n_ * bound_bytes_, false); reserve(Ub_, W * n_ * bound_bytes_, false);
-    reserve(big1_, W * 4, false); reserve(big2_, W * 4, false); reserve(ulist_, W * 4, false);
+    // big2: phase 2's large rows, of which there is one per survivor and per stored zone of a
+    // bucket -- more than W when a bucket holds many stored zones (see ReduceArgs).
+    const std::size_t cap2 = W + nbase_ + ndelta_ + 1;
+    reserve(big1_, W * 4, false); reserve(big2_, cap2 * 4, false); reserve(ulist_, W * 4, false);
     reserve(keep_, W * 4, false); reserve(keep1_, W * 4, false);
     reserve(k1pre_, (W + 1) * 4, false); reserve(kpre_, (W + 1) * 4, false);
     reserve(surv_, W * 4, false);
@@ -492,17 +502,21 @@ class FrontierMetal {
     reserve(ghist_, std::size_t(ntiles) * 256 * 4, false);
     std::uint32_t* ctr = ctr_.as<std::uint32_t>();
     ctr[kValid] = 0; ctr[kHit] = kNoHit; ctr[kNewKeys] = 0; ctr[kKilled] = 0; ctr[kWide] = 0;
-    ctr[kBig1] = 0; ctr[kBig2] = 0; ctr[kUnion] = 0; ctr[kErr] = 0;
+    ctr[kBig1] = 0; ctr[kBig2] = 0; ctr[kUnion] = 0; ctr[kErr] = 0; ctr[kExpanded] = 0;
+    ctr[kMergeCap] = 0; ctr[kLaneSplit] = 0;
     freed_before_ = ctr[kFreed];   // cumulative over the level
 
     begin();
     // ---- expand ----
+    // prev_slot: the frontier slot of the last work item before this batch, so a frontier zone
+    // whose transitions straddle two sub-batches is counted as explored once.
+    const std::uint32_t prev_slot = w0 > 0 ? ch.wf.as<std::uint32_t>()[w0 - 1] : 0xffffffffu;
     struct { std::uint32_t nwork; std::int32_t has_tclock; std::uint64_t sentinel;
-             std::int32_t extrap, pad; }
-        ea{Wu, has_tclock_ ? 1 : 0, sentinel_, extrap_ ? 1 : 0, 0};
+             std::int32_t extrap; std::uint32_t prev_slot; }
+        ea{Wu, has_tclock_ ? 1 : 0, sentinel_, extrap_ ? 1 : 0, prev_slot};
     use("fr_expand");
     bind({&ch.wf, &ch.wr, &fa_, &ptab_, &ch.rkey, &ch.rflags, &ch.rg_off, &ch.rg, &ch.rr_off,
-          &ch.rr, &ch.rv_off, &ch.rv, &ch.rdead, nullptr, nullptr, nullptr, &tdbm_, &bz_, &sk0_,
+          &ch.rr, &ch.rv_off, &ch.rv, &ch.rdead, &alive_, nullptr, nullptr, &tdbm_, &bz_, &sk0_,
           &sv0_, &ctr_});
     [enc_ setBuffer:ch.wf.b offset:w0 * 4 atIndex:0];
     [enc_ setBuffer:ch.wr.b offset:w0 * 4 atIndex:1];
@@ -528,6 +542,7 @@ class FrontierMetal {
       [enc_ dispatchThreadgroups:MTLSizeMake(ntiles, 1, 1) threadsPerThreadgroup:MTLSizeMake(sort_t_, 1, 1)];
       sk = dk; sv = dv;
     }
+    chk_sk_ = sk; chk_sv_ = sv;
     // ---- group into buckets, and find each bucket's stored zones ----
     struct { std::uint32_t W, nbase, ndelta; } ga{Wu, std::uint32_t(nbase_), std::uint32_t(ndelta_)};
     use("fr_heads");
@@ -550,7 +565,7 @@ class FrontierMetal {
     [enc_ setBytes:&Wu length:4 atIndex:11];
     dispatch_indirect(3, tbb);
     // ---- reduce, phase 1: each candidate against its bucket's stored zones ----
-    struct { std::uint32_t W; } rd{Wu};
+    struct { std::uint32_t W, cap2; } rd{Wu, std::uint32_t(cap2)};
     const int tg_red = nn_ * 4;
     const std::uint32_t trs = launch_tpt("fr_reduce_stored");
     indirect(ctr_, kValid, 1, trs, 0);
@@ -599,7 +614,7 @@ class FrontierMetal {
       indirect(ctr_, kUnion, 1, sgu, 5);
       use("fr_union");
       bind({&ulist_, &binfo_, &base_a_, &delta_a_, &ptab_, &alive_, sv, &bz_, &keep_, &k1pre_, &surv_,
-            &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &ctr_, &hsh_});
+            &zref_, &zcnt_, &ztab_, &ztslot_, &pend_, &ctr_, &hsh_, &Lb_, &Ub_});
       dispatch_sg_indirect(5, sgu, tg_un);
     }
     // ---- intern the survivors' zones ----
@@ -646,10 +661,12 @@ class FrontierMetal {
     const std::uint32_t* ctr = ctr_.as<std::uint32_t>();
     const std::uint32_t nvalid = ctr[kValid], hit = ctr[kHit];
     lvl_valid_ += nvalid;
-    if (P_.stats) P_.stats->generated += nvalid;
+    if (P_.stats) { P_.stats->generated += nvalid; P_.stats->explored += ctr[kExpanded]; }
     if (hit != kNoHit) return true;
     if (ctr[kWide]) throw Overflow{};
-    FR_CHECK(ctr[kErr] == 0, "zone table invariant broken (a full table)");
+    FR_CHECK(ctr[kErr] == 0, "a GPU capacity bound was exceeded (full zone table, or big2 overflow)");
+    FR_CHECK(ctr[kMergeCap] == 0, "convex-union merge loop exceeded its bound");
+    FR_CHECK(ctr[kLaneSplit] == 0, "the lanes of a SIMD-group disagreed on a convex-union test");
     const std::uint32_t kept = kpre_.as<std::uint32_t>()[W];
     const std::uint32_t fresh = wpre_.as<std::uint32_t>()[W];   // zones not already stored
     lvl_rows_ += rowoff_.as<std::uint32_t>()[W];
@@ -666,6 +683,7 @@ class FrontierMetal {
     nfree_ -= recycled;
     zcount_ += fresh - recycled;
     nfn_ += kept;
+    if (check_) check_after();
     if (ndelta_ > std::max<std::size_t>(nbase_ / 4, 1u << 16) || (stress_ && ndelta_)) fold();
     return false;
   }
@@ -759,7 +777,8 @@ class FrontierMetal {
       id<MTLBuffer> b = [dev_ newBufferWithLength:bytes options:MTLResourceStorageModeShared];
       if (!b) throw OutOfMemory("out of GPU memory: the system refused a " + mb(bytes) + " zone page");
       mem_used_ += bytes;
-      ptab_.as<std::uint64_t>()[pages_.size()] = b.gpuAddress;
+      ptab_.as<std::uint64_t>()[1 + pages_.size()] = b.gpuAddress;
+      ptab_.as<std::uint64_t>()[0] = pages_.size() + 1;
       pages_.push_back(b);
     }
   }
@@ -790,6 +809,145 @@ class FrontierMetal {
     wait(submit());
     FR_CHECK(ctr_.as<std::uint32_t>()[kErr] == 0, "zone table rebuild found the table full");
     ntomb_ = 0;
+  }
+  // ---- HORA_GPU_CHECK: a batch may remove a zone only if a zone that stays covers it ----------
+  // Before each batch the live entries and their keys are recorded; after it, every entry that died
+  // and every candidate that was dropped must be a_LU-covered by a live entry of its discrete state.
+  // The first violations are printed with the zones involved, and the search stops.
+  void check_before() {
+    const std::uint32_t* al = alive_.as<std::uint32_t>();
+    chk_acount_ = acount_;
+    chk_alive_.assign(al, al + acount_);
+    chk_key_.assign(acount_, ~0ull);
+    for (std::size_t i = 0; i < nbase_; ++i) chk_key_[base_a_.as<std::uint32_t>()[i]] = base_k_.as<std::uint64_t>()[i];
+    for (std::size_t i = 0; i < ndelta_; ++i) chk_key_[delta_a_.as<std::uint32_t>()[i]] = delta_k_.as<std::uint64_t>()[i];
+  }
+  void key_bounds(std::uint64_t key, std::vector<std::int32_t>& L, std::vector<std::int32_t>& U) const {
+    const int* Ll = Lloc_.as<int>(); const int* Ul = Uloc_.as<int>();
+    const int* lb = locbase_.as<int>(); const int* ks = kshift_.as<int>();
+    const std::uint64_t* km = kmask_.as<std::uint64_t>();
+    L.assign(Lq_.as<int>(), Lq_.as<int>() + n_);
+    U.assign(Uq_.as<int>(), Uq_.as<int>() + n_);
+    for (int p = 0; p < np_; ++p) {
+      const int gl = lb[p] + int((key >> ks[p]) & km[p]);
+      for (int c = 0; c < n_; ++c) {
+        L[c] = std::max(L[c], Ll[std::size_t(gl) * n_ + c]);
+        U[c] = std::max(U[c], Ul[std::size_t(gl) * n_ + c]);
+      }
+    }
+    L[0] = U[0] = 0;
+  }
+  bool alu(const void* z, const void* zp, const std::int32_t* L, const std::int32_t* U) const {
+    if (gz_ == 1) return dbm_is_alu_le(static_cast<const sraw_t*>(z), static_cast<const sraw_t*>(zp), n_, L, U);
+    if (gz_ == 2) return dbm_is_alu_le(static_cast<const nraw_t*>(z), static_cast<const nraw_t*>(zp), n_, L, U);
+    return dbm_is_alu_le(static_cast<const raw_t*>(z), static_cast<const raw_t*>(zp), n_, L, U);
+  }
+  void print_zone(const char* tag, const void* p) const {
+    std::fprintf(stderr, "[gpu]     %s:", tag);
+    for (int e = 0; e < nn_; ++e) {
+      const int v = gz_ == 1 ? int(static_cast<const std::int8_t*>(p)[e])
+                  : gz_ == 2 ? int(static_cast<const std::int16_t*>(p)[e])
+                             : static_cast<const std::int32_t*>(p)[e];
+      if (e % n_ == 0) std::fprintf(stderr, " |");
+      std::fprintf(stderr, " %d", v);
+    }
+    std::fprintf(stderr, "\n");
+  }
+  // Is zone z covered by a live entry of `key`? Prints the live entries when `show`.
+  bool covered_by_live(const void* z, std::uint64_t key, bool show) const {
+    std::vector<std::int32_t> L, U;
+    key_bounds(key, L, U);
+    const std::uint32_t* al = alive_.as<std::uint32_t>();
+    const std::uint32_t* zr = zref_.as<std::uint32_t>();
+    bool hit = false;
+    for (int side = 0; side < 2 && !hit; ++side) {
+      const std::size_t cnt = side ? ndelta_ : nbase_;
+      const std::uint64_t* k = (side ? delta_k_ : base_k_).as<std::uint64_t>();
+      const std::uint32_t* a = (side ? delta_a_ : base_a_).as<std::uint32_t>();
+      for (std::size_t i = 0; i < cnt; ++i) {
+        if (k[i] != key || !al[a[i]]) continue;
+        if (show) print_zone(side ? "live (delta)" : "live (base)", zone_ptr(zr[a[i]]));
+        if (alu(z, zone_ptr(zr[a[i]]), L.data(), U.data())) { hit = true; if (!show) break; }
+      }
+    }
+    return hit;
+  }
+  void check_after() {
+    const std::uint32_t* al = alive_.as<std::uint32_t>();
+    const std::uint32_t* zr = zref_.as<std::uint32_t>();
+    int bad = 0;
+    // Reference counts: every live entry's zone counted once per entry, nothing else.
+    {
+      std::vector<std::uint32_t> want(zcount_, 0);
+      for (int side = 0; side < 2; ++side) {
+        const std::size_t cnt = side ? ndelta_ : nbase_;
+        const std::uint32_t* a = (side ? delta_a_ : base_a_).as<std::uint32_t>();
+        for (std::size_t i = 0; i < cnt; ++i)
+          if (al[a[i]]) {
+            if (zr[a[i]] >= zcount_) { std::fprintf(stderr, "[gpu] CHECK: entry %u names zone %u >= %zu\n", a[i], zr[a[i]], zcount_); ++bad; }
+            else ++want[zr[a[i]]];
+          }
+      }
+      const std::uint32_t* zc = zcnt_.as<std::uint32_t>();
+      std::vector<std::uint8_t> isfree(zcount_, 0);
+      for (std::size_t i = 0; i < nfree_; ++i) isfree[freel_.as<std::uint32_t>()[i]] = 1;
+      const std::uint32_t npend = ctr_.as<std::uint32_t>()[kFreed];
+      for (std::uint32_t i = 0; i < npend; ++i) isfree[pend_.as<std::uint32_t>()[i]] |= 2;
+      int shown = 0;
+      for (std::size_t z = 0; z < zcount_; ++z) {
+        if ((want[z] != zc[z] || (want[z] && isfree[z])) && shown < 6) {
+          std::fprintf(stderr, "[gpu] CHECK level %d: zone %zu has %u live entries, refcount %u, %s\n",
+                       level_, z, want[z], zc[z], isfree[z] == 1 ? "on the free list"
+                       : isfree[z] == 2 ? "queued for reuse" : isfree[z] ? "free and queued" : "in use");
+          ++shown; ++bad;
+        }
+      }
+    }
+    for (std::size_t a = 0; a < chk_acount_ && bad < 3; ++a) {
+      if (!chk_alive_[a] || al[a]) continue;
+      const void* z = zone_ptr(zr[a]);
+      if (covered_by_live(z, chk_key_[a], false)) continue;
+      ++bad;
+      std::fprintf(stderr, "[gpu] CHECK level %d: stored entry %zu died uncovered\n", level_, a);
+      print_zone("died", z);
+      covered_by_live(z, chk_key_[a], true);
+    }
+    const std::uint32_t nvalid = ctr_.as<std::uint32_t>()[kValid];
+    const std::uint32_t* keep = keep_.as<std::uint32_t>();
+    const std::uint64_t* sk = chk_sk_->as<std::uint64_t>();
+    const std::uint32_t* sv = chk_sv_->as<std::uint32_t>();
+    for (std::uint32_t j = 0; j < nvalid && bad < 3; ++j) {
+      if (keep[j]) continue;
+      const void* z = static_cast<const char*>(bz_.b.contents) + std::size_t(sv[j]) * nn_ * gz_;
+      if (covered_by_live(z, sk[j], false)) continue;
+      ++bad;
+      std::fprintf(stderr, "[gpu] CHECK level %d: candidate %u dropped uncovered (after phase 1: %s)\n",
+                   level_, j, keep1_.as<std::uint32_t>()[j] ? "kept" : "dropped");
+      print_zone("dropped", z);
+      covered_by_live(z, sk[j], true);
+      // Why was it dropped? Stored zones (alive before the batch) and other candidates that cover it.
+      std::vector<std::int32_t> L, U;
+      key_bounds(sk[j], L, U);
+      for (std::size_t a = 0; a < chk_acount_; ++a) {
+        if (!chk_alive_[a] || chk_key_[a] != sk[j]) continue;
+        const void* y = zone_ptr(zr[a]);
+        if (alu(z, y, L.data(), U.data())) {
+          char tag[96];
+          std::snprintf(tag, sizeof tag, "covering stored entry %zu, alive now %u", a, al[a]);
+          print_zone(tag, y);
+        }
+      }
+      for (std::uint32_t i = 0; i < nvalid; ++i) {
+        if (i == j || sk[i] != sk[j]) continue;
+        const void* y = static_cast<const char*>(bz_.b.contents) + std::size_t(sv[i]) * nn_ * gz_;
+        if (alu(z, y, L.data(), U.data())) {
+          char tag[96];
+          std::snprintf(tag, sizeof tag, "covering candidate %u (as now in bz), keep %u", i, keep[i]);
+          print_zone(tag, y);
+        }
+      }
+    }
+    FR_CHECK(bad == 0, "HORA_GPU_CHECK: a batch removed a zone no remaining zone covers");
   }
   // The kernels' zone hash, on the host, for zone `z` (fr_entry_hash).
   static std::uint32_t mix32(std::uint32_t x) {
@@ -841,8 +999,20 @@ class FrontierMetal {
     enc_ = nil; cb_ = nil;
     return cb;
   }
+  // A timed wait: a command buffer still running after HORA_GPU_WAIT_S seconds (default 120) is
+  // reported -- with the kernel that was running, under HORA_GPU_PROFILE -- and the process ends.
+  // The GPU cannot be stopped from here, but the run no longer sits on a hung GPU indefinitely.
   void wait(id<MTLCommandBuffer> cb) {
-    [cb waitUntilCompleted];
+    const auto t0 = Clock::now();
+    while (cb.status < MTLCommandBufferStatusCompleted) {
+      if (ms_since(t0) > wait_limit_ms_) {
+        std::fprintf(stderr, "[gpu] command buffer still running after %.0f s (level %d, kernel %s): "
+                     "aborting\n", wait_limit_ms_ / 1000, level_, kernel_ ? kernel_ : "?");
+        std::fflush(stderr);
+        std::_Exit(3);
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(20));
+    }
     FR_CHECK(cb.status == MTLCommandBufferStatusCompleted,
              std::string("command buffer failed: ") + (cb.error ? cb.error.localizedDescription.UTF8String : "?"));
   }
@@ -1046,8 +1216,15 @@ class FrontierMetal {
   std::uint64_t clockbits_ = 0, qbits_ = 0, sentinel_ = 0;
   std::size_t wmax_ = 0;
   bool trace_ = false, stress_ = false, profile_ = false;
+  double wait_limit_ms_ = 120000;
   int level_ = 0;
   std::size_t nf_prev_ = 0, lvl_w_ = 0, lvl_valid_ = 0, lvl_kept_ = 0, lvl_rows_ = 0, lvl_buckets_ = 0;
+  bool check_ = false;    // HORA_GPU_CHECK: verify every removal (check_before / check_after)
+  std::vector<std::uint32_t> chk_alive_;
+  std::vector<std::uint64_t> chk_key_;
+  std::size_t chk_acount_ = 0;
+  Buf* chk_sk_ = nullptr;
+  Buf* chk_sv_ = nullptr;
   double t_enum_ = 0, t_wait_ = 0;
 
   id<MTLDevice> dev_ = nil;

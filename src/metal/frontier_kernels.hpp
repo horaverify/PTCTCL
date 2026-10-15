@@ -60,9 +60,15 @@ inline const char* frontier_kernels_source() {
 #endif
 #define FR_PAGE_MASK ((1u << FR_PAGE_SHIFT) - 1u)
 #define FR_MAX_PAGES 4096
-struct ArenaPages { device GZ* p[FR_MAX_PAGES]; };
+// npages is the number of allocated pages. A zone id past them -- only a corrupted id can be --
+// is clamped to page 0 rather than followed: the arena is reached through raw GPU addresses, and
+// an address outside every buffer faults or hangs the GPU, which can take the machine down. The
+// clamped access stays inside the arena; HORA_GPU_CHECK catches the corruption that produced it.
+struct ArenaPages { ulong npages; device GZ* p[FR_MAX_PAGES]; };
 inline device GZ* zone_at(device const ArenaPages& A, uint z) {
-  return A.p[z >> FR_PAGE_SHIFT] + ulong(z & FR_PAGE_MASK) * kNN;
+  uint pg = z >> FR_PAGE_SHIFT;
+  if (pg >= uint(A.npages)) pg = 0u;
+  return A.p[pg] + ulong(z & FR_PAGE_MASK) * kNN;
 }
 
 // ---- small helpers --------------------------------------------------------------------------
@@ -118,7 +124,7 @@ struct ExpandArgs {
   int   has_tclock;   // the target constrains clocks: test tdbm on every target-matching successor
   ulong sentinel;     // sort key of a disabled transition: above every discrete key
   int   extrap;       // apply Extra_LU+ (global bounds Lx, Ux) to every successor
-  int   pad;
+  uint  prev_slot;    // frontier slot of the work item just before this batch (~0u: none)
 };
 
 // Conjoin the constraint triples c[from .. to).
@@ -147,6 +153,7 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
                       device const uint*  rv_off  [[buffer(10)]],
                       device const int*   rv      [[buffer(11)]],
                       device const ulong* rdead   [[buffer(12)]],
+                      device const uint*  alive   [[buffer(13)]],
                       device const int*   tdbm    [[buffer(16)]],
                       device GZ*          bz      [[buffer(17)]],
                       device ulong*       skey    [[buffer(18)]],
@@ -167,7 +174,18 @@ kernel void fr_expand(device const uint*  wf      [[buffer(0)]],
   threadgroup int* D = tgm + sgid * (kNN + kN);   // the zone, then a row of scratch
   const uint r = wr[w];
   const ulong key = rkey[r];
-  gdbm_load(D, zone_at(AP, zref[fz[wf[w]]]), kN, lane);
+  // A frontier zone that died during this round -- a zone inserted in it covers it, or absorbed
+  // it into a hull -- is not expanded: that zone is in the next frontier, and its successors
+  // cover these. The first work item of each live frontier zone counts it as explored (ctr[10]).
+  const uint slot = wf[w], entry = fz[slot];
+  const bool live = alive[entry] != 0u;
+  if (lane == 0 && live && slot != (w > 0 ? wf[w - 1] : A.prev_slot))
+    atomic_fetch_add_explicit(&ctr[10], 1u, memory_order_relaxed);
+  if (!live) {
+    if (lane == 0) { skey[w] = A.sentinel; sval[w] = w; }
+    return;
+  }
+  gdbm_load(D, zone_at(AP, zref[entry]), kN, lane);
   bool ok = true;
   for (uint g = rg_off[r]; ok && g < rg_off[r + 1]; ++g)
     ok = gdbm_constrain(D, kN, rg[3 * g], rg[3 * g + 1], rg[3 * g + 2], lane);
@@ -429,7 +447,10 @@ kernel void fr_bucket_bounds(device const ulong* bkey [[buffer(0)]], device cons
   Ub[ulong(b) * kN + c] = FR_BOUND(u == GDBM_ALU_NEG_INF ? kBoundNone : u);
 }
 
-struct ReduceArgs { uint W; };
+// cap2: big2's capacity. Phase 2 has a row per survivor AND per stored zone of each bucket, so
+// its large rows can outnumber the batch (one bucket of many stored zones); the host sizes big2
+// for every row it can have, and an append past cap2 is reported (ctr[9]) instead of written.
+struct ReduceArgs { uint W; uint cap2; };
 
 // Both phases split their rows by size. A row comparing against at most FR_SOLO zones is decided
 // by one lane alone -- the common case wherever discrete states hold a handful of zones, and there
@@ -642,7 +663,11 @@ kernel void fr_reduce_pairs(device const uint*  rowoff  [[buffer(0)]],
     if (R.stored) { if (dom) fr_kill(R.a, alive, zref, zcnt, ztab, ztslot, pend, ctr); }
     else keep[R.pos] = dom ? 0u : 1u;
   }
-  if (big) big2[atomic_fetch_add_explicit(&ctr[7], 1u, memory_order_relaxed)] = r0 + lane;
+  if (big) {
+    const uint k = atomic_fetch_add_explicit(&ctr[7], 1u, memory_order_relaxed);
+    if (k < A.cap2) big2[k] = r0 + lane;
+    else atomic_fetch_add_explicit(&ctr[9], 1u, memory_order_relaxed);
+  }
 }
 // Phase 2, the large rows: one SIMD-group per listed row.
 kernel void fr_reduce_pairs_big(device const uint*  rowoff  [[buffer(0)]],
@@ -674,7 +699,7 @@ kernel void fr_reduce_pairs_big(device const uint*  rowoff  [[buffer(0)]],
                                 uint sgid [[simdgroup_index_in_threadgroup]],
                                 uint lane [[thread_index_in_simdgroup]]) {
   const uint k = tg * sgs + sgid;
-  if (k >= nbig[7]) return;
+  if (k >= min(nbig[7], A.cap2)) return;
   const uint row = big2[k];
   const uint b = segment_of(rowoff, hpre[A.W], row);
   const uint local = row - rowoff[b];
@@ -712,8 +737,17 @@ kernel void fr_reduce_pairs_big(device const uint*  rowoff  [[buffer(0)]],
 // stored, never what is reachable: the hull is exactly the union. One SIMD-group per listed
 // bucket, its survivors in rank order. "Newest" here: this batch's earlier survivors, latest
 // first, then the delta's entries and the base's, each latest first.
+//
+// Before it merges, a survivor is tested against the hulls the earlier survivors became, and
+// dropped if one covers it: inserted one at a time (the CPU engine's canonical order), it would
+// have met those hulls, not the zones phase 2 compared it with. Phases 1 and 2 already compared
+// it with every stored zone and every earlier survivor as it was, so only the hulls are new.
+// A survivor that became a hull is marked keep = 2 while its bucket is processed, then 1 again.
 #ifndef FR_MERGE_SCAN
 #define FR_MERGE_SCAN 32
+#endif
+#ifndef FR_HULL_COVER
+#define FR_HULL_COVER 0   // the test against earlier hulls (HORA_GPU_HULL_COVER=1): off by default
 #endif
 kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
                      device const uint4* binfo   [[buffer(1)]],
@@ -733,6 +767,8 @@ kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
                      device uint*        pend    [[buffer(15)]],
                      device atomic_uint* ctr     [[buffer(16)]],
                      device uint*        hshw    [[buffer(17)]],
+                     device const FR_BOUND* Lb   [[buffer(18)]],
+                     device const FR_BOUND* Ub   [[buffer(19)]],
                      threadgroup int*    tgm     [[threadgroup(0)]],
                      uint tg [[threadgroup_position_in_grid]],
                      uint sgs  [[simdgroups_per_threadgroup]],
@@ -745,13 +781,40 @@ kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
   const uint s0 = k1pre[nw.x], ns = k1pre[nw.x + nw.y] - s0;
   threadgroup int* X = tgm + sgid * (2 * kNN);
   threadgroup int* H = X + kNN;
+  const BoundView L{Lb + ulong(b) * kN}, U{Ub + ulong(b) * kN};
   for (uint r = 0; r < ns; ++r) {
     const uint pos = surv[s0 + r];
     if (simd_broadcast_first(keep[pos]) == 0u) continue;   // dropped, or absorbed earlier
     const uint w = sval[pos];
+    // Covered by a hull an earlier survivor became? One earlier survivor a lane.
+    device const GZ* Z = bz + ulong(w) * kNN;
+    bool covered = false;
+    for (uint base = 0; FR_HULL_COVER && base < r && !covered; base += 32u) {
+      const uint r2 = base + lane;
+      bool c = false;
+      if (r2 < r) {
+        const uint p2 = surv[s0 + r2];
+        c = keep[p2] == 2u && gdbm_alu_le_1(Z, bz + ulong(sval[p2]) * kNN, kN, L, U);
+      }
+      covered = simd_any(c);
+    }
+    if (covered) {
+      if (lane == 0) keep[pos] = 0u;
+      simdgroup_barrier(mem_flags::mem_device);
+      continue;
+    }
     gdbm_load(X, bz + ulong(w) * kNN, kN, lane);
     bool changed = false;
+    // Every merge removes a zone of the bucket, so there are at most as many rounds as zones.
+    // Past that the absorbed zones are not being seen as gone: stop and report (ctr[11]) rather
+    // than spin -- a kernel that never ends takes the whole GPU, and the machine, with it.
+    const uint max_rounds = ns + st.y + st.w + 2u;
+    uint rounds = 0;
     for (bool merged = true; merged;) {
+      if (++rounds > max_rounds) {
+        if (lane == 0) atomic_fetch_add_explicit(&ctr[11], 1u, memory_order_relaxed);
+        break;
+      }
       merged = false;
       uint seen = 0;
       for (int r2 = int(r) - 1; r2 >= 0 && seen < FR_MERGE_SCAN && !merged; --r2) {
@@ -770,7 +833,14 @@ kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
           const uint a = run[first + uint(t)];
           if (simd_broadcast_first(alive[a]) == 0u) continue;
           ++seen;
-          if (gdbm_try_union(X, zone_at(AP, zref[a]), H, kN, lane)) {
+          const bool u = gdbm_try_union(X, zone_at(AP, zref[a]), H, kN, lane);
+          // The lanes must agree (see GDBM_FOR_E in gdbm.hpp): a split answer kills the zone on
+          // one lane and writes the hull on none. Reported as an error (ctr[13]), never acted on.
+          if (simd_any(u) != simd_all(u)) {
+            if (lane == 0) atomic_fetch_add_explicit(&ctr[13], 1u, memory_order_relaxed);
+            continue;
+          }
+          if (u) {
             merged = changed = true;
             if (lane == 0) fr_kill(a, alive, zref, zcnt, ztab, ztslot, pend, ctr);
           }
@@ -783,8 +853,13 @@ kernel void fr_union(device const uint*  ulist   [[buffer(0)]],
       uint h = 0;
       GDBM_FOR_E(e, lane, kNN) { const GZ sv = fr_stored(X[e]); out[e] = sv; h += fr_entry_hash(uint(e), int(sv)); }
       h = fr_mix(simd_sum(h));
-      if (lane == 0) hshw[w] = h;
+      if (lane == 0) { hshw[w] = h; keep[pos] = 2u; }
+      simdgroup_barrier(mem_flags::mem_device);           // the hull, before later survivors read it
     }
+  }
+  for (uint r = lane; r < ns; r += 32u) {                  // keep is a 0/1 flag again
+    const uint pos = surv[s0 + r];
+    if (keep[pos] == 2u) keep[pos] = 1u;
   }
 }
 
