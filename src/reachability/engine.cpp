@@ -1806,7 +1806,7 @@ bool deadlock_reachable(const Network& net, Backend backend, ReachStats* stats,
   const auto is_dl = [&](const SymState& s) { return state_has_deadlock(net, s); };
 
 #ifdef HORA_HAVE_CUDA
-  if (backend == Backend::Cuda && !network_has_diagonal(net) && !gsim_on() &&
+  if (backend == Backend::Cuda && !network_has_diagonal(net) &&
       disc_key_bits(net) <= key_budget<NarrowKey>()) {
     const char* dm = std::getenv("HORA_DL_MODE");
     if (!dm || *dm == 'd') {
